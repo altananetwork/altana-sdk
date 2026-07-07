@@ -1,0 +1,57 @@
+{
+  "name": "@altananetwork/sdk",
+  "version": "0.3.3",
+  "description": "TypeScript SDK for creating non-custodial agentic wallets with on-chain session-key delegation.",
+  "license": "GPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/altananetwork/sdk.git",
+    "directory": "packages/wallet"
+  },
+  "homepage": "https://docs.altana.network",
+  "bugs": {
+    "url": "https://github.com/altananetwork/sdk/issues"
+  },
+  "keywords": [
+    "wallet",
+    "session-keys",
+    "agentic",
+    "passkey",
+    "viem",
+    "ethereum",
+    "porto",
+    "altana"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "node ../../scripts/check-publishable.mjs && bun run clean && bun run build",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "ox": "^0.14.0",
+    "porto": "0.2.37",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

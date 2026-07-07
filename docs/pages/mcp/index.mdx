@@ -1,0 +1,27 @@
+---
+title: MCP Server
+description: Operate Altana wallets directly from Claude, Cursor, or any MCP-compatible AI host.
+---
+
+# MCP Server
+
+`@altananetwork/mcp` exposes the SDK as an MCP server. AI hosts like Claude Code, Cursor, and Continue can use it to create wallets, grant sessions, and execute transactions through tools or slash commands.
+
+## When to use it
+
+- You want to **operate** wallets from a chat interface ("create a wallet for me", "grant this bot a daily cap of 0.01 ETH").
+- You're prototyping agent flows and want to test session lifecycles by hand.
+- You're building demos where the user is an AI host, not your code.
+
+If you're writing code, use [`@altananetwork/sdk`](/sdk/bnb) directly. The MCP server is a thin wrapper.
+
+## What it provides
+
+- **11 tools** covering wallet creation, balance, verification, session lifecycle, and transactions.
+- **12 prompts** exposed as slash commands (`/altana-agentic-wallet:create-wallet`, etc.).
+- **Stateless key handling.** Keys live in your OS keychain, with file/env fallbacks.
+
+## Next
+
+- [Install](/mcp/install). Get the server running in your AI host.
+- [Tools](/mcp/tools). Full reference for every exposed tool.

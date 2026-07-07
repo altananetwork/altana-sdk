@@ -1,0 +1,61 @@
+export { createClient } from "./client.js";
+export type {
+  Client,
+  CreateClientOptions,
+  ClientCreateWalletOptions,
+  ClientCreatePasskeyWalletOptions,
+  ClientRecoverFromPasskeyOptions,
+  ClientExecuteOptions,
+  ClientGrantSessionOptions,
+  ClientRevokeSessionOptions,
+  ClientBalancesOptions,
+} from "./client.js";
+
+export type { CreateWalletOptions, CreateWalletResult } from "./createWallet.js";
+export type { CreatePasskeyWalletOptions } from "./createPasskeyWallet.js";
+export type { RecoverFromPasskeyOptions } from "./recoverFromPasskey.js";
+export type { ExecuteOptions, Call } from "./execute.js";
+export type { BalancesResult } from "./balances.js";
+
+export {
+  signerFromPrivateKey,
+  createPrivateKeySigner,
+} from "./internal/signer.js";
+export type { Signer, SignerType } from "./internal/signer.js";
+
+export {
+  createPasskey,
+  createHeadlessPasskey,
+  signerFromPasskey,
+  isPasskeySigner,
+} from "./internal/passkey.js";
+export type {
+  PasskeySigner,
+  PasskeyCredential,
+} from "./internal/passkey.js";
+
+export type {
+  Session,
+  SessionPermissions,
+  CallPermission,
+  SpendPermission,
+  GrantSessionOptions,
+} from "./internal/sessions.js";
+
+export type { Wallet, ExecuteResult } from "./internal/types.js";
+export { ETHEREUM, BNB, BASE, RELAY_URL } from "./config.js";
+export type { NetworkConfig, L2CacheConfig } from "./config.js";
+
+export {
+  syncKeyToL2,
+  ensureKeyCached,
+  readCachedKey,
+  isCachedKeyValid,
+} from "./syncKeyToL2.js";
+export type {
+  SyncKeyToL2Args,
+  SyncKeyToL2Result,
+  EnsureKeyCachedArgs,
+  EnsureKeyCachedStatus,
+  CachedKey,
+} from "./syncKeyToL2.js";

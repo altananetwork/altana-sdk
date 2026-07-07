@@ -1,0 +1,64 @@
+---
+draft: true
+title: "Let an Agent Trade on a DEX, Capped"
+description: Scope a session to a DEX router with a spend cap. The agent can trade but cannot exceed the limit or touch any other contract.
+---
+
+import { UseCaseMeta } from '../../components/UseCaseMeta'
+
+<p style={{ fontSize: '0.8em', color: 'var(--vocs-color_textSecondary)', marginBottom: '0.1rem', fontWeight: 500, letterSpacing: '0.02em' }}>Build with Altana</p>
+
+# Let an agent trade on a DEX, capped
+
+<UseCaseMeta
+  tools={['SDK', 'MCP']}
+  rows={[
+  { label: "Goal", value: "I want my agent to trade on a DEX, but capped so it can only spend what I allow and only there." },
+  { label: "Who it's for", value: "The BSC crowd. This is the path that lands." },
+  { label: "What you'll use", value: <><code>grantSession</code> scoped to the DEX router with a spend cap and expiry, then <code>execute</code>.</> },
+  { label: "Prerequisites", value: <><a href="/use-cases/1-agent-wallet-policy">Use Case 1</a> wallet, funded on BNB with a stablecoin.</> },
+]} />
+
+The example below uses **PancakeSwap** on BNB. Swap in any DEX router address to use a different exchange; the pattern is identical.
+
+## Walkthrough
+
+```ts
+import {
+  createClient,
+  BNB,
+  signerFromPrivateKey,
+} from "@altananetwork/sdk";
+
+const client = createClient({ chains: [BNB] });
+const signer = signerFromPrivateKey(process.env.PRIVATE_KEY as `0x${string}`);
+
+// wallet from Use Case 1
+const session = await client.grantSession({
+  wallet,
+  signer,
+  permissions: {
+    calls: [{ to: "0xPancakeRouter..." }],                          // only this router
+    spend: [{ limit: 100_000_000_000_000_000_000n, period: "day", token: "0xStable..." }],
+  },
+  expiry: Math.floor(Date.now() / 1000) + 3 * 24 * 60 * 60,
+});
+
+// The agent builds swap calldata and executes within the cap.
+await client.execute({
+  session,
+  calls: [{ to: "0xPancakeRouter...", data: "0xSwapCalldata...", value: 0n }],
+});
+```
+
+## The moment that makes it click
+
+A swap inside the cap goes through. An oversized swap is blocked at validation before it ever touches the chain.
+
+## Why it is different
+
+The trading bot holds a key that can only hit that one router and only up to the cap. It cannot drain the wallet, cannot touch any other contract, and expires on its own.
+
+## What's next
+
+[Use Case 3](/use-cases/3-portfolio-multiple-agents): run a full portfolio with more than one agent on the same wallet.

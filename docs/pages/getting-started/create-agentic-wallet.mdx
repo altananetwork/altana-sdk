@@ -1,0 +1,186 @@
+---
+title: Create an Agentic Wallet
+description: "Create a Altana agentic wallet: a smart account with a global onchain registry of permissions, accessible by any authorized agent."
+---
+
+import { useState, useEffect } from 'react'
+import { PasskeyDemo } from '../../components/PasskeyDemo'
+
+export function WalletTabSwitcher() {
+  const [tab, setTab] = useState('passkey')
+
+  useEffect(() => {
+    const show = (id) => {
+      const passkey = document.getElementById('wallet-tab-passkey')
+      const pk = document.getElementById('wallet-tab-private-key')
+      if (passkey) passkey.style.display = id === 'passkey' ? '' : 'none'
+      if (pk) pk.style.display = id === 'private-key' ? '' : 'none'
+    }
+
+    if (window.location.hash === '#private-key') {
+      show('private-key')
+      setTab('private-key')
+      setTimeout(() => {
+        document.querySelector('[data-wallet-tabs]')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }, 50)
+    } else {
+      show('passkey')
+    }
+  }, [])
+
+  const switchTab = (id) => {
+    const passkey = document.getElementById('wallet-tab-passkey')
+    const pk = document.getElementById('wallet-tab-private-key')
+    if (passkey) passkey.style.display = id === 'passkey' ? '' : 'none'
+    if (pk) pk.style.display = id === 'private-key' ? '' : 'none'
+    setTab(id)
+    history.replaceState(null, '', id === 'passkey' ? location.pathname : `#${id}`)
+  }
+
+  const btn = (id) => ({
+    padding: '0.5rem 1.4rem',
+    border: '1px solid var(--vocs-color_border)',
+    borderRadius: '6px',
+    background: tab === id ? 'var(--vocs-color_backgroundDark)' : 'transparent',
+    color: 'inherit',
+    cursor: 'pointer',
+    fontWeight: tab === id ? '600' : '400',
+    fontSize: '0.95rem',
+    transition: 'background 0.15s',
+  })
+
+  return (
+    <div data-wallet-tabs style={{ display: 'flex', gap: '0.5rem', margin: '2rem 0 2rem' }}>
+      <button onClick={() => switchTab('passkey')} style={btn('passkey')}>Passkey</button>
+      <button onClick={() => switchTab('private-key')} style={btn('private-key')}>Private Key</button>
+    </div>
+  )
+}
+
+<p style={{ fontSize: '0.8em', color: 'var(--vocs-color_textSecondary)', marginBottom: '0.1rem', fontWeight: 500, letterSpacing: '0.02em' }}>Getting Started</p>
+
+# Create an agentic wallet
+
+An agentic wallet gives any authorized agent permissioned access to your onchain assets through Altana's global [Keystore](/concepts/keystore): a public onchain registry of authorized keys.
+
+You own the wallet. Agents get scoped, expiring, revocable keys. Every permission is verifiable by anyone, from any chain, with a free read.
+
+:::info[Which admin key type?]
+**Passkey**: biometric (Face ID, Touch ID, Windows Hello).<br/>Runs in the browser using `navigator.credentials` (WebAuthn).<br/>The private key never leaves your device's secure hardware.<br/>Best for user-facing apps where a human holds the keys.
+
+**Private key**: programmatic, server side.<br/>The key lives wherever your code runs: an env var, OS keychain, or encrypted file.<br/>Altana never sees it. No API key, no off-chain service.<br/>Best for autonomous agents and backend scripts.
+:::
+
+<WalletTabSwitcher />
+
+<div id="wallet-tab-passkey">
+
+## Try it live
+
+Each call hits the Altana SDK against BNB Smart Chain. Your passkey stays on your device.
+
+<PasskeyDemo />
+
+## [Build this into your own app →](/use-cases/1b-passkey-delegates-to-agent#build-this-in-your-own-app)
+
+Step-by-step code walkthrough for integrating a passkey wallet into your browser app, granting a session to an agent, and revoking it.
+
+</div>
+
+<div id="wallet-tab-private-key" style={{ display: 'none' }}>
+
+## Get started with the SDK
+
+### What you need
+
+- **Node.js 18+** and npm, bun, or pnpm
+
+### Step 1: Install
+
+```bash
+npm install @altananetwork/sdk viem
+```
+
+### Step 2: Generate your wallet
+
+The SDK creates a fresh private key and wallet address for you. Run this once.
+
+```ts
+import { createClient, BNB, createPrivateKeySigner } from "@altananetwork/sdk";
+
+const signer = createPrivateKeySigner();
+console.log("Save this key:", signer._privateKey); // copy and store this somewhere safe
+
+const client = createClient({ chains: [BNB] });
+const wallet = await client.createWallet({ signer });
+
+console.log("Wallet address:", wallet.address);
+```
+
+:::info[Save your key before continuing]
+Copy the value printed for `signer._privateKey`. The SDK does not store it anywhere.
+
+You will need it to sign every future transaction.
+:::
+
+### Step 3: Fund your wallet
+
+Send BNB to your `wallet.address` before executing.
+
+<div style={{marginTop: '1em'}}>Fund the address with BNB from any exchange or wallet.</div>
+
+### Step 4: Run a transaction
+
+The first `execute` activates the wallet and registers the admin key in the global [Keystore](/concepts/keystore).
+
+All in one transaction.
+
+```ts
+const result = await client.execute({
+  wallet,
+  signer,
+  calls: { to: wallet.address as `0x${string}`, value: 0n },
+});
+
+console.log(result.status, result.transactionHash);
+```
+
+---
+
+## Already have a private key?
+
+If you are bringing an existing Ethereum key, use `signerFromPrivateKey` instead of generating a new one.
+
+Store it in a `.env` file at your project root:
+
+```bash
+# .env  —  add to .gitignore, never commit this file
+PRIVATE_KEY=0xYourKeyHere
+```
+
+Install dotenv to load it:
+
+```bash
+npm install dotenv
+```
+
+Then use it in your script:
+
+```ts
+import 'dotenv/config'
+import { createClient, BNB, signerFromPrivateKey } from "@altananetwork/sdk";
+
+const client = createClient({ chains: [BNB] });
+const signer = signerFromPrivateKey(process.env.PRIVATE_KEY as `0x${string}`);
+const wallet = await client.createWallet({ signer });
+
+console.log(wallet.address);
+```
+
+</div>
+
+---
+
+- [Give an agent a wallet and a policy](/use-cases/1-agent-wallet-policy): grant an AI a scoped, expiring key on this wallet.
+- [Use a passkey wallet as admin, delegate to an agent](/use-cases/1b-passkey-delegates-to-agent): passkey admin grants a capped key to an AI.
+- [Connect an AI tool](/getting-started/build-with-claude): operate wallets via Claude, Codex, or any AI without writing code.

@@ -1,0 +1,59 @@
+---
+title: Networks & Addresses
+description: Supported chains, RPC endpoints, and deployed contract addresses.
+---
+
+# Networks & Addresses
+
+Altana is multi-chain. The SDK ships a config per network, importable from
+`@altananetwork/sdk`. **BNB Smart Chain is the default**; Ethereum is
+supported for wallet execution and L1 cross-chain proofs; Base is supported as the L2
+Keystore cache for cross-chain verification.
+
+## Supported SDK exports
+
+| Export | Network | Chain ID | Use |
+| --- | --- | --- | --- |
+| `BNB` | BNB Smart Chain | 56 | Default wallet execution network with a standalone Keystore |
+| `ETHEREUM` | Ethereum | 1 | Wallet execution network and L1 Keystore source for cross-chain proofs |
+| `BASE` | Base | 8453 | L2 Keystore cache for cross-chain session verification |
+
+## BNB Smart Chain: `BNB`
+
+- **Chain id:** 56
+- **Public RPC:** `https://bsc-rpc.publicnode.com`
+- **Explorer:** https://bscscan.com
+- **Relay:** `https://relay.altana.network`
+
+KeyStore contracts:
+
+| Contract | Address |
+| --- | --- |
+| KeyStore | `0x6572427ED530BadcF7375Cf9A4709D8d2b0E7E0a` |
+| KeyStoreController | `0x0834Ee2C9BdC3E3efF0a2dC34393D4B0e546A555` |
+
+## Ethereum: `ETHEREUM`
+
+- **Chain id:** 1
+- **Public RPC:** `https://ethereum-rpc.publicnode.com`
+- **Explorer:** https://etherscan.io
+- **Relay:** `https://relay.altana.network`
+
+| Contract | Address |
+| --- | --- |
+| KeyStore | `0xb70fDa90C1d576Ba8399946a0c10ECD9d9Ea923b` |
+| KeyStoreController | `0x30a188Eecf14F4142B0d828ce838C9E1134e7FaA` |
+
+## Base: `BASE`
+
+Used for cross-chain session-key verification when operating on Ethereum. Not used by BNB.
+
+| Contract | Address |
+| --- | --- |
+| KeyStoreCache | `0x6572427ED530BadcF7375Cf9A4709D8d2b0E7E0a` |
+
+Chain id 8453 · RPC `https://base-rpc.publicnode.com`.
+
+> Addresses are the source of truth in the Keystore repo's deployment manifests
+> (`deployments/*.json`) and the SDK's `packages/wallet/src/config.ts`. If contracts are
+> redeployed, update both in lockstep.

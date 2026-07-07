@@ -1,0 +1,27 @@
+{
+  "name": "@altananetwork/e2e",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end smoke tests for @altananetwork/sdk and @altananetwork/mcp on Sepolia. Not published. Internal CI use.",
+  "scripts": {
+    "smoke:wallet": "bun run smoke-test.ts",
+    "smoke:session": "bun run smoke-session.ts",
+    "smoke:passkey": "bun run smoke-passkey.ts",
+    "smoke:grant-first": "bun run smoke-grant-first.ts",
+    "smoke:mcp": "bun run smoke-mcp.ts",
+    "smoke:all": "bun run smoke-test.ts && bun run smoke-session.ts && bun run smoke-passkey.ts && bun run smoke-grant-first.ts && bun run smoke-mcp.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@altananetwork/sdk": "workspace:*",
+    "@altananetwork/mcp": "workspace:*",
+    "porto": "0.2.37",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "@types/bun": "^1.1.0",
+    "@types/node": "^20.17.0"
+  }
+}

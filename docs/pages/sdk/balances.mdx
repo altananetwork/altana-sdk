@@ -1,0 +1,58 @@
+---
+title: balances
+description: Read a wallet's on-chain balances on a given chain.
+---
+
+<p style={{ fontSize: '0.8em', color: 'var(--vocs-color_textSecondary)', marginBottom: '0.1rem', fontWeight: 500, letterSpacing: '0.02em' }}>SDK</p>
+
+# balances
+
+Read a wallet's on-chain balances. This is a plain read: no signer, no userOp, no relay. It works for any address (a `Wallet` you created or a bare `0x…` address), including counterfactual wallets that haven't been deployed yet.
+
+```ts
+// `client` and `wallet` from earlier
+const { native } = await client.balances({ wallet });
+console.log(native); // bigint — native token balance in wei
+```
+
+Pass a bare address if that's all you have:
+
+```ts
+const { native } = await client.balances({
+  wallet: "0xabc…" as `0x${string}`,
+});
+```
+
+Target a specific chain when the client is configured with more than one:
+
+```ts
+import { createClient, BNB, ETHEREUM } from "@altananetwork/sdk";
+
+const client = createClient({ chains: [BNB, ETHEREUM] });
+
+// BNB Smart Chain (the default — first chain)
+const bnb = await client.balances({ wallet });
+// Ethereum
+const ethereum = await client.balances({ wallet, chainId: 1 });
+```
+
+## Parameters
+
+```ts
+client.balances(opts: ClientBalancesOptions): Promise<BalancesResult>;
+
+type ClientBalancesOptions = {
+  wallet: Wallet | Address;       // a Wallet object or a bare 0x… address
+  chainId?: number;               // defaults to the client's default chain
+};
+
+type BalancesResult = {
+  native: bigint;                 // native token balance in wei (BNB on BNB Smart Chain, ETH on Ethereum)
+};
+```
+
+## Notes
+
+- **Native only, for now.** `balances` returns the native token balance. ERC-20 balances land alongside the v1 DeFi recipes (the recipes know which tokens matter per protocol).
+- **No funds required.** It's a read against the chain's public RPC, so it doesn't cost gas and doesn't need the wallet to be funded or deployed.
+- **Units are wei.** Use viem's [`formatEther`](https://viem.sh/docs/utilities/formatEther) to display it: `formatEther(native)`.

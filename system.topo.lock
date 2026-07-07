@@ -1,0 +1,208 @@
+{
+  "version": 1,
+  "world": "Sdk",
+  "manifestDigest": "96bfbc4a82b5b0e6c7fe8dac323f8e4be943073f675a97f6dc817b1725d9d5b0",
+  "systems": {
+    "CrosschainDemo": {
+      "globs": [
+        "apps/passkey-crosschain/**"
+      ],
+      "files": {
+        "apps/passkey-crosschain/src/main.ts": "adb4a663e6a916d71bd18fe3ad13ec42e8ccc84ba6de457b0524d29492cd8d9e",
+        "apps/passkey-crosschain/vite.config.ts": "6273611936913991423d6da4306d428cf147bce0cdc1a5f60a849c35e4aff5bb"
+      },
+      "digest": "bfb21e6af7d8e7511f2223d455e4c53d16fd413ac18d0695f2fcc879e04ca499"
+    },
+    "PasskeyDemo": {
+      "globs": [
+        "apps/passkey-demo/**"
+      ],
+      "files": {
+        "apps/passkey-demo/src/main.ts": "c8764719f0632ad76c617b5b696b52733f592d9b54b2aae89644329d92babb05",
+        "apps/passkey-demo/vite.config.ts": "6273611936913991423d6da4306d428cf147bce0cdc1a5f60a849c35e4aff5bb"
+      },
+      "digest": "c537a8d5c42a032ea210c190fb6cb27e1070574aad86f409e8ae523cff854184"
+    },
+    "Docs": {
+      "globs": [
+        "docs/**"
+      ],
+      "files": {
+        "docs/components/PasskeyAgentDemo.tsx": "5a2013da2e63273f10d8dedba1e4ea9565be816ec310275a23d7990624a50f5f",
+        "docs/components/PasskeyDemo.tsx": "4bbd154e05ac7038b3cc55ad1a825f161a79058ce4aa6e44abdc7084787913cb",
+        "docs/components/UseCaseMeta.tsx": "5fdf54793e2a316b90090a922efc81b44ab3385d2bcf23492a7eadab3a0b217a",
+        "docs/vocs.config.ts": "482262abdd58beb2fee6ff11d49182467c52e3ef5f7c15c67e29860db65ff3c5"
+      },
+      "digest": "03625c23f23399aa018a81b46762e614f04f9ad5140c9c20de91c052a542dd6a"
+    },
+    "RegistryTools": {
+      "globs": [
+        "packages/hypersigner-keystore-mcp/src/index.ts"
+      ],
+      "files": {
+        "packages/hypersigner-keystore-mcp/src/index.ts": "d5ded177a877c2823f77224bd6dcb93dd37f5c082b726a1803a489a23623bb63"
+      },
+      "digest": "505b91cf1341d9131dafb7ceb4221a7a98dcaf00581e676ad57f5e3f09275f07"
+    },
+    "RegistryCodec": {
+      "globs": [
+        "packages/hypersigner-keystore-mcp/src/keystore.ts"
+      ],
+      "files": {
+        "packages/hypersigner-keystore-mcp/src/keystore.ts": "4c7dbd493a2e1bc304420979641ef8bf26175d5951ab2f593db42c143d8c78b4"
+      },
+      "digest": "0a3c4566463d180d28f1baadb395ee5ef4e4a641974c7308fda2dae1beab59d1"
+    },
+    "WalletTools": {
+      "globs": [
+        "packages/mcp/src/index.ts"
+      ],
+      "files": {
+        "packages/mcp/src/index.ts": "01e2c631d46032bdd0bd7ae2c50d2a6b8c6f68949fb88445d20751028e55b796"
+      },
+      "digest": "a09ae0e6c348045c6e57eecafb173d7584fe40ffe206dbc8545c30bb0419f1e1"
+    },
+    "KeyVault": {
+      "globs": [
+        "packages/mcp/src/keys.ts"
+      ],
+      "files": {
+        "packages/mcp/src/keys.ts": "a3803f53db7770737e1dfacdb36102857193c30df247ecab4db12b74fdc4cc2d"
+      },
+      "digest": "26670e2c3fbf0d5669a8f354c12c41b0b184fb2138846aef1fb0add5edec5d09"
+    },
+    "SessionLedger": {
+      "globs": [
+        "packages/mcp/src/sessions.ts"
+      ],
+      "files": {
+        "packages/mcp/src/sessions.ts": "6e4d0ac1ed17142b9842d241d0954e9fb1311023f510d7fb48b6b886c4771411"
+      },
+      "digest": "3fd2a264178c29be138cfae2b58cc406ffcf2140b740ec3c5e588d22e161e953"
+    },
+    "Execution": {
+      "globs": [
+        "packages/wallet/src/execute.ts",
+        "packages/wallet/src/balances.ts"
+      ],
+      "files": {
+        "packages/wallet/src/balances.ts": "61668d6f9d9521b907343110183a839084b3cb0af2fad8a706cc9861c6535003",
+        "packages/wallet/src/execute.ts": "b868f2e5557b6be1c6a70e837992466bd46cc8378675d4fa48d6379f5561f1d2"
+      },
+      "digest": "5d9b55a9dd04df503338fc249d901e8c9cd579dbc40b571ec5ea24fb9c0f90d6"
+    },
+    "WalletSdk": {
+      "globs": [
+        "packages/wallet/**",
+        "tests/e2e/**"
+      ],
+      "files": {
+        "packages/wallet/src/client.ts": "32eade729de01d48e008fbdf4e1412c777ec26daff37a1d89f326553ac0a48fb",
+        "packages/wallet/src/index.ts": "3c15a68d5f71289859ff0f37d195805674e32dfd0c09f43f294eada0d01c3dbc",
+        "packages/wallet/src/internal/types.ts": "a82ab0cb972dd55d242c5ca319d0fd6da6f50056a243340fc6cb0efb07bfdef3",
+        "tests/e2e/bnb-prod-relay.ts": "5aa3ee02c28a9ccea330a2e8b05c802a962f8f83d5a88773a4ff14a04f05807e",
+        "tests/e2e/bnb-testnet.ts": "08d3f5fce9e85e257e3667e38a76b62b464edddf1e1dc99dcfbee9214788c146",
+        "tests/e2e/repro.ts": "178465b400ca67af05d5718792dba6e6f7ab8cde818dbda28ca9b9fc224e5561",
+        "tests/e2e/smoke-grant-first.ts": "b029914cd2b48d8d060f8497d0c112860500f06a9cd1b2adeb68e4bd93e0953b",
+        "tests/e2e/smoke-passkey.ts": "60d9a47ff977a5d430a1ac6ed8f993df590d7e660fa0a7b4dae89d44b180eee2",
+        "tests/e2e/smoke-session.ts": "4e0ae922c89170864e53914f0a50ada33984a49adc7346a0fc5cdaec63abc6c0",
+        "tests/e2e/smoke-test.ts": "d98659982d6a6c928c195cb481a752f78040474fbfbd1533d635f7e6ac488779",
+        "tests/e2e/spike-e2e-faucet.ts": "777a24f4c196ce15d18ac57f12c3a1b845a198520c06ad22925aa11d7df1ba65",
+        "tests/e2e/spike-full-flow.ts": "3b6b970a0e68d9dedf9a8fe56fe0ed2cc40ca367e4819038fb389b545b6be30e",
+        "tests/e2e/spike-porto-batching.ts": "e796ca244cb214808c59de081514152fc98f2747421077ccdc42e2110c58c371",
+        "tests/e2e/spike-porto-only-session.ts": "2aaaed3686066fa9ec7cdda99be9a57e48b18907a1672564cd9b5ef9f253732f",
+        "tests/e2e/spike-required-funds.ts": "fe7c6989f15ac33d76e96931a7b825be09ea941d93e82ad73650303ad398acf2",
+        "tests/e2e/testSyncSDK.ts": "46630219f19824a7171c330a4304c24031cc569c1bd5b18be95444afda05dec6"
+      },
+      "digest": "8bd444dd2f24da2cb05469db2f76d64d316067b357f1ed43ae0de248de630f52"
+    },
+    "Networks": {
+      "globs": [
+        "packages/wallet/src/config.ts"
+      ],
+      "files": {
+        "packages/wallet/src/config.ts": "3a9c486260dfb85a6c24b71a7cf5d3e0b9d2b10bf2f441a812402d1ffdfbe66b"
+      },
+      "digest": "48be701284504434660fdb1a73f401caeecb4e77913c8ad87760cbdda9f6c099"
+    },
+    "Lifecycle": {
+      "globs": [
+        "packages/wallet/src/createWallet.ts",
+        "packages/wallet/src/createPasskeyWallet.ts",
+        "packages/wallet/src/recoverFromPasskey.ts"
+      ],
+      "files": {
+        "packages/wallet/src/createPasskeyWallet.ts": "f1595b7381b6f37e9c910e019cf4164593dcdebe7f2c6c15fc978413ac3d60e9",
+        "packages/wallet/src/createWallet.ts": "5e7bee1b001466635b742952952ad7af931ae89477290e8cd1ae22c3de23518a",
+        "packages/wallet/src/recoverFromPasskey.ts": "778dfb1c1761462dbcaed4d5ccf56fa98f53be2486e0540e40b201d64c7e4b6d"
+      },
+      "digest": "566612b48fb0cefb18869310bb27340c2426f71a34877423c9130f1e4f66383c"
+    },
+    "Sessions": {
+      "globs": [
+        "packages/wallet/src/grantSession.ts",
+        "packages/wallet/src/revokeSession.ts",
+        "packages/wallet/src/internal/sessions.ts"
+      ],
+      "files": {
+        "packages/wallet/src/grantSession.ts": "ce2b47d09d3db4526acab0a485fc2b0ab25e4b3409bed5a8fc2d159b789c3217",
+        "packages/wallet/src/internal/sessions.ts": "cdda0ed942ed27ef007be86ab3213fb7cd9cda803c17f1073f84e4fe30bccbc6",
+        "packages/wallet/src/revokeSession.ts": "31dfbfb0f7d3cedd540e8cca4a026d0ada721d703370e0e895f5efc5f0d6ac15"
+      },
+      "digest": "3f0bea79c2f7d3ad9239b5d27fdb26909a3a56d42f08330857cf342055ab1c5e"
+    },
+    "KeystoreCodec": {
+      "globs": [
+        "packages/wallet/src/internal/keystore.ts"
+      ],
+      "files": {
+        "packages/wallet/src/internal/keystore.ts": "e877f09dae765d7fa7483668316e361a1f4f69aba2ae6ffcd1557bdd1d2d3e2c"
+      },
+      "digest": "345dd18b9f41f10ef0cf95705c53d5fe8e029ced308c97edb75abbd07ca5c332"
+    },
+    "Signing": {
+      "globs": [
+        "packages/wallet/src/internal/signer.ts",
+        "packages/wallet/src/internal/passkey.ts"
+      ],
+      "files": {
+        "packages/wallet/src/internal/passkey.ts": "d7b5d3d6855934c385c9bcc02f542e35b38be3338f633597196e73d6c368231d",
+        "packages/wallet/src/internal/signer.ts": "e7303fe3d36668abbeb1e6f1ec0ea171437ad3d788bbd17a465d34cd6e36e87d"
+      },
+      "digest": "4f0a5d386fcaf7cc235ecc70b3e49c6a1cb7dcd21fa8c28804b641d02065eb53"
+    },
+    "Relaying": {
+      "globs": [
+        "packages/wallet/src/internal/relay.ts"
+      ],
+      "files": {
+        "packages/wallet/src/internal/relay.ts": "ce7c03dd704638b29e2fad13ae5f8af492e63d17750df8126333dabd10d50818"
+      },
+      "digest": "0172f611641d16a15a5428d1ea7ccaa9338f9baa9323b6197581f2681516c751"
+    },
+    "KeySync": {
+      "globs": [
+        "packages/wallet/src/syncKeyToL2.ts"
+      ],
+      "files": {
+        "packages/wallet/src/syncKeyToL2.ts": "eeb0e713896c91c24a6fa4ceb834ab0d21205199db139a1b0a0abea6ffd5617e"
+      },
+      "digest": "cc84dfcebb9464e1e70aab275ec3f732014637267bf80ea2f3542bc5375d8d44"
+    },
+    "WalletMcp": {
+      "globs": [
+        "packages/mcp/**",
+        "tests/e2e/smoke-mcp.ts"
+      ],
+      "files": {
+        "tests/e2e/smoke-mcp.ts": "9ad5eb4c77c9bfbf07b575b2fe9b26e6291b09be218791c1b394def5817d5bd6"
+      },
+      "digest": "5b2e1a79df4a5a50ea49a267d354edfe982c23ba694da237b3034c212a30e038"
+    }
+  },
+  "coverage": {
+    "universe": 44,
+    "covered": 44
+  },
+  "approvedAt": "2026-07-01T22:32:53.771Z"
+}

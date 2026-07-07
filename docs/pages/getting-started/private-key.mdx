@@ -1,0 +1,75 @@
+---
+title: Create a Private-Key Wallet
+description: Create a wallet from a local private key. For AI agents, backend scripts, and CLI tools.
+---
+
+<p style={{ fontSize: '0.8em', color: 'var(--vocs-color_textSecondary)', marginBottom: '0.1rem', fontWeight: 500, letterSpacing: '0.02em' }}>Getting Started</p>
+
+# Create a private-key wallet
+
+For AI agents, backend scripts, and CLI tools — anywhere a biometric prompt doesn't make sense. You supply a private key; Altana creates and manages a smart account around it. No custody, no Altana API key, no off-chain service involved.
+
+## What you need
+
+- **Node.js 18+** and npm, bun, or pnpm
+- **A private key** — a 32-byte hex string starting with `0x` that acts as the wallet's admin credential. You can use an existing key from MetaMask or any Ethereum wallet, generate one with `cast wallet new` (Foundry), or let the SDK generate one for you (shown below). Keep it secret — never commit it to source control.
+
+## 1. Install
+
+```bash
+npm install @altananetwork/sdk viem
+```
+
+`viem` is an Ethereum TypeScript library the SDK uses to talk to the blockchain.
+
+## 2. Store your key
+
+Put the private key in an environment variable, not in your code:
+
+```bash
+export PRIVATE_KEY=0xabc123...
+```
+
+## 3. Create the wallet
+
+```ts
+import { createClient, BNB, signerFromPrivateKey } from "@altananetwork/sdk";
+
+// BNB is the default wallet execution network.
+// ETHEREUM is also supported; BASE is the L2 verification cache.
+const client = createClient({ chains: [BNB] });
+
+const signer = signerFromPrivateKey(process.env.PRIVATE_KEY as `0x${string}`);
+const wallet = await client.createWallet({ signer });
+
+console.log(wallet.address); // your wallet's onchain address
+```
+
+Don't have a key yet? Let the SDK generate one:
+
+```ts
+const wallet = await client.createWallet();
+// wallet.signer holds a freshly generated key.
+// Save it — you'll need it to sign future transactions.
+```
+
+Send funds to `wallet.address` before running a transaction — the wallet is counterfactual and has no balance until you fund it. Fund the address with BNB from any exchange or wallet.
+
+## 4. Run a transaction
+
+```ts
+const result = await client.execute({
+  wallet,
+  signer,
+  calls: { to: "0xRecipient...", value: 1_000_000_000_000_000n }, // 0.001 BNB on BNB Smart Chain
+});
+
+console.log(result.status, result.transactionHash);
+```
+
+The first `execute` on a fresh wallet activates the smart account and registers the admin key onchain, then runs your call — all in one transaction. Every subsequent `execute` is just your calls.
+
+## What's next
+
+- [Give an agent a wallet and a policy](/use-cases/1-agent-wallet-policy) — grant an AI a scoped, expiring key on this wallet.
+- [Create a passkey wallet](/getting-started/passkey) — the end-user path for browser apps.

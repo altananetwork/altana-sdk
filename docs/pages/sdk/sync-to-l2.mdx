@@ -1,0 +1,140 @@
+---
+title: ensureKeyCached
+description: Mirror an L1 Keystore entry into an L2 cache so the session can act cross-chain.
+---
+
+<p style={{ fontSize: '0.8em', color: 'var(--vocs-color_textSecondary)', marginBottom: '0.1rem', fontWeight: 500, letterSpacing: '0.02em' }}>SDK</p>
+
+# ensureKeyCached
+
+A session you granted via [`grantSession`](/sdk/grant-session) is registered in the [Keystore](/concepts/keystore) on L1 (Ethereum). For another chain to honor that session, the registry state has to be mirrored to an L2 cache on that chain. `ensureKeyCached` does that.
+
+It's idempotent: if the L2 cache already has the key, it returns immediately. Otherwise it waits for the L2 to anchor past the relevant L1 block, then submits a storage proof.
+
+```ts
+import { ensureKeyCached, ETHEREUM, BASE } from "@altananetwork/sdk";
+import { createPublicClient, createWalletClient, http } from "viem";
+import { mainnet, base } from "viem/chains";
+import { privateKeyToAccount } from "viem/accounts";
+
+const l1Client = createPublicClient({ chain: mainnet, transport: http(ETHEREUM.publicRpcUrl) });
+const l2Client = createPublicClient({ chain: base, transport: http(BASE.publicRpcUrl) });
+
+// The L2 wallet client pays L2 gas to submit the proof. This can be ANY
+// account with L2 native ETH — your own EOA, a backend relayer, a per-user
+// funded address, etc. The proof is permissionless; no privilege is granted.
+const l2WalletClient = createWalletClient({
+  account: privateKeyToAccount(relayerKey),
+  chain: base,
+  transport: http(BASE.publicRpcUrl),
+});
+
+await ensureKeyCached({
+  l1Client,
+  l2Client,
+  l2WalletClient,
+  l1KeyStore: ETHEREUM.keyStore,
+  l2Cache: BASE.keyStoreCache,
+  user: session.walletAddress,
+  publicKey: session.publicKey,
+  onStatus: (status) => {
+    // "cache-hit" | "waiting-for-anchor" | "submitting-proof" | "done"
+    console.log(status);
+  },
+});
+
+// Session is now valid on Base. Subsequent agent actions are instant.
+```
+
+## What it does
+
+1. Reads `isValidKey(user, keyId)` on the L2 cache. If `true`, returns immediately (`cache-hit`).
+2. Otherwise polls the L2's `L1Block` predeploy until it points to an L1 block that contains the registration (`waiting-for-anchor`). Base anchors ~1–3 min behind L1.
+3. Fetches an `eth_getProof` against L1 for the packed Key storage slot, RLP-encodes the L1 block header, and submits `populateKey(...)` to the L2 cache (`submitting-proof`).
+4. Reads the cache back and resolves with the populated `CachedKey` (`done`).
+
+The first cross-chain action on a given chain pays this cost once. After the cache is populated, the L2 reads it locally without further L1 round-trips.
+
+## Who pays L2 gas
+
+The submitter of `populateKey` pays. The op is permissionless on the contract, so anyone can land a valid proof, but *someone* has to send the L2 tx. Practically:
+
+- **A relayer EOA you control.** Simplest in v0. Fund a single address on each L2 and have your backend submit proofs on demand.
+- **The user themselves**, if they already hold L2 native ETH. Pass their `WalletClient`.
+- **A future bundler-batched flow** that includes `populateKey` as the first call of the L2 userOp. Not wired into `execute` yet.
+
+There's no on-protocol relayer. The cache contract is just a verifier.
+
+## Parameters
+
+```ts
+function ensureKeyCached(args: EnsureKeyCachedArgs): Promise<CachedKey>;
+
+type EnsureKeyCachedArgs = {
+  /** Public client on the L1 chain (Ethereum). Used for eth_getProof + block lookup. */
+  l1Client: PublicClient;
+  /** Public client on the L2 chain. Used for L1Block read + receipt wait. */
+  l2Client: PublicClient;
+  /** Wallet client on the L2 chain — the relayer that pays L2 gas. */
+  l2WalletClient: WalletClient;
+  /** L1 Keystore address. From ETHEREUM.keyStore. */
+  l1KeyStore: Address;
+  /** L2 cache address. From BASE.keyStoreCache. */
+  l2Cache: Address;
+  /** Wallet whose key is being mirrored — the smart account that registered on L1. */
+  user: Address;
+  /** SEC1-encoded public key bytes for the session being mirrored. */
+  publicKey: Hex;
+  /** Progress callback for the four lifecycle states. */
+  onStatus?: (status: EnsureKeyCachedStatus) => void;
+  /** Poll cadence while waiting for L2 to anchor. Default 3s. */
+  anchorPollIntervalMs?: number;
+  /** Max wait for the L1 anchor. Default 5 minutes. */
+  anchorTimeoutMs?: number;
+};
+
+type EnsureKeyCachedStatus =
+  | "cache-hit"
+  | "waiting-for-anchor"
+  | "submitting-proof"
+  | "done";
+```
+
+## Returns
+
+```ts
+type CachedKey = {
+  publicKey: Hex;
+  revoked: boolean;
+  expiry: number;             // unix seconds, 0 = never expires
+  isRoot: boolean;
+  sourceBlockHash: Hex;
+  sourceBlockNumber: bigint;
+};
+```
+
+The `sourceBlockHash` / `sourceBlockNumber` fields record which L1 block the cache state was proven against, useful for monitoring how stale the L2 view is.
+
+## Related helpers
+
+`ensureKeyCached` is the function most apps want. The lower-level helpers are also exported for cases where you want explicit control:
+
+```ts
+// Always submit a fresh proof regardless of cache state. Use to propagate a
+// revocation you just landed on L1 without waiting for the next cache miss.
+syncKeyToL2(args): Promise<{ txHash: Hex; cachedKey: CachedKey }>;
+
+// Pure read against the L2 cache. Returns zeroed struct if not yet populated.
+readCachedKey(l2Client, l2Cache, user, keyId): Promise<CachedKey>;
+
+// Pure read: cache has the key AND it's not revoked AND not expired.
+// Equivalent to KeyStoreCache.isValidKey(user, keyId).
+isCachedKeyValid(l2Client, l2Cache, user, keyId): Promise<boolean>;
+```
+
+## Notes
+
+- **L1 Keystore is the source of truth.** The L2 cache is only as fresh as the last proof submitted. Revocations on L1 do **not** propagate automatically; until someone submits a post-revocation proof, the L2 cache still reports the key as valid. Call `syncKeyToL2` right after `revokeSession` to push the revocation through, or rely on `ensureKeyCached` running again on the next action.
+- **Monotonic revoke is enforced cache-side too.** Once the cache observes `revoked=true`, it cannot be flipped back to live by a later proof: even one against an older L1 block. This prevents replay attacks during the L1→L2 anchor window.
+- **The cache is permissionless.** Any address can submit a proof for any `(user, publicKey)` pair. There is no admin and no relayer registry.
+- **One cache per chain.** For the supported L2 cache today, use `BASE.keyStoreCache`; see the [Chains](/concepts/keystore#chains) table.

@@ -1,0 +1,4 @@
+dist/
+.vocs/
+node_modules/
+*.log

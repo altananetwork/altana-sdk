@@ -1,0 +1,74 @@
+---
+title: createWallet
+description: Create a smart-account wallet from a local signer.
+---
+
+<p style={{ fontSize: '0.8em', color: 'var(--vocs-color_textSecondary)', marginBottom: '0.1rem', fontWeight: 500, letterSpacing: '0.02em' }}>SDK</p>
+
+# createWallet
+
+`client.createWallet` creates a smart-account wallet for a signer. The signer's key lives wherever you keep it (env var, OS keychain, hardware wallet). Altana never sees it.
+
+First create a client with `createClient`, configured with the chains the wallet should work on. The same wallet address is provisioned on every chain the client lists.
+
+```ts
+import { createClient, BNB, signerFromPrivateKey } from "@altananetwork/sdk";
+
+const client = createClient({ chains: [BNB] });
+const signer = signerFromPrivateKey("0x...");
+const wallet = await client.createWallet({ signer });
+```
+
+The wallet is **counterfactual**. Its address is deterministic, but it isn't a smart account onchain until the first [`execute`](/sdk/execute). That first execute is what registers the admin key in [Keystore](/concepts/keystore).
+
+## Parameters
+
+```ts
+type ClientCreateWalletOptions = {
+  /** Bring your own signer. If omitted, the SDK generates a fresh private-key signer. */
+  signer?: Signer;
+};
+```
+
+The chains the wallet is provisioned on come from the client (`createClient({ chains })`), not from this call.
+
+## Returns
+
+```ts
+type CreateWalletResult = {
+  address: Address;            // the wallet's smart-account address (same on every chain)
+  signer: Signer;              // same reference if you passed one in
+};
+```
+
+## Notes
+
+- Fund `result.address` with native tokens before calling `execute` — the wallet is counterfactual and has no balance until you send some.
+- If you omit `signer`, the SDK generates a fresh private-key signer and returns it on the result. Persist `result.signer` however your app stores keys.
+- The address is identical on every chain the client was configured with, so one wallet handle works across all of them: pass `chainId` per operation to pick which one.
+
+## Private key helpers
+
+Two functions handle the private-key signer path:
+
+**`signerFromPrivateKey(key)`**: reconstructs a signer from a key you already have. Use this when the key is stored in an env var, OS keychain, or secrets manager.
+
+```ts
+import { signerFromPrivateKey } from "@altananetwork/sdk";
+
+const signer = signerFromPrivateKey(process.env.PRIVATE_KEY as `0x${string}`);
+```
+
+**`createPrivateKeySigner()`**: generates a fresh random secp256k1 key and returns the signer. Use this when you want the SDK to create the key. **You are responsible for persisting it**: it is not stored anywhere automatically.
+
+```ts
+import { createPrivateKeySigner, createClient, BNB } from "@altananetwork/sdk";
+
+const signer = createPrivateKeySigner();
+console.log("Save this key:", signer._privateKey); // persist before continuing
+
+const client = createClient({ chains: [BNB] });
+const wallet = await client.createWallet({ signer });
+```
+
+Calling `createWallet()` with no `signer` argument is equivalent: it calls `createPrivateKeySigner()` internally and attaches the result to `wallet.signer`.

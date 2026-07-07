@@ -1,0 +1,77 @@
+---
+title: createPasskeyWallet
+description: Create a smart-account wallet backed by a WebAuthn passkey.
+---
+
+<p style={{ fontSize: '0.8em', color: 'var(--vocs-color_textSecondary)', marginBottom: '0.1rem', fontWeight: 500, letterSpacing: '0.02em' }}>SDK</p>
+
+# createPasskeyWallet
+
+`client.createPasskeyWallet` creates a smart-account wallet whose admin authority is a passkey (Face ID, Touch ID, Windows Hello, hardware security key). The private key never leaves the device's secure hardware.
+
+**Browser only.** Uses `navigator.credentials`.
+
+```ts
+import { createClient, BNB } from "@altananetwork/sdk";
+
+const client = createClient({ chains: [BNB] });
+const wallet = await client.createPasskeyWallet({
+  name: "MyApp",
+  rpId: "myapp.example",
+});
+
+// wallet.signer is a PasskeySigner. Use it like any other signer.
+```
+
+Same as [`createWallet`](/sdk/create-wallet): the wallet is counterfactual until the first [`execute`](/sdk/execute), which is when the admin (P-256) public key gets registered in [Keystore](/concepts/keystore).
+
+## Parameters
+
+```ts
+type ClientCreatePasskeyWalletOptions = {
+  /** Label shown in the OS passkey prompt (e.g. "MyApp"). */
+  name: string;
+  /** Relying-Party ID. Defaults to the current origin's host. */
+  rpId?: string;
+};
+```
+
+The chains the wallet is provisioned on come from the client (`createClient({ chains })`). For wallet execution, use `BNB` or `ETHEREUM`; `BASE` is exported for the L2 Keystore cache used by cross-chain verification.
+
+## Returns
+
+A standard `CreateWalletResult` whose `signer` is a `PasskeySigner`.
+
+## Notes
+
+- The wallet address is **embedded in the passkey's userHandle** at creation time. This is what makes [`recoverFromPasskey`](/sdk/recover-from-passkey) work later: the device knows which wallet each saved passkey belongs to.
+- Authorization on the chain side uses **P-256 (secp256r1)** signatures, matching WebAuthn. [Keystore](/concepts/keystore) is signature-scheme agnostic, so it stores the P-256 public key the same way it stores secp256k1 keys.
+- The user sees a single biometric prompt per signature. No seed phrases, no extension required.
+
+## Example: full passkey app flow
+
+```ts
+import { createClient, BNB } from "@altananetwork/sdk";
+
+const client = createClient({ chains: [BNB] });
+
+async function loginOrSignup() {
+  try {
+    // Returning user: pick from saved passkeys
+    return await client.recoverFromPasskey({ rpId: "myapp.example" });
+  } catch {
+    // New user: create one
+    return await client.createPasskeyWallet({
+      name: "MyApp",
+      rpId: "myapp.example",
+    });
+  }
+}
+
+const wallet = await loginOrSignup();
+await client.execute({
+  wallet,
+  signer: wallet.signer,
+  calls: { to: "0x...", value: 0n },
+});
+```

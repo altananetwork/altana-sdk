@@ -1,0 +1,60 @@
+---
+title: MCP Tools
+description: Every tool exposed by the Altana MCP server.
+---
+
+<p style={{ fontSize: '0.8em', color: 'var(--vocs-color_textSecondary)', marginBottom: '0.1rem', fontWeight: 500, letterSpacing: '0.02em' }}>MCP Server</p>
+
+# Tools
+
+The Altana MCP server exposes 11 tools. AI hosts call them by name; users can also invoke them as slash commands via the prompt interface (e.g. `/altana-agentic-wallet:create-wallet`).
+
+## Discovery
+
+| Tool | Purpose |
+|---|---|
+| `about_altana` | Returns Altana's positioning, Keystore explainer, and SDK surface. AI hosts call this when the user asks "what is Altana". |
+
+## Wallet lifecycle
+
+| Tool | Purpose |
+|---|---|
+| `create_wallet` | Generates a new private key, stores it in the OS keychain under the given name, returns the address. |
+| `list_wallets` | Lists wallet names available on this machine (across keychain, file, env). |
+| `wallet_balance` | Reads native + ERC-20 balances for a stored wallet. |
+| `wallet_execute` | Submits one or more calls signed by the wallet's admin key. |
+
+## Verification
+
+| Tool | Purpose |
+|---|---|
+| `wallet_verification` | Lists all active keys on a wallet from [Keystore](/concepts/keystore). |
+| `verify_authorization` | Answers: is this key/session authorized on this wallet right now? |
+
+## Session lifecycle
+
+| Tool | Purpose |
+|---|---|
+| `grant_session` | Generates a session key, registers it in Keystore, authorizes it with the given permissions. Returns the session details + keyId. |
+| `list_sessions` | Lists local session metadata (those granted from this machine). |
+| `session_execute` | Submits calls signed by a stored session key. |
+| `revoke_session` | Deactivates the session in Keystore and pulls onchain authority. |
+
+## Slash command equivalents
+
+Every tool has a matching prompt, exposed as a slash command:
+
+| Slash command | Calls |
+|---|---|
+| `/altana-agentic-wallet:about` | `about_altana` |
+| `/altana-agentic-wallet:create-wallet` | `create_wallet` |
+| `/altana-agentic-wallet:list-wallets` | `list_wallets` |
+| `/altana-agentic-wallet:wallet-balance` | `wallet_balance` |
+| `/altana-agentic-wallet:wallet-info` | `wallet_verification` |
+| `/altana-agentic-wallet:verify-session` | `verify_authorization` |
+| `/altana-agentic-wallet:grant-session` | `grant_session` |
+| `/altana-agentic-wallet:list-sessions` | `list_sessions` |
+| `/altana-agentic-wallet:session-execute` | `session_execute` |
+| `/altana-agentic-wallet:revoke-session` | `revoke_session` |
+| `/altana-agentic-wallet:send-tx` | `wallet_execute` |
+| `/altana-agentic-wallet:demos` | listing of available demo flows |

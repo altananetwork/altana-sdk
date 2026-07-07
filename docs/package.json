@@ -1,0 +1,26 @@
+{
+  "name": "@altananetwork/docs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "predev": "cp ../packages/wallet/SKILL.md public/skill.md",
+    "dev": "vocs dev",
+    "prebuild": "cp ../packages/wallet/SKILL.md public/skill.md",
+    "build": "bun run --filter '@altananetwork/sdk' build && vocs build",
+    "preview": "vocs preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@altananetwork/sdk": "workspace:*",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "viem": "^2.21.0",
+    "vocs": "^1.4.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.6.3"
+  }
+}

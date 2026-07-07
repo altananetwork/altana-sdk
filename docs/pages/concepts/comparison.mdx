@@ -1,0 +1,81 @@
+---
+title: How Altana is Different
+description: What separates Altana from other agentic-wallet stacks.
+---
+
+<p style={{ fontSize: '0.8em', color: 'var(--vocs-color_textSecondary)', marginBottom: '0.1rem', fontWeight: 500, letterSpacing: '0.02em' }}>Introduction</p>
+
+# How Altana is Different
+
+There are plenty of "agentic wallet" products. Most of them solve the same surface problem (letting an AI act on a user's wallet) but they all store the authorization state in places only their own stack can read.
+
+Altana inverts that.
+
+**Permissions are first-class onchain objects.** Any app, any agent, any chain that bridges to it can verify who is authorized to act on a wallet, without integrating with a wallet vendor's proprietary API.
+
+## What "agentic wallet" usually means
+
+Most stacks combine:
+
+- a smart-account contract (ERC-4337 or similar) that holds funds
+- a session-key authorization mechanism (the agent signs intents, the wallet validates)
+- a vendor-side coordinator (a backend or proprietary contract) that knows which keys are authorized
+
+The third piece is where the silos live. Two agents on the same user's wallet can't verify each other unless they're both clients of the same vendor. A DEX can't check whether an incoming caller is authorized without integrating per-vendor.
+
+## What Altana does
+
+Altana replaces the vendor-side coordinator with **Keystore: a public onchain registry**.
+
+| | Most agentic wallets | Altana |
+|---|---|---|
+| Who knows which keys are authorized | The vendor's backend or proprietary contract | Anyone reading the onchain registry |
+| Cross-agent verification | Requires both agents on the same platform | One `eth_call` from any client |
+| Cross-app integration | Per-vendor SDK | Read the registry |
+| Revocation | A vendor API call | One onchain transaction, global effect |
+| Custody | Often vendor-side or platform-specific | Local. The integrator's signer. |
+
+## Cost model
+
+Keystore splits writes and reads.
+
+- **Writes** register or revoke a key. Done by the wallet itself, batched into the userOp the user was already submitting.
+- **Reads are free and unlimited.** Verifying whether a key is authorized is an `eth_call` against any RPC. An agent can check a million times per second at zero cost.
+
+This is what makes cross-agent and cross-app verification practical at scale. The party doing the verification never pays.
+
+## Concretely, this enables
+
+<table style={{display:'block',borderCollapse:'collapse',overflowX:'auto',marginBottom:'var(--vocs-space_24)'}}>
+  <tbody>
+    <tr>
+      <td style={{border:'1px solid var(--vocs-color_tableBorder)',fontSize:'var(--vocs-fontSize_td)',padding:'var(--vocs-space_8) var(--vocs-space_12)',verticalAlign:'top',width:'30%'}}><strong>Agent-to-agent verification</strong></td>
+      <td style={{border:'1px solid var(--vocs-color_tableBorder)',fontSize:'var(--vocs-fontSize_td)',padding:'var(--vocs-space_8) var(--vocs-space_12)',verticalAlign:'top'}}>Two AIs acting on the same wallet can verify each other's authority onchain. No platform in between.</td>
+    </tr>
+    <tr style={{backgroundColor:'var(--vocs-color_background2)'}}>
+      <td style={{border:'1px solid var(--vocs-color_tableBorder)',fontSize:'var(--vocs-fontSize_td)',padding:'var(--vocs-space_8) var(--vocs-space_12)',verticalAlign:'top'}}><strong>Cross-app authorization</strong></td>
+      <td style={{border:'1px solid var(--vocs-color_tableBorder)',fontSize:'var(--vocs-fontSize_td)',padding:'var(--vocs-space_8) var(--vocs-space_12)',verticalAlign:'top'}}>A DEX, lending protocol, or orderbook can check whether a key is allowed to act on a wallet, without integrating with any wallet vendor.</td>
+    </tr>
+    <tr>
+      <td style={{border:'1px solid var(--vocs-color_tableBorder)',fontSize:'var(--vocs-fontSize_td)',padding:'var(--vocs-space_8) var(--vocs-space_12)',verticalAlign:'top'}}><strong>One-tx revocation</strong></td>
+      <td style={{border:'1px solid var(--vocs-color_tableBorder)',fontSize:'var(--vocs-fontSize_td)',padding:'var(--vocs-space_8) var(--vocs-space_12)',verticalAlign:'top'}}>Pulling a key from the registry is a single transaction. The effect is global and immediate; no off-chain coordination required.</td>
+    </tr>
+    <tr style={{backgroundColor:'var(--vocs-color_background2)'}}>
+      <td style={{border:'1px solid var(--vocs-color_tableBorder)',fontSize:'var(--vocs-fontSize_td)',padding:'var(--vocs-space_8) var(--vocs-space_12)',verticalAlign:'top'}}><strong>A new class of agent services</strong></td>
+      <td style={{border:'1px solid var(--vocs-color_tableBorder)',fontSize:'var(--vocs-fontSize_td)',padding:'var(--vocs-space_8) var(--vocs-space_12)',verticalAlign:'top'}}>Users hire AI agents through onchain employment contracts. Anyone can verify what an agent is allowed to do, and revoke takes one tx.</td>
+    </tr>
+  </tbody>
+</table>
+
+## What stays the same
+
+- You still get a smart-account wallet with the standard session-key features (scoped permissions, time-bounded expiry, onchain validation).
+- You still use [`grantSession`](/sdk/grant-session), [`execute`](/sdk/execute), [`revokeSession`](/sdk/revoke-session). Same shape as any other session-key SDK.
+- Funds still live in the wallet's smart account. Altana never touches them.
+
+The difference is what surface knows about the authorizations, and that difference is what unlocks the cross-app, cross-agent properties.
+
+## Read more
+
+- [Keystore](/concepts/keystore). The public registry, with code for verifying authorizations.
+- [Sessions](/concepts/sessions). Scoped delegations enforced onchain.

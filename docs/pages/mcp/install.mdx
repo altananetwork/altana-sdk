@@ -1,0 +1,74 @@
+---
+title: Install MCP Server
+description: Run the Altana MCP server in Claude Code, Cursor, or any MCP-compatible host.
+---
+
+<p style={{ fontSize: '0.8em', color: 'var(--vocs-color_textSecondary)', marginBottom: '0.1rem', fontWeight: 500, letterSpacing: '0.02em' }}>MCP Server</p>
+
+# Install
+
+## Claude Code
+
+```bash
+claude mcp add altana -- bunx @altananetwork/mcp
+```
+
+That's it. Restart Claude Code; tools and slash commands become available.
+
+To remove:
+
+```bash
+claude mcp remove altana
+```
+
+## Network
+
+The server operates on one chain, selected at startup via the `ALTANA_CHAIN` environment
+variable. It defaults to **BNB Smart Chain**.
+
+| `ALTANA_CHAIN` | Chain |
+| --- | --- |
+| `bnb` (default) | BNB Smart Chain (56) |
+| `ethereum` | Ethereum (1) |
+
+```bash
+# Operate on Ethereum instead of the BNB default
+claude mcp add altana -e ALTANA_CHAIN=ethereum -- bunx @altananetwork/mcp
+```
+
+One server process serves one chain. Restart with a different `ALTANA_CHAIN` to switch.
+
+## Cursor / Continue / other hosts
+
+Add this to your host's MCP server config:
+
+```json
+{
+  "mcpServers": {
+    "altana": {
+      "command": "bunx",
+      "args": ["@altananetwork/mcp"]
+    }
+  }
+}
+```
+
+## Keys
+
+Wallet admin keys and session keys live in **separate namespaces** so they can never collide. The server reads each kind from three places, in order.
+
+**Wallet admin keys:**
+
+1. **OS keychain** under service `altana-wallet`. Primary. Written by `create_wallet`.
+2. **`~/.altana/keys.json`** → `wallets[]`. File fallback. Mode 0600.
+3. **`ALTANA_WALLET_<NAME>_PRIVATE_KEY`** env var. Env fallback.
+
+For the default wallet, the convention is `ALTANA_WALLET_DEFAULT_PRIVATE_KEY`.
+
+**Session keys:**
+
+1. **OS keychain** under service `altana-session`. Primary. Written by `grant_session`.
+2. **`~/.altana/keys.json`** → `sessions[]`. File fallback.
+3. **`ALTANA_SESSION_<NAME>_PRIVATE_KEY`** env var.
+
+Altana never sees these keys. They stay on your machine.

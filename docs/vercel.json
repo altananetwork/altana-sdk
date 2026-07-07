@@ -1,0 +1,14 @@
+{
+  "git": {
+    "deploymentEnabled": {
+      "main": true
+    }
+  },
+  "ignoreCommand": "git diff HEAD^ HEAD --quiet -- . ../packages/wallet",
+  "redirects": [
+    { "source": "/use-cases/2-agent-trades-dex", "destination": "/use-cases", "permanent": false },
+    { "source": "/use-cases/3-portfolio-multiple-agents", "destination": "/use-cases", "permanent": false },
+    { "source": "/use-cases/4-verify-agent-authority", "destination": "/use-cases", "permanent": false },
+    { "source": "/use-cases/5-cross-chain-authorization", "destination": "/use-cases", "permanent": false }
+  ]
+}

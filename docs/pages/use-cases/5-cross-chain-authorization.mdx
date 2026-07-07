@@ -1,0 +1,120 @@
+---
+draft: true
+title: "Authorize Across Chains"
+description: Grant a session on one chain, mirror it to an L2 cache, and verify or act on it there — no re-granting, no bridge message.
+---
+
+import { UseCaseMeta } from '../../components/UseCaseMeta'
+
+<p style={{ fontSize: '0.8em', color: 'var(--vocs-color_textSecondary)', marginBottom: '0.1rem', fontWeight: 500, letterSpacing: '0.02em' }}>Build with Altana</p>
+
+# Authorize across chains
+
+<UseCaseMeta
+  tools={['SDK']}
+  rows={[
+  { label: "Goal", value: "I want a session granted on one chain to be verifiable on another without re-granting." },
+  { label: "Who it's for", value: "Advanced. The capstone." },
+  { label: "What you'll use", value: <><code>grantSession</code> on L1, <code>ensureKeyCached</code> to mirror, then verify from L2.</> },
+  { label: "Prerequisites", value: <><a href="/use-cases/1-agent-wallet-policy">Use Case 1</a> wallet with an active session.</> },
+]} />
+
+## How it works
+
+Sessions are granted on L1 (Ethereum, the Keystore source of truth). An L2 cache on Base can verify that same session via a storage proof against L1 state, without any bridge message or re-granting.
+
+`ensureKeyCached` handles the proof:
+
+1. Reads the L2 cache. If the key is already there, returns immediately (`cache-hit`).
+2. Polls the L2's `L1Block` predeploy until it anchors past the relevant L1 block (`waiting-for-anchor`, typically 1–3 min)
+3. Fetches an `eth_getProof` from L1 and submits it to the L2 cache (`submitting-proof`)
+4. Returns once the cache confirms the key is live (`done`)
+
+After step 4, any tool on Base can call `isValidKey` on the cache, for free, from any RPC.
+
+## Walkthrough
+
+```ts
+import {
+  createClient,
+  ensureKeyCached,
+  ETHEREUM,
+  BASE,
+  signerFromPrivateKey,
+} from "@altananetwork/sdk";
+import { createPublicClient, createWalletClient, http } from "viem";
+import { mainnet, base } from "viem/chains";
+import { privateKeyToAccount } from "viem/accounts";
+
+// 1. Grant the session on Ethereum (L1, source of truth).
+const client = createClient({ chains: [ETHEREUM] });
+const signer = signerFromPrivateKey(process.env.PRIVATE_KEY as `0x${string}`);
+const wallet = await client.createWallet({ signer });
+
+const session = await client.grantSession({
+  wallet,
+  signer,
+  permissions: {
+    calls: [{ to: "0xSomeContract..." }],
+    spend: [{ limit: 50_000_000_000_000_000n, period: "day" }],
+  },
+  expiry: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
+});
+
+// 2. Mirror the session key to the Base L2 cache.
+const l1Client = createPublicClient({ chain: mainnet, transport: http(ETHEREUM.publicRpcUrl) });
+const l2Client = createPublicClient({ chain: base, transport: http(BASE.publicRpcUrl) });
+
+// The L2 wallet client pays L2 gas to submit the proof.
+// Any funded account works — your own EOA, a backend relayer, etc.
+const l2WalletClient = createWalletClient({
+  account: privateKeyToAccount(process.env.RELAYER_KEY as `0x${string}`),
+  chain: base,
+  transport: http(BASE.publicRpcUrl),
+});
+
+await ensureKeyCached({
+  l1Client,
+  l2Client,
+  l2WalletClient,
+  l1KeyStore: ETHEREUM.keyStore,
+  l2Cache: BASE.keyStoreCache,
+  user: session.walletAddress,
+  publicKey: session.publicKey,
+  onStatus: (s) => console.log(s), // cache-hit | waiting-for-anchor | submitting-proof | done
+});
+
+// 3. Verify the session from Base — free, from any RPC.
+const { keccak256 } = await import("viem");
+
+const CACHE_ABI = [{
+  name: "isValidKey", type: "function", stateMutability: "view",
+  inputs: [
+    { name: "user", type: "address" },
+    { name: "keyId", type: "bytes32" },
+  ],
+  outputs: [{ type: "bool" }],
+}] as const;
+
+const keyId = keccak256(session.publicKey);
+const isValid = await l2Client.readContract({
+  address: BASE.keyStoreCache,
+  abi: CACHE_ABI,
+  functionName: "isValidKey",
+  args: [session.walletAddress, keyId],
+});
+
+console.log("Session valid on Base:", isValid); // true
+```
+
+:::info[L2 execution]
+The current SDK supports wallet execution on BNB and Ethereum. Cross-chain **verification** from Base is available today via `ensureKeyCached` + `isValidKey`; additional L2 execution support will be added as it ships.
+:::
+
+## Why it is different
+
+Authorization crosses chains by storage proof, permissionlessly, with no bridge message and no per-chain re-granting. The first cross-chain action pays the proof cost once; after that, the L2 cache serves reads locally without L1 round-trips.
+
+## What's next
+
+[Use Cases overview](/use-cases): see the full map of what you can build with Altana.

@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Altana — Passkey Wallet Demo</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <main>
+      <header class="page-header">
+        <img src="/altana-logo.svg" alt="Altana" class="logo" />
+        <div class="badge">@altana/wallet · SDK reference demo</div>
+        <h1>Generate passkey wallets connected to the KeyStore</h1>
+        <p class="sub">
+          A TypeScript SDK for passkey-secured smart-account wallets.
+          Integrators ship biometric wallet creation, on-chain scoped
+          session keys for AI agents, and passkey-driven recovery through
+          the Altana KeyStore registry — all from a single library.
+        </p>
+      </header>
+
+      <div class="split">
+
+        <aside class="code-pane">
+          <div class="code-tabs">
+            <span class="code-file">main.ts</span>
+            <span class="code-lang">TypeScript · @altana/wallet</span>
+          </div>
+          <pre class="code"><code><span class="kw">import</span> {
+  createPasskeyWallet,
+  grantSession,
+  execute,
+  revokeSession,
+  recoverFromPasskey,
+} <span class="kw">from</span> <span class="str">"@altana/wallet"</span>
+<span class="kw">import</span> { parseEther } <span class="kw">from</span> <span class="str">"viem"</span>
+
+<span class="snippet" id="code-create"><span class="cmt">// 1. Create wallet — passkey is the only authority</span>
+<span class="kw">const</span> wallet = <span class="kw">await</span> <span class="fn">createPasskeyWallet</span>({
+  name: <span class="str">"My App Wallet"</span>,
+})</span>
+
+<span class="snippet" id="code-grant"><span class="cmt">// 3. Grant a scoped session key to an agent.
+//    On the wallet's first admin action, the SDK auto-prepends
+//    KeyStore.initialRegisterKey into the same tx — one userOp,
+//    two state changes. That's what makes recovery work later.</span>
+<span class="kw">const</span> session = <span class="kw">await</span> <span class="fn">grantSession</span>(wallet, wallet.signer, {
+  permissions: {
+    calls: [{ to: recipient }],
+    spend: [{ limit: <span class="fn">parseEther</span>(<span class="str">"0.01"</span>), period: <span class="str">"day"</span> }],
+  },
+  expiry: <span class="num">Math</span>.<span class="fn">floor</span>(<span class="num">Date</span>.<span class="fn">now</span>() / <span class="num">1000</span>) + <span class="num">3600</span>,
+})</span>
+
+<span class="snippet" id="code-execute"><span class="cmt">// 4. Agent executes within scope (no biometric)</span>
+<span class="kw">await</span> <span class="fn">execute</span>(session, {
+  to: recipient,
+  value: <span class="num">1n</span>,
+  data: <span class="str">"0x"</span>,
+})</span>
+
+<span class="snippet" id="code-revoke"><span class="cmt">// 5. Revoke when done</span>
+<span class="kw">await</span> <span class="fn">revokeSession</span>(wallet, wallet.signer, session)</span>
+
+<span class="snippet" id="code-recover"><span class="cmt">// Lost localStorage? Passkey alone recovers the wallet.</span>
+<span class="kw">const</span> restored = <span class="kw">await</span> <span class="fn">recoverFromPasskey</span>()</span>
+</code></pre>
+        </aside>
+
+        <div class="ui-pane">
+
+      <section class="step" id="step-1">
+        <div class="step-head">
+          <span class="step-num">1</span>
+          <h2>Create or recover</h2>
+          <code class="sdk-tag">createPasskeyWallet() · recoverFromPasskey()</code>
+        </div>
+        <p>
+          Click below — your browser will prompt for a passkey (Touch ID,
+          Face ID, Windows Hello, or hardware key). The passkey becomes the
+          admin authority of your new smart account.
+        </p>
+        <label>
+          Wallet name (shown in the OS keychain — use something unique per
+          test, e.g. "Altana Recovery 21")
+          <input id="wallet-name" type="text" value="Altana Recovery 21" />
+        </label>
+        <div class="btn-row">
+          <button id="btn-create">Create wallet with passkey</button>
+          <button id="btn-recover" class="secondary">Recover existing wallet</button>
+        </div>
+        <p class="hint">
+          The OS keychain keeps every passkey you've ever made under its
+          chosen name. Picking the wrong one in Recover = looking up a
+          different wallet. Unique names per test make this unambiguous.
+        </p>
+        <div class="kv" id="wallet-info" hidden>
+          <div><span>Wallet address</span><code id="wallet-addr"></code></div>
+          <div><span>Balance</span><code id="wallet-balance">—</code><button id="btn-refresh" class="link">refresh</button></div>
+        </div>
+      </section>
+
+      <section class="step" id="step-2" hidden>
+        <div class="step-head">
+          <span class="step-num">2</span>
+          <h2>Fund</h2>
+          <code class="sdk-tag">(off-SDK · any wallet sends ETH)</code>
+        </div>
+        <p>
+          Send any small amount (≥ 0.003 ETH) to the wallet address above
+          from anywhere — MetaMask, a Sepolia faucet, anything. Click
+          "refresh" until the balance appears.
+        </p>
+      </section>
+
+      <section class="step" id="step-3" hidden>
+        <div class="step-head">
+          <span class="step-num">3</span>
+          <h2>Grant a session key to an agent</h2>
+          <code class="sdk-tag">grantSession(wallet, admin, { permissions, expiry })</code>
+        </div>
+        <p>
+          A session key is a separate key the wallet authorizes to act on
+          its behalf — within rules. Anything outside the rules reverts at
+          the smart-account contract. Set the rules below, then sign the
+          grant with your passkey.
+        </p>
+
+        <label>
+          Where the agent can send funds
+          <input id="recipient" type="text" placeholder="0x… (paste any address — e.g. your funding wallet)" />
+        </label>
+
+        <label>
+          Daily spend cap (ETH)
+          <input id="spend-cap" type="text" value="0.01" />
+        </label>
+
+        <label>
+          Session lifetime
+          <select id="lifetime">
+            <option value="3600" selected>1 hour</option>
+            <option value="86400">1 day</option>
+            <option value="604800">1 week</option>
+          </select>
+        </label>
+
+        <div class="permission-summary" id="perm-summary">
+          <div class="ps-label">This session will be allowed to:</div>
+          <ul>
+            <li>Send ETH <strong>only to</strong> <code id="ps-recipient">(set recipient)</code></li>
+            <li>Spend at most <strong><span id="ps-cap">0.01</span> ETH</strong> per rolling 24h window</li>
+            <li>Expire after <strong><span id="ps-lifetime">1 hour</span></strong></li>
+          </ul>
+          <div class="ps-foot">
+            Anything outside these rules — different recipient, over the
+            cap, after expiry — fails at the wallet contract. The session
+            key cannot escape its scope.
+          </div>
+        </div>
+
+        <button id="btn-grant">Grant session (passkey signs)</button>
+        <div class="kv" id="session-info" hidden>
+          <div><span>Session pubkey</span><code id="session-pk"></code></div>
+          <div><span>Grant tx</span><code id="grant-tx"></code></div>
+        </div>
+        <div class="onchain-box" id="keystore-box" hidden>
+          <div class="ob-head">
+            <span class="ob-dot"></span>
+            On-chain: KeyStore registration (same tx as the grant)
+          </div>
+          <div class="ob-body">
+            <div><span>KeyStore</span><code id="ks-addr"></code></div>
+            <div><span>keyId</span><code id="ks-keyid"></code></div>
+            <div><span>publicKey on-chain</span><code id="ks-pubkey"></code></div>
+          </div>
+          <div class="ob-foot">
+            This is what <code>recoverFromPasskey()</code> reads. As long as
+            this exists on-chain, the wallet is recoverable from the passkey
+            alone.
+          </div>
+        </div>
+      </section>
+
+      <section class="step" id="step-4" hidden>
+        <div class="step-head">
+          <span class="step-num">4</span>
+          <h2>Execute as session</h2>
+          <code class="sdk-tag">execute(session, calls)</code>
+        </div>
+        <p>
+          The session key — not the passkey — signs this 1-wei transfer.
+          This is the path an AI agent would take.
+        </p>
+        <button id="btn-execute">Execute (session signs)</button>
+        <div class="kv" id="exec-info" hidden>
+          <div><span>Status</span><code id="exec-status"></code></div>
+          <div><span>Tx hash</span><code id="exec-tx"></code></div>
+        </div>
+      </section>
+
+      <section class="step" id="step-5" hidden>
+        <div class="step-head">
+          <span class="step-num">5</span>
+          <h2>Revoke</h2>
+          <code class="sdk-tag">revokeSession(wallet, admin, session)</code>
+        </div>
+        <p>
+          Passkey signs an on-chain revoke. After confirmation, the session
+          can no longer execute.
+        </p>
+        <button id="btn-revoke">Revoke session (passkey signs)</button>
+        <div class="kv" id="revoke-info" hidden>
+          <div><span>Status</span><code id="revoke-status"></code></div>
+          <div><span>Tx hash</span><code id="revoke-tx"></code></div>
+        </div>
+      </section>
+
+      <section class="logs">
+        <h2>Logs</h2>
+        <pre id="log"></pre>
+      </section>
+
+        </div><!-- /.ui-pane -->
+      </div><!-- /.split -->
+
+      <footer class="page-foot">
+        <div class="foot-title">What you just used</div>
+        <div class="foot-grid">
+          <div>
+            <code>createPasskeyWallet</code>
+            <span>One call. Generates the throwaway EOA, prompts WebAuthn, runs EIP-7702.</span>
+          </div>
+          <div>
+            <code>grantSession</code>
+            <span>Authorizes a scoped key on-chain. Allow-listed calls + spend caps + expiry.</span>
+          </div>
+          <div>
+            <code>execute</code>
+            <span>Polymorphic. Admin signs, or session signs — same function.</span>
+          </div>
+          <div>
+            <code>revokeSession</code>
+            <span>Single tx. Effect is immediate at the smart-account contract.</span>
+          </div>
+          <div>
+            <code>recoverFromPasskey</code>
+            <span>WebAuthn picker + two eth_calls to KeyStore. No backend involved.</span>
+          </div>
+          <div>
+            <code>signerFromPrivateKey / createHeadlessPasskey</code>
+            <span>For agent servers + tests. Same SDK surface, no browser needed.</span>
+          </div>
+        </div>
+        <div class="foot-cta">
+          Source: <a href="https://github.com/altananetwork/sdk" target="_blank">github.com/altananetwork/sdk</a>
+        </div>
+      </footer>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

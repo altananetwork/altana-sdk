@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "allowImportingTsExtensions": false,
+    "types": ["node", "bun"]
+  },
+  "include": ["./smoke-*.ts"],
+  "exclude": ["./spike-*.ts"]
+}

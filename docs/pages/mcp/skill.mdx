@@ -1,0 +1,43 @@
+---
+title: Claude Skill
+description: Drop-in Claude Code skill that teaches Claude how to use @altananetwork/sdk.
+---
+
+# Claude Skill
+
+Altana ships a [Claude Code skill](https://docs.anthropic.com/en/docs/claude-code/skills) so any Claude-powered agent can build with `@altananetwork/sdk` correctly out of the box.
+
+## Install
+
+Save the skill into your project (or your user-level skills directory) at `.claude/skills/altana-agentic-wallet/SKILL.md`:
+
+```bash
+mkdir -p .claude/skills/altana-agentic-wallet
+curl -fsSL https://docs.altana.network/skill.md \
+  -o .claude/skills/altana-agentic-wallet/SKILL.md
+```
+
+Restart Claude Code (or open a new conversation) and Claude will load the skill automatically when a prompt matches its triggers.
+
+## When the skill activates
+
+Recognize these patterns:
+
+- "I want an AI agent that can trade / pay / mint on my behalf"
+- "Grant this bot a $50/day spending limit on USDC"
+- "How do two agents verify each other onchain"
+- "Build a wallet that recovers from a passkey"
+- "Non-custodial wallet for my app, but I don't want users to handle seed phrases"
+- "Revoke this key: make sure it can't sign anymore"
+- "Check whether `<address>` is allowed to act on `<wallet>` right now"
+
+## MCP server vs skill
+
+| You are… | Use |
+|---|---|
+| Writing TypeScript/JS code that needs wallet ops | `@altananetwork/sdk` SDK (this skill) |
+| Operating wallets interactively from Claude Code | [`@altananetwork/mcp`](/mcp) server |
+| Building a UI that signs from the browser | SDK with `client.createPasskeyWallet` |
+| Running a local agent that holds its own session | SDK with `client.execute({ session, calls })` |
+
+The full skill content is at [`packages/wallet/SKILL.md`](https://github.com/altananetwork/sdk/blob/main/packages/wallet/SKILL.md) in the SDK repo.

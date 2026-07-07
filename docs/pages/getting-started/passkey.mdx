@@ -1,0 +1,75 @@
+---
+title: Create a Passkey Wallet
+description: Create a wallet secured by Face ID or Touch ID. No seed phrase, no extension. Built for consumer apps.
+---
+
+<p style={{ fontSize: '0.8em', color: 'var(--vocs-color_textSecondary)', marginBottom: '0.1rem', fontWeight: 500, letterSpacing: '0.02em' }}>Getting Started</p>
+
+# Create a passkey wallet
+
+For consumer apps — wallets secured by Face ID, Touch ID, or Windows Hello. The user sees one biometric prompt; no seed phrase, no browser extension. The private key is generated and stored on the device's secure hardware and never leaves it.
+
+## What you need
+
+- A **frontend project** — React, Vue, vanilla JS, or any framework that runs in a browser
+- **npm, bun, or pnpm** to install packages
+- A browser with biometric support — Chrome, Safari, and Firefox on modern devices all qualify
+
+This runs entirely in the browser. No backend or server required for basic setup.
+
+## 1. Install
+
+```bash
+npm install @altananetwork/sdk viem
+```
+
+`viem` is an Ethereum TypeScript library the SDK uses to talk to the blockchain.
+
+## 2. Create the wallet
+
+```ts
+import { createClient, BNB } from "@altananetwork/sdk";
+
+// BNB is the default wallet execution network.
+// ETHEREUM is also supported; BASE is the L2 verification cache.
+const client = createClient({ chains: [BNB] });
+
+const wallet = await client.createPasskeyWallet({
+  name: "MyApp",          // shown in the OS passkey prompt
+  rpId: "myapp.example",  // your app's domain
+});
+
+console.log(wallet.address); // the wallet's onchain address
+```
+
+The user sees one biometric prompt. After that, `wallet` is a fully usable smart-account handle and `wallet.signer` works with every client method.
+
+## 3. Run a transaction
+
+```ts
+const result = await client.execute({
+  wallet,
+  signer: wallet.signer,
+  calls: { to: "0xRecipient...", value: 1_000_000_000_000_000n }, // 0.001 BNB on BNB Smart Chain
+});
+
+console.log(result.status, result.transactionHash);
+```
+
+Each `execute` triggers one biometric prompt to sign. No popups, no extensions.
+
+## 4. Handle returning users
+
+When a user returns — on any device with their passkeys synced — you can rebuild their wallet from onchain state without storing anything yourself:
+
+```ts
+const wallet = await client.recoverFromPasskey({ rpId: "myapp.example" });
+// OS shows the passkey picker, biometric prompt, done.
+```
+
+Two onchain reads, one biometric. No localStorage, no server, no seed phrase.
+
+## What's next
+
+- [Delegate to an AI agent](/use-cases/1b-passkey-delegates-to-agent) — grant a capped, expiring key to an agent from this passkey wallet.
+- [Create a private-key wallet](/getting-started/private-key) — the agent-side path for scripts and backends.

@@ -1,0 +1,63 @@
+---
+title: Why Altana
+description: Non-custodial agentic wallets with onchain session-key delegation.
+---
+
+# Why Altana
+
+Altana enables a **global registry of permissions onchain, accessible by any agent**.
+
+Traditional agentic wallets store permissions locally or in centralized servers.<br />Altana's **Keystore** infrastructure makes composable permissions accessible across any chain and any wallet, enabling:
+
+<table style={{display:'block',borderCollapse:'collapse',overflowX:'auto',marginBottom:'var(--vocs-space_24)'}}>
+  <tbody>
+    <tr>
+      <td style={{border:'1px solid var(--vocs-color_tableBorder)',fontSize:'var(--vocs-fontSize_td)',fontWeight:'700',padding:'var(--vocs-space_8) var(--vocs-space_12)',verticalAlign:'top',width:'30%'}}>Agent-to-agent verification</td>
+      <td style={{border:'1px solid var(--vocs-color_tableBorder)',fontSize:'var(--vocs-fontSize_td)',padding:'var(--vocs-space_8) var(--vocs-space_12)',verticalAlign:'top'}}>Two AIs acting on the same wallet can verify each other's authority onchain. No platform in between.</td>
+    </tr>
+    <tr style={{backgroundColor:'var(--vocs-color_background2)'}}>
+      <td style={{border:'1px solid var(--vocs-color_tableBorder)',fontSize:'var(--vocs-fontSize_td)',fontWeight:'700',padding:'var(--vocs-space_8) var(--vocs-space_12)',verticalAlign:'top'}}>Cross-app authorization</td>
+      <td style={{border:'1px solid var(--vocs-color_tableBorder)',fontSize:'var(--vocs-fontSize_td)',padding:'var(--vocs-space_8) var(--vocs-space_12)',verticalAlign:'top'}}>Any DEX, orderbook, or protocol can read whether an agent is authorized, without integrating with the specific wallet vendor.</td>
+    </tr>
+    <tr>
+      <td style={{border:'1px solid var(--vocs-color_tableBorder)',fontSize:'var(--vocs-fontSize_td)',fontWeight:'700',padding:'var(--vocs-space_8) var(--vocs-space_12)',verticalAlign:'top'}}>A new class of agent services</td>
+      <td style={{border:'1px solid var(--vocs-color_tableBorder)',fontSize:'var(--vocs-fontSize_td)',padding:'var(--vocs-space_8) var(--vocs-space_12)',verticalAlign:'top'}}>Users hire AI agents through onchain employment contracts. Anyone can verify what an agent is allowed to do, and revoke is one transaction.</td>
+    </tr>
+  </tbody>
+</table>
+
+[See how Altana compares](/concepts/comparison)
+
+## What Altana solves
+
+<div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem', margin: '1.5rem 0 3rem' }}>
+  <div style={{ padding: '1.5rem', border: '1px solid var(--vocs-color_border)', borderRadius: '8px' }}>
+    <p style={{ fontWeight: '700', fontSize: '1rem', margin: '0 0 0.5rem', color: 'var(--vocs-color_heading)' }}>Permissions without a middleman</p>
+    <p style={{ fontSize: '0.9rem', lineHeight: '1.6', color: 'var(--vocs-color_text2)', margin: 0 }}>Authorization rules live onchain, not in a vendor's database. Any protocol can verify whether an agent is allowed to act, with no integration required.</p>
+  </div>
+  <div style={{ padding: '1.5rem', border: '1px solid var(--vocs-color_border)', borderRadius: '8px' }}>
+    <p style={{ fontWeight: '700', fontSize: '1rem', margin: '0 0 0.5rem', color: 'var(--vocs-color_heading)' }}>Policy enforced before every transaction</p>
+    <p style={{ fontSize: '0.9rem', lineHeight: '1.6', color: 'var(--vocs-color_text2)', margin: 0 }}>Spend caps, contract allowlists, and expiry windows are validated at the execution layer, not in application code that can be bypassed.</p>
+  </div>
+  <div style={{ padding: '1.5rem', border: '1px solid var(--vocs-color_border)', borderRadius: '8px' }}>
+    <p style={{ fontWeight: '700', fontSize: '1rem', margin: '0 0 0.5rem', color: 'var(--vocs-color_heading)' }}>Self-custodial by architecture</p>
+    <p style={{ fontSize: '0.9rem', lineHeight: '1.6', color: 'var(--vocs-color_text2)', margin: 0 }}>The user signs. The user revokes. Altana never holds keys. Grant or revoke in one transaction, with no support ticket and no counterparty risk.</p>
+  </div>
+</div>
+
+## Who it's for
+
+<div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem', margin: '1.5rem 0 3rem' }}>
+  <div style={{ padding: '1.5rem', background: 'var(--vocs-color_background2)', borderRadius: '8px' }}>
+    <p style={{ fontWeight: '700', fontSize: '1rem', margin: '0 0 0.5rem', color: 'var(--vocs-color_heading)' }}>App developers</p>
+    <p style={{ fontSize: '0.9rem', lineHeight: '1.6', color: 'var(--vocs-color_text2)', margin: 0 }}>Ship agentic features with a wallet your users actually control. Give an agent a scoped key, not full custody, and let the chain enforce the limit.</p>
+  </div>
+  <div style={{ padding: '1.5rem', background: 'var(--vocs-color_background2)', borderRadius: '8px' }}>
+    <p style={{ fontWeight: '700', fontSize: '1rem', margin: '0 0 0.5rem', color: 'var(--vocs-color_heading)' }}>AI agent builders</p>
+    <p style={{ fontSize: '0.9rem', lineHeight: '1.6', color: 'var(--vocs-color_text2)', margin: 0 }}>Equip your agent with a wallet and a capped, revocable session. The agent operates within the bounds the user set, and those bounds are publicly verifiable.</p>
+  </div>
+  <div style={{ padding: '1.5rem', background: 'var(--vocs-color_background2)', borderRadius: '8px' }}>
+    <p style={{ fontWeight: '700', fontSize: '1rem', margin: '0 0 0.5rem', color: 'var(--vocs-color_heading)' }}>Protocols and integrators</p>
+    <p style={{ fontSize: '0.9rem', lineHeight: '1.6', color: 'var(--vocs-color_text2)', margin: 0 }}>Read agent authority from the chain before executing. Know exactly what an agent is allowed to do without trusting the agent's own claims.</p>
+  </div>
+</div>

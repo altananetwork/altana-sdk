@@ -1,0 +1,60 @@
+---
+draft: true
+title: "Verify an Agent's Authority from Anywhere"
+description: One free onchain read answers whether a key is authorized to act on a wallet right now. No API key, no vendor integration.
+---
+
+import { UseCaseMeta } from '../../components/UseCaseMeta'
+
+<p style={{ fontSize: '0.8em', color: 'var(--vocs-color_textSecondary)', marginBottom: '0.1rem', fontWeight: 500, letterSpacing: '0.02em' }}>Build with Altana</p>
+
+# Verify an agent's authority from anywhere
+
+<UseCaseMeta
+  tools={['SDK', 'MCP']}
+  rows={[
+  { label: "Goal", value: "I want any app, or a second agent, to confirm an agent's authority on a wallet without integrating Altana." },
+  { label: "Who it's for", value: 'The composability and integration audience. Conceptual home for "no vendor in the middle."' },
+  { label: "What you'll use", value: <>The Keystore read: <code>getActiveKeys</code> plus a <code>keccak256</code> of the public key. Free, unlimited, from any RPC.</> },
+  { label: "Prerequisites", value: <><a href="/use-cases/1-agent-wallet-policy">Use Case 1</a> wallet with an active session, or later.</> },
+]} />
+
+## Walkthrough
+
+```ts
+import { createPublicClient, http, keccak256 } from "viem";
+import { BNB } from "@altananetwork/sdk";
+
+const client = createPublicClient({
+  chain: BNB.chain,
+  transport: http(BNB.publicRpcUrl),
+});
+
+const KEYSTORE_ABI = [{
+  name: "getActiveKeys", type: "function", stateMutability: "view",
+  inputs: [{ name: "user", type: "address" }],
+  outputs: [{ type: "bytes32[]" }],
+}] as const;
+
+const active = await client.readContract({
+  address: BNB.keyStore,
+  abi: KEYSTORE_ABI,
+  functionName: "getActiveKeys",
+  args: [walletAddress],
+});
+
+// One eth_call answers: is this key allowed to act on this wallet right now?
+const authorized = active.includes(keccak256(sessionPublicKey));
+```
+
+Run this from your own script against your own wallet. This is exactly what a DEX or a counterparty agent would run, for free, from any RPC.
+
+## Why it is different
+
+Authorization is a public onchain object. Verification costs nothing, needs no API key, and works for parties who have never heard of your app.
+
+**Note on sub-delegation.** Only the wallet admin grants sessions. Do not read this as one agent minting a sub-key for another. It is the admin authorizing both agents, and the agents verifying each other. If session-to-session sub-delegation lands later, the docs will be updated.
+
+## What's next
+
+[Use Case 5](/use-cases/5-cross-chain-authorization): take that authorization to another chain without re-granting.

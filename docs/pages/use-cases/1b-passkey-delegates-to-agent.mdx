@@ -1,0 +1,130 @@
+---
+title: "Use a Passkey Wallet as Admin"
+description: Create a wallet secured by Face ID or Touch ID and delegate a capped key from it to an AI agent. No seed phrase.
+---
+
+import { UseCaseMeta } from '../../components/UseCaseMeta'
+import { PasskeyAgentDemo } from '../../components/PasskeyAgentDemo'
+
+<p style={{ fontSize: '0.8em', color: 'var(--vocs-color_textSecondary)', marginBottom: '0.1rem', fontWeight: 500, letterSpacing: '0.02em' }}>Build with Altana</p>
+
+# Use a passkey wallet as admin
+
+<UseCaseMeta
+  rows={[
+  { label: "Goal", value: "I want a wallet with no seed phrase, secured by Face ID, and I want to delegate a capped key on it to my AI." },
+  { label: "Who it's for", value: <>Consumer apps. Runs parallel to <a href="/use-cases/1-agent-wallet-policy">Use Case 1</a>, not strictly after it.</> },
+  { label: "What you'll use", value: <><code>createPasskeyWallet</code>, <code>grantSession</code>, <code>execute</code>, <code>revokeSession</code>.</> },
+]} />
+
+## How it works
+
+You hold the admin key inside your device's secure hardware, backed by Face ID or Touch ID. The agent holds a separate, scoped session key with a spend cap, an expiry, and a contract allowlist. You can revoke it in one transaction.
+
+The two roles never share a key:
+
+| Role | Key type | Held by | Can be revoked? |
+|---|---|---|---|
+| Admin (you) | Passkey (P-256) | Your device | No: it's yours |
+| Agent | Session (secp256k1) | Agent process | Yes: one tx |
+
+## Try it live
+
+Run the complete flow right here — no setup, no code. Each button calls the Altana SDK against BNB. Your passkey stays on your device.
+
+<PasskeyAgentDemo />
+
+---
+
+## Build this in your own app
+
+The steps below are for developers integrating this flow into a browser app (React, Next.js, plain HTML). `createPasskeyWallet` uses WebAuthn and must run in a browser — it cannot run in Node.js or a terminal.
+
+:::tip[Testing in Node.js or a script?]
+Swap `createPasskeyWallet` for `createHeadlessPasskey` — identical wallet shape, P256 key held in memory, no biometric prompt:
+
+```ts
+import { createClient, BNB, createHeadlessPasskey } from "@altananetwork/sdk";
+
+const client = createClient({ chains: [BNB] });
+const wallet = await client.createWallet({ signer: createHeadlessPasskey() });
+```
+:::
+
+## Step 1: Create the passkey wallet
+
+```ts
+import { createClient, BNB } from "@altananetwork/sdk";
+
+const client = createClient({ chains: [BNB] });
+
+const wallet = await client.createPasskeyWallet({
+  name: "MyApp",
+  rpId: "myapp.example", // your app's domain
+});
+```
+
+One biometric prompt. No seed phrase. `wallet.signer` works with every client method.
+
+## Step 2: Grant a session to the agent
+
+You (admin) authorize the agent's key onchain. The agent key is separate from your passkey.
+
+```ts
+const session = await client.grantSession({
+  wallet,
+  signer: wallet.signer,          // your passkey signs this
+  permissions: {
+    calls: [{ to: "0xSomeContract..." }],
+    spend: [{ limit: 50_000_000_000_000_000n, period: "day" }], // 0.05 BNB/day cap
+  },
+  expiry: Math.floor(Date.now() / 1000) + 24 * 60 * 60, // 1 day
+});
+```
+
+:::tip[What lands onchain]
+In a single transaction: the agent's public key is registered in [Keystore](/concepts/keystore) and authorized on your wallet with its permissions hash. Any tool can verify the agent's authority with a free `eth_call`, with no API key and no Altana integration required.
+:::
+
+## Step 3: The agent executes, no passkey involved
+
+The agent uses its session key. Your passkey is not touched. The onchain validator enforces the permissions before the call goes through.
+
+```ts
+// This runs in the agent's process — it has the `session` object.
+const result = await client.execute({
+  session,
+  calls: [{ to: "0xSomeContract...", data: "0x...", value: 0n }],
+});
+```
+
+An oversized call, a call to an unauthorized contract, or a call after expiry all revert at validation. The agent literally cannot exceed the leash.
+
+## Step 4: Recover your wallet on any device
+
+Recovery matches your passkey's private key (held on your device, synced via iCloud or Google) against the public key registered onchain in the Keystore. Switch devices, come back months later — both halves are still there.
+
+```ts
+const wallet = await client.recoverFromPasskey({ rpId: "myapp.example" });
+// OS shows the passkey picker → biometric → done.
+```
+
+## Step 5: Revoke the agent
+
+One transaction. Effect is global and immediate.
+
+```ts
+await client.revokeSession({ wallet, signer: wallet.signer, session });
+// The agent's next call reverts at validation.
+```
+
+:::info[Revocation is monotonic]
+Once revoked, a session key cannot be reactivated. To give the agent access again, grant a fresh session with a new keypair.
+:::
+
+---
+
+## What's next
+
+- [Use Case 2](/use-cases/2-agent-trades-dex): point the agent session at a real DEX with a spend cap.
+- [Use Case 4](/use-cases/4-verify-agent-authority): verify any agent's authority with a single free onchain read.

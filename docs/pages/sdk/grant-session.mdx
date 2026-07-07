@@ -1,0 +1,87 @@
+---
+title: grantSession
+description: Authorize a scoped, time-bounded session key for a wallet.
+---
+
+<p style={{ fontSize: '0.8em', color: 'var(--vocs-color_textSecondary)', marginBottom: '0.1rem', fontWeight: 500, letterSpacing: '0.02em' }}>SDK</p>
+
+# grantSession
+
+Grant a scoped session key for a wallet. The admin signer authorizes the session onchain; from that point forward the session can act on the wallet within its permissions, enforced onchain.
+
+```ts
+import { createClient, BNB, signerFromPrivateKey } from "@altananetwork/sdk";
+
+const client = createClient({ chains: [BNB] });
+const admin = signerFromPrivateKey("0x...");
+const wallet = await client.createWallet({ signer: admin });
+
+const session = await client.grantSession({
+  wallet,
+  signer: admin,
+  permissions: {
+    calls: [{ to: "0xUniswapRouter..." }],
+    spend: [{
+      limit: 100_000_000n,        // 100 USDC (6 decimals)
+      period: "day",
+      token: "0xUSDC...",
+    }],
+  },
+  expiry: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60, // 7 days
+});
+
+// Hand `session` to whichever process runs the agent.
+```
+
+## Keystore impact
+
+The session's public key is written to [Keystore](/concepts/keystore) via the Controller. From that moment, any tool reading `getActiveKeys` on the wallet sees this session. Reads are free and unlimited.
+
+## Parameters
+
+```ts
+client.grantSession(opts: ClientGrantSessionOptions): Promise<Session>;
+
+type ClientGrantSessionOptions = {
+  wallet: Wallet;
+  signer: Signer;                  // the wallet's admin signer
+  permissions: SessionPermissions;
+  /** Unix epoch seconds. Most apps use Date.now()/1000 + N. */
+  expiry: number;
+  /** Bring your own session signer, or omit to let the SDK generate one. */
+  sessionSigner?: Signer;
+  /** Fee token (default: native token). */
+  feeToken?: Address;
+  /** Target chain. Defaults to the client's default chain. */
+  chainId?: number;
+};
+```
+
+See [Sessions](/concepts/sessions) for the full permission shape reference.
+
+## Returns
+
+```ts
+type Session = {
+  walletAddress: Address;
+  signer: Signer;          // session key. Agent signs with this.
+  publicKey: Hex;
+  permissions: SessionPermissions;
+  expiry: number;
+};
+```
+
+## What lands onchain
+
+In a single userOp:
+
+1. The session's public key is registered in [Keystore](/concepts/keystore), making it discoverable by any tool.
+2. The session is authorized on the wallet's smart account with its permissions hash.
+
+Both happen atomically. There is no intermediate state where one exists without the other.
+
+## Notes
+
+- **Persist the full `Session` object**, not just `publicKey`. The agent needs `permissions + expiry` byte-exact at execute time.
+- If you generated the session signer (omitted `sessionSigner`), persist `session.signer` securely. Losing it means the session can no longer sign.
+- **`permissions.calls` omitted = unrestricted.** Always set both `calls` and `spend` unless you specifically want an open-scope session.

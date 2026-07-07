@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.turbo/
+*.tsbuildinfo
+.env
+.env.local
+.DS_Store
+
+# Local security audit reports (contain finding details)
+.gstack/
+tmp/
+docs/public/skill.md

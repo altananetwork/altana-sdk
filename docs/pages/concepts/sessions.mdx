@@ -1,0 +1,67 @@
+---
+title: Sessions
+description: Scoped, time-bounded delegations from a wallet's admin key to an agent.
+---
+
+<p style={{ fontSize: '0.8em', color: 'var(--vocs-color_textSecondary)', marginBottom: '0.1rem', fontWeight: 500, letterSpacing: '0.02em' }}>Concepts</p>
+
+# Sessions
+
+A **session** is a scoped, time-bounded delegation from a wallet's admin key to another key. The session key can act on the wallet, but only within the granted permissions, and only until the expiry.
+
+Permissions are enforced onchain. A session that tries to call a contract outside its allowlist, or spend beyond its cap, reverts at validation time. There is no off-chain trust assumption.
+
+## Anatomy of a session
+
+```ts
+type Session = {
+  walletAddress: Address;       // the wallet this session can act on
+  signer: Signer;               // the session key (agent signs with this)
+  publicKey: Hex;               // identifier onchain
+  permissions: SessionPermissions;
+  expiry: number;               // unix epoch seconds
+};
+
+type SessionPermissions = {
+  calls?: readonly CallPermission[];   // allowed contracts / signatures
+  spend?: readonly SpendPermission[];  // per-token rolling caps
+};
+```
+
+## Permission shapes
+
+**Call permissions** restrict which contracts and methods the session can hit:
+
+```ts
+calls: [
+  { to: "0xUniswapRouter..." },             // any method on this contract
+  { signature: "transfer(address,uint256)" }, // any contract, this method
+  { signature: "swap(...)", to: "0xPool" }, // both, AND semantics
+]
+```
+
+**Spend permissions** cap how much the session can move per token, per rolling period:
+
+```ts
+spend: [
+  { limit: 100_000_000n, period: "day", token: "0xUSDC..." }, // 100 USDC/day
+  { limit: 10n ** 16n, period: "hour" },                       // 0.01 ETH/hour (native)
+]
+```
+
+## Lifecycle
+
+| Stage | Function | Keystore impact |
+|---|---|---|
+| Grant | [`grantSession`](/sdk/grant-session) | Write. Session public key registered. |
+| Use | [`execute(session, calls)`](/sdk/execute) | None. |
+| Verify | Any client reads `getActiveKeys` | None. Free, unlimited. |
+| Revoke | [`revokeSession`](/sdk/revoke-session) | Write (gated by `onlyKeyOwnerOrValidator`). Session revoked (monotonic: cannot be reactivated). |
+| Expire | Automatic at `expiry` | None. No transaction. |
+
+Reads are free and unlimited, which is what makes cross-agent and cross-app verification practical.
+
+## Notes
+
+- **Sessions must be byte-exact on execute.** The onchain validator matches `permissions + expiry + role + publicKey` exactly to the hash committed at grant time. Persist the `Session` object verbatim. Sloppy JSON round-trips (bigints to numbers, key reordering) break the match.
+- **`permissions.calls` omitted = unrestricted.** If you don't pass `calls`, the session can call any contract within its spend cap. Set both unless that's truly what you want.

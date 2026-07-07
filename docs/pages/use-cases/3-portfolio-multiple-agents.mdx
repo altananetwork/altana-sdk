@@ -1,0 +1,72 @@
+---
+draft: true
+title: "Run a Portfolio with Multiple Agents"
+description: Several agents on one wallet, each with its own scope and cap, all independently revocable.
+---
+
+import { UseCaseMeta } from '../../components/UseCaseMeta'
+
+<p style={{ fontSize: '0.8em', color: 'var(--vocs-color_textSecondary)', marginBottom: '0.1rem', fontWeight: 500, letterSpacing: '0.02em' }}>Build with Altana</p>
+
+# Run a portfolio with multiple agents
+
+<UseCaseMeta
+  tools={['SDK', 'MCP']}
+  rows={[
+  { label: "Goal", value: "I want a portfolio wallet run by more than one agent, each with its own job, all transparent and revocable." },
+  { label: "Who it's for", value: "Anyone building multi-agent systems. Flagship differentiator." },
+  { label: "What you'll use", value: <><code>grantSession</code> twice with complementary scopes, <code>execute</code>, the Keystore read for mutual verification, <code>revokeSession</code>.</> },
+  { label: "Prerequisites", value: <><a href="/use-cases/1-agent-wallet-policy">Use Case 1</a> wallet, funded on BNB.</> },
+]} />
+
+## Walkthrough
+
+```ts
+import {
+  createClient,
+  BNB,
+  signerFromPrivateKey,
+} from "@altananetwork/sdk";
+
+const client = createClient({ chains: [BNB] });
+const signer = signerFromPrivateKey(process.env.PRIVATE_KEY as `0x${string}`);
+
+// One shared wallet, the operator is admin. Two agents, separated duties.
+
+// Agent A: swaps on PancakeSwap, cap X.
+const sessionA = await client.grantSession({
+  wallet,
+  signer,
+  permissions: {
+    calls: [{ to: "0xPancakeRouter..." }],
+    spend: [{ limit: capX, period: "day", token: "0xStable..." }],
+  },
+  expiry,
+});
+
+// Agent B: lending / rebalance, cap Y.
+const sessionB = await client.grantSession({
+  wallet,
+  signer,
+  permissions: {
+    calls: [{ to: "0xLendingPool..." }],
+    spend: [{ limit: capY, period: "day", token: "0xStable..." }],
+  },
+  expiry,
+});
+
+// Before coordinating, Agent B can verify Agent A is still authorized
+// using the Keystore read from Use Case 4.
+
+// Revoke Agent A without touching Agent B:
+await client.revokeSession({ wallet, signer, session: sessionA });
+// Agent B keeps working.
+```
+
+## Why it is different
+
+Multiple agents on one wallet with divided, independently verifiable, independently revocable authority. Agent-to-agent verification uses only your own agents, with nothing external to set up.
+
+## What's next
+
+- [Use Case 4](/use-cases/4-verify-agent-authority): verify each agent's authority with a single onchain read.

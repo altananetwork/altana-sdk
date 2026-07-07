@@ -1,0 +1,55 @@
+---
+title: recoverFromPasskey
+description: Rebuild a wallet handle from any passkey saved on the user's device.
+---
+
+<p style={{ fontSize: '0.8em', color: 'var(--vocs-color_textSecondary)', marginBottom: '0.1rem', fontWeight: 500, letterSpacing: '0.02em' }}>SDK</p>
+
+# recoverFromPasskey
+
+Recover a passkey-backed wallet using onchain state and the OS keychain. **Browser only.**
+
+```ts
+import { createClient, BNB } from "@altananetwork/sdk";
+
+const client = createClient({ chains: [BNB] });
+const wallet = await client.recoverFromPasskey({ rpId: "myapp.example" });
+// Browser shows the passkey picker, biometric prompt, done.
+// Two onchain reads, no server, no localStorage required.
+```
+
+## Keystore impact
+
+Recovery is a pure read: two `eth_call`s against Keystore (`getActiveKeys` + `getPublicKey`). No onchain write, no transaction. An app can recover a user's wallet handle a million times a day at zero cost.
+
+## Flow
+
+1. **Discoverable-credential picker.** `allowCredentials: []` tells the OS to show all passkeys saved on this device for the given `rpId`. The user picks one, then completes biometric verification.
+2. **Extract the wallet address.** The assertion's `userHandle` carries the 20-byte wallet address that `createPasskeyWallet` baked in at creation time.
+3. **Read Keystore.** `getActiveKeys(wallet) + getPublicKey(wallet, keyId)` to retrieve the P-256 public key the wallet authorized.
+4. **Rebuild the signer.** From `{ credentialId, publicKey, rpId }`.
+
+Two `eth_call`s, one biometric prompt. No server side-channel.
+
+## Parameters
+
+```ts
+type ClientRecoverFromPasskeyOptions = {
+  /** Relying-Party ID. Must match what was used at creation time. */
+  rpId?: string;
+  /** Target chain to read from. Defaults to the client's default chain. */
+  chainId?: number;
+};
+```
+
+For wallet reads and writes, configure the client with `BNB` or `ETHEREUM`. `BASE` is the exported L2 Keystore cache for verifying Ethereum-granted sessions cross-chain.
+
+## Returns
+
+A `CreateWalletResult` whose `signer` is a `PasskeySigner`. Drop-in compatible with `client.execute`, `client.grantSession`, etc.
+
+## Notes
+
+- **The wallet must have transacted at least once.** Recovery reads the admin key from Keystore, which is populated on the wallet's first `execute`. A wallet that was created but never used isn't yet onchain to recover from.
+- **The `rpId` must match.** Passkeys are scoped to a relying-party ID, usually a domain. If you used `"myapp.example"` at creation, you must use the same here.
+- **No fallback to localStorage.** Recovery is purely onchain plus device-resident. This is what makes Altana wallets durable across machines, browser data wipes, and OS migrations, as long as the passkey is in iCloud Keychain or Google Password Manager.
