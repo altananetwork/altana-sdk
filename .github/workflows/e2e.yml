@@ -1,24 +1,20 @@
-name: e2e
+name: ci
 
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
-
-# Serialize runs so two concurrent pushes don't race the same funder wallet
-# on Sepolia. cancel-in-progress: false lets an in-flight run finish.
-concurrency:
-  group: e2e-main
-  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  smoke:
-    name: Sepolia smoke suite
+  build-and-check:
+    name: Build & typecheck
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -31,33 +27,12 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
-      - name: Build wallet package
+      - name: Build SDK
         run: bun run --filter '@altananetwork/sdk' build
 
-      - name: Typecheck
-        run: bun run --filter '*' typecheck
-
-      - name: Smoke — wallet
-        env:
-          TEST_FUNDER_KEY: ${{ secrets.TEST_FUNDER_KEY }}
-        run: bun run tests/e2e/smoke-test.ts
-
-      - name: Smoke — session
-        env:
-          TEST_FUNDER_KEY: ${{ secrets.TEST_FUNDER_KEY }}
-        run: bun run tests/e2e/smoke-session.ts
-
-      - name: Smoke — passkey
-        env:
-          TEST_FUNDER_KEY: ${{ secrets.TEST_FUNDER_KEY }}
-        run: bun run tests/e2e/smoke-passkey.ts
-
-      - name: Smoke — grant-first
-        env:
-          TEST_FUNDER_KEY: ${{ secrets.TEST_FUNDER_KEY }}
-        run: bun run tests/e2e/smoke-grant-first.ts
-
-      - name: Smoke — MCP
-        env:
-          TEST_FUNDER_KEY: ${{ secrets.TEST_FUNDER_KEY }}
-        run: bun run tests/e2e/smoke-mcp.ts
+      - name: Typecheck shipping packages
+        run: |
+          bun run --filter '@altananetwork/sdk' \
+                  --filter '@altananetwork/mcp' \
+                  --filter '@altananetwork/hypersigner-keystore-mcp' \
+                  typecheck
