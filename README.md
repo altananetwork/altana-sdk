@@ -1,12 +1,16 @@
 # Altana
 
-Non-custodial agentic wallets with on-chain session-key delegation.
+**Let your AI agents pay, invest, and operate. Safely.**
 
-Altana enables a **global registry of permissions on-chain, accessible by any agent**. Traditional agentic wallets store permissions locally or in centralized servers. Altana's **KeyStore** infrastructure makes composable permissions accessible across any chain and any wallet, enabling:
+Altana is noncustodial infrastructure that gives your agents real authority to transact — always inside limits you set and can revoke at any moment. Three pieces make it work: an agentic wallet your agent acts from, the **KeyStore** permission registry that records exactly what each agent may do, and an intent relay that turns an approved intent into a real onchain transaction with gas handled for you.
 
-- **Agent-to-agent verification.** Two AIs acting on the same wallet can verify each other's authority on-chain. No platform in between.
-- **Cross-app authorization.** Any DEX, orderbook, or protocol can read whether an agent is authorized, without integrating with the specific wallet vendor.
-- **A new class of agent services.** Users hire AI agents through on-chain employment contracts. Anyone can verify what an agent is allowed to do, and revoke is one transaction.
+Every permission lives in a neutral onchain registry — openly verifiable, revocable in one transaction, and accessible by any agent on any chain. That unlocks:
+
+- **Agent-to-agent verification.** Two agents acting on the same wallet can verify each other's authority onchain. No platform in between.
+- **Cross-app authorization.** Any DEX, orderbook, or protocol can read whether an agent is authorized, without integrating a specific wallet vendor.
+- **Instant revocation.** Change your mind at any point. Revoke a key in one transaction, and it takes effect before the next action.
+
+Live on mainnet across BNB Chain, Ethereum, and Base.
 
 ## Install
 
