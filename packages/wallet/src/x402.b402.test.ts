@@ -15,6 +15,7 @@ import {
   networkToChainId,
   buildEip3009TypedData,
   buildPermit2TypedData,
+  buildPermit2WitnessTypedData,
   signX402Payment,
 } from "./x402.js";
 
@@ -114,29 +115,33 @@ test("signX402Payment handles a real B402 permit2-exact requirement", async () =
   expect(payload.scheme).toBe("exact");
   expect(payload.network).toBe("eip155:56");
 
-  // Spec-faithful envelope: permit2 payload is {signature, from, permit} —
-  // the rail is conveyed by the presence of `permit` (and the scheme), not by
-  // an in-payload method field.
+  // permit2-exact goes through the x402ExactPermit2Proxy: the payload carries
+  // {signature, from, permit} where `permit` includes the recipient-binding
+  // witness (to = payTo, validAfter). `spender` is the proxy (spenderAddress).
   const p = payload.payload as any;
   expect(p.permit).toBeDefined();
   expect(p.authorization).toBeUndefined();
   expect(p.from.toLowerCase()).toBe(WALLET.toLowerCase());
-  // spender comes from extra.spenderAddress (real field name).
   expect(p.permit.spender.toLowerCase()).toBe(SPENDER.toLowerCase());
-  // amount comes from `amount` (no maxAmountRequired in the real wire).
   expect(p.permit.permitted.amount).toBe("10000000000000000");
   expect(p.permit.deadline).toBe(String(now + 30));
+  // The witness binds the merchant recipient (payTo) into the signature.
+  expect(p.permit.witness.to.toLowerCase()).toBe(PAYTO.toLowerCase());
+  expect(p.permit.witness.validAfter).toBe("0");
 
-  // Signature is the account-wrapped sig over the Permit2 digest on chain 56.
+  // Signature must be over the PermitWitnessTransferFrom digest (not the plain
+  // PermitTransferFrom) — this is what the proxy/facilitator verifies.
   const expectedSig = await signOrderTypedData(
     session,
-    buildPermit2TypedData({
+    buildPermit2WitnessTypedData({
       chainId: 56,
       token: USDT,
       amount: 10_000_000_000_000_000n,
       spender: SPENDER,
       nonce: 42n,
       deadline: BigInt(now + 30),
+      to: PAYTO,
+      validAfter: 0n,
     }) as any,
   );
   expect(p.signature).toBe(expectedSig);

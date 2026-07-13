@@ -59,6 +59,7 @@ export {
   selectX402Requirement,
   signX402Payment,
   buildPermit2TypedData,
+  buildPermit2WitnessTypedData,
   buildEip3009TypedData,
   encodeXPaymentHeader,
   networkToChainId,
@@ -70,6 +71,7 @@ export type {
   SignX402Options,
   FetchWithX402Options,
   Permit2PaymentInput,
+  Permit2WitnessInput,
   Eip3009PaymentInput,
 } from "./x402.js";
 export { approveTokenForPermit2 } from "./approveTokenForPermit2.js";

@@ -114,6 +114,8 @@ export type SignX402Options = {
   eip3009Nonce?: Hex;
   /** Permit2 nonce; defaults to a random uint256. */
   permit2Nonce?: bigint;
+  /** permit2-exact witness `validAfter`; defaults to 0. */
+  permit2ValidAfter?: bigint;
 };
 
 /**
@@ -203,29 +205,61 @@ export async function signX402Payment(
     }
     const nonce = opts.permit2Nonce ?? BigInt(randomHex32());
     const deadline = BigInt(now + timeout);
-    const signature = await signOrderTypedData(
-      session,
-      buildPermit2TypedData({
-        chainId,
-        token: req.asset,
-        amount,
-        spender,
-        nonce,
-        deadline,
-      }) as any,
-    );
-    inner = {
-      signature,
-      // The token owner (payer) — the facilitator needs it for
-      // Permit2.permitTransferFrom(owner, …).
-      from: session.walletAddress,
-      permit: {
-        permitted: { token: req.asset, amount: amount.toString() },
-        spender,
-        nonce: nonce.toString(),
-        deadline: deadline.toString(),
-      },
-    };
+    // B402 permit2-exact routes through the x402ExactPermit2Proxy, which
+    // verifies a `permitWitnessTransferFrom` binding the recipient (payTo).
+    // The legacy plain "permit2" scheme signs a direct PermitTransferFrom.
+    const isWitness = req.extra?.assetTransferMethod === "permit2-exact";
+    if (isWitness) {
+      const validAfter = opts.permit2ValidAfter ?? 0n;
+      const signature = await signOrderTypedData(
+        session,
+        buildPermit2WitnessTypedData({
+          chainId,
+          token: req.asset,
+          amount,
+          spender,
+          nonce,
+          deadline,
+          to: req.payTo,
+          validAfter,
+        }) as any,
+      );
+      inner = {
+        signature,
+        from: session.walletAddress,
+        permit: {
+          permitted: { token: req.asset, amount: amount.toString() },
+          spender,
+          nonce: nonce.toString(),
+          deadline: deadline.toString(),
+          witness: { to: req.payTo, validAfter: validAfter.toString() },
+        },
+      };
+    } else {
+      const signature = await signOrderTypedData(
+        session,
+        buildPermit2TypedData({
+          chainId,
+          token: req.asset,
+          amount,
+          spender,
+          nonce,
+          deadline,
+        }) as any,
+      );
+      inner = {
+        signature,
+        // The token owner (payer) — the facilitator needs it for
+        // Permit2.permitTransferFrom(owner, …).
+        from: session.walletAddress,
+        permit: {
+          permitted: { token: req.asset, amount: amount.toString() },
+          spender,
+          nonce: nonce.toString(),
+          deadline: deadline.toString(),
+        },
+      };
+    }
   } else {
     const name = req.extra?.name;
     const version712 = req.extra?.version;
@@ -396,6 +430,60 @@ export function buildPermit2TypedData(
       spender: input.spender,
       nonce: input.nonce,
       deadline: input.deadline,
+    },
+  };
+}
+
+/** Inputs for a Permit2 `PermitWitnessTransferFrom` (B402 permit2-exact). */
+export type Permit2WitnessInput = Permit2PaymentInput & {
+  /**
+   * Witness recipient — the merchant `payTo`, bound into the signature so the
+   * settler can't redirect funds. Verified by the x402ExactPermit2Proxy.
+   */
+  to: Address;
+  /** Witness `validAfter` (B402 permit2-exact uses 0). */
+  validAfter: bigint;
+};
+
+/**
+ * Build the EIP-712 typed data for a Permit2 `PermitWitnessTransferFrom` with
+ * the B402 `Witness(address to,uint256 validAfter)` — the digest the
+ * x402ExactPermit2Proxy (`spender`) actually verifies. The witness type string
+ * is taken verbatim from that proxy's on-chain bytecode.
+ */
+export function buildPermit2WitnessTypedData(
+  input: Permit2WitnessInput,
+): TypedDataDefinition {
+  return {
+    domain: {
+      name: "Permit2",
+      chainId: input.chainId,
+      verifyingContract: PERMIT2_ADDRESS,
+    },
+    types: {
+      TokenPermissions: [
+        { name: "token", type: "address" },
+        { name: "amount", type: "uint256" },
+      ],
+      Witness: [
+        { name: "to", type: "address" },
+        { name: "validAfter", type: "uint256" },
+      ],
+      PermitWitnessTransferFrom: [
+        { name: "permitted", type: "TokenPermissions" },
+        { name: "spender", type: "address" },
+        { name: "nonce", type: "uint256" },
+        { name: "deadline", type: "uint256" },
+        { name: "witness", type: "Witness" },
+      ],
+    },
+    primaryType: "PermitWitnessTransferFrom",
+    message: {
+      permitted: { token: input.token, amount: input.amount },
+      spender: input.spender,
+      nonce: input.nonce,
+      deadline: input.deadline,
+      witness: { to: input.to, validAfter: input.validAfter },
     },
   };
 }

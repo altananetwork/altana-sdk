@@ -35,6 +35,7 @@ import {
 } from "./approveSignatureChecker.js";
 import { approveTokenForPermit2 as approveTokenForPermit2Impl } from "./approveTokenForPermit2.js";
 import { fetchWithX402 as fetchWithX402Impl } from "./x402.js";
+import type { FetchWithX402Options } from "./x402.js";
 
 export type CreateClientOptions = {
   /**
@@ -119,7 +120,9 @@ export type ClientFetchWithX402Options = {
   session: Session;
   url: string;
   init?: RequestInit;
-};
+  /** Preferred rail when a chain offers several (defaults to "permit2"). */
+  preferRail?: FetchWithX402Options["preferRail"];
+} & ChainSelector;
 
 export type Client = {
   /** The chains this client was configured with. */
@@ -308,7 +311,12 @@ export function createClient(opts: CreateClientOptions): Client {
     },
 
     fetchWithX402(o) {
-      return fetchWithX402Impl(o.session, o.url, o.init);
+      // The client is chain-aware: default the x402 chain to its own so a
+      // multi-chain 402 is paid on the right chain, and honor an override.
+      return fetchWithX402Impl(o.session, o.url, o.init, {
+        chainId: o.chainId ?? defaultChainId,
+        ...(o.preferRail ? { preferRail: o.preferRail } : {}),
+      });
     },
   };
 }
