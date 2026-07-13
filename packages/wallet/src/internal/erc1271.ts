@@ -23,7 +23,7 @@ import {
 import * as Key from "porto/viem/Key";
 import type { Session } from "./sessions.js";
 import { isPasskeySigner, passkeyToPortoKey } from "./passkey.js";
-import { hasRawPrivateKey } from "./signer.js";
+import { hasRawPrivateKey, type Signer } from "./signer.js";
 
 /**
  * Compute the digest the account actually verifies for a given app digest.
@@ -74,13 +74,18 @@ export function computeAccountSecp256k1KeyHash(address: Address): Hex {
  * sessions hash the flat P256 public key via Porto's Key.hash (keyType 1).
  */
 export function sessionKeyHash(session: Session): Hex {
-  if (isPasskeySigner(session.signer)) {
+  return keyHashForSigner(session.signer);
+}
+
+/** keyHash IthacaAccount stores for a signer, by curve. */
+export function keyHashForSigner(signer: Signer): Hex {
+  if (isPasskeySigner(signer)) {
     return Key.hash({
-      publicKey: session.signer.credential.publicKey,
+      publicKey: signer.credential.publicKey,
       type: "webauthn-p256",
     });
   }
-  return computeAccountSecp256k1KeyHash(session.signer.address);
+  return computeAccountSecp256k1KeyHash(signer.address);
 }
 
 /**

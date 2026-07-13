@@ -1,10 +1,11 @@
 import { type Address, type Hex } from "viem";
 import { type NetworkConfig } from "./config.js";
-import { computeAccountSecp256k1KeyHash } from "./internal/erc1271.js";
+import { keyHashForSigner } from "./internal/erc1271.js";
 import { createPrivateKeySigner, type Signer } from "./internal/signer.js";
 import {
   buildPublicClient,
   buildRelayClient,
+  keyDescriptorFromSigner,
   submitCalls,
   waitForCalls,
   type KeyDescriptor,
@@ -38,14 +39,16 @@ export async function grantSession(
 
   const sessionSigner = opts.sessionSigner ?? createPrivateKeySigner();
 
-  const sessionKeyDesc: KeyDescriptor = {
-    type: "secp256k1",
-    publicKey: sessionSigner.publicKey,
+  // Session key descriptor — secp256k1 or passkey (WebAuthnP256), by signer.
+  const sessionKeyDesc: KeyDescriptor = keyDescriptorFromSigner(sessionSigner, {
     role: "session",
     expiry: opts.expiry,
     permissions: opts.permissions,
-  };
+  });
 
+  // Admin descriptor. Only `role` is consumed by submitCalls for signing (the
+  // curve is inferred from adminSigner itself), so secp256k1 here is inert even
+  // for passkey admins.
   const adminKeyDesc: KeyDescriptor = {
     type: "secp256k1",
     publicKey: adminSigner.publicKey,
@@ -96,7 +99,7 @@ export async function grantSession(
   // hash". Wait until the new keyHash is visible from THIS process AND give
   // the relay's separate connection pool time to converge before we hand the
   // Session back to the caller.
-  const expectedKeyHash = computeAccountSecp256k1KeyHash(sessionSigner.address);
+  const expectedKeyHash = keyHashForSigner(sessionSigner);
   const startedWait = Date.now();
   await waitForSessionKeyVisible(
     publicClient,
