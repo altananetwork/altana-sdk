@@ -15,12 +15,16 @@ import { UseCaseMeta } from '../../components/UseCaseMeta'
   tools={['SDK', 'MCP']}
   rows={[
   { label: "Goal", value: "I want any app, or a second agent, to confirm an agent's authority on a wallet without integrating Altana." },
-  { label: "Who it's for", value: 'The composability and integration audience. Conceptual home for "no vendor in the middle."' },
+  { label: "Who it's for", value: "Developers or protocols that need to confirm an agent's authority without integrating Altana or trusting a vendor." },
   { label: "What you'll use", value: <>The Keystore read: <code>getActiveKeys</code> plus a <code>keccak256</code> of the public key. Free, unlimited, from any RPC.</> },
-  { label: "Prerequisites", value: <><a href="/use-cases/1-agent-wallet-policy">Use Case 1</a> wallet with an active session, or later.</> },
+  { label: "Prerequisites", value: <>A wallet with an active agent session, granted in <a href="/use-cases/1-agent-wallet-policy">Give an agent a wallet and a policy</a>.</> },
 ]} />
 
-## Walkthrough
+Anyone can run this. It is a plain read against the public Keystore, so it needs no admin key, no session, and nothing from Altana.
+
+## Step 1: Set up a public read client
+
+You only need a read client pointed at the chain. No admin key and no session.
 
 ```ts
 import { createPublicClient, http, keccak256 } from "viem";
@@ -30,7 +34,13 @@ const client = createPublicClient({
   chain: BNB.chain,
   transport: http(BNB.publicRpcUrl),
 });
+```
 
+## Step 2: Read the active keys from the Keystore
+
+Call `getActiveKeys` on the Keystore for the wallet you care about.<br />This is a plain `eth_call`: free, unlimited, and available from any RPC.
+
+```ts
 const KEYSTORE_ABI = [{
   name: "getActiveKeys", type: "function", stateMutability: "view",
   inputs: [{ name: "user", type: "address" }],
@@ -43,7 +53,13 @@ const active = await client.readContract({
   functionName: "getActiveKeys",
   args: [walletAddress],
 });
+```
 
+## Step 3: Check whether the agent's key is authorized
+
+Hash the agent's public key and check whether it is in the active set.<br />One call answers whether that key can act on the wallet right now.
+
+```ts
 // One eth_call answers: is this key allowed to act on this wallet right now?
 const authorized = active.includes(keccak256(sessionPublicKey));
 ```
@@ -54,8 +70,8 @@ Run this from your own script against your own wallet. This is exactly what a DE
 
 Authorization is a public onchain object. Verification costs nothing, needs no API key, and works for parties who have never heard of your app.
 
-**Note on sub-delegation.** Only the wallet admin grants sessions. Do not read this as one agent minting a sub-key for another. It is the admin authorizing both agents, and the agents verifying each other. If session-to-session sub-delegation lands later, the docs will be updated.
+**Note on sub-delegation.**<br />Only the wallet admin grants sessions. Do not read this as one agent minting a sub-key for another. It is the admin authorizing both agents, and the agents verifying each other. If session-to-session sub-delegation lands later, the docs will be updated.
 
 ## What's next
 
-[Use Case 5](/use-cases/5-cross-chain-authorization): take that authorization to another chain without re-granting.
+[Authorize across chains](/use-cases/5-cross-chain-authorization): take that authorization to another chain without granting it again.

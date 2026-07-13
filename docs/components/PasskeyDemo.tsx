@@ -99,7 +99,7 @@ export function PasskeyDemo() {
         )}
         {createStatus === 'done' && (
           <p style={{ marginTop: '0.75rem', fontSize: '0.85rem', color: 'var(--vocs-color_text2)' }}>
-            Fund this address with BNB before step 2.
+            Fund this address to continue. We recommend around <strong>$5</strong> of BNB.
           </p>
         )}
       </StepCard>
