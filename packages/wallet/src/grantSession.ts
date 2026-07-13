@@ -1,5 +1,6 @@
-import { encodeAbiParameters, keccak256, padHex, type Address, type Hex } from "viem";
+import { type Address, type Hex } from "viem";
 import { type NetworkConfig } from "./config.js";
+import { computeAccountSecp256k1KeyHash } from "./internal/erc1271.js";
 import { createPrivateKeySigner, type Signer } from "./internal/signer.js";
 import {
   buildPublicClient,
@@ -143,20 +144,6 @@ const ACCOUNT_GET_KEYS_ABI = [
     ],
   },
 ] as const;
-
-function computeAccountSecp256k1KeyHash(address: Address): Hex {
-  // AltanaAccount stores Secp256k1 keys with publicKey = abi.encode(address),
-  // and the keyHash is keccak256(abi.encode(uint256(keyType), keccak256(publicKey))).
-  // keyType enum is { P256=0, WebAuthnP256=1, Secp256k1=2, External=3 }.
-  const encodedPubKey = padHex(address, { size: 32 });
-  const publicKeyHash = keccak256(encodedPubKey);
-  return keccak256(
-    encodeAbiParameters(
-      [{ type: "uint256" }, { type: "bytes32" }],
-      [2n, publicKeyHash],
-    ),
-  );
-}
 
 async function waitForSessionKeyVisible(
   publicClient: ReturnType<typeof buildPublicClient>,
