@@ -1,6 +1,6 @@
 ---
 title: Welcome
-description: Noncustodial infrastructure that lets AI agents pay, invest, and operate. Safely. Live on mainnet across BNB Chain, Ethereum, and Base.
+description: Noncustodial authorization infrastructure for agentic workflows. Give agents provable, revocable authority to act onchain. Live on mainnet across BNB Chain, Ethereum, and Base.
 showOutline: false
 showAiCta: false
 content:
@@ -26,11 +26,12 @@ import {
   </h1>
 
   <div className="home-intro">
-    Altana is noncustodial wallet infrastructure for AI agents. Give an agent
-    its own onchain wallet with permissions you scope: spend caps, allowed
-    contracts, and expiry. Every permission is recorded in a public onchain
-    Keystore and revocable in one transaction. Build with the TypeScript SDK,
-    or operate wallets from Claude, Cursor, or any MCP client.
+    Altana is noncustodial authorization infrastructure for agentic workflows.<br />
+    Give an agent provable, revocable authority to act onchain, scoped by spend
+    caps, allowed contracts, and expiry you set, never your keys.<br />
+    Every permission lives in an open onchain Keystore that any app or agent can
+    verify, not a vendor backend you have to trust.<br />
+    Build with the TypeScript SDK, or operate through Claude, Cursor, or any MCP client.
   </div>
 
   <div className="home-proof">
@@ -122,13 +123,13 @@ https://docs.altana.network/llms-full.txt
 </div>
 </div>
 
-<a className="home-demo-banner" href="/getting-started/create-agentic-wallet#try-it-live">
+<a className="home-demo-banner" href="/getting-started/create-agentic-wallet">
   <span className="banner-icon"><ZapIcon size={22} /></span>
   <span className="banner-copy">
     <span className="banner-title">Try it live</span>
-    <span className="banner-desc">Create an agentic wallet and execute a real transaction in your browser. No code required.</span>
+    <span className="banner-desc">Create an agentic wallet and run a real onchain transaction in your browser, with a passkey or a private key. No code required.</span>
   </span>
-  <span className="banner-cta">Launch the demo</span>
+  <span className="banner-cta" aria-hidden="true">→</span>
 </a>
 
 <div className="home-section-label">Explore the docs</div>

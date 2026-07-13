@@ -5,7 +5,7 @@ export default defineConfig({
   title: "Altana",
   titleTemplate: "%s · Altana",
   description:
-    "Noncustodial infrastructure that lets AI agents pay, invest, and operate. Safely.",
+    "Noncustodial authorization infrastructure for agentic workflows. Give agents provable, revocable authority to act onchain, scoped by policy you control and verifiable by anyone.",
   rootDir: ".",
   baseUrl: "https://docs.altana.network",
   ogImageUrl:

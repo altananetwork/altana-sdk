@@ -63,7 +63,7 @@ h1.home-title {
   font-size: 15.5px;
   line-height: 1.7;
   color: var(--vocs-color_text2);
-  max-width: 760px;
+  max-width: none;
   margin: 0 0 26px;
 }
 
@@ -290,12 +290,16 @@ h1.home-title {
 .home-demo-banner .banner-cta {
   margin-left: auto;
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
   background: #3665e4;
   color: #ffffff;
   border-radius: 8px;
-  padding: 10px 20px;
-  font-size: 14px;
-  font-weight: 500;
+  font-size: 17px;
+  line-height: 1;
   transition: background 0.15s ease;
 }
 
@@ -310,6 +314,65 @@ h1.home-title {
   .home-demo-banner .banner-cta {
     margin-left: 50px;
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Admin key chooser: two columns on the create-agentic-wallet page     */
+/* ------------------------------------------------------------------ */
+
+.admin-key-lead {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--vocs-color_heading);
+  margin: 24px 0 12px;
+}
+
+.admin-key-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin: 0 0 8px;
+}
+
+@media (max-width: 720px) {
+  .admin-key-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.admin-key-card {
+  border: 1px solid var(--vocs-color_border);
+  border-radius: 10px;
+  padding: 18px 20px;
+  background: var(--vocs-color_background2);
+}
+
+.admin-key-name {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--altana-blue);
+  margin-bottom: 10px;
+}
+
+.admin-key-best {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--vocs-color_heading);
+  margin: 0 0 10px;
+}
+
+.admin-key-best strong {
+  font-weight: 600;
+}
+
+.admin-key-desc {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--vocs-color_text2);
+  margin: 0;
 }
 
 /* ------------------------------------------------------------------ */
