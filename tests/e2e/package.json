@@ -11,6 +11,9 @@
     "smoke:grant-first": "bun run smoke-grant-first.ts",
     "smoke:mcp": "bun run smoke-mcp.ts",
     "smoke:all": "bun run smoke-test.ts && bun run smoke-session.ts && bun run smoke-passkey.ts && bun run smoke-grant-first.ts && bun run smoke-mcp.ts",
+    "fork:erc1271": "bun run fork-erc1271.ts",
+    "fork:x402": "bun run fork-x402.ts",
+    "fork:all": "bun run fork-erc1271.ts && bun run fork-x402.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

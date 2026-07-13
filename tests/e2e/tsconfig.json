@@ -5,6 +5,6 @@
     "allowImportingTsExtensions": false,
     "types": ["node", "bun"]
   },
-  "include": ["./smoke-*.ts"],
+  "include": ["./smoke-*.ts", "./fork-*.ts"],
   "exclude": ["./spike-*.ts"]
 }
