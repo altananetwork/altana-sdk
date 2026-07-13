@@ -1,48 +1,96 @@
 ---
 title: Welcome
 description: Noncustodial infrastructure that lets AI agents pay, invest, and operate. Safely. Live on mainnet across BNB Chain, Ethereum, and Base.
-layout: landing
+showOutline: false
+showAiCta: false
+content:
+  width: 1120px
 ---
 
-<div className="home-hero">
-<div className="home-hero-left">
+import {
+  WalletIcon,
+  ShieldIcon,
+  KeyIcon,
+  SparkIcon,
+  BookIcon,
+  CodeIcon,
+  ServerIcon,
+  LayersIcon,
+  ZapIcon,
+} from "../components/icons";
+
+<div className="home-header">
   <h1 className="home-title">
-    Agents you can trust.<br />
+    Agents you can trust.{" "}
     <span className="accent">Permissions you can prove.</span>
   </h1>
 
-  <ul className="home-props">
-    <li>
-      <span className="prop-title">Give your agent a wallet, not your keys.</span>
-      <span className="prop-desc">Create a noncustodial agentic wallet and grant a session key scoped by spend caps, contracts, and expiry.</span>
-    </li>
-    <li>
-      <span className="prop-title">Permissions live onchain, in the Keystore.</span>
-      <span className="prop-desc">An open registry, not a vendor backend. Any app can verify what your agent may do.</span>
-    </li>
-    <li>
-      <span className="prop-title">Revoke instantly.</span>
-      <span className="prop-desc">One transaction pulls the key. The effect is immediate and global.</span>
-    </li>
-  </ul>
+  <div className="home-intro">
+    Altana is noncustodial wallet infrastructure for AI agents. Give an agent
+    its own onchain wallet with permissions you scope: spend caps, allowed
+    contracts, and expiry. Every permission is recorded in a public onchain
+    Keystore and revocable in one transaction. Build with the TypeScript SDK,
+    or operate wallets from Claude, Cursor, or any MCP client.
+  </div>
 
-  <div className="home-hero-foot">
-    <a className="home-cta-primary" href="/getting-started/create-agentic-wallet">Start building</a>
-    <div className="home-proof">
-      <span className="live"><span className="dot" /> Live on mainnet</span>
-      <span className="sep">|</span>
-      <span className="chains">
+  <div className="home-proof">
+    <span className="live"><span className="dot" /> Live on mainnet</span>
+    <span className="sep">|</span>
+    <span className="chains">
+      <a href="/concepts/networks#bnb-smart-chain-bnb" title="BNB Chain on Networks & Addresses">
         <img src="/chains/bnb.svg" alt="BNB Chain" style={{ height: 17 }} />
+      </a>
+      <a href="/concepts/networks#ethereum-ethereum" title="Ethereum on Networks & Addresses">
         <img src="/chains/ethereum.svg" alt="Ethereum" style={{ height: 20 }} className="invert-dark" />
+      </a>
+      <a href="/concepts/networks#base-base" title="Base on Networks & Addresses">
         <img src="/chains/base.svg" alt="Base" style={{ height: 16 }} />
-      </span>
-    </div>
+      </a>
+    </span>
   </div>
 </div>
-<div className="home-hero-right">
-<p className="home-section-label">Quickstart</p>
-<h2 className="home-section-title panel-title">Ship in under five minutes</h2>
-<p className="home-panel-step">Pick your tool. One command connects your agent.</p>
+
+<div className="home-section-label">Quickstart</div>
+<h2 className="home-section-title">Start in five minutes</h2>
+
+<div className="home-start-grid">
+<div className="home-start-paths">
+  <a href="/getting-started/create-agentic-wallet">
+    <span className="path-icon"><WalletIcon /></span>
+    <span className="path-copy">
+      <span className="path-title">Create an agentic wallet</span>
+      <span className="path-desc">Your first wallet, session grant, and transaction.</span>
+    </span>
+    <span className="path-arrow">→</span>
+  </a>
+  <a href="/getting-started/passkey">
+    <span className="path-icon"><ShieldIcon /></span>
+    <span className="path-copy">
+      <span className="path-title">Passkey wallet quickstart</span>
+      <span className="path-desc">A wallet secured by Face ID or Touch ID, in the browser.</span>
+    </span>
+    <span className="path-arrow">→</span>
+  </a>
+  <a href="/getting-started/private-key">
+    <span className="path-icon"><KeyIcon /></span>
+    <span className="path-copy">
+      <span className="path-title">Private key wallet quickstart</span>
+      <span className="path-desc">Programmatic wallets for backends and autonomous agents.</span>
+    </span>
+    <span className="path-arrow">→</span>
+  </a>
+  <a href="/getting-started/build-with-claude">
+    <span className="path-icon"><SparkIcon /></span>
+    <span className="path-copy">
+      <span className="path-title">Connect an AI tool</span>
+      <span className="path-desc">Operate wallets from Claude, Cursor, or Codex. No code.</span>
+    </span>
+    <span className="path-arrow">→</span>
+  </a>
+</div>
+<div className="home-start-code">
+
+<div className="home-panel-step">Or pick your tool. One command connects your agent.</div>
 
 :::code-group
 
@@ -71,57 +119,87 @@ https://docs.altana.network/llms-full.txt
 
 :::
 
-<div className="home-hero-foot">
-  <div className="home-demo">
-    <p className="home-section-label">Try it live</p>
-    <p className="demo-desc">Create an agentic wallet and execute a real transaction in your browser. No code required.</p>
-    <a className="home-cta-primary demo-cta" href="/getting-started/create-agentic-wallet#try-it-live">
-      <span className="bolt">⚡</span> Launch the demo
-    </a>
-  </div>
-</div>
 </div>
 </div>
 
-<p className="home-section-label">Choose your path</p>
+<a className="home-demo-banner" href="/getting-started/create-agentic-wallet#try-it-live">
+  <span className="banner-icon"><ZapIcon size={22} /></span>
+  <span className="banner-copy">
+    <span className="banner-title">Try it live</span>
+    <span className="banner-desc">Create an agentic wallet and execute a real transaction in your browser. No code required.</span>
+  </span>
+  <span className="banner-cta">Launch the demo</span>
+</a>
+
+<div className="home-section-label">Explore the docs</div>
 
 <div className="pathway-grid">
   <div className="pathway-card">
-    <div className="pathway-head">
-      <span className="pathway-icon">🤖</span>
-      <span className="pathway-title">Build with AI tools</span>
+    <a className="pathway-head" href="/use-cases">
+      <span className="pathway-icon"><BookIcon /></span>
+      <span className="pathway-title">Guides</span>
+    </a>
+    <div className="pathway-desc">
+      Walkthroughs organized by goal, from a single scoped agent to a
+      portfolio run by multiple agents. Each one ships working code.
     </div>
-    <p className="pathway-desc">
-      Set up the Altana MCP server in Claude, Cursor, or Codex and operate
-      wallets through chat or slash commands. No code required.
-    </p>
     <div className="pathway-links">
-      <a href="/getting-started/build-with-claude">Connect an AI tool <span>→</span></a>
-      <a href="/mcp/install">Install the MCP server <span>→</span></a>
-      <a href="/mcp/tools">MCP tools reference <span>→</span></a>
-      <a href="/mcp/skill">Claude Skill <span>→</span></a>
+      <a href="/use-cases/1-agent-wallet-policy">Private key: agent wallet and policy <span>→</span></a>
+      <a href="/use-cases/1b-passkey-delegates-to-agent">Passkey: agent wallet and policy <span>→</span></a>
+      <a href="/use-cases/2-agent-trades-dex">Let an agent trade on a DEX <span>→</span></a>
+      <a href="/use-cases/3-portfolio-multiple-agents">Run a portfolio with multiple agents <span>→</span></a>
+      <a href="/use-cases/4-verify-agent-authority">Verify agent authority <span>→</span></a>
+      <a href="/use-cases/5-cross-chain-authorization">Authorize across chains <span>→</span></a>
     </div>
   </div>
   <div className="pathway-card">
-    <div className="pathway-head">
-      <span className="pathway-icon">{"</>"}</span>
-      <span className="pathway-title">Integrate the SDK</span>
-    </div>
-    <p className="pathway-desc">
+    <a className="pathway-head" href="/sdk">
+      <span className="pathway-icon"><CodeIcon /></span>
+      <span className="pathway-title">SDK Reference</span>
+    </a>
+    <div className="pathway-desc">
       Programmatic wallet creation, session grants, and onchain execution.
-      TypeScript SDK, BNB by default.
-    </p>
+      TypeScript, BNB Smart Chain by default.
+    </div>
     <div className="pathway-links">
       <a href="/sdk/bnb">Setup on BNB Smart Chain <span>→</span></a>
       <a href="/sdk/create-wallet">createWallet <span>→</span></a>
       <a href="/sdk/grant-session">grantSession <span>→</span></a>
       <a href="/sdk/execute">execute <span>→</span></a>
+      <a href="/concepts/networks">Networks & Addresses <span>→</span></a>
+      <a href="/sdk">All functions <span>→</span></a>
     </div>
   </div>
-</div>
-
-<div className="home-links-row home-links-centered">
-  <a href="/why-altana">Why Altana</a>
-  <a href="/concepts/comparison">How Altana is different</a>
-  <a href="/concepts/keystore">Keystore</a>
+  <div className="pathway-card">
+    <a className="pathway-head" href="/mcp">
+      <span className="pathway-icon"><ServerIcon /></span>
+      <span className="pathway-title">MCP Server</span>
+    </a>
+    <div className="pathway-desc">
+      Wallet tools for Claude, Cursor, and any MCP client. Create wallets,
+      grant sessions, and send transactions from chat.
+    </div>
+    <div className="pathway-links">
+      <a href="/mcp">Overview <span>→</span></a>
+      <a href="/mcp/install">Install <span>→</span></a>
+      <a href="/mcp/tools">Tools reference <span>→</span></a>
+      <a href="/mcp/skill">Claude Skill <span>→</span></a>
+    </div>
+  </div>
+  <div className="pathway-card">
+    <div className="pathway-head">
+      <span className="pathway-icon"><LayersIcon /></span>
+      <span className="pathway-title">Concepts</span>
+    </div>
+    <div className="pathway-desc">
+      The mental model: how the Keystore and sessions fit together, and how
+      Altana compares to custodial platforms.
+    </div>
+    <div className="pathway-links">
+      <a href="/concepts/keystore">Keystore <span>→</span></a>
+      <a href="/concepts/sessions">Sessions <span>→</span></a>
+      <a href="/why-altana">Why Altana <span>→</span></a>
+      <a href="/concepts/comparison">How Altana is different <span>→</span></a>
+    </div>
+  </div>
 </div>

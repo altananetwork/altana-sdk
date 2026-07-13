@@ -84,11 +84,11 @@ export default defineConfig({
   topNav: [
     { text: "Get started", link: "/getting-started/create-agentic-wallet" },
     { text: "Guides", link: "/use-cases" },
-    { text: "SDK", link: "/sdk/bnb" },
+    { text: "SDK", link: "/sdk" },
     { text: "MCP", link: "/mcp" },
   ],
   sidebar: [
-    { text: "Welcome", link: "/" },
+    { text: "Welcome", link: "/", items: [] },
     {
       text: "Get Started",
       items: [
@@ -102,8 +102,8 @@ export default defineConfig({
       text: "Guides",
       items: [
         { text: "Overview", link: "/use-cases" },
-        { text: "Give an agent a wallet and a policy", link: "/use-cases/1-agent-wallet-policy" },
-        { text: "Use a passkey as admin", link: "/use-cases/1b-passkey-delegates-to-agent" },
+        { text: "Private key: agent wallet and policy", link: "/use-cases/1-agent-wallet-policy" },
+        { text: "Passkey: agent wallet and policy", link: "/use-cases/1b-passkey-delegates-to-agent" },
         { text: "Let an agent trade on a DEX", link: "/use-cases/2-agent-trades-dex" },
         { text: "Run a portfolio with multiple agents", link: "/use-cases/3-portfolio-multiple-agents" },
         { text: "Verify agent authority", link: "/use-cases/4-verify-agent-authority" },
@@ -113,6 +113,7 @@ export default defineConfig({
     {
       text: "SDK Reference",
       items: [
+        { text: "Overview", link: "/sdk" },
         { text: "Setup: BNB Smart Chain", link: "/sdk/bnb" },
         {
           text: "Wallets",
@@ -140,6 +141,13 @@ export default defineConfig({
       ],
     },
     {
+      text: "Networks & Addresses",
+      items: [
+        { text: "Mainnet", link: "/concepts/networks" },
+        { text: "Testnet", link: "/concepts/networks/testnet" },
+      ],
+    },
+    {
       text: "MCP Server",
       items: [
         { text: "Overview", link: "/mcp" },
@@ -154,7 +162,6 @@ export default defineConfig({
       items: [
         { text: "Keystore", link: "/concepts/keystore" },
         { text: "Sessions", link: "/concepts/sessions" },
-        { text: "Networks & Addresses", link: "/concepts/networks" },
       ],
     },
     {
