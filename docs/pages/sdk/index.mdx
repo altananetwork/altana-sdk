@@ -1,0 +1,52 @@
+---
+title: SDK Reference
+description: Every function in the Altana TypeScript SDK for creating wallets, granting sessions, and executing onchain.
+---
+
+# SDK Reference
+
+The Altana SDK is a TypeScript library for creating noncustodial agentic wallets, granting scoped sessions, and executing transactions onchain. It runs anywhere JavaScript runs, including servers, browsers, and agent runtimes, with no API key and no hosted backend.
+
+```bash
+npm install @altananetwork/sdk viem
+```
+
+New to the SDK? Start with [Setup: BNB Smart Chain](/sdk/bnb), Altana's default network, then follow [Create an agentic wallet](/getting-started/create-agentic-wallet) for the full walkthrough.
+
+## Wallets
+
+| Function | What it does |
+|---|---|
+| [`createWallet`](/sdk/create-wallet) | Create a wallet from a private key signer and register it in the Keystore. |
+| [`createPasskeyWallet`](/sdk/create-passkey-wallet) | Create a wallet whose admin key is a passkey (Face ID, Touch ID, Windows Hello). |
+| [`recoverFromPasskey`](/sdk/recover-from-passkey) | Reconnect to an existing passkey wallet from a new device or session. |
+
+## Sessions & Execution
+
+| Function | What it does |
+|---|---|
+| [`grantSession`](/sdk/grant-session) | Authorize an agent key with scoped permissions: spend caps, allowed contracts, expiry. |
+| [`execute`](/sdk/execute) | Send calls from the wallet, signed by the admin key or a session key. |
+| [`revokeSession`](/sdk/revoke-session) | Revoke a session key. One transaction; immediate and global. |
+
+## Reads & Chains
+
+| Function | What it does |
+|---|---|
+| [`balances`](/sdk/balances) | Read native and token balances for a wallet. |
+| [`ensureKeyCached`](/sdk/sync-to-l2) | Prove a key from the L1 Keystore into an L2 cache to authorize across chains. |
+
+## Payments & Signing
+
+| Function | What it does |
+|---|---|
+| [`fetchWithX402`](/sdk/x402) | Pay for an HTTP resource from a session key (x402), via Permit2 or EIP-3009. |
+| [`signOrder`](/sdk/sign-order) | Sign an off-chain authorization with a session key (ERC-1271 wrapped signature). |
+| [`approveSignatureChecker`](/sdk/approve-signature-checker) | Authorize which contract may verify a session's signatures on-chain. |
+| [`approveTokenForPermit2`](/sdk/approve-permit2) | One-time ERC-20 approval of Permit2 for the permit2 payment rail. |
+
+## Chain setup
+
+| Page | What it covers |
+|---|---|
+| [Setup: BNB Smart Chain](/sdk/bnb) | Install, `createClient`, and configuration for multiple chains. Deployed contract addresses live in [Networks & Addresses](/concepts/networks). |

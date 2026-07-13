@@ -3,6 +3,8 @@ title: Create an Agentic Wallet
 description: "Create a Altana agentic wallet: a smart account with a global onchain registry of permissions, accessible by any authorized agent."
 ---
 
+import { Eyebrow } from '../../components/Eyebrow'
+
 import { useState, useEffect } from 'react'
 import { PasskeyDemo } from '../../components/PasskeyDemo'
 
@@ -57,7 +59,7 @@ export function WalletTabSwitcher() {
   )
 }
 
-<p style={{ fontSize: '0.8em', color: 'var(--vocs-color_textSecondary)', marginBottom: '0.1rem', fontWeight: 500, letterSpacing: '0.02em' }}>Getting Started</p>
+<Eyebrow>Getting Started</Eyebrow>
 
 # Create an agentic wallet
 
@@ -65,11 +67,20 @@ An agentic wallet gives any authorized agent permissioned access to your onchain
 
 You own the wallet. Agents get scoped, expiring, revocable keys. Every permission is verifiable by anyone, from any chain, with a free read.
 
-:::info[Which admin key type?]
-**Passkey**: biometric (Face ID, Touch ID, Windows Hello).<br/>Runs in the browser using `navigator.credentials` (WebAuthn).<br/>The private key never leaves your device's secure hardware.<br/>Best for user-facing apps where a human holds the keys.
+<p className="admin-key-lead">Which admin key type?</p>
 
-**Private key**: programmatic, server side.<br/>The key lives wherever your code runs: an env var, OS keychain, or encrypted file.<br/>Altana never sees it. No API key, no off-chain service.<br/>Best for autonomous agents and backend scripts.
-:::
+<div className="admin-key-grid">
+  <div className="admin-key-card">
+    <span className="admin-key-name">Passkey</span>
+    <p className="admin-key-best"><strong>Best for</strong> consumer apps where a person approves with Face ID or Touch ID.</p>
+    <p className="admin-key-desc">Biometric authentication run in the browser through WebAuthn. The private key is created inside your device's secure hardware and never leaves it.</p>
+  </div>
+  <div className="admin-key-card">
+    <span className="admin-key-name">Private key</span>
+    <p className="admin-key-best"><strong>Best for</strong> autonomous agents, backend services, and scripts.</p>
+    <p className="admin-key-desc">A key your own code holds, in an env var, OS keychain, or encrypted file. Altana never sees it. No API key and no hosted backend.</p>
+  </div>
+</div>
 
 <WalletTabSwitcher />
 

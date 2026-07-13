@@ -1,22 +1,23 @@
 ---
-draft: true
 title: "Authorize Across Chains"
 description: Grant a session on one chain, mirror it to an L2 cache, and verify or act on it there — no re-granting, no bridge message.
 ---
 
+import { Eyebrow } from '../../components/Eyebrow'
+
 import { UseCaseMeta } from '../../components/UseCaseMeta'
 
-<p style={{ fontSize: '0.8em', color: 'var(--vocs-color_textSecondary)', marginBottom: '0.1rem', fontWeight: 500, letterSpacing: '0.02em' }}>Build with Altana</p>
+<Eyebrow>Build with Altana</Eyebrow>
 
 # Authorize across chains
 
 <UseCaseMeta
   tools={['SDK']}
   rows={[
-  { label: "Goal", value: "I want a session granted on one chain to be verifiable on another without re-granting." },
-  { label: "Who it's for", value: "Advanced. The capstone." },
+  { label: "Goal", value: "I want a session granted on one chain to be verifiable on another without granting it again." },
+  { label: "Who it's for", value: "Developers who grant a session on one chain and need to verify or act on it from another." },
   { label: "What you'll use", value: <><code>grantSession</code> on L1, <code>ensureKeyCached</code> to mirror, then verify from L2.</> },
-  { label: "Prerequisites", value: <><a href="/use-cases/1-agent-wallet-policy">Use Case 1</a> wallet with an active session.</> },
+  { label: "Prerequisites", value: <>A wallet with an active agent session, granted in <a href="/use-cases/1-agent-wallet-policy">Give an agent a wallet and a policy</a>.</> },
 ]} />
 
 ## How it works
@@ -32,7 +33,11 @@ Sessions are granted on L1 (Ethereum, the Keystore source of truth). An L2 cache
 
 After step 4, any tool on Base can call `isValidKey` on the cache, for free, from any RPC.
 
-## Walkthrough
+The three steps below follow the flow above: grant on L1, mirror to the L2 cache, then verify on L2.
+
+## Step 1: Grant the session on Ethereum (L1)
+
+Sessions are granted on L1, the Keystore source of truth. This is the same `grantSession` you have already used, pointed at Ethereum.
 
 ```ts
 import {
@@ -60,7 +65,13 @@ const session = await client.grantSession({
   },
   expiry: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
 });
+```
 
+## Step 2: Mirror the session to the Base L2 cache
+
+`ensureKeyCached` proves the L1 authorization into an L2 cache. It waits for Base to anchor past the L1 block, submits the storage proof, and returns once the key is live. Any funded account can pay the L2 gas.
+
+```ts
 // 2. Mirror the session key to the Base L2 cache.
 const l1Client = createPublicClient({ chain: mainnet, transport: http(ETHEREUM.publicRpcUrl) });
 const l2Client = createPublicClient({ chain: base, transport: http(BASE.publicRpcUrl) });
@@ -83,7 +94,13 @@ await ensureKeyCached({
   publicKey: session.publicKey,
   onStatus: (s) => console.log(s), // cache-hit | waiting-for-anchor | submitting-proof | done
 });
+```
 
+## Step 3: Verify the session from Base
+
+Once cached, any tool on Base can confirm the session with a single free read, with no L1 round trip.
+
+```ts
 // 3. Verify the session from Base — free, from any RPC.
 const { keccak256 } = await import("viem");
 
@@ -117,4 +134,4 @@ Authorization crosses chains by storage proof, permissionlessly, with no bridge 
 
 ## What's next
 
-[Use Cases overview](/use-cases): see the full map of what you can build with Altana.
+[Browse all guides](/use-cases): see the full map of what you can build with Altana.

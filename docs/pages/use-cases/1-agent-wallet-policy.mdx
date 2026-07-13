@@ -1,7 +1,9 @@
 ---
-title: "Give an Agent a Wallet and a Policy"
+title: "Private Key: Give an Agent a Wallet and a Policy"
 description: Create a wallet and hand an AI agent a capped, expiring, revocable key. The hello-world every other use case builds on.
 ---
+
+import { Eyebrow } from '../../components/Eyebrow'
 
 import { useState } from 'react'
 import { UseCaseMeta } from '../../components/UseCaseMeta'
@@ -39,9 +41,9 @@ export function CopyAddr({ address }) {
   )
 }
 
-<p style={{ fontSize: '0.8em', color: 'var(--vocs-color_textSecondary)', marginBottom: '0.1rem', fontWeight: 500, letterSpacing: '0.02em' }}>Build with Altana</p>
+<Eyebrow>Build with Altana</Eyebrow>
 
-# Give an agent a wallet and a policy
+# Private key: give an agent a wallet and a policy
 
 <UseCaseMeta
   tools={['SDK', 'MCP']}
@@ -92,7 +94,7 @@ const session = await client.grantSession({
 
 <div style={{background:'rgba(217,119,6,0.07)',borderLeft:'3px solid rgba(217,119,6,0.6)',borderRadius:'4px',padding:'0.75rem 1rem',margin:'1rem 0',fontSize:'0.9rem',lineHeight:1.7}}>
   <span style={{color:'#d97706',fontWeight:600}}>Replace <code style={{color:'#d97706'}}>0xYourContract</code> with your contract address.</span><br/>
-  To test on BNB, try WBNB: <CopyAddr address="0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c" /> · <a href="/use-cases/2-agent-trades-dex" style={{color:'var(--vocs-color_link)'}}>Use Case 2</a> for DEX trading.
+  To test on BNB, try WBNB: <CopyAddr address="0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c" /> · see <a href="/use-cases/2-agent-trades-dex" style={{color:'var(--vocs-color_link)'}}>Let an agent trade on a DEX</a>.
 </div>
 
 Pass `session` to your agent process. It holds the session key; treat it like a private key.
@@ -124,5 +126,5 @@ The policy is onchain. Any tool, block explorer, or smart contract can verify wh
 
 ---
 
-- [Use Case 1b](/use-cases/1b-passkey-delegates-to-agent): the human side: a passkey wallet that delegates to an agent.
-- [Use Case 2](/use-cases/2-agent-trades-dex): point this session at a real DEX.
+- [Use a passkey as admin](/use-cases/1b-passkey-delegates-to-agent): the human side, a passkey wallet that delegates to an agent.
+- [Let an agent trade on a DEX](/use-cases/2-agent-trades-dex): point this session at a real DEX.

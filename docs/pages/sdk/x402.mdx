@@ -1,0 +1,92 @@
+---
+title: x402 payments
+description: Pay for HTTP resources from a session key — fetchWithX402 signs an x402 payment authorization (Permit2 or EIP-3009) and retries.
+---
+
+import { Eyebrow } from '../../components/Eyebrow'
+
+<Eyebrow>SDK</Eyebrow>
+
+# x402 payments
+
+`x402` is an HTTP 402 flow: a server answers `402` with payment requirements, the client signs an authorization, base64-encodes it into an `X-PAYMENT` header, and retries. A facilitator settles the authorization on-chain. `fetchWithX402` does this transparently from a session key — the agent just calls a URL.
+
+Both supported rails verify the session key on-chain via [ERC-1271](/concepts/off-chain-signatures):
+
+- **permit2-exact** (the reliable rail — any token approved to Permit2). Includes Binance **B402**, which binds the recipient with a Permit2 *witness* (`permitWitnessTransferFrom`). Checker = Permit2.
+- **exact / EIP-3009** (the standard x402 wire). Only works for tokens whose EIP-3009 is ERC-1271-aware (Circle FiatTokenV2_2, e.g. Base/Ethereum USDC). Checker = the token.
+
+## Pay for a resource
+
+```ts
+import { createClient, BNB } from "@altananetwork/sdk";
+
+const client = createClient({ chains: [BNB] });
+// `session` from grantSession; the wallet must have approved Permit2 + the checker (below).
+
+const res = await client.fetchWithX402({
+  session,
+  url: "https://api.example.com/paid-endpoint",
+  // chainId defaults to the client's default chain; override to target another.
+});
+
+console.log(res.status, await res.text()); // 200 + paid content
+```
+
+## One-time provisioning
+
+Before the first payment, the wallet's admin sets up the rail:
+
+```ts
+import { PERMIT2_ADDRESS } from "@altananetwork/sdk";
+
+// permit2-exact rail:
+await client.approveTokenForPermit2({ wallet, signer: admin, token: USDC });      // ERC20 approve(Permit2)
+await client.approveSignatureChecker({ wallet, signer: admin, session, checker: PERMIT2_ADDRESS });
+
+// EIP-3009 rail (checker = the token itself):
+await client.approveSignatureChecker({ wallet, signer: admin, session, checker: USDC });
+```
+
+See [approveTokenForPermit2](/sdk/approve-permit2) and [approveSignatureChecker](/sdk/approve-signature-checker).
+
+## Parameters
+
+```ts
+client.fetchWithX402(opts: ClientFetchWithX402Options): Promise<Response>;
+
+type ClientFetchWithX402Options = {
+  session: Session;
+  url: string;
+  init?: RequestInit;
+  /** Only pay options on this chain when any match. Defaults to the client's chain. */
+  chainId?: number;
+  /** Preferred rail when a chain offers several. Defaults to "permit2". */
+  preferRail?: "permit2" | "eip3009";
+};
+```
+
+Non-402 responses pass through untouched; a 402 is parsed, the best payable option is selected (preferring the requested chain, then the permit2 rail), signed, and retried.
+
+## Lower-level helpers
+
+For servers/facilitators or custom flows, the standalone functions are also exported:
+
+```ts
+import {
+  fetchWithX402,          // fetchWithX402(session, url, init?, { chainId, preferRail })
+  selectX402Requirement,  // choose an option from a 402 `accepts[]`
+  signX402Payment,        // sign one requirement → { header, payload }
+  buildPermit2TypedData,        // plain PermitTransferFrom
+  buildPermit2WitnessTypedData, // permit2-exact PermitWitnessTransferFrom (B402)
+  buildEip3009TypedData,        // TransferWithAuthorization
+  encodeXPaymentHeader,
+  networkToChainId,             // CAIP-2 "eip155:56" → 56
+  PERMIT2_ADDRESS,
+} from "@altananetwork/sdk";
+```
+
+## Notes
+
+- **Browser limitation.** Third-party x402 endpoints often omit `X-PAYMENT` from CORS `Access-Control-Allow-Headers`, so a browser can't POST the payment. Run `fetchWithX402` server-side.
+- The signature is a 98-byte ERC-1271 envelope, not an EOA signature — see [Off-chain signatures](/concepts/off-chain-signatures). A facilitator must verify via `isValidSignature`.
