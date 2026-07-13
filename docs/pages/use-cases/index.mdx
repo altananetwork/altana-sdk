@@ -9,8 +9,8 @@ The at-a-glance map. Find your goal, then follow the path.
 
 | Goal | SDK functions | MCP commands | Chain |
 |---|---|---|---|
-| [Give an agent a wallet and a policy](/use-cases/1-agent-wallet-policy) | `createWallet`, `grantSession`, `execute`, `revokeSession` | create-wallet, grant-session, send-tx, revoke-session | BNB |
-| [Passkey wallet delegates to an agent](/use-cases/1b-passkey-delegates-to-agent) | `createPasskeyWallet`, `grantSession`, `recoverFromPasskey` | (browser SDK) | BNB |
+| [Private key: give an agent a wallet and a policy](/use-cases/1-agent-wallet-policy) | `createWallet`, `grantSession`, `execute`, `revokeSession` | create-wallet, grant-session, send-tx, revoke-session | BNB |
+| [Passkey: give an agent a wallet and a policy](/use-cases/1b-passkey-delegates-to-agent) | `createPasskeyWallet`, `grantSession`, `recoverFromPasskey` | (browser SDK) | BNB |
 | [Agent trades on DEX, capped](/use-cases/2-agent-trades-dex) | `grantSession` (scoped), `execute` | grant-session, session-execute | BNB |
 | [Portfolio with multiple agents](/use-cases/3-portfolio-multiple-agents) | `grantSession` (×2), `execute`, Keystore read, `revokeSession` | grant-session, session-execute, verify-session, revoke-session | BNB |
 | [Verify agent authority from anywhere](/use-cases/4-verify-agent-authority) | Keystore read (`getActiveKeys` + `keccak256`) | verify-session | any |

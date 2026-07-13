@@ -1,7 +1,9 @@
 ---
-title: "Give an Agent a Wallet and a Policy"
+title: "Private Key: Give an Agent a Wallet and a Policy"
 description: Create a wallet and hand an AI agent a capped, expiring, revocable key. The hello-world every other use case builds on.
 ---
+
+import { Eyebrow } from '../../components/Eyebrow'
 
 import { useState } from 'react'
 import { UseCaseMeta } from '../../components/UseCaseMeta'
@@ -39,9 +41,9 @@ export function CopyAddr({ address }) {
   )
 }
 
-<p style={{ fontSize: '0.8em', color: 'var(--vocs-color_textSecondary)', marginBottom: '0.1rem', fontWeight: 500, letterSpacing: '0.02em' }}>Build with Altana</p>
+<Eyebrow>Build with Altana</Eyebrow>
 
-# Give an agent a wallet and a policy
+# Private key: give an agent a wallet and a policy
 
 <UseCaseMeta
   tools={['SDK', 'MCP']}
