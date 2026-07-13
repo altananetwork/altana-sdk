@@ -10,7 +10,7 @@
  *      path
  *   5. Passkey revokes the session
  *
- * Sepolia testnet. No deployer key in the browser — funding is the user's
+ * BNB Smart Chain. No deployer key in the browser — funding is the user's
  * responsibility (any wallet works).
  */
 
@@ -25,9 +25,14 @@ import {
 } from "@altananetwork/sdk";
 import { createPublicClient, formatEther, http, parseEther, type Address, type Hex } from "viem";
 
-// One client, configured for BNB testnet. Add more chains here to make the
-// same wallet usable across them.
+// One client, configured for BNB Smart Chain. Add more chains here to make
+// the same wallet usable across them.
 const client = createClient({ chains: [BNB] });
+
+// Populate the header network badge from the SDK's chain config so the demo
+// always states which chain it's actually talking to.
+setText("network-name", BNB.chain.name);
+setText("network-id", String(BNB.chainId));
 
 // ---------- helpers ---------------------------------------------------------
 
@@ -43,10 +48,10 @@ function log(msg: string, cls?: "ok" | "err") {
 }
 
 function explorerTx(hash: string) {
-  return `https://testnet.bscscan.com/tx/${hash}`;
+  return `${BNB.explorer}/tx/${hash}`;
 }
 function explorerAddr(addr: string) {
-  return `https://testnet.bscscan.com/address/${addr}`;
+  return `${BNB.explorer}/address/${addr}`;
 }
 
 function setText(id: string, html: string) {
@@ -224,7 +229,7 @@ function rehydrate() {
 async function refreshBalance() {
   if (!walletState) return;
   const bal = await publicClient.getBalance({ address: walletState.address });
-  setText("wallet-balance", `${formatEther(bal)} ETH`);
+  setText("wallet-balance", `${formatEther(bal)} BNB`);
 }
 
 document.getElementById("btn-refresh")!.addEventListener("click", refreshBalance);
@@ -336,7 +341,7 @@ document.getElementById("btn-grant")!.addEventListener("click", async () => {
 
     log(
       `Granting session: send to ${recipientForSession.slice(0, 10)}…, ` +
-        `${capInput} ETH/day cap, ${lifetimeLabel(lifetimeSec)} lifetime. Passkey will prompt…`,
+        `${capInput} BNB/day cap, ${lifetimeLabel(lifetimeSec)} lifetime. Passkey will prompt…`,
     );
 
     sessionState = await client.grantSession({
@@ -350,7 +355,7 @@ document.getElementById("btn-grant")!.addEventListener("click", async () => {
         // call to this address is allowed. The smart-account contract
         // rejects anything outside this list at validation time.
         calls: [{ to: recipientForSession }],
-        // Rolling-window spend cap on the native token (ETH).
+        // Rolling-window spend cap on the native token (BNB).
         spend: [{ limit: dailyCapWei, period: "day" }],
       },
       expiry: Math.floor(Date.now() / 1000) + lifetimeSec,

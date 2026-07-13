@@ -7,6 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "b402": "bun b402-server.ts",
+    "pay-real-b402": "bun pay-real-b402.ts",
+    "settle-real-b402": "bun settle-real-b402.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

@@ -4,13 +4,25 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Altana — Passkey Wallet Demo</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
     <main>
       <header class="page-header">
         <img src="/altana-logo.svg" alt="Altana" class="logo" />
-        <div class="badge">@altana/wallet · SDK reference demo</div>
+        <div class="header-tags">
+          <div class="badge">@altana/wallet · SDK reference demo</div>
+          <div class="network-badge">
+            <span class="net-dot"></span>
+            <span id="network-name">BNB Smart Chain</span> · <span id="network-id">56</span>
+          </div>
+        </div>
         <h1>Generate passkey wallets connected to the KeyStore</h1>
         <p class="sub">
           A TypeScript SDK for passkey-secured smart-account wallets.
@@ -105,12 +117,13 @@
         <div class="step-head">
           <span class="step-num">2</span>
           <h2>Fund</h2>
-          <code class="sdk-tag">(off-SDK · any wallet sends ETH)</code>
+          <code class="sdk-tag">(off-SDK · any wallet sends BNB)</code>
         </div>
         <p>
-          Send any small amount (≥ 0.003 ETH) to the wallet address above
-          from anywhere — MetaMask, a Sepolia faucet, anything. Click
-          "refresh" until the balance appears.
+          Send any small amount (≥ 0.003 BNB) to the wallet address above
+          from anywhere on <strong>BNB Smart Chain</strong> — MetaMask, an
+          exchange withdrawal, anything. Click "refresh" until the balance
+          appears.
         </p>
       </section>
 
@@ -133,7 +146,7 @@
         </label>
 
         <label>
-          Daily spend cap (ETH)
+          Daily spend cap (BNB)
           <input id="spend-cap" type="text" value="0.01" />
         </label>
 
@@ -149,8 +162,8 @@
         <div class="permission-summary" id="perm-summary">
           <div class="ps-label">This session will be allowed to:</div>
           <ul>
-            <li>Send ETH <strong>only to</strong> <code id="ps-recipient">(set recipient)</code></li>
-            <li>Spend at most <strong><span id="ps-cap">0.01</span> ETH</strong> per rolling 24h window</li>
+            <li>Send BNB <strong>only to</strong> <code id="ps-recipient">(set recipient)</code></li>
+            <li>Spend at most <strong><span id="ps-cap">0.01</span> BNB</strong> per rolling 24h window</li>
             <li>Expire after <strong><span id="ps-lifetime">1 hour</span></strong></li>
           </ul>
           <div class="ps-foot">
@@ -210,15 +223,21 @@
           The session key signs an x402 payment authorization (Permit2) —
           entirely off-chain, no biometric. This is how an agent pays for an
           HTTP resource. "Build payment" shows the exact X-PAYMENT the agent
-          would send; "Pay &amp; fetch" calls a live B402 URL if you have one.
+          would send; "Pay &amp; fetch" runs the full 402 → sign → retry loop
+          against a live B402 URL.
         </p>
         <button id="btn-x402-build">Build x402 payment (session signs)</button>
         <div class="kv" id="x402-info" hidden>
           <div><span>X-PAYMENT</span><code id="x402-header"></code></div>
         </div>
         <pre id="x402-payload" hidden></pre>
+        <p class="hint">
+          No B402 service handy? Run the bundled mock —
+          <code>bun run b402</code> in <code>apps/passkey-demo</code> — then
+          "Pay &amp; fetch" the pre-filled URL below.
+        </p>
         <div class="row">
-          <input id="x402-url" type="text" placeholder="https://your-b402-service/premium" />
+          <input id="x402-url" type="text" value="http://localhost:8788/premium" placeholder="https://your-b402-service/premium" />
           <button id="btn-x402-fetch" class="secondary">Pay &amp; fetch</button>
         </div>
         <div class="kv" id="x402-fetch-info" hidden>

@@ -56,6 +56,7 @@ export {
 // x402 payments (Permit2 + EIP-3009).
 export {
   fetchWithX402,
+  selectX402Requirement,
   signX402Payment,
   buildPermit2TypedData,
   buildEip3009TypedData,
@@ -67,6 +68,7 @@ export type {
   X402Requirement,
   X402PaymentPayload,
   SignX402Options,
+  FetchWithX402Options,
   Permit2PaymentInput,
   Eip3009PaymentInput,
 } from "./x402.js";
