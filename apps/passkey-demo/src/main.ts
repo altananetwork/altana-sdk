@@ -18,6 +18,8 @@ import {
   createClient,
   signerFromPasskey,
   createPrivateKeySigner,
+  signX402Payment,
+  fetchWithX402,
   BNB,
   type PasskeyCredential,
 } from "@altananetwork/sdk";
@@ -361,6 +363,7 @@ document.getElementById("btn-grant")!.addEventListener("click", async () => {
     setText("grant-tx", "(see logs)");
     show("session-info");
     show("step-4");
+    show("step-x402");
 
     // Surface the auto-prepended KeyStore registration that landed in this
     // same tx. This is what `recoverFromPasskey()` reads — making it visible
@@ -408,6 +411,65 @@ document.getElementById("btn-execute")!.addEventListener("click", async () => {
     log(`Execute failed: ${err instanceof Error ? err.message : err}`, "err");
   } finally {
     setDisabled("btn-execute", false);
+  }
+});
+
+// ---------- step 4b: x402 payment ------------------------------------------
+
+// A sample B402 payment requirement (what a merchant's 402 response carries).
+// Permit2 scheme on BNB, 0.5 USDT, placeholder merchant + facilitator.
+const SAMPLE_X402_REQUIREMENT = {
+  scheme: "permit2",
+  network: "bsc",
+  asset: "0x55d398326f99059fF775485246999027B3197955" as Address, // BSC-USDT
+  maxAmountRequired: "500000000000000000", // 0.5 USDT (18 dec)
+  payTo: "0x000000000000000000000000000000000000dEaD" as Address,
+  maxTimeoutSeconds: 600,
+  extra: { spender: "0x0000000000000000000000000000000000000001" as Address },
+};
+
+document.getElementById("btn-x402-build")!.addEventListener("click", async () => {
+  if (!sessionState) return;
+  setDisabled("btn-x402-build", true);
+  try {
+    log("Session signing an x402 Permit2 payment (off-chain, no biometric)…");
+    const { header, payload } = await signX402Payment(
+      sessionState,
+      SAMPLE_X402_REQUIREMENT,
+    );
+    setText("x402-header", `${header.slice(0, 44)}…`);
+    show("x402-info");
+    const payloadEl = document.getElementById("x402-payload") as HTMLPreElement;
+    payloadEl.textContent = JSON.stringify(payload, null, 2);
+    payloadEl.hidden = false;
+    log("x402 payment built — the agent would send this as the X-PAYMENT header.", "ok");
+  } catch (err) {
+    log(`x402 build failed: ${err instanceof Error ? err.message : err}`, "err");
+  } finally {
+    setDisabled("btn-x402-build", false);
+  }
+});
+
+document.getElementById("btn-x402-fetch")!.addEventListener("click", async () => {
+  if (!sessionState) return;
+  const url = (document.getElementById("x402-url") as HTMLInputElement).value.trim();
+  if (!url) {
+    log("Enter a B402 service URL first.", "err");
+    return;
+  }
+  setDisabled("btn-x402-fetch", true);
+  try {
+    log(`fetchWithX402 → ${url} (pays a 402 challenge with the session key)…`);
+    const res = await fetchWithX402(sessionState, url);
+    const body = await res.text();
+    setText("x402-status", String(res.status));
+    setText("x402-body", body.slice(0, 300));
+    show("x402-fetch-info");
+    log(`x402 fetch complete: HTTP ${res.status}`, res.ok ? "ok" : "err");
+  } catch (err) {
+    log(`x402 fetch failed: ${err instanceof Error ? err.message : err}`, "err");
+  } finally {
+    setDisabled("btn-x402-fetch", false);
   }
 });
 

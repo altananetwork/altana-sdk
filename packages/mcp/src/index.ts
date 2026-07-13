@@ -24,6 +24,7 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import {
   createClient,
   signerFromPrivateKey,
+  fetchWithX402,
   ETHEREUM,
   BNB,
 } from "@altananetwork/sdk";
@@ -804,6 +805,94 @@ tool(
               status: result.status,
               transactionHash: result.transactionHash,
               callsId: result.callsId,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
+  },
+);
+
+// x402_request — the agent pays for an HTTP resource. Fetches `url`; if the
+// server answers 402, signs an x402 payment (Permit2 or EIP-3009) with the
+// session key and retries with the X-PAYMENT header. The wallet must already
+// have the payment token approved to Permit2 (for the permit2 scheme) and the
+// verifying contract approved as a signature checker for the session.
+tool(
+  "x402_request",
+  {
+    title: "Pay for an HTTP resource (x402)",
+    description:
+      "Fetch an HTTP URL, transparently paying an x402/B402 payment challenge " +
+      "with a session key. On a 402 response the agent signs the payment " +
+      "(Permit2 or EIP-3009) and retries. Requires the wallet to have approved " +
+      "the payment token to Permit2 and approved the verifying contract as a " +
+      "signature checker for this session.",
+    inputSchema: {
+      sessionName: z.string(),
+      url: z.string(),
+      method: z.string().optional(),
+      body: z.string().optional(),
+    },
+  },
+  async ({
+    sessionName,
+    url,
+    method,
+    body,
+  }: {
+    sessionName: string;
+    url: string;
+    method?: string;
+    body?: string;
+  }) => {
+    const stored = await getSession(sessionName);
+    const key = await getSessionKey(sessionName);
+    const sessionSigner = signerFromPrivateKey(key.privateKey);
+
+    // Rebuild the Session shape from persisted metadata (same as
+    // session_execute): permissions + expiry must match the on-chain grant.
+    const permissionsRuntime = {
+      calls: stored.permissions.calls,
+      spend: stored.permissions.spend?.map((s) => ({
+        limit: BigInt(s.limit),
+        period: s.period,
+        ...(s.token ? { token: s.token } : {}),
+      })),
+    };
+    const session = {
+      walletAddress: stored.walletAddress,
+      signer: sessionSigner,
+      publicKey: stored.publicKey,
+      permissions: permissionsRuntime as any,
+      expiry: stored.expiry,
+    } as any;
+
+    const init: RequestInit = {};
+    if (method) init.method = method;
+    if (body !== undefined) {
+      init.body = body;
+      init.method = method ?? "POST";
+      init.headers = { "content-type": "application/json" };
+    }
+
+    const res = await fetchWithX402(session, url, init);
+    const text = await res.text();
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              sessionName,
+              walletAddress: stored.walletAddress,
+              url,
+              status: res.status,
+              paid: res.status !== 402,
+              body: text.slice(0, 4000),
             },
             null,
             2,

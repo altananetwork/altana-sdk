@@ -200,6 +200,33 @@
         </div>
       </section>
 
+      <section class="step" id="step-x402" hidden>
+        <div class="step-head">
+          <span class="step-num">4b</span>
+          <h2>Pay a B402 service (x402)</h2>
+          <code class="sdk-tag">fetchWithX402(session, url)</code>
+        </div>
+        <p>
+          The session key signs an x402 payment authorization (Permit2) —
+          entirely off-chain, no biometric. This is how an agent pays for an
+          HTTP resource. "Build payment" shows the exact X-PAYMENT the agent
+          would send; "Pay &amp; fetch" calls a live B402 URL if you have one.
+        </p>
+        <button id="btn-x402-build">Build x402 payment (session signs)</button>
+        <div class="kv" id="x402-info" hidden>
+          <div><span>X-PAYMENT</span><code id="x402-header"></code></div>
+        </div>
+        <pre id="x402-payload" hidden></pre>
+        <div class="row">
+          <input id="x402-url" type="text" placeholder="https://your-b402-service/premium" />
+          <button id="btn-x402-fetch" class="secondary">Pay &amp; fetch</button>
+        </div>
+        <div class="kv" id="x402-fetch-info" hidden>
+          <div><span>HTTP status</span><code id="x402-status"></code></div>
+          <div><span>Body</span><code id="x402-body"></code></div>
+        </div>
+      </section>
+
       <section class="step" id="step-5" hidden>
         <div class="step-head">
           <span class="step-num">5</span>
