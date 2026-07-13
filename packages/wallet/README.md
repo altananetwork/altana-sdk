@@ -55,6 +55,25 @@ await client.execute({
 });
 ```
 
+### Pay for an API with x402
+
+A session key can pay for HTTP resources via the x402 standard (Permit2 or EIP-3009
+rails), settled on-chain from the smart wallet. Provision once, then pay transparently:
+
+```ts
+import { PERMIT2_ADDRESS } from "@altananetwork/sdk";
+
+// One-time, as admin (permit2 rail):
+await client.approveTokenForPermit2({ wallet, signer, token: "0xUSDC…" });
+await client.approveSignatureChecker({ wallet, signer, session, checker: PERMIT2_ADDRESS });
+
+// The agent pays + fetches (server-side):
+const res = await client.fetchWithX402({ session, url: "https://api.example.com/paid" });
+```
+
+Payments are authorized with the account's ERC-1271 signature — see
+[Off-chain signatures](https://docs.altana.network/concepts/off-chain-signatures).
+
 ## Documentation
 
 Full docs, concept guides, and SDK reference: [**docs.altana.network**](https://docs.altana.network).

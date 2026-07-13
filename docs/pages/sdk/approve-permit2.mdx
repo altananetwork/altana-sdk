@@ -1,0 +1,48 @@
+---
+title: approveTokenForPermit2
+description: One-time ERC-20 approval of the canonical Permit2, required before paying with the permit2 x402 rail.
+---
+
+import { Eyebrow } from '../../components/Eyebrow'
+
+<Eyebrow>SDK</Eyebrow>
+
+# approveTokenForPermit2
+
+The permit2 [x402](/sdk/x402) rail moves tokens through the canonical Permit2 contract, which must hold an ERC-20 allowance from the wallet. This sets that allowance once (default: max).
+
+```ts
+import { createClient, BNB } from "@altananetwork/sdk";
+
+const client = createClient({ chains: [BNB] });
+
+await client.approveTokenForPermit2({
+  wallet,
+  signer: admin,     // the wallet's admin
+  token: USDC,       // the token you'll pay with
+  // amount defaults to max uint256; pass a value to cap it.
+});
+```
+
+## Parameters
+
+```ts
+client.approveTokenForPermit2(opts: ClientApproveTokenForPermit2Options): Promise<ExecuteResult>;
+
+type ClientApproveTokenForPermit2Options = {
+  wallet: Wallet;
+  signer: Signer;      // the wallet's admin signer
+  token: Address;
+  amount?: bigint;     // default: max uint256
+  feeToken?: Address;  // default: native token
+  chainId?: number;    // default: the client's default chain
+};
+```
+
+The Permit2 address (identical on every chain) is exported as `PERMIT2_ADDRESS`.
+
+## Notes
+
+- One approval per token covers unlimited future permit2 payments.
+- This is only for the **permit2** rail. The EIP-3009 rail needs no Permit2 approval — only an [approveSignatureChecker](/sdk/approve-signature-checker) on the token.
+- Pair it with `approveSignatureChecker({ checker: PERMIT2_ADDRESS })` to complete permit2 provisioning.

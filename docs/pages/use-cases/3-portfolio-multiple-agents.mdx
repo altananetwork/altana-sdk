@@ -1,12 +1,13 @@
 ---
-draft: true
 title: "Run a Portfolio with Multiple Agents"
 description: Several agents on one wallet, each with its own scope and cap, all independently revocable.
 ---
 
+import { Eyebrow } from '../../components/Eyebrow'
+
 import { UseCaseMeta } from '../../components/UseCaseMeta'
 
-<p style={{ fontSize: '0.8em', color: 'var(--vocs-color_textSecondary)', marginBottom: '0.1rem', fontWeight: 500, letterSpacing: '0.02em' }}>Build with Altana</p>
+<Eyebrow>Build with Altana</Eyebrow>
 
 # Run a portfolio with multiple agents
 
@@ -14,12 +15,16 @@ import { UseCaseMeta } from '../../components/UseCaseMeta'
   tools={['SDK', 'MCP']}
   rows={[
   { label: "Goal", value: "I want a portfolio wallet run by more than one agent, each with its own job, all transparent and revocable." },
-  { label: "Who it's for", value: "Anyone building multi-agent systems. Flagship differentiator." },
+  { label: "Who it's for", value: "Developers running several agents on one wallet, each with a different job and its own limits." },
   { label: "What you'll use", value: <><code>grantSession</code> twice with complementary scopes, <code>execute</code>, the Keystore read for mutual verification, <code>revokeSession</code>.</> },
-  { label: "Prerequisites", value: <><a href="/use-cases/1-agent-wallet-policy">Use Case 1</a> wallet, funded on BNB.</> },
+  { label: "Prerequisites", value: <>An agentic wallet set up in <a href="/use-cases/1-agent-wallet-policy">Give an agent a wallet and a policy</a>, funded on BNB.</> },
 ]} />
 
-## Walkthrough
+Two agents share one wallet, each with its own scoped session. You grant them separately, they can verify each other, and you can revoke either one without touching the other.
+
+## Step 1: Connect as the wallet admin
+
+One shared wallet, and you hold the admin key.<br />Each agent will get its own session with a separate job.
 
 ```ts
 import {
@@ -32,7 +37,13 @@ const client = createClient({ chains: [BNB] });
 const signer = signerFromPrivateKey(process.env.PRIVATE_KEY as `0x${string}`);
 
 // One shared wallet, the operator is admin. Two agents, separated duties.
+```
 
+## Step 2: Grant Agent A a session for swaps
+
+Agent A can reach only the PancakeSwap router, capped at X per day.<br />It cannot touch anything else on the wallet.
+
+```ts
 // Agent A: swaps on PancakeSwap, cap X.
 const sessionA = await client.grantSession({
   wallet,
@@ -43,7 +54,13 @@ const sessionA = await client.grantSession({
   },
   expiry,
 });
+```
 
+## Step 3: Grant Agent B a session for lending
+
+Agent B gets a separate key scoped to the lending pool, capped at Y.<br />The two agents' scopes never overlap.
+
+```ts
 // Agent B: lending / rebalance, cap Y.
 const sessionB = await client.grantSession({
   wallet,
@@ -54,9 +71,15 @@ const sessionB = await client.grantSession({
   },
   expiry,
 });
+```
 
+## Step 4: Verify and revoke independently
+
+Each agent can confirm the other is still authorized with a free Keystore read.<br />When you revoke one agent's key, the other keeps working.
+
+```ts
 // Before coordinating, Agent B can verify Agent A is still authorized
-// using the Keystore read from Use Case 4.
+// using the Keystore read from the "Verify agent authority" guide.
 
 // Revoke Agent A without touching Agent B:
 await client.revokeSession({ wallet, signer, session: sessionA });
@@ -69,4 +92,4 @@ Multiple agents on one wallet with divided, independently verifiable, independen
 
 ## What's next
 
-- [Use Case 4](/use-cases/4-verify-agent-authority): verify each agent's authority with a single onchain read.
+- [Verify agent authority](/use-cases/4-verify-agent-authority): confirm each agent's authority with a single onchain read.

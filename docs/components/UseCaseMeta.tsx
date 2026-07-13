@@ -10,21 +10,22 @@ const defaultToolLinks: Record<Tool, string> = {
   'AI Chat': '/getting-started/build-with-claude',
 }
 
+// Brand palette: SDK = Altana Blue, MCP = Ember Orange, AI Chat = Signal Yellow.
 const toolStyles: Record<Tool, { background: string; color: string; border: string }> = {
   SDK: {
-    background: 'rgba(59, 130, 246, 0.10)',
-    color: '#3b82f6',
-    border: '1px solid rgba(59, 130, 246, 0.25)',
+    background: 'rgba(54, 101, 228, 0.10)',
+    color: '#3665e4',
+    border: '1px solid rgba(54, 101, 228, 0.25)',
   },
   MCP: {
-    background: 'rgba(139, 92, 246, 0.10)',
-    color: '#8b5cf6',
-    border: '1px solid rgba(139, 92, 246, 0.25)',
+    background: 'rgba(226, 98, 46, 0.10)',
+    color: '#e2622e',
+    border: '1px solid rgba(226, 98, 46, 0.25)',
   },
   'AI Chat': {
-    background: 'rgba(34, 197, 94, 0.10)',
-    color: '#22c55e',
-    border: '1px solid rgba(34, 197, 94, 0.25)',
+    background: 'rgba(242, 203, 69, 0.14)',
+    color: '#b8860b',
+    border: '1px solid rgba(242, 203, 69, 0.45)',
   },
 }
 

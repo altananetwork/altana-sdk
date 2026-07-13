@@ -1,0 +1,45 @@
+---
+title: Off-chain signatures (ERC-1271)
+description: How an Altana session key signs off-chain authorizations that verify on-chain — the nested EIP-712 digest and the signature-checker gate.
+---
+
+import { Eyebrow } from '../../components/Eyebrow'
+
+<Eyebrow>Concepts</Eyebrow>
+
+# Off-chain signatures (ERC-1271)
+
+Most agent actions are live transactions. But some protocols — **x402 HTTP payments**, Permit2, EIP-3009, intent DEXes (CoW, 1inch, Seaport) — need an **off-chain signed authorization** that a third party submits later. An Altana wallet is a smart account, so it can't produce a plain EOA signature; it authorizes via **ERC-1271** `isValidSignature`, and a session key can drive that. Two things make it work.
+
+## 1. The nested digest
+
+An Altana account does **not** verify a signature against the raw application digest (the Permit2 / EIP-3009 / order digest). It re-wraps that digest in a nested EIP-712 envelope keyed to the account address, and verifies the signature against the **wrapped** digest:
+
+```
+nested = keccak256(0x1901 ‖ domainSeparator ‖ structHash)
+  domainSeparator = keccak256(abi.encode(
+                      keccak256("EIP712Domain(address verifyingContract)"), wallet))
+  structHash      = keccak256(abi.encode(
+                      keccak256("ERC1271Sign(bytes32 digest)"), appDigest))
+```
+
+The account's EIP-712 domain is intentionally **stripped to `verifyingContract` only** (no name/version/chainId). The wrapped signature is the account envelope `innerSig ‖ keyHash ‖ prehash` (98 bytes for a secp256k1 session key), **not** a bare 65-byte ECDSA signature — so a verifier must call `isValidSignature`, never `ecrecover`.
+
+The SDK does all of this for you: [`signOrder` / `signOrderTypedData`](/sdk/sign-order) produce the wrapped signature over any app digest.
+
+## 2. The signature-checker gate
+
+A session key's `isValidSignature` returns the ERC-1271 magic value **only when `msg.sender` is an approved checker** for that key (super-admin keys skip the gate). The checker is whichever contract calls `isValidSignature` during verification:
+
+| Rail | Checker to approve |
+|---|---|
+| Permit2 / permit2-exact | the canonical Permit2 (`0x0000…78BA3`) |
+| EIP-3009 | the token contract (e.g. USDC) |
+
+Approve it once per session with [`approveSignatureChecker`](/sdk/approve-signature-checker). Without it, verification returns `0xffffffff` even for a perfectly valid signature.
+
+## Putting it together
+
+For an x402 payment the SDK composes both: [`fetchWithX402`](/sdk/x402) signs the payment authorization with the session key (nested digest) and the checker approval lets the facilitator's on-chain settlement verify it. See [x402 payments](/sdk/x402) for the end-to-end flow.
+
+> **Note on facilitators.** A payment can be valid and settleable on-chain yet still be refused by a payment *facilitator* that verifies signatures off-chain assuming an EOA (`ecrecover`). Supporting smart-account payers requires the facilitator to verify via ERC-1271 (`isValidSignature`, optionally ERC-6492 for counterfactual accounts).

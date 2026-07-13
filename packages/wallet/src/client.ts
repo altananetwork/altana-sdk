@@ -25,6 +25,17 @@ import { execute as executeImpl } from "./execute.js";
 import { grantSession as grantSessionImpl } from "./grantSession.js";
 import { revokeSession as revokeSessionImpl } from "./revokeSession.js";
 import { balances as balancesImpl, type BalancesResult } from "./balances.js";
+import {
+  signOrder as signOrderImpl,
+  signOrderTypedData as signOrderTypedDataImpl,
+} from "./signOrder.js";
+import {
+  approveSignatureChecker as approveSignatureCheckerImpl,
+  revokeSignatureChecker as revokeSignatureCheckerImpl,
+} from "./approveSignatureChecker.js";
+import { approveTokenForPermit2 as approveTokenForPermit2Impl } from "./approveTokenForPermit2.js";
+import { fetchWithX402 as fetchWithX402Impl } from "./x402.js";
+import type { FetchWithX402Options } from "./x402.js";
 
 export type CreateClientOptions = {
   /**
@@ -89,6 +100,30 @@ export type ClientBalancesOptions = {
   wallet: Wallet | Address;
 } & ChainSelector;
 
+export type ClientApproveSignatureCheckerOptions = {
+  wallet: Wallet;
+  signer: Signer;
+  session: Session;
+  checker: Address;
+  feeToken?: Address;
+} & ChainSelector;
+
+export type ClientApproveTokenForPermit2Options = {
+  wallet: Wallet;
+  signer: Signer;
+  token: Address;
+  amount?: bigint;
+  feeToken?: Address;
+} & ChainSelector;
+
+export type ClientFetchWithX402Options = {
+  session: Session;
+  url: string;
+  init?: RequestInit;
+  /** Preferred rail when a chain offers several (defaults to "permit2"). */
+  preferRail?: FetchWithX402Options["preferRail"];
+} & ChainSelector;
+
 export type Client = {
   /** The chains this client was configured with. */
   readonly chains: readonly NetworkConfig[];
@@ -106,6 +141,24 @@ export type Client = {
   grantSession(opts: ClientGrantSessionOptions): Promise<Session>;
   revokeSession(opts: ClientRevokeSessionOptions): Promise<ExecuteResult>;
   balances(opts: ClientBalancesOptions): Promise<BalancesResult>;
+
+  /** Sign a protocol digest with a session key (offline, chain-independent). */
+  signOrder(opts: { session: Session; appDigest: Hex }): Promise<Hex>;
+  signOrderTypedData(opts: {
+    session: Session;
+    typedData: Parameters<typeof signOrderTypedDataImpl>[1];
+  }): Promise<Hex>;
+  approveSignatureChecker(
+    opts: ClientApproveSignatureCheckerOptions,
+  ): Promise<ExecuteResult>;
+  revokeSignatureChecker(
+    opts: ClientApproveSignatureCheckerOptions,
+  ): Promise<ExecuteResult>;
+  approveTokenForPermit2(
+    opts: ClientApproveTokenForPermit2Options,
+  ): Promise<ExecuteResult>;
+  /** fetch() that transparently pays x402 challenges with the session key. */
+  fetchWithX402(opts: ClientFetchWithX402Options): Promise<Response>;
 };
 
 /**
@@ -215,6 +268,55 @@ export function createClient(opts: CreateClientOptions): Client {
 
     balances(o) {
       return balancesImpl(o.wallet, { network: resolve(o.chainId) });
+    },
+
+    signOrder(o) {
+      return signOrderImpl(o.session, o.appDigest);
+    },
+
+    signOrderTypedData(o) {
+      return signOrderTypedDataImpl(o.session, o.typedData);
+    },
+
+    approveSignatureChecker(o) {
+      return approveSignatureCheckerImpl(
+        o.wallet,
+        o.signer,
+        { session: o.session, checker: o.checker },
+        {
+          network: resolve(o.chainId),
+          ...(o.feeToken ? { feeToken: o.feeToken } : {}),
+        },
+      );
+    },
+
+    revokeSignatureChecker(o) {
+      return revokeSignatureCheckerImpl(
+        o.wallet,
+        o.signer,
+        { session: o.session, checker: o.checker },
+        {
+          network: resolve(o.chainId),
+          ...(o.feeToken ? { feeToken: o.feeToken } : {}),
+        },
+      );
+    },
+
+    approveTokenForPermit2(o) {
+      return approveTokenForPermit2Impl(o.wallet, o.signer, o.token, {
+        network: resolve(o.chainId),
+        ...(o.feeToken ? { feeToken: o.feeToken } : {}),
+        ...(o.amount !== undefined ? { amount: o.amount } : {}),
+      });
+    },
+
+    fetchWithX402(o) {
+      // The client is chain-aware: default the x402 chain to its own so a
+      // multi-chain 402 is paid on the right chain, and honor an override.
+      return fetchWithX402Impl(o.session, o.url, o.init, {
+        chainId: o.chainId ?? defaultChainId,
+        ...(o.preferRail ? { preferRail: o.preferRail } : {}),
+      });
     },
   };
 }

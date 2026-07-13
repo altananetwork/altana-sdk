@@ -46,6 +46,36 @@ export type { Wallet, ExecuteResult } from "./internal/types.js";
 export { ETHEREUM, BNB, BASE, RELAY_URL } from "./config.js";
 export type { NetworkConfig, L2CacheConfig } from "./config.js";
 
+// ERC-1271 order signing (session keys signing off-chain authorizations).
+export { signOrder, signOrderTypedData } from "./signOrder.js";
+export {
+  approveSignatureChecker,
+  revokeSignatureChecker,
+} from "./approveSignatureChecker.js";
+
+// x402 payments (Permit2 + EIP-3009).
+export {
+  fetchWithX402,
+  selectX402Requirement,
+  signX402Payment,
+  buildPermit2TypedData,
+  buildPermit2WitnessTypedData,
+  buildEip3009TypedData,
+  encodeXPaymentHeader,
+  networkToChainId,
+  PERMIT2_ADDRESS,
+} from "./x402.js";
+export type {
+  X402Requirement,
+  X402PaymentPayload,
+  SignX402Options,
+  FetchWithX402Options,
+  Permit2PaymentInput,
+  Permit2WitnessInput,
+  Eip3009PaymentInput,
+} from "./x402.js";
+export { approveTokenForPermit2 } from "./approveTokenForPermit2.js";
+
 export {
   syncKeyToL2,
   ensureKeyCached,
