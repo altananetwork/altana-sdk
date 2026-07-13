@@ -10,22 +10,33 @@ layout: landing
     Agents you can trust.<br />
     <span className="accent">Permissions you can prove.</span>
   </h1>
-  <p className="home-sub">
-    Create an agentic wallet and grant your agent a session key with spend
-    caps and expiry. Permissions live in the Keystore, an open onchain
-    registry: any app can verify them and you can revoke them instantly.
-  </p>
-  <div className="home-ctas">
+
+  <ul className="home-props">
+    <li>
+      <span className="prop-title">Give your agent a wallet, not your keys.</span>
+      <span className="prop-desc">Create a noncustodial agentic wallet and grant a session key scoped by spend caps, contracts, and expiry.</span>
+    </li>
+    <li>
+      <span className="prop-title">Permissions live onchain, in the Keystore.</span>
+      <span className="prop-desc">An open registry, not a vendor backend. Any app can verify what your agent may do.</span>
+    </li>
+    <li>
+      <span className="prop-title">Revoke instantly.</span>
+      <span className="prop-desc">One transaction pulls the key. The effect is immediate and global.</span>
+    </li>
+  </ul>
+
+  <div className="home-hero-foot">
     <a className="home-cta-primary" href="/getting-started/create-agentic-wallet">Start building</a>
-  </div>
-  <div className="home-proof">
-    <span className="live"><span className="dot" /> Live on mainnet</span>
-    <span className="sep">|</span>
-    <span className="chains">
-      <img src="/chains/bnb.svg" alt="BNB Chain" style={{ height: 17 }} />
-      <img src="/chains/ethereum.svg" alt="Ethereum" style={{ height: 20 }} className="invert-dark" />
-      <img src="/chains/base.svg" alt="Base" style={{ height: 16 }} />
-    </span>
+    <div className="home-proof">
+      <span className="live"><span className="dot" /> Live on mainnet</span>
+      <span className="sep">|</span>
+      <span className="chains">
+        <img src="/chains/bnb.svg" alt="BNB Chain" style={{ height: 17 }} />
+        <img src="/chains/ethereum.svg" alt="Ethereum" style={{ height: 20 }} className="invert-dark" />
+        <img src="/chains/base.svg" alt="Base" style={{ height: 16 }} />
+      </span>
+    </div>
   </div>
 </div>
 <div className="home-hero-right">
@@ -35,8 +46,16 @@ layout: landing
 
 :::code-group
 
+```bash [TypeScript]
+npm install @altananetwork/sdk viem
+```
+
 ```bash [Claude Code]
 claude mcp add altana -- bunx @altananetwork/mcp
+```
+
+```text [AI chat]
+https://docs.altana.network/llms-full.txt
 ```
 
 ```json [Cursor]
@@ -50,29 +69,21 @@ claude mcp add altana -- bunx @altananetwork/mcp
 }
 ```
 
-```text [AI chat]
-https://docs.altana.network/llms-full.txt
-```
-
-```bash [TypeScript]
-npm install @altananetwork/sdk viem
-```
-
 :::
-</div>
-</div>
 
-<a href="/getting-started/create-agentic-wallet" className="home-demo-banner">
-  <span className="banner-icon">⚡</span>
-  <span className="banner-copy">
-    <span className="banner-title">Try it live</span>
-    <span className="banner-desc">Create an agentic wallet and execute a real transaction in your browser. No code required.</span>
-  </span>
-  <span className="banner-cta">Try the demo</span>
-</a>
+<div className="home-hero-foot">
+  <div className="home-demo">
+    <p className="home-section-label">Try it live</p>
+    <p className="demo-desc">Create an agentic wallet and execute a real transaction in your browser. No code required.</p>
+    <a className="home-cta-primary demo-cta" href="/getting-started/create-agentic-wallet#try-it-live">
+      <span className="bolt">⚡</span> Launch the demo
+    </a>
+  </div>
+</div>
+</div>
+</div>
 
 <p className="home-section-label">Choose your path</p>
-<h2 className="home-section-title">Two ways to build</h2>
 
 <div className="pathway-grid">
   <div className="pathway-card">
@@ -109,7 +120,7 @@ npm install @altananetwork/sdk viem
   </div>
 </div>
 
-<div className="home-links-row" style={{ marginTop: 40 }}>
+<div className="home-links-row home-links-centered">
   <a href="/why-altana">Why Altana</a>
   <a href="/concepts/comparison">How Altana is different</a>
   <a href="/concepts/keystore">Keystore</a>

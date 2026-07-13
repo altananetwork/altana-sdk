@@ -42,7 +42,7 @@
    (hero, banner, pathways, links) shares these edges. */
 .vocs_DocsLayout_content:has(.home-hero),
 .vocs_Content:has(.home-hero) {
-  max-width: 1152px !important;
+  max-width: 1320px !important;
   width: 100%;
   margin-left: auto !important;
   margin-right: auto !important;
@@ -66,13 +66,75 @@
   }
 }
 
-.home-hero-left {
+/* Both columns are flex so their feet (CTA / try it live) sit on the
+   same baseline no matter which column is taller. */
+.home-hero-left,
+.home-hero-right {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+}
+
+.home-hero-left {
   padding-top: 34px;
 }
 
-.home-hero-right {
-  min-width: 0;
+.home-hero-foot {
+  margin-top: auto;
+  padding-top: 34px;
+}
+
+/* Value props: one clear point per row. */
+.home-props {
+  list-style: none;
+  margin: 26px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.home-props li {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-left: 16px;
+  border-left: 2px solid var(--altana-blue);
+}
+
+.home-props .prop-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--vocs-color_heading);
+}
+
+.home-props .prop-desc {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--vocs-color_text2);
+}
+
+/* Try it live callout, foot of the right column. */
+.home-demo {
+  border-top: 1px solid var(--vocs-color_border);
+  padding-top: 20px;
+}
+
+.home-demo .demo-desc {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--vocs-color_text2);
+  margin: 4px 0 16px;
+  max-width: 460px;
+}
+
+.home-cta-primary.demo-cta {
+  gap: 8px;
+}
+
+.home-cta-primary .bolt {
+  font-size: 15px;
+  line-height: 1;
 }
 
 .home-hero-right .vocs_CodeGroup {
@@ -269,6 +331,33 @@
 /* Theme switch (top nav): light / system / dark                       */
 /* ------------------------------------------------------------------ */
 
+.topnav-end {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.topnav-github {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  color: var(--vocs-color_text3);
+}
+
+.topnav-github:hover {
+  color: var(--vocs-color_heading);
+}
+
+/* The landing page has no sidebar, so Vocs drops the social icons into
+   the page foot. The top nav carries GitHub instead. */
+.vocs_Content:has(.home-hero) ~ * .vocs_Socials,
+.vocs_DocsLayout_content:has(.home-hero) .vocs_Socials {
+  display: none;
+}
+
 .altana-theme-switch {
   display: inline-flex;
   align-items: center;
@@ -276,7 +365,7 @@
   border: 1px solid var(--vocs-color_border);
   border-radius: 9999px;
   padding: 2px;
-  margin-left: 8px;
+  margin-left: 4px;
 }
 
 .altana-theme-switch button {
@@ -337,6 +426,11 @@
   align-items: center;
   gap: 14px;
   margin-bottom: 34px;
+}
+
+/* Breathing room between the CTA and the mainnet proof strip. */
+.home-hero-left .home-hero-foot .home-proof {
+  margin-top: 26px;
 }
 
 .home-cta-primary {
@@ -454,6 +548,12 @@
 
 .home-links-row a:hover {
   text-decoration: underline;
+}
+
+.home-links-centered {
+  justify-content: center;
+  gap: 10px 28px;
+  margin: 48px 0 8px;
 }
 
 /* ------------------------------------------------------------------ */
