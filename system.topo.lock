@@ -30,8 +30,8 @@
       "files": {
         "docs/components/Card.tsx": "6dc48774d136f866ca7e41ba650dfe740386aca10f5a3cf7fffc5cc9d1cc435d",
         "docs/components/Eyebrow.tsx": "fdeed8b010ae97779c203fd7d4808eb41e2b1026e686697d325dcdec5e3b4b2c",
-        "docs/components/PasskeyAgentDemo.tsx": "b3834f8ed1a423fc4d0dd75fe9f0a374c3d11435856c6c1af2cff4e9a7ffebb8",
-        "docs/components/PasskeyDemo.tsx": "d0bc7e67c55560750764cb7368292a4314e2810c12d766c00e0c02244d547982",
+        "docs/components/PasskeyAgentDemo.tsx": "8ab45b59e83e7d654bbf6720f8690659704d647e5574371846118bfad3b53a0d",
+        "docs/components/PasskeyDemo.tsx": "58ba25ac5b6b95c5ac9ec61f111e3b265ad11c156d8759e7b7fc62558bcd7299",
         "docs/components/ThemeSwitch.tsx": "f638efd75689fc80f94b13e1757d7344299280b0d556e8a7550a099faaea8db1",
         "docs/components/UseCaseMeta.tsx": "10e6bc458842a5a6c3469b7266e79a81767236cffb5cf181c65f9f920155e126",
         "docs/components/demo/primitives.tsx": "1430ba48b99c1951847d86ed282b6c7abf40f40fbca485c94490a3d77af7e872",
@@ -39,7 +39,7 @@
         "docs/layout.tsx": "38305ae255e958e3fb5ae92ae71035163cc38f5aecbdca40a0d32710937ca4d2",
         "docs/vocs.config.ts": "6fede528cdf8f8bc196db3bcca6fd69b9e733274d1e79f18adc353fcdadedc5e"
       },
-      "digest": "111d68041424e54b3f35289ffbcec78f6ea2a95874424cea0d275273abb2d1be"
+      "digest": "fad539066954996eaac30bff3264f8b4b6a52c5352147bb1f8d4af8ae3accc70"
     },
     "RegistryTools": {
       "globs": [
@@ -210,5 +210,5 @@
     "universe": 50,
     "covered": 50
   },
-  "approvedAt": "2026-07-13T14:17:43.960Z"
+  "approvedAt": "2026-07-13T17:34:05.626Z"
 }

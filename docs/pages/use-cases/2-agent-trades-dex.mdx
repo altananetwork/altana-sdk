@@ -14,15 +14,17 @@ import { UseCaseMeta } from '../../components/UseCaseMeta'
 <UseCaseMeta
   tools={['SDK', 'MCP']}
   rows={[
-  { label: "Goal", value: "I want my agent to trade on a DEX, but capped so it can only spend what I allow and only there." },
-  { label: "Who it's for", value: "The BSC crowd. This is the path that lands." },
-  { label: "What you'll use", value: <><code>grantSession</code> scoped to the DEX router with a spend cap and expiry, then <code>execute</code>.</> },
-  { label: "Prerequisites", value: <><a href="/use-cases/1-agent-wallet-policy">Use Case 1</a> wallet, funded on BNB with a stablecoin.</> },
+  { label: "Goal", value: "I want my agent to trade on a DEX, but capped so it can only spend what I allow and only on that exchange." },
+  { label: "Who it's for", value: "Developers giving a trading agent access to one DEX on BNB Smart Chain, without exposing the rest of the wallet." },
+  { label: "What you'll use", value: <><code>grantSession</code> scoped to the DEX router with a spend cap and expiry, then <code>execute</code> to run the swap.</> },
+  { label: "Prerequisites", value: <>An agentic wallet set up in <a href="/use-cases/1-agent-wallet-policy">Give an agent a wallet and a policy</a>, funded on BNB with a stablecoin to trade.</> },
 ]} />
 
-The example below uses **PancakeSwap** on BNB. Swap in any DEX router address to use a different exchange; the pattern is identical.
+The example below uses **PancakeSwap** on BNB. Swap in any DEX router address to use a different exchange; the pattern is identical. The flow is three steps: connect to the chain, grant a session scoped to the DEX, then let the agent trade within it.
 
-## Walkthrough
+## Step 1: Connect and load your signer
+
+Create a client for BNB Smart Chain and load the admin signer that owns the wallet.<br />This is the key you control, and the agent never sees it.
 
 ```ts
 import {
@@ -33,8 +35,14 @@ import {
 
 const client = createClient({ chains: [BNB] });
 const signer = signerFromPrivateKey(process.env.PRIVATE_KEY as `0x${string}`);
+```
 
-// wallet from Use Case 1
+## Step 2: Grant a session scoped to the DEX
+
+Give the agent a session key that can reach only one DEX router, with a daily spend cap in your stablecoin and an expiry. These limits are enforced onchain by the wallet, not by your application code.
+
+```ts
+// wallet from the "Give an agent a wallet and a policy" guide
 const session = await client.grantSession({
   wallet,
   signer,
@@ -44,7 +52,13 @@ const session = await client.grantSession({
   },
   expiry: Math.floor(Date.now() / 1000) + 3 * 24 * 60 * 60,
 });
+```
 
+## Step 3: Execute a swap within the cap
+
+Pass the session to your agent. It builds the swap calldata and calls `execute` to trade within the limits you set.
+
+```ts
 // The agent builds swap calldata and executes within the cap.
 await client.execute({
   session,
@@ -62,4 +76,4 @@ The trading bot holds a key that can only hit that one router and only up to the
 
 ## What's next
 
-[Use Case 3](/use-cases/3-portfolio-multiple-agents): run a full portfolio with more than one agent on the same wallet.
+Ready for more than one agent? [Run a portfolio with multiple agents](/use-cases/3-portfolio-multiple-agents) puts several agents on the same wallet, each with its own scoped session.

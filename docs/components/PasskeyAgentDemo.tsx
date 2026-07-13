@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { createClient, BNB } from '@altananetwork/sdk'
 import type { Wallet, Signer, Session } from '@altananetwork/sdk'
-import { createPublicClient, http, formatEther } from 'viem'
+import { createPublicClient, http } from 'viem'
 import { bsc } from 'viem/chains'
 import { AltanaButton, CopyButton, StatusBox, StepCard, TxConfirmed } from './demo/primitives'
 import type { StepStatus } from './demo/primitives'
@@ -178,13 +178,13 @@ export function PasskeyAgentDemo() {
         )}
         {createStatus === 'done' && !funded && (
           <p style={{ marginTop: '0.75rem', fontSize: '0.85rem', color: 'var(--vocs-color_text2)' }}>
-            Fund this address with at least <strong>0.05 BNB</strong> to cover steps 2–4 (~0.012 BNB per transaction).
-            {' '}— checking balance…
+            Fund this address to continue. We recommend around <strong>$5</strong> of BNB.
+            {' '}Checking balance…
           </p>
         )}
         {createStatus === 'done' && funded && (
           <p style={{ marginTop: '0.75rem', fontSize: '0.85rem', color: '#065f46' }}>
-            ✓ Funded ({formatEther(balance!).slice(0, 8)} BNB) — ready for step 2
+            ✓ Funded, ready for step 2
           </p>
         )}
       </StepCard>
