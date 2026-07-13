@@ -37,9 +37,9 @@
         "docs/components/demo/primitives.tsx": "1430ba48b99c1951847d86ed282b6c7abf40f40fbca485c94490a3d77af7e872",
         "docs/components/icons.tsx": "3b39200291f0a4371c317a755d0f0d73c985e073617fa6cd8c8f100eda744efd",
         "docs/layout.tsx": "38305ae255e958e3fb5ae92ae71035163cc38f5aecbdca40a0d32710937ca4d2",
-        "docs/vocs.config.ts": "c020bf42eeb1bc249153a831064fdfa6e9843e3bca2f4370f6f983f21dd8bab2"
+        "docs/vocs.config.ts": "6fede528cdf8f8bc196db3bcca6fd69b9e733274d1e79f18adc353fcdadedc5e"
       },
-      "digest": "706dd8680251e58d1ca757e38b72c311131290c05f88a99f592152b39bf118fa"
+      "digest": "111d68041424e54b3f35289ffbcec78f6ea2a95874424cea0d275273abb2d1be"
     },
     "RegistryTools": {
       "globs": [
@@ -210,5 +210,5 @@
     "universe": 50,
     "covered": 50
   },
-  "approvedAt": "2026-07-13T13:31:47.161Z"
+  "approvedAt": "2026-07-13T14:17:43.960Z"
 }

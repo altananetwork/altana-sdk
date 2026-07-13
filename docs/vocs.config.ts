@@ -1,13 +1,25 @@
 import { createElement, Fragment } from "react";
 import { defineConfig } from "vocs";
 
+// Vocs injects `<base href={baseUrl}>` into every page whenever the build is
+// non-localhost. That makes every relative URL on the page (images, internal
+// links) resolve against baseUrl instead of the host actually serving the
+// page. Fine on the real production domain; on a Vercel preview/staging
+// deploy it 404s local assets and sends internal link clicks to the live
+// production site instead of navigating client-side. Only set baseUrl for
+// the actual production deploy so previews resolve against themselves.
+const baseUrl =
+  process.env.VERCEL_ENV === "production"
+    ? "https://docs.altana.network"
+    : undefined;
+
 export default defineConfig({
   title: "Altana",
   titleTemplate: "%s · Altana",
   description:
     "Noncustodial authorization infrastructure for agentic workflows. Give agents provable, revocable authority to act onchain, scoped by policy you control and verifiable by anyone.",
   rootDir: ".",
-  baseUrl: "https://docs.altana.network",
+  baseUrl,
   ogImageUrl:
     "https://vocs.dev/api/og?logo=%logo&title=%title&description=%description",
   editLink: {
