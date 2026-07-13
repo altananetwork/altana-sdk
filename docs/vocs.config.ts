@@ -120,6 +120,7 @@ export default defineConfig({
         { text: "Run a portfolio with multiple agents", link: "/use-cases/3-portfolio-multiple-agents" },
         { text: "Verify agent authority", link: "/use-cases/4-verify-agent-authority" },
         { text: "Authorize across chains", link: "/use-cases/5-cross-chain-authorization" },
+        { text: "Pay for an API with x402", link: "/use-cases/6-agent-pays-api-x402" },
       ],
     },
     {
@@ -150,6 +151,15 @@ export default defineConfig({
             { text: "ensureKeyCached", link: "/sdk/sync-to-l2" },
           ],
         },
+        {
+          text: "Payments & Signing",
+          items: [
+            { text: "x402 payments", link: "/sdk/x402" },
+            { text: "signOrder", link: "/sdk/sign-order" },
+            { text: "approveSignatureChecker", link: "/sdk/approve-signature-checker" },
+            { text: "approveTokenForPermit2", link: "/sdk/approve-permit2" },
+          ],
+        },
       ],
     },
     {
@@ -174,6 +184,7 @@ export default defineConfig({
       items: [
         { text: "Keystore", link: "/concepts/keystore" },
         { text: "Sessions", link: "/concepts/sessions" },
+        { text: "Off-chain signatures", link: "/concepts/off-chain-signatures" },
       ],
     },
     {

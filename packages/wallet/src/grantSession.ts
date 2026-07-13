@@ -1,9 +1,11 @@
-import { encodeAbiParameters, keccak256, padHex, type Address, type Hex } from "viem";
+import { type Address, type Hex } from "viem";
 import { type NetworkConfig } from "./config.js";
+import { keyHashForSigner } from "./internal/erc1271.js";
 import { createPrivateKeySigner, type Signer } from "./internal/signer.js";
 import {
   buildPublicClient,
   buildRelayClient,
+  keyDescriptorFromSigner,
   submitCalls,
   waitForCalls,
   type KeyDescriptor,
@@ -37,14 +39,16 @@ export async function grantSession(
 
   const sessionSigner = opts.sessionSigner ?? createPrivateKeySigner();
 
-  const sessionKeyDesc: KeyDescriptor = {
-    type: "secp256k1",
-    publicKey: sessionSigner.publicKey,
+  // Session key descriptor — secp256k1 or passkey (WebAuthnP256), by signer.
+  const sessionKeyDesc: KeyDescriptor = keyDescriptorFromSigner(sessionSigner, {
     role: "session",
     expiry: opts.expiry,
     permissions: opts.permissions,
-  };
+  });
 
+  // Admin descriptor. Only `role` is consumed by submitCalls for signing (the
+  // curve is inferred from adminSigner itself), so secp256k1 here is inert even
+  // for passkey admins.
   const adminKeyDesc: KeyDescriptor = {
     type: "secp256k1",
     publicKey: adminSigner.publicKey,
@@ -95,7 +99,7 @@ export async function grantSession(
   // hash". Wait until the new keyHash is visible from THIS process AND give
   // the relay's separate connection pool time to converge before we hand the
   // Session back to the caller.
-  const expectedKeyHash = computeAccountSecp256k1KeyHash(sessionSigner.address);
+  const expectedKeyHash = keyHashForSigner(sessionSigner);
   const startedWait = Date.now();
   await waitForSessionKeyVisible(
     publicClient,
@@ -143,20 +147,6 @@ const ACCOUNT_GET_KEYS_ABI = [
     ],
   },
 ] as const;
-
-function computeAccountSecp256k1KeyHash(address: Address): Hex {
-  // AltanaAccount stores Secp256k1 keys with publicKey = abi.encode(address),
-  // and the keyHash is keccak256(abi.encode(uint256(keyType), keccak256(publicKey))).
-  // keyType enum is { P256=0, WebAuthnP256=1, Secp256k1=2, External=3 }.
-  const encodedPubKey = padHex(address, { size: 32 });
-  const publicKeyHash = keccak256(encodedPubKey);
-  return keccak256(
-    encodeAbiParameters(
-      [{ type: "uint256" }, { type: "bytes32" }],
-      [2n, publicKeyHash],
-    ),
-  );
-}
 
 async function waitForSessionKeyVisible(
   publicClient: ReturnType<typeof buildPublicClient>,

@@ -24,7 +24,11 @@ import {
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import type { NetworkConfig } from "../config.js";
 import { hasRawPrivateKey, type Signer } from "./signer.js";
-import { isPasskeySigner, passkeyToPortoKey } from "./passkey.js";
+import {
+  isPasskeySigner,
+  passkeyToPortoKey,
+  type PasskeySigner,
+} from "./passkey.js";
 import { buildFirstActionPrepend } from "./keystore.js";
 
 const NATIVE_TOKEN: Address = "0x0000000000000000000000000000000000000000";
@@ -154,20 +158,63 @@ export type Call = {
   data?: Hex;
 };
 
-export type KeyDescriptor = {
-  type: "secp256k1";
-  publicKey: Hex;
-  role: "admin" | "session";
-  expiry?: number;
-  permissions?: {
-    calls?: readonly { signature?: string; to?: Address }[];
-    spend?: readonly {
-      limit: bigint;
-      period: "minute" | "hour" | "day" | "week" | "month" | "year";
-      token?: Address;
-    }[];
-  };
+export type KeyPermissions = {
+  calls?: readonly { signature?: string; to?: Address }[];
+  spend?: readonly {
+    limit: bigint;
+    period: "minute" | "hour" | "day" | "week" | "month" | "year";
+    token?: Address;
+  }[];
 };
+
+export type KeyDescriptor =
+  | {
+      type: "secp256k1";
+      publicKey: Hex;
+      role: "admin" | "session";
+      expiry?: number;
+      permissions?: KeyPermissions;
+    }
+  | {
+      // Passkey (WebAuthnP256) key. Carries the signer so we can rebuild the
+      // Porto Key (headless or real credential) when authorizing on-chain.
+      type: "webauthn-p256";
+      signer: PasskeySigner;
+      role: "admin" | "session";
+      expiry?: number;
+      permissions?: KeyPermissions;
+    };
+
+/**
+ * Build a KeyDescriptor from a signer, picking the curve variant. Used to
+ * authorize a session (or admin) key on-chain; the resulting Porto Key's
+ * keyHash must match what signOrder signs under (see sessionKeyHash).
+ */
+export function keyDescriptorFromSigner(
+  signer: Signer,
+  opts: {
+    role: "admin" | "session";
+    expiry?: number;
+    permissions?: KeyPermissions;
+  },
+): KeyDescriptor {
+  if (isPasskeySigner(signer)) {
+    return {
+      type: "webauthn-p256",
+      signer,
+      role: opts.role,
+      ...(opts.expiry !== undefined ? { expiry: opts.expiry } : {}),
+      ...(opts.permissions ? { permissions: opts.permissions } : {}),
+    };
+  }
+  return {
+    type: "secp256k1",
+    publicKey: signer.publicKey,
+    role: opts.role,
+    ...(opts.expiry !== undefined ? { expiry: opts.expiry } : {}),
+    ...(opts.permissions ? { permissions: opts.permissions } : {}),
+  };
+}
 
 /**
  * Submits a batch of calls through the relay as a single intent. Returns the
@@ -308,7 +355,14 @@ export async function submitCalls(
   return (sent?.id ?? sent) as Hex;
 }
 
-function toPortoKey(desc: KeyDescriptor): any {
+export function toPortoKey(desc: KeyDescriptor): any {
+  if (desc.type === "webauthn-p256") {
+    return passkeyToPortoKey(desc.signer, {
+      role: desc.role,
+      ...(desc.expiry !== undefined ? { expiry: desc.expiry } : {}),
+      ...(desc.permissions ? { permissions: desc.permissions } : {}),
+    });
+  }
   return Key.fromSecp256k1({
     publicKey: desc.publicKey,
     role: desc.role,

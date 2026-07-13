@@ -1,0 +1,70 @@
+---
+title: "Agent Pays for an API with x402"
+description: Give an agent a session key that pays for HTTP resources on its own — x402 payments settled from an Altana smart wallet via Permit2 or EIP-3009.
+---
+
+import { Eyebrow } from '../../components/Eyebrow'
+
+<Eyebrow>Build with Altana</Eyebrow>
+
+# Agent Pays for an API with x402
+
+An agent needs to call a paid API — data, inference, a service — priced per request via the **x402** HTTP standard. With an Altana session key it pays autonomously, capped and revocable, no human in the loop per call.
+
+The session key signs an [x402 payment authorization](/sdk/x402); a facilitator settles it on-chain. The signature is an [ERC-1271](/concepts/off-chain-signatures) smart-account signature, verified on-chain — not a raw EOA signature.
+
+## 1. Provision the wallet once
+
+Grant a scoped session, then set up the payment rail. For the **permit2** rail (works with any token approved to Permit2, including Binance B402):
+
+```ts
+import { createClient, BNB, PERMIT2_ADDRESS, signerFromPrivateKey } from "@altananetwork/sdk";
+
+const client = createClient({ chains: [BNB] });
+const admin = signerFromPrivateKey("0x...");
+const wallet = await client.createWallet({ signer: admin });
+const USDC = "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d"; // BNB USDC
+
+const session = await client.grantSession({
+  wallet, signer: admin,
+  permissions: {
+    calls: [{ to: USDC }],
+    spend: [{ limit: 1_000_000_000_000_000_000n, period: "day", token: USDC }],
+  },
+  expiry: Math.floor(Date.now() / 1000) + 24 * 60 * 60,
+});
+
+await client.approveTokenForPermit2({ wallet, signer: admin, token: USDC });
+await client.approveSignatureChecker({ wallet, signer: admin, session, checker: PERMIT2_ADDRESS });
+```
+
+## 2. The agent pays and fetches
+
+Hand the agent the `session`. From then on, paying is one call:
+
+```ts
+const res = await client.fetchWithX402({
+  session,
+  url: "https://api.example.com/paid-endpoint",
+});
+// 402 → sign payment → retry → 200 + content, transparently.
+console.log(res.status, await res.text());
+```
+
+## Choosing the rail
+
+| Rail | Use when | Checker |
+|---|---|---|
+| **permit2-exact** | any Permit2-approved token; Binance B402 | Permit2 |
+| **EIP-3009** | Circle FiatTokenV2_2 USDC (Base/Ethereum) | the token |
+
+`fetchWithX402` picks the best payable option from the 402 automatically, preferring your chain and the permit2 rail.
+
+## Related
+
+- [x402 payments](/sdk/x402) — the full API
+- [approveSignatureChecker](/sdk/approve-signature-checker) · [approveTokenForPermit2](/sdk/approve-permit2)
+- [Off-chain signatures (ERC-1271)](/concepts/off-chain-signatures) — why and how it verifies
+- [grantSession](/sdk/grant-session) — scoping the session
+
+> Run `fetchWithX402` server-side: third-party x402 endpoints commonly omit `X-PAYMENT` from their CORS allow-list, so browsers can't POST the payment.

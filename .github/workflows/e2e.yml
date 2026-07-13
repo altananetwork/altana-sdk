@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   build-and-check:
-    name: Build & typecheck
+    name: Build, typecheck & unit tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -36,3 +36,38 @@ jobs:
                   --filter '@altananetwork/mcp' \
                   --filter '@altananetwork/hypersigner-keystore-mcp' \
                   typecheck
+
+      - name: Typecheck e2e (fork + demo harness)
+        run: bun run --filter '@altananetwork/e2e' typecheck
+
+      - name: Unit tests
+        run: bun run --filter '@altananetwork/sdk' test
+
+  fork-tests:
+    name: On-chain fork tests (anvil)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Fork tests hit public mainnet RPC (BNB + Base) and can be rate-limited /
+    # flaky, so they are informational for now. Flip continue-on-error to false
+    # once they run reliably in CI (e.g. with a dedicated RPC endpoint).
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.11
+
+      - name: Setup Foundry (anvil)
+        uses: foundry-rs/foundry-toolchain@v1 # TODO: pin to a SHA for supply-chain consistency
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Build SDK
+        run: bun run --filter '@altananetwork/sdk' build
+
+      - name: Run fork tests (ERC-1271, permit2, permit2-witness, eip3009)
+        run: bun run --filter '@altananetwork/e2e' fork:all
