@@ -106,6 +106,7 @@ test("signX402Payment (permit2) binds the facilitator spender and Permit2 checke
   });
 
   expect(payload.scheme).toBe("permit2");
+  expect((payload.payload as any).from.toLowerCase()).toBe(WALLET.toLowerCase());
   const permit = (payload.payload as any).permit;
   expect(permit.permitted.token.toLowerCase()).toBe(TOKEN.toLowerCase());
   expect(permit.permitted.amount).toBe("25000");

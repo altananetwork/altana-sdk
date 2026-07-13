@@ -166,6 +166,9 @@ export async function signX402Payment(
       network: req.network,
       payload: {
         signature,
+        // The token owner (payer) — the facilitator needs it for
+        // Permit2.permitTransferFrom(owner, …).
+        from: session.walletAddress,
         permit: {
           permitted: { token: req.asset, amount: amount.toString() },
           spender,

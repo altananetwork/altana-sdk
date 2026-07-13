@@ -14,6 +14,7 @@
     "fork:erc1271": "bun run fork-erc1271.ts",
     "fork:x402": "bun run fork-x402.ts",
     "fork:all": "bun run fork-erc1271.ts && bun run fork-x402.ts",
+    "demo:b402": "bun run demo-b402.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
