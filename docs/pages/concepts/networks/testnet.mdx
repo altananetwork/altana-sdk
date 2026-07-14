@@ -1,14 +1,53 @@
 ---
 title: Testnet
-description: Testnet support for Altana is coming soon.
+description: Altana's BNB Smart Chain testnet — RPC, faucet, relay, and deployed contract addresses.
 ---
 
 # Testnet
 
-**Testnet support is coming soon.**
+Altana's testnet runs on **BNB Smart Chain Testnet (chain 97)** — the full stack
+(keystore, account contracts, and the Altana testnet relay) is deployed there, so
+you can create wallets and execute end-to-end. The SDK ships a ready-made
+`BNB_TESTNET` config, importable from `@altananetwork/sdk`.
 
-Altana runs on mainnet today across BNB Smart Chain, Ethereum, and Base. Public
-testnet endpoints and deployed contract addresses will be listed here once they
-are available.
+The testnet explorer is at [testnet.altana.network](https://testnet.altana.network).
 
-For live networks, see [Mainnet](/concepts/networks).
+## BNB Smart Chain Testnet: `BNB_TESTNET`
+
+Fund new wallets with test BNB from the
+[BNB testnet faucet](https://testnet.bnbchain.org/faucet-smart) before executing.
+
+- **Chain id:** 97
+- **Public RPC:** `https://bsc-testnet-rpc.publicnode.com`
+- **Explorer:** https://testnet.bscscan.com
+- **Faucet:** https://testnet.bnbchain.org/faucet-smart
+- **Relay:** `https://relay-testnet.altana.network`
+
+KeyStore contracts:
+
+| Contract | Address |
+| --- | --- |
+| KeyStore | `0x6b8361C29d05D498b1a12B54A37310f94171E94A` |
+| KeyStoreController | `0xb530D1971f5453F3359518343F05D0AedFfF7e12` |
+
+Account stack (used by the relay):
+
+| Contract | Address |
+| --- | --- |
+| Orchestrator | `0xcb5CEf3C54aa90e9A7ad602A258D3d360cC862B9` |
+| Delegation proxy | `0x4F4ddE38Da9F8AbBb96C48cA520b992D4bADc3D6` |
+| Account implementation | `0x33aD2F49ab9f122f5F0FDF579f575724EfF353DE` |
+| Simulator | `0x3006de101E96e85272d5B5Ad07A9738fa7678008` |
+| Funder | `0xb248602EAadd9c3e2Db4575C4e4d58003b7a2740` |
+| Escrow | `0xCd075ceb5Cd463a9233a8085fc915767139F655c` |
+
+EXP fee tokens (pay relay fees in a test token instead of native tBNB):
+
+| Token | Address |
+| --- | --- |
+| EXP | `0xa8071DA5e994cB8e3eB56CaD0FBB6ca424dD8dc0` |
+| EXP2 | `0x61727778216127D0843A99A3e91e99C27e9f3BC7` |
+
+> Addresses are the source of truth in the Keystore repo's deployment manifests
+> (`deployments/*.json`) and the SDK's `packages/wallet/src/config.ts`. If contracts are
+> redeployed, update both in lockstep.
