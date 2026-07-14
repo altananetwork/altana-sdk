@@ -27,6 +27,7 @@ import {
   fetchWithX402,
   ETHEREUM,
   BNB,
+  BNB_TESTNET,
 } from "@altananetwork/sdk";
 import type { Signer, Wallet } from "@altananetwork/sdk";
 import {
@@ -50,14 +51,20 @@ import {
 // ---------- network ---------------------------------------------------------
 
 // Chain is selected at startup via the ALTANA_CHAIN env var. Defaults to BNB
-// Chain. Set ALTANA_CHAIN=ethereum to operate on Ethereum instead. All chains
-// use the Altana relay (see the SDK config's relayUrl). One MCP process serves
-// one chain; restart with a different ALTANA_CHAIN to switch.
+// Chain. Set ALTANA_CHAIN=ethereum to operate on Ethereum, or
+// ALTANA_CHAIN=bnb-testnet for the BSC testnet stack. All chains execute
+// through the Altana relay (mainnet relay for mainnets, testnet relay for
+// bnb-testnet — see the SDK config's relayUrl). One MCP process serves one
+// chain; restart with a different ALTANA_CHAIN to switch. Sepolia/Base Sepolia
+// are keystore-only (no relay) and so are not selectable here.
 const NETWORKS = {
   bnb: BNB,
   "56": BNB,
   ethereum: ETHEREUM,
   "1": ETHEREUM,
+  "bnb-testnet": BNB_TESTNET,
+  "bsc-testnet": BNB_TESTNET,
+  "97": BNB_TESTNET,
 } as const;
 
 const requestedChain = (process.env.ALTANA_CHAIN || "bnb").toLowerCase();
@@ -65,7 +72,7 @@ const NETWORK = NETWORKS[requestedChain as keyof typeof NETWORKS] ?? BNB;
 if (!(requestedChain in NETWORKS)) {
   console.error(
     `[altana-mcp] Unknown ALTANA_CHAIN="${requestedChain}". ` +
-      `Supported: bnb (default), ethereum. Falling back to bnb.`,
+      `Supported: bnb (default), ethereum, bnb-testnet. Falling back to bnb.`,
   );
 }
 console.error(
