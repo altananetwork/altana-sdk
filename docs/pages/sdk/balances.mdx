@@ -38,6 +38,39 @@ const bnb = await client.balances({ wallet });
 const ethereum = await client.balances({ wallet, chainId: 1 });
 ```
 
+## ERC-20 tokens
+
+Pass `tokens` to read ERC-20 balances in the same call. All per-token reads are batched into a single multicall:
+
+```ts
+const res = await client.balances({
+  wallet,
+  tokens: ["0x55d398326f99059ff775485246999027b3197955"], // USDT (BSC)
+});
+
+for (const t of res.tokens!) {
+  if (!t.ok) continue;            // token whose reads reverted (bad address, non-ERC-20)
+  console.log(t.display, t.symbol); // "12.5 USDT" — ready to render
+  console.log(t.raw);               // bigint — the on-chain amount, use for transfers
+}
+```
+
+### BEP-677 scaled UI amounts
+
+Tokens implementing [BEP-677](https://github.com/bnb-chain/BEPs/blob/master/BEPs/BEP-677.md) (`IScaledUIAmount`, detected via ERC-165 id `0xa60bf13d`) carry a display multiplier: wallets must show `raw × uiMultiplier / 1e18` while raw balances and allowances stay unchanged on-chain. `balances` handles this automatically — `display` (and `scaled.scaledRaw`) carry the multiplier; `raw` never does.
+
+```ts
+const [t] = (await client.balances({ wallet, tokens: [scaledToken] })).tokens!;
+if (t.ok && t.scaled) {
+  t.display;               // "1500" — already scaled (raw 1000, ×1.5)
+  t.scaled.uiMultiplier;   // 1500000000000000000n (1e18 fixed-point)
+  t.scaled.scaledRaw;      // 1500000000000000000000n — the bigint behind display
+  t.scaled.pending;        // set iff a multiplier change is scheduled but not yet effective
+}
+```
+
+Scheduled multiplier changes (`newUIMultiplier()` / `effectiveAt()`, ERC-165 id `0x4bd27648`) are compared against the block timestamp of the same multicall: a change still in the future is surfaced under `scaled.pending` without being applied early; a change already effective is applied even if the token's `uiMultiplier()` lazily reports the old value.
+
 ## Parameters
 
 ```ts
@@ -45,16 +78,37 @@ client.balances(opts: ClientBalancesOptions): Promise<BalancesResult>;
 
 type ClientBalancesOptions = {
   wallet: Wallet | Address;       // a Wallet object or a bare 0x… address
+  tokens?: readonly Address[];    // ERC-20s to include; BEP-677 display scaling is automatic
   chainId?: number;               // defaults to the client's default chain
 };
 
 type BalancesResult = {
   native: bigint;                 // native token balance in wei (BNB on BNB Smart Chain, ETH on Ethereum)
+  tokens?: TokenBalance[];        // present iff `tokens` was passed; input order preserved
 };
+
+type TokenBalance =
+  | {
+      address: Address;
+      ok: true;
+      raw: bigint;                // on-chain balanceOf — what transfers/allowances use
+      decimals: number;
+      symbol: string;             // "" if symbol() is missing/undecodable
+      display: string;            // human string, BEP-677 multiplier already applied
+      scaled?: {                  // present iff the token implements IScaledUIAmount
+        uiMultiplier: bigint;     // active multiplier, 1e18 fixed-point
+        scaledRaw: bigint;        // raw * uiMultiplier / 1e18, truncated
+        pending?: { newUIMultiplier: bigint; effectiveAt: bigint };
+      };
+    }
+  | { address: Address; ok: false; error: string };
 ```
 
 ## Notes
 
-- **Native only, for now.** `balances` returns the native token balance. ERC-20 balances land alongside the v1 DeFi recipes (the recipes know which tokens matter per protocol).
+- **Raw vs display.** `raw` is always the unscaled on-chain amount — build transfers and allowance checks on it. `display` is what to show users; for BEP-677 tokens the two intentionally differ.
+- **Truncation.** Scaling uses the spec's integer formula `raw × uiMultiplier / 1e18`, truncating toward zero. Round-trips are not lossless.
+- **Non-ERC-165 tokens are fine.** Tokens without `supportsInterface` (e.g. USDT) simply come back unscaled; the failed detection call is expected and handled.
+- **A bad token doesn't throw.** An address whose `balanceOf`/`decimals` reads revert yields `{ ok: false, error }` and leaves the other entries intact.
 - **No funds required.** It's a read against the chain's public RPC, so it doesn't cost gas and doesn't need the wallet to be funded or deployed.
-- **Units are wei.** Use viem's [`formatEther`](https://viem.sh/docs/utilities/formatEther) to display it: `formatEther(native)`.
+- **Units are wei.** Use viem's [`formatEther`](https://viem.sh/docs/utilities/formatEther) for `native`; token entries already provide `display`.

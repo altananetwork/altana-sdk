@@ -47,10 +47,11 @@ jobs:
     name: On-chain fork tests (anvil)
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # Fork tests hit public mainnet RPC (BNB + Base) and can be rate-limited /
-    # flaky, so they are informational for now. Flip continue-on-error to false
-    # once they run reliably in CI (e.g. with a dedicated RPC endpoint).
-    continue-on-error: true
+    # Fork tests fork BNB + Base. They read dedicated RPC endpoints from the
+    # BSC_FORK_RPC_URL / BASE_FORK_RPC_URL secrets (falling back to public nodes
+    # only for local runs without them). With dedicated RPCs they run reliably,
+    # so this is now a required gate rather than informational.
+    continue-on-error: false
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -70,4 +71,7 @@ jobs:
         run: bun run --filter '@altananetwork/sdk' build
 
       - name: Run fork tests (ERC-1271, permit2, permit2-witness, eip3009)
+        env:
+          BSC_FORK_RPC_URL: ${{ secrets.BSC_FORK_RPC_URL }}
+          BASE_FORK_RPC_URL: ${{ secrets.BASE_FORK_RPC_URL }}
         run: bun run --filter '@altananetwork/e2e' fork:all

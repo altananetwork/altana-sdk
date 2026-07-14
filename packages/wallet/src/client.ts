@@ -98,6 +98,8 @@ export type ClientRevokeSessionOptions = {
 
 export type ClientBalancesOptions = {
   wallet: Wallet | Address;
+  /** ERC-20 tokens to include. BEP-677 display scaling is applied automatically. */
+  tokens?: readonly Address[];
 } & ChainSelector;
 
 export type ClientApproveSignatureCheckerOptions = {
@@ -267,7 +269,10 @@ export function createClient(opts: CreateClientOptions): Client {
     },
 
     balances(o) {
-      return balancesImpl(o.wallet, { network: resolve(o.chainId) });
+      return balancesImpl(o.wallet, {
+        network: resolve(o.chainId),
+        ...(o.tokens !== undefined ? { tokens: o.tokens } : {}),
+      });
     },
 
     signOrder(o) {

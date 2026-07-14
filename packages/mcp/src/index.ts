@@ -289,17 +289,24 @@ tool(
   },
 );
 
-// wallet_balance — native token balance for a named wallet.
+// wallet_balance — native (and optionally ERC-20) balances for a named wallet.
 tool(
   "wallet_balance",
   {
     title: "Wallet balance",
-    description: "Native token balance (ETH) for a wallet, by name.",
-    inputSchema: { name: z.string() },
+    description:
+      "Native token balance for a wallet, by name. Pass `tokens` (ERC-20 " +
+      "addresses) to include token balances; BEP-677 scaled-UI-amount tokens " +
+      "are detected via ERC-165 and their `display` value is scaled by " +
+      "uiMultiplier automatically (raw amounts stay unscaled).",
+    inputSchema: { name: z.string(), tokens: z.array(z.string()).optional() },
   },
-  async ({ name }: { name: string }) => {
+  async ({ name, tokens }: { name: string; tokens?: string[] }) => {
     const key = await getWalletKey(name);
-    const wei = await publicClient.getBalance({ address: key.address });
+    const res = await client.balances({
+      wallet: key.address,
+      ...(tokens !== undefined ? { tokens: tokens.map(assertAddress) } : {}),
+    });
     return {
       content: [
         {
@@ -308,8 +315,41 @@ tool(
             {
               name,
               address: key.address,
-              balanceWei: wei.toString(),
-              balanceEth: formatEther(wei),
+              balanceWei: res.native.toString(),
+              balanceEth: formatEther(res.native),
+              ...(res.tokens !== undefined
+                ? {
+                    tokens: res.tokens.map((t) =>
+                      t.ok
+                        ? {
+                            address: t.address,
+                            symbol: t.symbol,
+                            decimals: t.decimals,
+                            raw: t.raw.toString(),
+                            display: t.display,
+                            ...(t.scaled
+                              ? {
+                                  scaled: {
+                                    uiMultiplier: t.scaled.uiMultiplier.toString(),
+                                    scaledRaw: t.scaled.scaledRaw.toString(),
+                                    ...(t.scaled.pending
+                                      ? {
+                                          pending: {
+                                            newUIMultiplier:
+                                              t.scaled.pending.newUIMultiplier.toString(),
+                                            effectiveAt:
+                                              t.scaled.pending.effectiveAt.toString(),
+                                          },
+                                        }
+                                      : {}),
+                                  },
+                                }
+                              : {}),
+                          }
+                        : { address: t.address, error: t.error },
+                    ),
+                  }
+                : {}),
             },
             null,
             2,
