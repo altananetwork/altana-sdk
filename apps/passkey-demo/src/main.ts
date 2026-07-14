@@ -250,23 +250,30 @@ function renderTokenBalances(tokens: TokenBalance[]) {
   if (!el) return;
   el.innerHTML = "";
   for (const t of tokens) {
+    // A token whose reads failed never reaches the balance panel — hex noise
+    // is not a wallet UI. The reason goes to the console for debugging.
+    if (!t.ok) {
+      console.warn(`[balances] skipping token ${t.address}: ${t.error}`);
+      continue;
+    }
     const row = document.createElement("div");
     const code = document.createElement("code");
-    if (!t.ok) {
-      code.textContent = `${t.address.slice(0, 10)}… — unreadable`;
-    } else {
-      let text = `${t.display} ${t.symbol}`;
-      if (t.scaled && t.scaled.uiMultiplier !== UI_MULTIPLIER_ONE) {
-        text += ` (BEP-677 ×${formatUnits(t.scaled.uiMultiplier, 18)})`;
-      }
-      if (t.scaled?.pending) {
-        const when = new Date(Number(t.scaled.pending.effectiveAt) * 1000);
-        text += ` (pending ×${formatUnits(t.scaled.pending.newUIMultiplier, 18)} at ${when.toLocaleString()})`;
-      }
-      code.textContent = text;
+    let text = `${t.display} ${t.symbol}`;
+    if (t.scaled && t.scaled.uiMultiplier !== UI_MULTIPLIER_ONE) {
+      text += ` (BEP-677 ×${formatUnits(t.scaled.uiMultiplier, 18)})`;
     }
+    if (t.scaled?.pending) {
+      const when = new Date(Number(t.scaled.pending.effectiveAt) * 1000);
+      text += ` (pending ×${formatUnits(t.scaled.pending.newUIMultiplier, 18)} at ${when.toLocaleString()})`;
+    }
+    code.textContent = text;
     row.appendChild(code);
     el.appendChild(row);
+  }
+  if (el.childElementCount === 0) {
+    const code = document.createElement("code");
+    code.textContent = "—";
+    el.appendChild(code);
   }
 }
 
