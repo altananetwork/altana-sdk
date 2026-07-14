@@ -68,7 +68,7 @@ await client.execute({
 });
 ```
 
-The session is **on-chain in KeyStore** the moment `grantSession` confirms. Any tool can verify the authorization without going through Altana.
+By default the session is **on-chain in KeyStore** the moment `grantSession` confirms — any tool can verify the authorization without going through Altana. (`register: false` grants an unlisted session for ephemeral keys; register it later with `registerSessionKey`.)
 
 ## Packages
 

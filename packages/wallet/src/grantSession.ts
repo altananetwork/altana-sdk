@@ -59,26 +59,35 @@ export async function grantSession(
   const publicClient = buildPublicClient(network);
 
   // Register the session's public key in KeyStore alongside the Porto
-  // authorization. KeyStore is the public registry that lets ANY tool/agent
-  // verify this session — without it, the session would only exist inside
-  // Porto's smart-account contract and `verify_authorization` would return
+  // authorization (default). KeyStore is the public registry that lets ANY
+  // tool/agent verify this session — without it, the session only exists
+  // inside Porto's smart-account contract and `verify_authorization` returns
   // false. Batched into the same userOp at the cost of one registration fee.
-  const fee = await readRegistrationFee(publicClient, network);
-  const registerSessionCall = buildAdditionalRegisterCall({
-    publicKey: sessionSigner.publicKey,
-    fee,
-    network,
-    expiry: opts.expiry,
-  });
+  // `register: false` skips the registry entry (and the fee) for ephemeral
+  // sessions; the account-level authorization below is unaffected, and the
+  // key can be registered later with registerSessionKey.
+  const register = opts.register !== false;
+  let registerCalls: { to: Address; value: bigint; data: Hex }[] = [];
+  if (register) {
+    const fee = await readRegistrationFee(publicClient, network);
+    registerCalls = [
+      buildAdditionalRegisterCall({
+        publicKey: sessionSigner.publicKey,
+        fee,
+        network,
+        expiry: opts.expiry,
+      }),
+    ];
+  }
 
   // submitCalls auto-prepends initialRegisterKey(admin) on the wallet's
   // very first admin action, so the final intent ends up as:
-  //   [ initialRegisterKey(admin)?, registerKey(session), authorizeKeys=[session] ]
+  //   [ initialRegisterKey(admin)?, registerKey(session)?, authorizeKeys=[session] ]
   const callsId = await submitCalls(
     relayClient,
     wallet.address,
     adminSigner,
-    [registerSessionCall],
+    registerCalls,
     {
       feeToken,
       submittingKey: adminKeyDesc,

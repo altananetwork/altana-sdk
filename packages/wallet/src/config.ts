@@ -1,4 +1,4 @@
-import { base, bsc, mainnet } from "viem/chains";
+import { base, bsc, bscTestnet, mainnet } from "viem/chains";
 import type { Address, Chain } from "viem";
 
 /**
@@ -20,12 +20,22 @@ export type NetworkConfig = {
   publicRpcUrl: string;
   /** Block explorer base URL. */
   explorer: string;
-  /** Altana relay endpoint. */
-  relayUrl: string;
+  /**
+   * Altana relay endpoint. Unset for keystore-only networks — no relay serves
+   * them, and any attempt to execute through them throws (see buildRelayClient).
+   */
+  relayUrl?: string;
 };
 
 /** Altana relay serving all mainnets. */
 export const RELAY_URL = "https://relay.altana.network";
+
+/**
+ * Altana testnet relay. Serves BSC testnet (chainId 97) only — the standalone
+ * testnet account stack. Sepolia / Base Sepolia are keystore-only testnets and
+ * have no relay.
+ */
+export const TESTNET_RELAY_URL = "https://relay-testnet.altana.network";
 
 export const ETHEREUM: NetworkConfig = {
   chain: mainnet,
@@ -45,6 +55,24 @@ export const BNB: NetworkConfig = {
   publicRpcUrl: "https://bsc-rpc.publicnode.com",
   explorer: "https://bscscan.com",
   relayUrl: RELAY_URL,
+};
+
+/**
+ * BNB Smart Chain Testnet — the full-stack Altana testnet. Standalone
+ * ecosystem (no L1Block predeploy, so no L2 cache): keystore + account stack +
+ * relay all live on chain 97. Fund wallets from https://testnet.bnbchain.org/faucet-smart.
+ *
+ * Addresses sourced from the Altana KeyStore deployment manifest:
+ *   <altana-keystore>/deployments/bnb-testnet.json (v1.0.1)
+ */
+export const BNB_TESTNET: NetworkConfig = {
+  chain: bscTestnet,
+  chainId: 97,
+  keyStore: "0x6b8361C29d05D498b1a12B54A37310f94171E94A",
+  keyStoreController: "0xb530D1971f5453F3359518343F05D0AedFfF7e12",
+  publicRpcUrl: "https://bsc-testnet-rpc.publicnode.com",
+  explorer: "https://testnet.bscscan.com",
+  relayUrl: TESTNET_RELAY_URL,
 };
 
 /**

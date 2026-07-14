@@ -55,7 +55,7 @@ spend: [
 
 | Stage | Function | Keystore impact |
 |---|---|---|
-| Grant | [`grantSession`](/sdk/grant-session) | Write. Session public key registered. |
+| Grant | [`grantSession`](/sdk/grant-session) | Write. Session public key registered by default (`register: false` skips; registrable later). |
 | Use | [`execute(session, calls)`](/sdk/execute) | None. |
 | Verify | Any client reads `getActiveKeys` | None. Free, unlimited. |
 | Revoke | [`revokeSession`](/sdk/revoke-session) | Write (gated by `onlyKeyOwnerOrValidator`). Session revoked (monotonic: cannot be reactivated). |

@@ -37,6 +37,7 @@ const client = createClient({ chains: [BNB] });
 // client.createPasskeyWallet — smart account from a passkey (Face ID / Touch ID), browser
 // client.execute             — run calls as wallet admin OR as a session
 // client.grantSession        — admin authorizes a scoped session key on-chain
+// client.registerSessionKey  — lazily add a Keystore entry for a session granted with register: false
 // client.revokeSession       — admin pulls authority; effect is immediate
 // client.recoverFromPasskey  — browser: rebuild wallet handle from any saved passkey
 // client.balances            — read native + token balances for a wallet
@@ -107,6 +108,10 @@ const session = await client.grantSession({
 // the exact permissions+expiry at execute time — the on-chain validator
 // matches them byte-for-byte against the authorization committed at grant.
 ```
+
+The grant also registers the key in Keystore, making it verifiable on-chain by
+any third party. For ephemeral keys, `register: false` skips this (and the fee);
+register later anytime with `client.registerSessionKey({ wallet, signer, session })`.
 
 ### Agent acts using a session
 

@@ -27,6 +27,7 @@ import {
   fetchWithX402,
   ETHEREUM,
   BNB,
+  BNB_TESTNET,
 } from "@altananetwork/sdk";
 import type { Signer, Wallet } from "@altananetwork/sdk";
 import {
@@ -50,14 +51,20 @@ import {
 // ---------- network ---------------------------------------------------------
 
 // Chain is selected at startup via the ALTANA_CHAIN env var. Defaults to BNB
-// Chain. Set ALTANA_CHAIN=ethereum to operate on Ethereum instead. All chains
-// use the Altana relay (see the SDK config's relayUrl). One MCP process serves
-// one chain; restart with a different ALTANA_CHAIN to switch.
+// Chain. Set ALTANA_CHAIN=ethereum to operate on Ethereum, or
+// ALTANA_CHAIN=bnb-testnet for the BSC testnet stack. All chains execute
+// through the Altana relay (mainnet relay for mainnets, testnet relay for
+// bnb-testnet — see the SDK config's relayUrl). One MCP process serves one
+// chain; restart with a different ALTANA_CHAIN to switch. Sepolia/Base Sepolia
+// are keystore-only (no relay) and so are not selectable here.
 const NETWORKS = {
   bnb: BNB,
   "56": BNB,
   ethereum: ETHEREUM,
   "1": ETHEREUM,
+  "bnb-testnet": BNB_TESTNET,
+  "bsc-testnet": BNB_TESTNET,
+  "97": BNB_TESTNET,
 } as const;
 
 const requestedChain = (process.env.ALTANA_CHAIN || "bnb").toLowerCase();
@@ -65,7 +72,7 @@ const NETWORK = NETWORKS[requestedChain as keyof typeof NETWORKS] ?? BNB;
 if (!(requestedChain in NETWORKS)) {
   console.error(
     `[altana-mcp] Unknown ALTANA_CHAIN="${requestedChain}". ` +
-      `Supported: bnb (default), ethereum. Falling back to bnb.`,
+      `Supported: bnb (default), ethereum, bnb-testnet. Falling back to bnb.`,
   );
 }
 console.error(
@@ -429,7 +436,9 @@ tool(
       "Returns a boolean plus the keyId that was checked. Pass either " +
       "`{ walletAddress, keyId }` for a direct check or `{ sessionName }` " +
       "to look up a session this server granted (server resolves the " +
-      "wallet and keyId from local metadata).",
+      "wallet and keyId from local metadata). Note: this reads the public " +
+      "KeyStore registry — a session granted with register: false works " +
+      "on-chain but reports false here until it is registered.",
     inputSchema: {
       walletAddress: z.string().optional(),
       keyId: z.string().optional(),
@@ -607,6 +616,17 @@ tool(
       // Cap at 1 year. Sessions are short-lived delegations by design;
       // anything longer should be a fresh re-issue, not a single grant.
       lifetimeSeconds: z.number().int().positive().max(31_536_000).optional(),
+      register: z
+        .boolean()
+        .optional()
+        .describe(
+          "Register the session key in the public KeyStore registry " +
+            "(default true). Registered keys are verifiable on-chain by any " +
+            "third party via verify_authorization — keep the default unless " +
+            "the key is ephemeral and nothing will ever look it up. When " +
+            "false, verify_authorization reports the key as not authorized " +
+            "even though the session works.",
+        ),
     },
   },
   async ({
@@ -615,12 +635,14 @@ tool(
     recipient,
     dailyCapEth,
     lifetimeSeconds,
+    register,
   }: {
     walletName: string;
     sessionName: string;
     recipient: string;
     dailyCapEth?: string;
     lifetimeSeconds?: number;
+    register?: boolean;
   }) => {
     // Refuse to overwrite an existing session entry. Sessions live in their
     // own keychain namespace (altana-session), so this only collides with
@@ -658,6 +680,7 @@ tool(
         spend: [{ limit: capWei, period: "day" }],
       },
       expiry,
+      ...(register !== undefined ? { register } : {}),
     });
 
     // Persist:

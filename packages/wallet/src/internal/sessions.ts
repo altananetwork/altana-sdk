@@ -64,4 +64,13 @@ export type GrantSessionOptions = {
    * secp256k1 session signer and returns it as part of the Session.
    */
   sessionSigner?: Signer;
+  /**
+   * Register the session's public key in the KeyStore registry (default
+   * true). Registration is what lets any third party verify the key's
+   * authority on-chain. Pass false for an ephemeral, account-only session —
+   * it works identically (permissions/expiry enforced by the account) but is
+   * invisible to KeyStore readers such as `verify_authorization`; it can be
+   * registered later with `registerSessionKey`.
+   */
+  register?: boolean;
 };
