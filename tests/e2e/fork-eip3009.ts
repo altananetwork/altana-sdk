@@ -47,7 +47,7 @@ const USDC: Address = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"; // Base USDC
 const USDC_NAME = "USD Coin";
 const USDC_VERSION = "2";
 const BASE_CHAIN_ID = 8453;
-const BASE_RPC = "https://base-rpc.publicnode.com";
+const BASE_RPC = process.env.BASE_FORK_RPC_URL ?? "https://base-rpc.publicnode.com";
 const ANVIL_PORT = 8548;
 const ANVIL_URL = `http://127.0.0.1:${ANVIL_PORT}`;
 

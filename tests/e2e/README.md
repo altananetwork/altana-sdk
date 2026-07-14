@@ -17,6 +17,22 @@ The same key is set as a GitHub Actions secret of the same name for CI runs.
 
 **Never put this key on mainnet.** Treat it as known-leaked: it's used by anyone with repo access.
 
+### Fork RPC endpoints
+
+The fork tests fork BNB Smart Chain and Base. They read dedicated RPC endpoints
+from env, falling back to public nodes when unset (fine locally, rate-limited in
+CI). Point these at a dedicated provider (Alchemy/QuickNode/Ankr, key in the URL)
+for reliable runs:
+
+```bash
+# .env at repo root (gitignored)
+BSC_FORK_RPC_URL=https://.../<KEY>   # fork-x402, fork-x402-witness, fork-erc1271, fork-bep677
+BASE_FORK_RPC_URL=https://.../<KEY>  # fork-eip3009
+```
+
+Both are set as GitHub Actions secrets of the same names and passed to the
+"On-chain fork tests" job.
+
 ## Run
 
 ```bash

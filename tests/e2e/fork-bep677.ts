@@ -41,7 +41,7 @@ import {
 import { bsc } from "viem/chains";
 import { createClient, BNB, UI_MULTIPLIER_ONE } from "@altananetwork/sdk";
 
-const BSC_RPC = "https://bsc-rpc.publicnode.com";
+const BSC_RPC = process.env.BSC_FORK_RPC_URL ?? "https://bsc-rpc.publicnode.com";
 const ANVIL_PORT = 8550;
 const ANVIL_URL = `http://127.0.0.1:${ANVIL_PORT}`;
 

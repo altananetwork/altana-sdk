@@ -36,7 +36,7 @@ import type { Session, Signer } from "@altananetwork/sdk";
 // (altana-account-mainnet/deploy/config.toml).
 const ITHACA_ACCOUNT_IMPL: Address =
   "0x4B5d20CD8a3927B500540d9BcCDDc27385c9fA79";
-const BSC_RPC = "https://bsc-rpc.publicnode.com";
+const BSC_RPC = process.env.BSC_FORK_RPC_URL ?? "https://bsc-rpc.publicnode.com";
 const ANVIL_PORT = 8546;
 const ANVIL_URL = `http://127.0.0.1:${ANVIL_PORT}`;
 
