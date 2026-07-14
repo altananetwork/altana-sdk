@@ -21,13 +21,22 @@ import {
   signX402Payment,
   fetchWithX402,
   BNB,
+  UI_MULTIPLIER_ONE,
   type PasskeyCredential,
+  type TokenBalance,
 } from "@altananetwork/sdk";
-import { createPublicClient, formatEther, http, parseEther, type Address, type Hex } from "viem";
+import { createPublicClient, formatEther, formatUnits, http, parseEther, type Address, type Hex } from "viem";
 
 // One client, configured for BNB Smart Chain. Add more chains here to make
 // the same wallet usable across them.
 const client = createClient({ chains: [BNB] });
+
+// Tokens shown in the balance panel. Add BEP-677 tokens here to see scaled
+// display amounts — the SDK detects IScaledUIAmount via ERC-165 and applies
+// uiMultiplier to the display value automatically.
+const DEMO_TOKENS: Address[] = [
+  "0x55d398326f99059ff775485246999027b3197955", // USDT (BSC) — plain ERC-20
+];
 
 // Populate the header network badge from the SDK's chain config so the demo
 // always states which chain it's actually talking to.
@@ -228,8 +237,37 @@ function rehydrate() {
 
 async function refreshBalance() {
   if (!walletState) return;
-  const bal = await publicClient.getBalance({ address: walletState.address });
-  setText("wallet-balance", `${formatEther(bal)} BNB`);
+  const res = await client.balances({
+    wallet: walletState.address,
+    tokens: DEMO_TOKENS,
+  });
+  setText("wallet-balance", `${formatEther(res.native)} BNB`);
+  renderTokenBalances(res.tokens ?? []);
+}
+
+function renderTokenBalances(tokens: TokenBalance[]) {
+  const el = document.getElementById("token-balances");
+  if (!el) return;
+  el.innerHTML = "";
+  for (const t of tokens) {
+    const row = document.createElement("div");
+    const code = document.createElement("code");
+    if (!t.ok) {
+      code.textContent = `${t.address.slice(0, 10)}… — unreadable`;
+    } else {
+      let text = `${t.display} ${t.symbol}`;
+      if (t.scaled && t.scaled.uiMultiplier !== UI_MULTIPLIER_ONE) {
+        text += ` (BEP-677 ×${formatUnits(t.scaled.uiMultiplier, 18)})`;
+      }
+      if (t.scaled?.pending) {
+        const when = new Date(Number(t.scaled.pending.effectiveAt) * 1000);
+        text += ` (pending ×${formatUnits(t.scaled.pending.newUIMultiplier, 18)} at ${when.toLocaleString()})`;
+      }
+      code.textContent = text;
+    }
+    row.appendChild(code);
+    el.appendChild(row);
+  }
 }
 
 document.getElementById("btn-refresh")!.addEventListener("click", refreshBalance);

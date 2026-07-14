@@ -35,3 +35,10 @@ bun run --filter '@altananetwork/e2e' smoke:all
 - `smoke-grant-first.ts` — registers admin via grantSession instead of first execute
 - `smoke-mcp.ts` — drives the MCP server over JSON-RPC stdio, end-to-end Path B flow
 - `spike-*.ts` — research scripts; not part of the smoke suite, kept for reference
+
+## Fork tests
+
+Self-contained anvil mainnet forks; no env vars or funded keys needed (requires `anvil` on PATH). Run directly, e.g. `bun tests/e2e/fork-bep677.ts`.
+
+- `fork-x402.ts`, `fork-x402-witness.ts`, `fork-eip3009.ts`, `fork-erc1271.ts` — x402 payment rails against real tokens
+- `fork-bep677.ts` — BEP-677 scaled-UI-amount display in `client.balances` (mock BEP-677 tokens + real USDT on a BSC fork)
