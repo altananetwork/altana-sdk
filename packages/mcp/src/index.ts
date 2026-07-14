@@ -429,7 +429,9 @@ tool(
       "Returns a boolean plus the keyId that was checked. Pass either " +
       "`{ walletAddress, keyId }` for a direct check or `{ sessionName }` " +
       "to look up a session this server granted (server resolves the " +
-      "wallet and keyId from local metadata).",
+      "wallet and keyId from local metadata). Note: this reads the public " +
+      "KeyStore registry — a session granted with register: false works " +
+      "on-chain but reports false here until it is registered.",
     inputSchema: {
       walletAddress: z.string().optional(),
       keyId: z.string().optional(),
@@ -607,6 +609,17 @@ tool(
       // Cap at 1 year. Sessions are short-lived delegations by design;
       // anything longer should be a fresh re-issue, not a single grant.
       lifetimeSeconds: z.number().int().positive().max(31_536_000).optional(),
+      register: z
+        .boolean()
+        .optional()
+        .describe(
+          "Register the session key in the public KeyStore registry " +
+            "(default true). Registered keys are verifiable on-chain by any " +
+            "third party via verify_authorization — keep the default unless " +
+            "the key is ephemeral and nothing will ever look it up. When " +
+            "false, verify_authorization reports the key as not authorized " +
+            "even though the session works.",
+        ),
     },
   },
   async ({
@@ -615,12 +628,14 @@ tool(
     recipient,
     dailyCapEth,
     lifetimeSeconds,
+    register,
   }: {
     walletName: string;
     sessionName: string;
     recipient: string;
     dailyCapEth?: string;
     lifetimeSeconds?: number;
+    register?: boolean;
   }) => {
     // Refuse to overwrite an existing session entry. Sessions live in their
     // own keychain namespace (altana-session), so this only collides with
@@ -658,6 +673,7 @@ tool(
         spend: [{ limit: capWei, period: "day" }],
       },
       expiry,
+      ...(register !== undefined ? { register } : {}),
     });
 
     // Persist:

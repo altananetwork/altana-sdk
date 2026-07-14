@@ -24,6 +24,8 @@ import { recoverFromPasskey as recoverFromPasskeyImpl } from "./recoverFromPassk
 import { execute as executeImpl } from "./execute.js";
 import { grantSession as grantSessionImpl } from "./grantSession.js";
 import { revokeSession as revokeSessionImpl } from "./revokeSession.js";
+import { registerSessionKey as registerSessionKeyImpl } from "./registerSessionKey.js";
+import type { RegisterSessionKeyResult } from "./registerSessionKey.js";
 import { balances as balancesImpl, type BalancesResult } from "./balances.js";
 import {
   signOrder as signOrderImpl,
@@ -96,6 +98,13 @@ export type ClientRevokeSessionOptions = {
   feeToken?: Address;
 } & ChainSelector;
 
+export type ClientRegisterSessionKeyOptions = {
+  wallet: Wallet;
+  signer: Signer;
+  session: Session;
+  feeToken?: Address;
+} & ChainSelector;
+
 export type ClientBalancesOptions = {
   wallet: Wallet | Address;
   /** ERC-20 tokens to include. BEP-677 display scaling is applied automatically. */
@@ -142,6 +151,10 @@ export type Client = {
   execute(opts: ClientExecuteOptions): Promise<ExecuteResult>;
   grantSession(opts: ClientGrantSessionOptions): Promise<Session>;
   revokeSession(opts: ClientRevokeSessionOptions): Promise<ExecuteResult>;
+  /** Lazily register a session key granted with `register: false`. Idempotent. */
+  registerSessionKey(
+    opts: ClientRegisterSessionKeyOptions,
+  ): Promise<RegisterSessionKeyResult>;
   balances(opts: ClientBalancesOptions): Promise<BalancesResult>;
 
   /** Sign a protocol digest with a session key (offline, chain-independent). */
@@ -253,6 +266,7 @@ export function createClient(opts: CreateClientOptions): Client {
           permissions: o.permissions,
           expiry: o.expiry,
           ...(o.sessionSigner ? { sessionSigner: o.sessionSigner } : {}),
+          ...(o.register !== undefined ? { register: o.register } : {}),
         },
         {
           network: resolve(o.chainId),
@@ -263,6 +277,13 @@ export function createClient(opts: CreateClientOptions): Client {
 
     revokeSession(o) {
       return revokeSessionImpl(o.wallet, o.signer, o.session, {
+        network: resolve(o.chainId),
+        ...(o.feeToken ? { feeToken: o.feeToken } : {}),
+      });
+    },
+
+    registerSessionKey(o) {
+      return registerSessionKeyImpl(o.wallet, o.signer, o.session, {
         network: resolve(o.chainId),
         ...(o.feeToken ? { feeToken: o.feeToken } : {}),
       });
