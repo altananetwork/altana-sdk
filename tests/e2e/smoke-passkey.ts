@@ -1,5 +1,5 @@
 /**
- * Passkey smoke test on Sepolia.
+ * Passkey smoke test on BNB testnet.
  *
  * Validates the full passkey-backed wallet lifecycle, using the headless
  * variant so it runs in Node:
@@ -20,12 +20,12 @@
 import {
   createClient,
   createHeadlessPasskey,
-  SEPOLIA,
+  BNB_TESTNET,
 } from "@altananetwork/sdk";
 import { buildPublicClient } from "../../packages/wallet/src/internal/relay.js";
 import { createWalletClient, http, parseEther, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { sepolia } from "viem/chains";
+import { bscTestnet } from "viem/chains";
 
 const TEST_FUNDER_KEY = process.env.TEST_FUNDER_KEY as Hex;
 if (!TEST_FUNDER_KEY) {
@@ -39,17 +39,17 @@ function ms(start: number) {
 }
 
 async function main() {
-  console.log("@altananetwork/sdk passkey smoke test — Sepolia");
+  console.log("@altananetwork/sdk passkey smoke test — BNB testnet");
   console.log("===========================================\n");
 
   const t0 = performance.now();
   const deployer = privateKeyToAccount(TEST_FUNDER_KEY);
   const deployerClient = createWalletClient({
     account: deployer,
-    chain: sepolia,
-    transport: http(SEPOLIA.publicRpcUrl),
+    chain: bscTestnet,
+    transport: http(BNB_TESTNET.publicRpcUrl),
   });
-  const publicClient = buildPublicClient(SEPOLIA);
+  const publicClient = buildPublicClient(BNB_TESTNET);
 
   // 1. Create passkey signer (headless variant for Node)
   console.log("[1] createHeadlessPasskey");
@@ -60,7 +60,7 @@ async function main() {
 
   // 2. Create wallet — uses throwaway-EOA bootstrap internally
   console.log("\n[2] createWallet({ signer: passkey })");
-  const client = createClient({ chains: [SEPOLIA] });
+  const client = createClient({ chains: [BNB_TESTNET] });
   const wallet = await client.createWallet({ signer: passkey });
   console.log("    wallet.address:", wallet.address);
   console.log(`    upgraded [${ms(t0)}]`);

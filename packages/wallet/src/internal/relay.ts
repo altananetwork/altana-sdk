@@ -34,6 +34,13 @@ import { buildFirstActionPrepend } from "./keystore.js";
 const NATIVE_TOKEN: Address = "0x0000000000000000000000000000000000000000";
 
 export function buildRelayClient(network: NetworkConfig) {
+  if (!network.relayUrl) {
+    throw new Error(
+      `No Altana relay serves chain ${network.chainId} (${network.chain.name}). ` +
+        `The testnet relay serves BSC testnet (97) only; Sepolia and other ` +
+        `keystore-only networks cannot execute through a relay.`,
+    );
+  }
   return createClient({
     chain: network.chain,
     transport: http(network.relayUrl, { timeout: 60_000 }),
