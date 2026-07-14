@@ -23,7 +23,7 @@ The Altana MCP server exposes 11 tools. AI hosts call them by name; users can al
 |---|---|
 | `create_wallet` | Generates a new private key, stores it in the OS keychain under the given name, returns the address. |
 | `list_wallets` | Lists wallet names available on this machine (across keychain, file, env). |
-| `wallet_balance` | Reads native + ERC-20 balances for a stored wallet. |
+| `wallet_balance` | Reads native + optional ERC-20 balances for a stored wallet (pass `tokens`). [BEP-677](https://github.com/bnb-chain/BEPs/blob/master/BEPs/BEP-677.md) scaled-UI-amount tokens are detected via ERC-165 and their `display` value is scaled automatically; `raw` stays the on-chain amount. |
 | `wallet_execute` | Submits one or more calls signed by the wallet's admin key. |
 
 ## Verification

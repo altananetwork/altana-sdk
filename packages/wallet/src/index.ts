@@ -15,7 +15,14 @@ export type { CreateWalletOptions, CreateWalletResult } from "./createWallet.js"
 export type { CreatePasskeyWalletOptions } from "./createPasskeyWallet.js";
 export type { RecoverFromPasskeyOptions } from "./recoverFromPasskey.js";
 export type { ExecuteOptions, Call } from "./execute.js";
-export type { BalancesResult } from "./balances.js";
+export type { BalancesResult, TokenBalance } from "./balances.js";
+// BEP-677 scaled-UI-amount building blocks.
+export {
+  applyUiMultiplier,
+  SCALED_UI_AMOUNT_INTERFACE_ID,
+  SCALED_UI_AMOUNT_PENDING_INTERFACE_ID,
+  UI_MULTIPLIER_ONE,
+} from "./internal/tokenBalances.js";
 
 export {
   signerFromPrivateKey,
