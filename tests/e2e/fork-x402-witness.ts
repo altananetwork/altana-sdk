@@ -40,7 +40,7 @@ import type { Session } from "@altananetwork/sdk";
 const ITHACA_ACCOUNT_IMPL: Address =
   "0x4B5d20CD8a3927B500540d9BcCDDc27385c9fA79";
 const USDC: Address = "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d"; // Binance-Peg USDC (18 dec)
-const BSC_RPC = "https://bsc-rpc.publicnode.com";
+const BSC_RPC = process.env.BSC_FORK_RPC_URL ?? "https://bsc-rpc.publicnode.com";
 const ANVIL_PORT = 8549;
 const ANVIL_URL = `http://127.0.0.1:${ANVIL_PORT}`;
 

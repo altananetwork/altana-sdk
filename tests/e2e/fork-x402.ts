@@ -38,7 +38,7 @@ import type { Session } from "@altananetwork/sdk";
 const ITHACA_ACCOUNT_IMPL: Address =
   "0x4B5d20CD8a3927B500540d9BcCDDc27385c9fA79";
 const USDT: Address = "0x55d398326f99059fF775485246999027B3197955"; // BSC-USDT (18 dec)
-const BSC_RPC = "https://bsc-rpc.publicnode.com";
+const BSC_RPC = process.env.BSC_FORK_RPC_URL ?? "https://bsc-rpc.publicnode.com";
 const ANVIL_PORT = 8547;
 const ANVIL_URL = `http://127.0.0.1:${ANVIL_PORT}`;
 
