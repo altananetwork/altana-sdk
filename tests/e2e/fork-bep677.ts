@@ -56,7 +56,7 @@ const MOCK_PENDING_RUNTIME: Hex =
 const MOCK_ELAPSED_RUNTIME: Hex =
   "0x608060405234801561000f575f5ffd5b506004361061007a575f3560e01c806395d89b411161005857806395d89b41146100df57806397a4064f14610106578063a60bf13d1461010d578063dc7670071461011b575f5ffd5b806301ffc9a71461007e578063313ce567146100a657806370a08231146100b5575b5f5ffd5b61009161008c36600461015f565b610129565b60405190151581526020015b60405180910390f35b6040516012815260200161009d565b6100d16100c336600461018d565b50683635c9adc5dea0000090565b60405190815260200161009d565b604080518082018252600581526439a0a62a1960d91b6020820152905161009d91906101b3565b60016100d1565b6714d1120d7b1600006100d1565b671bc16d674ec800006100d1565b5f63a60bf13d60e01b6001600160e01b031983161480610159575063097a4ec960e31b6001600160e01b03198316145b92915050565b5f6020828403121561016f575f5ffd5b81356001600160e01b031981168114610186575f5ffd5b9392505050565b5f6020828403121561019d575f5ffd5b81356001600160a01b0381168114610186575f5ffd5b602081525f82518060208401528060208501604085015e5f604082850101526040601f19601f8301168401019150509291505056fea26469706673582212206d0bbe5b5270937fe3ac4064fae4e1467613914702809e8cce31499fc9662de364736f6c634300081c0033";
 
-function assert(cond: boolean, msg: string): void {
+function assert(cond: unknown, msg: string): asserts cond {
   if (!cond) throw new Error(`ASSERT FAILED: ${msg}`);
 }
 
@@ -106,11 +106,10 @@ async function main() {
     // Native path unchanged.
     assert(res.native === 5n * 10n ** 18n, `native = ${res.native}`);
     assert(res.tokens?.length === 3, "three token entries, order preserved");
-    const [pendingTok, elapsedTok, usdt] = res.tokens!;
+    const [pendingTok, elapsedTok, usdt] = res.tokens;
 
     // Mock 1: pending change in the future → current 1.5x multiplier applies.
-    assert(pendingTok.ok, "pending mock readable");
-    if (!pendingTok.ok) return;
+    assert(pendingTok?.ok === true, "pending mock readable");
     assert(pendingTok.symbol === "sALT", `symbol = ${pendingTok.symbol}`);
     assert(pendingTok.raw === 1000n * 10n ** 18n, `raw stays unscaled: ${pendingTok.raw}`);
     assert(pendingTok.display === "1500", `1.5x display = ${pendingTok.display}`);
@@ -126,8 +125,7 @@ async function main() {
     console.log(`✓ pending mock: ${pendingTok.display} ${pendingTok.symbol} (×1.5, pending ×2)`);
 
     // Mock 2: effectiveAt elapsed → the 2x newUIMultiplier applies, no pending.
-    assert(elapsedTok.ok, "elapsed mock readable");
-    if (!elapsedTok.ok) return;
+    assert(elapsedTok?.ok === true, "elapsed mock readable");
     assert(elapsedTok.display === "2000", `2x display = ${elapsedTok.display}`);
     assert(
       elapsedTok.scaled?.uiMultiplier === 2n * UI_MULTIPLIER_ONE,
@@ -138,8 +136,7 @@ async function main() {
 
     // Real USDT: no ERC-165 at all — supportsInterface reverts on-chain and
     // the token must come back readable and UNscaled.
-    assert(usdt.ok, "USDT readable");
-    if (!usdt.ok) return;
+    assert(usdt?.ok === true, "USDT readable");
     assert(usdt.symbol.length > 0, "USDT symbol non-empty");
     assert(usdt.decimals === 18, `USDT decimals = ${usdt.decimals}`);
     assert(usdt.scaled === undefined, "USDT is not scaled");
