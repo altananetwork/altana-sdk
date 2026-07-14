@@ -35,24 +35,20 @@ const session = await client.grantSession({
 // Hand `session` to whichever process runs the agent.
 ```
 
-## Why the session key is registered
+## Registering the session key
 
-By default the session's public key is written to [Keystore](/concepts/keystore) via the Controller, batched into the same userOp. Registration is what makes the key's authority **provable to anyone**:
+The session's public key is written to [Keystore](/concepts/keystore) via the Controller, batched into the same userOp — controlled by the `register` flag, on by default. Registration is what makes the key's authority **provable to anyone**:
 
 - **Third parties can verify it on-chain** — other agents, counterparties, dashboards, and compliance tools can check the key's authority, expiry, and revocation state (`getActiveKeys` / `isValidKey`, or the MCP `verify_authorization` tool) without trusting you or Altana. Reads are free and unlimited.
 - **Keys are discoverable** — a wallet's keys can be enumerated from chain for recovery and auditing.
 - **Grants and revokes leave an on-chain trail** — timestamped, monotonic revocation.
 - **(Ethereum)** one registration extends across chains via [`ensureKeyCached`](/sdk/sync-to-l2).
 
-For ephemeral keys that nothing will ever look up, `register: false` skips the registry entry (and its one-time fee). The session works identically — permissions and expiry are enforced by the account either way — but it is invisible to KeyStore readers such as `verify_authorization` until you register it, which you can do at any time:
+To skip registration (and its one-time fee), pass `register: false`. The session works the same, but Keystore readers like `verify_authorization` won't see it. Register it later at any time:
 
 ```ts
-// Later, when a third party needs to verify the key:
 await client.registerSessionKey({ wallet, signer: admin, session });
-// Idempotent — an already-registered key submits nothing and pays nothing.
 ```
-
-`revokeSession` handles both states — an unregistered session revokes cleanly.
 
 ## Parameters
 
@@ -67,7 +63,7 @@ type ClientGrantSessionOptions = {
   expiry: number;
   /** Bring your own session signer, or omit to let the SDK generate one. */
   sessionSigner?: Signer;
-  /** Register the key in Keystore (default true). See "Why the session key is registered". */
+  /** Register the key in Keystore (default true). */
   register?: boolean;
   /** Fee token (default: native token). */
   feeToken?: Address;
@@ -94,10 +90,10 @@ type Session = {
 
 In a single userOp:
 
-1. The session's public key is registered in [Keystore](/concepts/keystore), making it discoverable by any tool (unless `register: false`).
+1. The session's public key is registered in [Keystore](/concepts/keystore), making it discoverable by any tool.
 2. The session is authorized on the wallet's smart account with its permissions hash.
 
-With the default, both happen atomically — no intermediate state where one exists without the other. With `register: false`, only the account authorization lands; the registry entry can be added later with `registerSessionKey`.
+Both happen atomically. There is no intermediate state where one exists without the other.
 
 ## Notes
 
