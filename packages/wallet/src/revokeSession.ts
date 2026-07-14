@@ -2,12 +2,13 @@ import { keccak256, type Address, type Hex } from "viem";
 import { type NetworkConfig } from "./config.js";
 import type { Signer } from "./internal/signer.js";
 import {
+  buildPublicClient,
   buildRelayClient,
   submitCalls,
   waitForCalls,
   type KeyDescriptor,
 } from "./internal/relay.js";
-import { buildRevokeKeyCall } from "./internal/keystore.js";
+import { buildRevokeKeyCall, readIsValidKey } from "./internal/keystore.js";
 import type { Session } from "./internal/sessions.js";
 import type { ExecuteResult, Wallet } from "./internal/types.js";
 
@@ -47,22 +48,33 @@ export async function revokeSession(
   };
 
   const relayClient = buildRelayClient(network);
+  const publicClient = buildPublicClient(network);
 
   // Revoke in KeyStore alongside revoking on Porto. KeyStore is the
   // public registry — leaving a revoked session there would be a stale
   // record that other tools would still treat as active. Both ops land in
   // the same userOp. Revocation is monotonic in v1.0.0.
-  const revokeCall = buildRevokeKeyCall({
-    walletAddress: wallet.address,
-    keyId: keccak256(sessionPublicKey),
+  //
+  // Gated on the key actually being registered: sessions granted with
+  // `register: false` have no KeyStore entry, and revoking a missing keyId
+  // would revert — taking the account-level revoke (the one that removes the
+  // session's authority) down with it, since the bundle is atomic.
+  const keyId = keccak256(sessionPublicKey);
+  const isRegistered = await readIsValidKey(
+    publicClient,
     network,
-  });
+    wallet.address,
+    keyId,
+  );
+  const revokeCalls = isRegistered
+    ? [buildRevokeKeyCall({ walletAddress: wallet.address, keyId, network })]
+    : [];
 
   const callsId = await submitCalls(
     relayClient,
     wallet.address,
     adminSigner,
-    [revokeCall],
+    revokeCalls,
     {
       feeToken,
       submittingKey: adminKeyDesc,

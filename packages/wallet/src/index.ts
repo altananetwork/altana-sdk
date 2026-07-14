@@ -8,6 +8,7 @@ export type {
   ClientExecuteOptions,
   ClientGrantSessionOptions,
   ClientRevokeSessionOptions,
+  ClientRegisterSessionKeyOptions,
   ClientBalancesOptions,
 } from "./client.js";
 
@@ -48,6 +49,10 @@ export type {
   SpendPermission,
   GrantSessionOptions,
 } from "./internal/sessions.js";
+
+// Lazy KeyStore registration for sessions granted with `register: false`.
+export { registerSessionKey } from "./registerSessionKey.js";
+export type { RegisterSessionKeyResult } from "./registerSessionKey.js";
 
 export type { Wallet, ExecuteResult } from "./internal/types.js";
 export {

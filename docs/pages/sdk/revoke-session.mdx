@@ -29,6 +29,8 @@ Revocation calls Keystore directly, not the Controller. The call is gated onchai
 
 Revocation is **monotonic**: once a key is revoked, it cannot be reactivated. To restore session access for a wallet, grant a new session with a fresh keypair.
 
+Sessions granted with `register: false` (see [grantSession](/sdk/grant-session)) have no Keystore entry — for those, `revokeSession` skips the Keystore call automatically and revokes the account-level authority alone, which is what actually strips the session's power.
+
 ## Parameters
 
 ```ts
@@ -47,7 +49,7 @@ type ClientRevokeSessionOptions = {
 
 In a single userOp:
 
-1. The session is **revoked in Keystore**. Any tool reading `getActiveKeys` will no longer see it.
+1. The session is **revoked in Keystore** (skipped if the session was never registered). Any tool reading `getActiveKeys` will no longer see it.
 2. The session's authority on the wallet's smart account is pulled.
 
 Both atomic. After the userOp confirms, the session is dead everywhere simultaneously.
