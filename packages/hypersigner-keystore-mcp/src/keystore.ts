@@ -17,7 +17,7 @@ import {
   encodeFunctionData,
   keccak256,
 } from "viem";
-import { bsc, mainnet } from "viem/chains";
+import { bsc, bscTestnet, mainnet } from "viem/chains";
 
 export const ZERO_ADDRESS =
   "0x0000000000000000000000000000000000000000" as Address;
@@ -160,6 +160,18 @@ export const CHAINS: Record<string, ChainConfig> = {
     explorerUrl: "https://etherscan.io",
     currencySymbol: "ETH",
   },
+  // BNB testnet keystore (v1.0.1). This MCP calls the KeyStore/Controller
+  // directly (no relay).
+  "bnb-testnet": {
+    key: "bnb-testnet",
+    chainId: 97,
+    chain: bscTestnet,
+    keyStore: "0x6b8361C29d05D498b1a12B54A37310f94171E94A",
+    controller: "0xb530D1971f5453F3359518343F05D0AedFfF7e12",
+    rpcUrl: "https://bsc-testnet-rpc.publicnode.com",
+    explorerUrl: "https://testnet.bscscan.com",
+    currencySymbol: "tBNB",
+  },
 };
 
 const ALIASES: Record<string, string> = {
@@ -168,6 +180,9 @@ const ALIASES: Record<string, string> = {
   eth: "ethereum",
   mainnet: "ethereum",
   "1": "ethereum",
+  "bsc-testnet": "bnb-testnet",
+  tbnb: "bnb-testnet",
+  "97": "bnb-testnet",
 };
 
 export function resolveChain(name?: string): ChainConfig {

@@ -128,6 +128,7 @@ export default defineConfig({
       items: [
         { text: "Overview", link: "/sdk" },
         { text: "Setup: BNB Smart Chain", link: "/sdk/bnb" },
+        { text: "Setup: BNB Testnet", link: "/sdk/bnb-testnet" },
         {
           text: "Wallets",
           items: [

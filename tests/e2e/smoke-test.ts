@@ -1,10 +1,10 @@
 /**
- * Smoke test for @altananetwork/sdk on Sepolia.
+ * Smoke test for @altananetwork/sdk on BNB testnet.
  *
  * Validates the post-Signer-refactor public API end-to-end:
  *   1. createPrivateKeySigner() — generates an in-memory ECDSA signer
- *   2. createWallet({ signer, skipFaucet: true }) — registers w/ Porto
- *   3. Fund the new wallet from the Altana deployer wallet (direct ETH)
+ *   2. createWallet({ signer, skipFaucet: true }) — registers via the relay
+ *   3. Fund the new wallet from the Altana deployer wallet (direct native token)
  *   4. execute(wallet, signer, sendOneWeiBack) — first execute, so SDK
  *      prepends KeyStoreController.initialRegisterKey atomically
  *   5. balances(wallet) + KeyStore.getActiveKeys verification
@@ -15,13 +15,13 @@
 import {
   createClient,
   createPrivateKeySigner,
-  SEPOLIA,
+  BNB_TESTNET,
 } from "@altananetwork/sdk";
 import { readActiveKeys } from "../../packages/wallet/src/internal/keystore.js";
 import { buildPublicClient } from "../../packages/wallet/src/internal/relay.js";
 import { createWalletClient, http, parseEther, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { sepolia } from "viem/chains";
+import { bscTestnet } from "viem/chains";
 
 const TEST_FUNDER_KEY = process.env.TEST_FUNDER_KEY as Hex;
 if (!TEST_FUNDER_KEY) {
@@ -35,17 +35,17 @@ function ms(start: number) {
 }
 
 async function main() {
-  console.log("@altananetwork/sdk smoke test — Sepolia (post-Signer refactor)");
+  console.log("@altananetwork/sdk smoke test — BNB testnet (post-Signer refactor)");
   console.log("============================================================\n");
 
   const t0 = performance.now();
   const deployer = privateKeyToAccount(TEST_FUNDER_KEY);
   const deployerClient = createWalletClient({
     account: deployer,
-    chain: sepolia,
-    transport: http(SEPOLIA.publicRpcUrl),
+    chain: bscTestnet,
+    transport: http(BNB_TESTNET.publicRpcUrl),
   });
-  const publicClient = buildPublicClient(SEPOLIA);
+  const publicClient = buildPublicClient(BNB_TESTNET);
 
   console.log("Deployer:", deployer.address);
   const deployerBal = await publicClient.getBalance({ address: deployer.address });
@@ -54,14 +54,14 @@ async function main() {
 
   // Step 1+2: create the signer + wallet
   console.log("[1] createPrivateKeySigner() + createWallet({ signer, skipFaucet: true })");
-  const client = createClient({ chains: [SEPOLIA] });
+  const client = createClient({ chains: [BNB_TESTNET] });
   const signer = createPrivateKeySigner();
   console.log("    signer.type:    ", signer.type);
   console.log("    signer.address: ", signer.address, `[${ms(t0)}]`);
 
   const wallet = await client.createWallet({ signer });
   console.log("    wallet.address: ", wallet.address, `[${ms(t0)}]`);
-  console.log("    wallet.chainId: ", SEPOLIA.chainId);
+  console.log("    wallet.chainId: ", BNB_TESTNET.chainId);
   // Sanity: same address everywhere
   if (wallet.address !== signer.address) {
     throw new Error("Wallet/signer address mismatch — bug in refactor");
@@ -77,7 +77,7 @@ async function main() {
   await publicClient.waitForTransactionReceipt({ hash: fundTx });
   console.log(`    confirmed [${ms(t0)}]`);
 
-  const keysBefore = await readActiveKeys(publicClient, SEPOLIA, wallet.address);
+  const keysBefore = await readActiveKeys(publicClient, BNB_TESTNET, wallet.address);
   console.log("    KeyStore.getActiveKeys before:", keysBefore.length);
 
   // Step 4: execute (first call prepends KeyStore registration)
@@ -97,7 +97,7 @@ async function main() {
 
   // Step 5: verify
   console.log("\n[4] Verify");
-  const keysAfter = await readActiveKeys(publicClient, SEPOLIA, wallet.address);
+  const keysAfter = await readActiveKeys(publicClient, BNB_TESTNET, wallet.address);
   console.log("    KeyStore.getActiveKeys after: ", keysAfter.length);
   if (keysAfter.length > 0) {
     console.log("    Registered keyId:             ", keysAfter[0]);
@@ -111,8 +111,8 @@ async function main() {
   console.log("Result:", pass ? "PASS ✓" : "PARTIAL");
   if (result.transactionHash) {
     console.log("\nEtherscan:");
-    console.log(`  https://sepolia.etherscan.io/tx/${result.transactionHash}`);
-    console.log(`  https://sepolia.etherscan.io/address/${wallet.address}`);
+    console.log(`  https://bscTestnet.etherscan.io/tx/${result.transactionHash}`);
+    console.log(`  https://bscTestnet.etherscan.io/address/${wallet.address}`);
   }
 }
 

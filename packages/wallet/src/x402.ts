@@ -135,6 +135,9 @@ export function networkToChainId(network: string): number {
     case "ethereum":
     case "mainnet":
       return 1;
+    case "bsc-testnet":
+    case "bnb-testnet":
+      return 97;
     default:
       throw new Error(`x402: unsupported network "${network}".`);
   }

@@ -50,8 +50,19 @@ export type {
 } from "./internal/sessions.js";
 
 export type { Wallet, ExecuteResult } from "./internal/types.js";
-export { ETHEREUM, BNB, BASE, RELAY_URL } from "./config.js";
+export {
+  ETHEREUM,
+  BNB,
+  BASE,
+  BNB_TESTNET,
+  RELAY_URL,
+  TESTNET_RELAY_URL,
+} from "./config.js";
 export type { NetworkConfig, L2CacheConfig } from "./config.js";
+
+// Testnet faucet helper — funds an EOA with native tokens via the testnet
+// relay's faucet. Works only on networks whose relay exposes it (BSC testnet).
+export { fundNative, waitForBalance } from "./internal/relay.js";
 
 // ERC-1271 order signing (session keys signing off-chain authorizations).
 export { signOrder, signOrderTypedData } from "./signOrder.js";
