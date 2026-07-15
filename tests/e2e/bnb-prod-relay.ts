@@ -24,7 +24,7 @@ const log = (label: string, value?: unknown) => {
 };
 
 const RELAY_URL =
-  process.env.RELAY_URL ?? "https://relay-testnet.altana.network";
+  process.env.RELAY_URL ?? "https://testnet-relay.altana.network";
 const FEE_RECIPIENT = "0x20E8551E9B458AE2a92aFBDE787dD76e3702833f" as const;
 const DEPLOYER_PK = process.env.DEPLOYER_KEY as `0x${string}`;
 if (!DEPLOYER_PK) throw new Error("DEPLOYER_KEY env var not set");

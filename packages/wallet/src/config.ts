@@ -35,7 +35,7 @@ export const RELAY_URL = "https://relay.altana.network";
  * testnet account stack. Sepolia / Base Sepolia are keystore-only testnets and
  * have no relay.
  */
-export const TESTNET_RELAY_URL = "https://relay-testnet.altana.network";
+export const TESTNET_RELAY_URL = "https://testnet-relay.altana.network";
 
 export const ETHEREUM: NetworkConfig = {
   chain: mainnet,
