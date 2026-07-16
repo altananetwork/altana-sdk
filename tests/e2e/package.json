@@ -19,7 +19,8 @@
     "demo:b402": "bun run demo-b402.ts",
     "typecheck": "tsc --noEmit",
     "fork:x402-server": "bun run fork-x402-server.ts",
-    "fork:erc8183-buyer": "bun run fork-erc8183.ts"
+    "fork:erc8183-buyer": "bun run fork-erc8183.ts",
+    "demo:hire-studio-agent": "bun run demo-hire-studio-agent.ts"
   },
   "dependencies": {
     "@altananetwork/sdk": "workspace:*",
