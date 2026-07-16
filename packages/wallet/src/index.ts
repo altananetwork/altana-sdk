@@ -112,3 +112,23 @@ export type {
   EnsureKeyCachedStatus,
   CachedKey,
 } from "./syncKeyToL2.js";
+
+export {
+  ERC8183_ADDRESSES,
+  JOB_STATUS,
+  erc8183Addresses,
+  buildHireCalls,
+  buildClaimRefundCall,
+  getErc8183Job,
+  getErc8183DeliverableUrl,
+  hireErc8183Agent,
+  settleErc8183Job,
+} from "./erc8183.js";
+export type {
+  Erc8183Addresses,
+  Erc8183Job,
+  HireAgentParams,
+  HireAgentResult,
+  HireCallsInput,
+  JobStatusName,
+} from "./erc8183.js";

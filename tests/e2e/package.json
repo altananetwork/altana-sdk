@@ -18,7 +18,8 @@
     "fork:all": "bun run fork-erc1271.ts && bun run fork-x402.ts && bun run fork-x402-witness.ts && bun run fork-eip3009.ts",
     "demo:b402": "bun run demo-b402.ts",
     "typecheck": "tsc --noEmit",
-    "fork:x402-server": "bun run fork-x402-server.ts"
+    "fork:x402-server": "bun run fork-x402-server.ts",
+    "fork:erc8183-buyer": "bun run fork-erc8183.ts"
   },
   "dependencies": {
     "@altananetwork/sdk": "workspace:*",
