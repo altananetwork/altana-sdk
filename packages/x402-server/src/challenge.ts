@@ -17,7 +17,10 @@ export function effectivePrice(cfg: MerchantConfig): bigint {
 export function buildChallenge(cfg: MerchantConfig): ChallengeBody {
   const amount = effectivePrice(cfg).toString();
   const network = `eip155:${cfg.chainId}`;
-  const timeout = cfg.maxTimeoutSeconds ?? 600;
+  // Default 300s, and keep custom values ≤480s if Studio buyers matter: their
+  // hardened signer refuses validity windows >600s and backdates validAfter
+  // by 120s, so a 600s challenge yields a 720s window and is refused.
+  const timeout = cfg.maxTimeoutSeconds ?? 300;
 
   const accepts: ChallengeAccept[] = cfg.rails.map((rail) => ({
     scheme: "exact",

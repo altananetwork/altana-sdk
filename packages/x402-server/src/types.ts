@@ -30,7 +30,11 @@ export type MerchantConfig = {
   /** Clamp ceiling — and never above. */
   maxPrice?: bigint;
   rails: RailConfig[];
-  /** Authorization validity window offered in the challenge (default 600s). */
+  /**
+   * Authorization validity window offered in the challenge (default 300s).
+   * Keep ≤480s: BNB Agent Studio buyers backdate validAfter by 120s and their
+   * signer refuses windows over 600s.
+   */
   maxTimeoutSeconds?: number;
   /** Resource URL echoed in the challenge (Studio buyers echo it back). */
   resource?: string;
