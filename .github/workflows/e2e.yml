@@ -28,20 +28,25 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Build SDK
-        run: bun run --filter '@altananetwork/sdk' build
+        run: |
+          bun run --filter '@altananetwork/sdk' build
+          bun run --filter '@altananetwork/x402-server' build
 
       - name: Typecheck shipping packages
         run: |
           bun run --filter '@altananetwork/sdk' \
                   --filter '@altananetwork/mcp' \
                   --filter '@altananetwork/hypersigner-keystore-mcp' \
+                  --filter '@altananetwork/x402-server' \
                   typecheck
 
       - name: Typecheck e2e (fork + demo harness)
         run: bun run --filter '@altananetwork/e2e' typecheck
 
       - name: Unit tests
-        run: bun run --filter '@altananetwork/sdk' test
+        run: |
+          bun run --filter '@altananetwork/sdk' test
+          bun run --filter '@altananetwork/x402-server' test
 
   fork-tests:
     name: On-chain fork tests (anvil)
@@ -68,7 +73,9 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Build SDK
-        run: bun run --filter '@altananetwork/sdk' build
+        run: |
+          bun run --filter '@altananetwork/sdk' build
+          bun run --filter '@altananetwork/x402-server' build
 
       - name: Run fork tests (ERC-1271, permit2, permit2-witness, eip3009)
         env:
