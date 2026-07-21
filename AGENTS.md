@@ -26,6 +26,20 @@ bug deadlocks multi-file runs that combine sessionKeyRegistration.test.ts's
 this back to a single `bun test` invocation, and avoid adding new
 `mock.module` usage to test files.
 
+## Keep docs in sync with SDK changes
+
+Every SDK change that adds, removes, or alters public behavior MUST update the
+docs in the same PR — never ship the code change alone. Check all of these:
+
+- `docs/pages/sdk/` (and `docs/pages/mcp/` for MCP tool changes) — the vocs
+  docs site; add a page for new surfaces, update existing pages for changed
+  signatures, options, defaults, or addresses.
+- `packages/<pkg>/README.md` — quickstart and examples must still be accurate.
+- `packages/wallet/SKILL.md` — if the change affects how agents use the SDK.
+
+If a PR touches `packages/*/src` public exports and no docs file, that PR is
+incomplete.
+
 If the CI workflow gains new packages or steps, update this list to match. If
 a step fails locally, fix it before pushing — a red or hung check on the PR
 blocks the merge.
