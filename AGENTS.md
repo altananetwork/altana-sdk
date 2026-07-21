@@ -40,6 +40,12 @@ docs in the same PR — never ship the code change alone. Check all of these:
 If a PR touches `packages/*/src` public exports and no docs file, that PR is
 incomplete.
 
+## Docs style: no em dashes
+
+Never use em dashes in docs prose (docs site pages, READMEs, SKILL.md).
+Rewrite the sentence instead: split it in two, or use a comma, colon, or
+parentheses.
+
 If the CI workflow gains new packages or steps, update this list to match. If
 a step fails locally, fix it before pushing — a red or hung check on the PR
 blocks the merge.
