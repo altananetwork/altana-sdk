@@ -25,7 +25,7 @@ export default defineConfig({
   editLink: {
     pattern:
       "https://github.com/altananetwork/altana-sdk/edit/main/docs/pages/:path",
-    text: "Edit this page",
+    text: "Suggest changes to this page",
   },
   font: {
     google: "Inter Tight",

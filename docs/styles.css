@@ -663,3 +663,166 @@ a[href*="chatgpt.com"].ai-copied::after { content: 'Copied'; }
   border-color: transparent;
   color: var(--vocs-color_text3);
 }
+
+/* ── Page feedback widget ─────────────────────────────────────────────
+   Mounted from the vocs Footer slot (footer.tsx). On pages with the outline
+   rail it portals into `.vocs_Outline` (modifier --outline); otherwise it
+   renders inline in the footer at the end of the page (modifier --footer). */
+.altana-feedback-slot {
+  /* The outline aside is a flex column; vocs inserts its nav after mount,
+     which can push our appended node up in DOM order. A high `order` keeps
+     the widget visually last (below "On this page") regardless. */
+  order: 100;
+  margin-top: 4px;
+}
+
+/* In the right rail: separated from the outline by a rule, sized for the
+   narrow column. */
+.altana-feedback--outline {
+  padding-top: 24px;
+  border-top: 1px solid var(--vocs-color_border);
+}
+
+.altana-feedback-title {
+  margin: 0 0 14px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--vocs-color_heading);
+}
+
+/* In the footer (pages without an outline rail, e.g. the welcome hub):
+   a top rule separates it from the prev/next navigation above. */
+.altana-feedback--footer {
+  padding-top: 32px;
+  border-top: 1px solid var(--vocs-color_border);
+}
+
+.altana-feedback--footer .altana-feedback-title {
+  font-size: 15px;
+}
+
+.altana-feedback-thumbs {
+  display: flex;
+  gap: 10px;
+}
+
+.altana-feedback-thumb {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid var(--vocs-color_border);
+  background: var(--vocs-color_background);
+  color: var(--vocs-color_text3);
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+
+.altana-feedback-thumb:hover {
+  color: var(--altana-blue);
+  border-color: var(--altana-blue);
+  background: var(--vocs-color_background2);
+}
+
+.altana-feedback--outline .altana-feedback-thumb {
+  width: 36px;
+  height: 36px;
+}
+
+.altana-feedback-survey {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 460px;
+}
+
+.altana-feedback-title[tabindex]:focus-visible {
+  outline: none;
+}
+
+.altana-feedback-options {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.altana-feedback-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--vocs-color_text2);
+  cursor: pointer;
+}
+
+.altana-feedback-option input[type='radio'] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--altana-blue);
+  cursor: pointer;
+}
+
+.altana-feedback-textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--vocs-color_border);
+  background: var(--vocs-color_background);
+  color: var(--vocs-color_heading);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.altana-feedback-textarea::placeholder {
+  color: var(--vocs-color_text3);
+}
+
+.altana-feedback-textarea:focus-visible {
+  outline: none;
+  border-color: var(--altana-blue);
+}
+
+.altana-feedback-submit {
+  align-self: flex-start;
+  padding: 8px 18px;
+  border-radius: 8px;
+  border: 1px solid var(--vocs-color_border);
+  background: var(--vocs-color_background2);
+  color: var(--vocs-color_heading);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.altana-feedback-submit:hover {
+  background: var(--altana-blue);
+  border-color: var(--altana-blue);
+  color: #ffffff;
+}
+
+.altana-feedback-thanks {
+  margin: 0;
+  color: var(--vocs-color_text2);
+  font-weight: 400;
+}
+
+.altana-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
