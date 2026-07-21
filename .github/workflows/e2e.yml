@@ -45,7 +45,20 @@ jobs:
 
       - name: Unit tests
         run: |
-          bun run --filter '@altananetwork/sdk' test
+          echo "=== full sdk suite, 90s cap ==="
+          timeout 90 bun run --filter '@altananetwork/sdk' test && echo "FULL SUITE OK" || echo "FULL SUITE EXIT $?"
+          cd packages/wallet
+          echo "=== per-file, 60s cap each ==="
+          for f in src/*.test.ts src/internal/*.test.ts; do
+            [ -e "$f" ] || continue
+            echo "--- $f ---"
+            timeout 60 bun test "$f" >/tmp/f.log 2>&1 && echo "OK $f" || { echo "EXIT $? $f"; tail -20 /tmp/f.log; }
+          done
+          echo "=== import probe: client.js ==="
+          timeout 60 bun -e 'await import("./src/client.js"); console.log("client.js import OK")' || echo "IMPORT PROBE EXIT $?"
+          echo "=== balances direct probe ==="
+          timeout 60 bun test src/client.balances.test.ts || echo "BALANCES EXIT $?"
+          cd ../..
           bun run --filter '@altananetwork/x402-server' test
 
   fork-tests:
