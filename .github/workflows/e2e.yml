@@ -60,16 +60,15 @@ jobs:
             echo "COMBO [$label] exit=$code $summary"
             if [ $code -ne 0 ]; then tail -5 /tmp/c.log; fi
           }
-          combo "all6 control"    $T $B $S $A $X $C
-          combo "drop typeddata"  $B $S $A $X $C
-          combo "drop b402"       $T $S $A $X $C
-          combo "drop sessionreg" $T $B $A $X $C
-          combo "drop approve"    $T $B $S $X $C
-          combo "drop sign"       $T $B $S $A $C
-          combo "pair sign+bal"   $X $C
-          combo "pair b402+bal"   $B $C
-          combo "full glob"       src/*.test.ts src/internal/*.test.ts
-          echo "=== bisect done ==="
+          combo "all6 (was hang)" $T $B $S $A $X $C
+          combo "full glob 1"     src/*.test.ts src/internal/*.test.ts
+          combo "full glob 2"     src/*.test.ts src/internal/*.test.ts
+          combo "full glob 3"     src/*.test.ts src/internal/*.test.ts
+          cd ../..
+          echo "=== real CI commands ==="
+          timeout 120 bun run --filter '@altananetwork/sdk' test
+          bun run --filter '@altananetwork/x402-server' test
+          echo "=== validation done ==="
 
   fork-tests:
     name: On-chain fork tests (anvil)

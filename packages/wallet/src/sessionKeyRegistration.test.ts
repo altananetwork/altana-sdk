@@ -20,6 +20,13 @@ import type { Session } from "./internal/sessions.js";
 const realRelay = await import("./internal/relay.js");
 const realKeystore = await import("./internal/keystore.js");
 
+// Load the full SDK graph BEFORE mock.module runs. Loading a large module
+// graph while mock hooks are registered deadlocks bun's loader on slow
+// runners: client.balances.test.ts imports ./client.js after this file's
+// mocks exist and CI hung there every run (bisect: only dropping this file
+// cured it). With the graph cached up front, later files load nothing new.
+await import("./client.js");
+
 // ---- delegating holders (default: real) -----------------------------------
 let submitCallsImpl: any = realRelay.submitCalls;
 let waitForCallsImpl: any = realRelay.waitForCalls;
