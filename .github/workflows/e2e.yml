@@ -54,11 +54,11 @@ jobs:
           C=src/client.balances.test.ts
           combo() {
             label="$1"; shift
-            timeout 45 bun test "$@" >/tmp/c.log 2>&1
-            code=$?
+            code=0
+            timeout 45 bun test "$@" >/tmp/c.log 2>&1 || code=$?
             summary=$(grep -E "Ran [0-9]+ tests" /tmp/c.log | tail -1)
             echo "COMBO [$label] exit=$code $summary"
-            [ $code -ne 0 ] && tail -5 /tmp/c.log
+            if [ $code -ne 0 ]; then tail -5 /tmp/c.log; fi
           }
           combo "all6 control"    $T $B $S $A $X $C
           combo "drop typeddata"  $B $S $A $X $C
