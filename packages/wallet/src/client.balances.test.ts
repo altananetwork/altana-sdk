@@ -5,6 +5,8 @@
  * must produce `tokens: []` without any token RPC traffic.
  */
 import { test, expect, afterEach } from "bun:test";
+
+console.error("[probe] client.balances.test.ts module loaded");
 import type { Address } from "viem";
 import { createClient } from "./client.js";
 import { BNB } from "./config.js";
@@ -37,8 +39,10 @@ function mockRpc(balanceHex: string): { calls: string[] } {
 }
 
 test("omitting tokens keeps the legacy shape: only native, no tokens key", async () => {
+  console.error("[probe] first balances test body entered");
   const { calls } = mockRpc("0xde0b6b3a7640000"); // 1e18
   const client = createClient({ chains: [BNB] });
+  console.error("[probe] createClient returned, awaiting balances");
   const res = await client.balances({ wallet: WALLET });
   expect(res.native).toBe(10n ** 18n);
   expect("tokens" in res).toBe(false);

@@ -58,17 +58,26 @@ jobs:
             timeout 45 bun test "$@" >/tmp/c.log 2>&1 || code=$?
             summary=$(grep -E "Ran [0-9]+ tests" /tmp/c.log | tail -1)
             echo "COMBO [$label] exit=$code $summary"
-            if [ $code -ne 0 ]; then tail -5 /tmp/c.log; fi
+            if [ $code -ne 0 ]; then tail -12 /tmp/c.log; fi
           }
-          combo "all6 (was hang)" $T $B $S $A $X $C
-          combo "full glob 1"     src/*.test.ts src/internal/*.test.ts
-          combo "full glob 2"     src/*.test.ts src/internal/*.test.ts
-          combo "full glob 3"     src/*.test.ts src/internal/*.test.ts
-          cd ../..
-          echo "=== real CI commands ==="
-          timeout 120 bun run --filter '@altananetwork/sdk' test
-          bun run --filter '@altananetwork/x402-server' test
-          echo "=== validation done ==="
+          combo "all6 probe"      $T $B $S $A $X $C
+          combo "sessionreg last" $T $B $A $X $C $S
+          echo "=== per-file isolation ==="
+          perfile_fail=0
+          for f in src/*.test.ts src/internal/*.test.ts; do
+            code=0
+            timeout 60 bun test "$f" >/tmp/f.log 2>&1 || code=$?
+            if [ $code -ne 0 ]; then echo "PERFILE EXIT $code $f"; perfile_fail=1; fi
+          done
+          echo "PERFILE overall fail=$perfile_fail"
+          echo "=== latest bun on all6 ==="
+          curl -fsSL https://bun.sh/install | bash >/dev/null 2>&1
+          "$HOME/.bun/bin/bun" --version
+          code=0
+          timeout 45 "$HOME/.bun/bin/bun" test $T $B $S $A $X $C >/tmp/l.log 2>&1 || code=$?
+          echo "LATESTBUN exit=$code $(grep -E 'Ran [0-9]+ tests' /tmp/l.log | tail -1)"
+          if [ $code -ne 0 ]; then tail -15 /tmp/l.log; fi
+          echo "=== probe run done ==="
 
   fork-tests:
     name: On-chain fork tests (anvil)
