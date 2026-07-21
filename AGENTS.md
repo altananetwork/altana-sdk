@@ -16,9 +16,15 @@ bun run --filter '@altananetwork/sdk' \
         --filter '@altananetwork/x402-server' \
         typecheck
 bun run --filter '@altananetwork/e2e' typecheck
-bun run --filter '@altananetwork/sdk' test
+(cd packages/wallet && for f in src/*.test.ts src/internal/*.test.ts; do bun test "$f" || exit 1; done)
 bun run --filter '@altananetwork/x402-server' test
 ```
+
+The sdk tests run one `bun test` process per file, matching CI: a bun loader
+bug deadlocks multi-file runs that combine sessionKeyRegistration.test.ts's
+`mock.module` with client.balances.test.ts on slow machines. Do not "simplify"
+this back to a single `bun test` invocation, and avoid adding new
+`mock.module` usage to test files.
 
 If the CI workflow gains new packages or steps, update this list to match. If
 a step fails locally, fix it before pushing — a red or hung check on the PR

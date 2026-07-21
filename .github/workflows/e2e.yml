@@ -44,8 +44,20 @@ jobs:
         run: bun run --filter '@altananetwork/e2e' typecheck
 
       - name: Unit tests
+        # The sdk test files run one process per file: a bun loader bug (still
+        # present in bun 1.3.14) deadlocks multi-file runs on GitHub runners
+        # when sessionKeyRegistration.test.ts's mock.module hooks coexist with
+        # client.balances.test.ts — the run freezes mid-await until the job
+        # timeout. Per-file isolation is reliably green (bisected Jul 2026),
+        # and the 120s timeout turns any future hang into a fast failure.
         run: |
-          bun run --filter '@altananetwork/sdk' test
+          cd packages/wallet
+          for f in src/*.test.ts src/internal/*.test.ts; do
+            [ -e "$f" ] || continue
+            echo "--- $f ---"
+            timeout 120 bun test "$f"
+          done
+          cd ../..
           bun run --filter '@altananetwork/x402-server' test
 
   fork-tests:
