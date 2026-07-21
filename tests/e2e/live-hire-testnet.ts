@@ -10,13 +10,14 @@
  *      If the seller ignores us, claimRefund after expiry returns the escrow.
  *
  * State (wallet key, jobId) persists to .live-hire-state.json (untracked).
- * Run: bun run live-hire-testnet.ts [status <jobId>]
+ * Run: bun run live-hire-testnet.ts [status <jobId> | refund <jobId>]
  */
 import { encodeFunctionData, formatEther, formatUnits, parseEther, type Address, type Hex } from "viem";
 import {
   createClient,
   signerFromPrivateKey,
   hireErc8183Agent,
+  buildClaimRefundCall,
   getErc8183Job,
   getErc8183DeliverableUrl,
   fundNative,
@@ -56,9 +57,36 @@ async function status(jobId: bigint) {
   }
 }
 
+/** Reclaim the escrow of an expired, undelivered job back to the wallet. */
+async function refund(jobId: bigint) {
+  const state = JSON.parse(await Bun.file(STATE_FILE).text());
+  const client = createClient({ chains: [BNB_TESTNET] });
+  const admin = signerFromPrivateKey(state.adminPrivateKey);
+  const wallet = await client.createWallet({ signer: admin });
+  if (wallet.address !== state.walletAddress) throw new Error("persisted key does not match wallet address");
+
+  const job = await getErc8183Job(BNB_TESTNET, jobId);
+  console.log(`job ${jobId}: ${job.statusName}, budget ${u(job.budget)}, expired ${new Date(Number(job.expiredAt) * 1000).toISOString()}`);
+  const before = await publicClient.readContract({ address: A.paymentToken, abi: ERC20_ABI, functionName: "balanceOf", args: [wallet.address] });
+
+  console.log(`claiming refund via relay ...`);
+  const res = await client.execute({
+    wallet,
+    signer: admin,
+    calls: [buildClaimRefundCall(97, jobId)],
+    chainId: 97,
+  });
+  console.log(`  execute status: ${res.status} tx ${res.transactionHash}`);
+
+  const after = await publicClient.readContract({ address: A.paymentToken, abi: ERC20_ABI, functionName: "balanceOf", args: [wallet.address] });
+  console.log(`  $U balance: ${u(before)} → ${u(after)}`);
+  console.log(`  job now: ${(await getErc8183Job(BNB_TESTNET, jobId)).statusName}`);
+}
+
 async function main() {
   const [, , cmd, arg] = process.argv;
   if (cmd === "status") return status(BigInt(arg!));
+  if (cmd === "refund") return refund(BigInt(arg!));
 
   console.log("LIVE hire on BSC testnet — real relay, real seller");
   console.log("==================================================\n");
