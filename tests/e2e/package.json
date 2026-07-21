@@ -17,13 +17,17 @@
     "fork:eip3009": "bun run fork-eip3009.ts",
     "fork:all": "bun run fork-erc1271.ts && bun run fork-x402.ts && bun run fork-x402-witness.ts && bun run fork-eip3009.ts",
     "demo:b402": "bun run demo-b402.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "fork:x402-server": "bun run fork-x402-server.ts",
+    "fork:erc8183-buyer": "bun run fork-erc8183.ts",
+    "demo:hire-studio-agent": "bun run demo-hire-studio-agent.ts"
   },
   "dependencies": {
     "@altananetwork/sdk": "workspace:*",
     "@altananetwork/mcp": "workspace:*",
     "porto": "0.2.37",
-    "viem": "^2.21.0"
+    "viem": "^2.21.0",
+    "@altananetwork/x402-server": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.6.3",

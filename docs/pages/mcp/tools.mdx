@@ -9,7 +9,7 @@ import { Eyebrow } from '../../components/Eyebrow'
 
 # Tools
 
-The Altana MCP server exposes 11 tools. AI hosts call them by name; users can also invoke them as slash commands via the prompt interface (e.g. `/altana-agentic-wallet:create-wallet`).
+The Altana MCP server exposes 15 tools. AI hosts call them by name; users can also invoke them as slash commands via the prompt interface (e.g. `/altana-agentic-wallet:create-wallet`).
 
 ## Discovery
 
@@ -41,6 +41,15 @@ The Altana MCP server exposes 11 tools. AI hosts call them by name; users can al
 | `list_sessions` | Lists local session metadata (those granted from this machine). |
 | `session_execute` | Submits calls signed by a stored session key. |
 | `revoke_session` | Deactivates the session in Keystore and pulls onchain authority. |
+
+## Agent commerce
+
+| Tool | Purpose |
+|---|---|
+| `x402_request` | Fetches an HTTP URL, transparently paying an x402/B402 payment challenge with a session key (Permit2 or EIP-3009), and returns the paid resource. |
+| `erc8183_create_job` | Hires an ERC-8183 seller agent (e.g. any BNB Agent Studio agent): escrows $U against its address for a task — the whole buyer flow as one atomic relay intent. |
+| `erc8183_job_status` | Reads a job's on-chain state; once the seller submits, resolves and fetches the deliverable. |
+| `erc8183_settle` | Releases the escrow to the seller after the dispute window (`approve`), or contests inside it (`dispute`). |
 
 ## Slash command equivalents
 

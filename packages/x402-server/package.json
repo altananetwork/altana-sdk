@@ -1,25 +1,25 @@
 {
-  "name": "@altananetwork/sdk",
-  "version": "0.6.0",
-  "description": "TypeScript SDK for creating non-custodial agentic wallets with on-chain session-key delegation.",
+  "name": "@altananetwork/x402-server",
+  "version": "0.1.0",
+  "description": "Seller-side x402/B402 payments: 402 challenges, X-PAYMENT verification (EOA + ERC-1271), and on-chain settlement for agents charging per request.",
   "license": "GPL-3.0-or-later",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/altananetwork/sdk.git",
-    "directory": "packages/wallet"
+    "directory": "packages/x402-server"
   },
   "homepage": "https://docs.altana.network",
   "bugs": {
     "url": "https://github.com/altananetwork/sdk/issues"
   },
   "keywords": [
-    "wallet",
-    "session-keys",
+    "x402",
+    "b402",
+    "payments",
     "agentic",
-    "passkey",
-    "viem",
-    "ethereum",
-    "porto",
+    "merchant",
+    "eip-3009",
+    "permit2",
     "altana"
   ],
   "type": "module",
@@ -33,25 +33,18 @@
   },
   "files": [
     "dist",
-    "README.md",
-    "LICENSE"
+    "README.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "clean": "rm -rf dist",
-    "prepublishOnly": "node ../../scripts/check-publishable.mjs && bun run clean && bun run build",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "bun test"
   },
   "dependencies": {
-    "ox": "^0.14.0",
-    "porto": "0.2.37",
+    "@altananetwork/sdk": "workspace:*",
     "viem": "^2.21.0"
   },
   "devDependencies": {
     "typescript": "^5.6.3"
-  },
-  "publishConfig": {
-    "access": "public"
   }
 }
