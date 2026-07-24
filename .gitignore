@@ -10,3 +10,6 @@ dist/
 .gstack/
 tmp/
 docs/public/skill.md
+
+# live-run state (contains private keys)
+tests/e2e/.live-hire-*.json

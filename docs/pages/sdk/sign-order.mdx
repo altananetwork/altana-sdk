@@ -1,0 +1,44 @@
+---
+title: signOrder
+description: Sign an off-chain authorization with a session key — the ERC-1271 wrapped signature Altana accounts verify on-chain.
+---
+
+import { Eyebrow } from '../../components/Eyebrow'
+
+<Eyebrow>SDK</Eyebrow>
+
+# signOrder
+
+Produce an [ERC-1271](/concepts/off-chain-signatures) signature over an application digest, wrapped in the account's nested envelope so the wallet's `isValidSignature` accepts it. Offline and chain-independent — used for x402 payments, Permit2, EIP-3009, and intent-DEX orders.
+
+```ts
+import { createClient, BNB } from "@altananetwork/sdk";
+import { hashTypedData } from "viem";
+
+const client = createClient({ chains: [BNB] });
+
+// From a raw digest:
+const sig = await client.signOrder({ session, appDigest: "0x…" });
+
+// Or from EIP-712 typed data (hashed for you):
+const sig2 = await client.signOrderTypedData({ session, typedData });
+```
+
+`signOrderTypedData({ session, typedData })` is exactly `signOrder({ session, appDigest: hashTypedData(typedData) })`.
+
+## Parameters
+
+```ts
+client.signOrder(opts: { session: Session; appDigest: Hex }): Promise<Hex>;
+client.signOrderTypedData(opts: { session: Session; typedData: TypedDataDefinition }): Promise<Hex>;
+```
+
+## Returns
+
+A `Hex` signature — the wrapped envelope `innerSig ‖ keyHash ‖ prehash` (98 bytes for a secp256k1 session key; a WebAuthn envelope for passkey sessions). Verify it by calling the wallet's `isValidSignature`, **not** `ecrecover`.
+
+## Notes
+
+- The signer must be a session key on the wallet (secp256k1 or passkey).
+- For the signature to *verify*, the calling contract must be an approved checker for the session — see [approveSignatureChecker](/sdk/approve-signature-checker).
+- Works identically across chains; the nested account domain is stripped to `verifyingContract`.

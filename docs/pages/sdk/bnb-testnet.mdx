@@ -1,0 +1,37 @@
+---
+title: BNB Testnet
+description: Create and operate Altana wallets on BNB Smart Chain Testnet (chain 97).
+---
+
+# BNB Testnet
+
+BNB Smart Chain Testnet (chain id **97**) is Altana's full-stack testnet — the
+keystore, account contracts, and the Altana testnet relay are all deployed there
+(see [Testnet](/concepts/networks/testnet)), and the SDK ships a ready-made
+`BNB_TESTNET` config.
+
+## Install
+
+```bash
+npm install @altananetwork/sdk viem
+```
+
+## Create a wallet on BNB testnet
+
+```ts
+import { createClient, BNB_TESTNET, signerFromPrivateKey } from "@altananetwork/sdk";
+
+const client = createClient({ chains: [BNB_TESTNET] });
+const signer = signerFromPrivateKey(process.env.PRIVATE_KEY as `0x${string}`);
+
+const wallet = await client.createWallet({ signer });
+
+console.log(wallet.address);
+```
+
+**Fund `wallet.address` with test BNB before step 2:** [testnet.bnbchain.org/faucet-smart](https://testnet.bnbchain.org/faucet-smart)
+
+## What's next
+
+- [Testnet networks & addresses](/concepts/networks/testnet). Chain ids, RPCs, faucet, and contract addresses.
+- [Grant a session](/sdk/grant-session). Scoped, time-bounded keys for AI agents.

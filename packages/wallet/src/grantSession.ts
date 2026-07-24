@@ -1,9 +1,11 @@
-import { encodeAbiParameters, keccak256, padHex, type Address, type Hex } from "viem";
+import { type Address, type Hex } from "viem";
 import { type NetworkConfig } from "./config.js";
+import { keyHashForSigner } from "./internal/erc1271.js";
 import { createPrivateKeySigner, type Signer } from "./internal/signer.js";
 import {
   buildPublicClient,
   buildRelayClient,
+  keyDescriptorFromSigner,
   submitCalls,
   waitForCalls,
   type KeyDescriptor,
@@ -37,14 +39,16 @@ export async function grantSession(
 
   const sessionSigner = opts.sessionSigner ?? createPrivateKeySigner();
 
-  const sessionKeyDesc: KeyDescriptor = {
-    type: "secp256k1",
-    publicKey: sessionSigner.publicKey,
+  // Session key descriptor — secp256k1 or passkey (WebAuthnP256), by signer.
+  const sessionKeyDesc: KeyDescriptor = keyDescriptorFromSigner(sessionSigner, {
     role: "session",
     expiry: opts.expiry,
     permissions: opts.permissions,
-  };
+  });
 
+  // Admin descriptor. Only `role` is consumed by submitCalls for signing (the
+  // curve is inferred from adminSigner itself), so secp256k1 here is inert even
+  // for passkey admins.
   const adminKeyDesc: KeyDescriptor = {
     type: "secp256k1",
     publicKey: adminSigner.publicKey,
@@ -55,26 +59,35 @@ export async function grantSession(
   const publicClient = buildPublicClient(network);
 
   // Register the session's public key in KeyStore alongside the Porto
-  // authorization. KeyStore is the public registry that lets ANY tool/agent
-  // verify this session — without it, the session would only exist inside
-  // Porto's smart-account contract and `verify_authorization` would return
+  // authorization (default). KeyStore is the public registry that lets ANY
+  // tool/agent verify this session — without it, the session only exists
+  // inside Porto's smart-account contract and `verify_authorization` returns
   // false. Batched into the same userOp at the cost of one registration fee.
-  const fee = await readRegistrationFee(publicClient, network);
-  const registerSessionCall = buildAdditionalRegisterCall({
-    publicKey: sessionSigner.publicKey,
-    fee,
-    network,
-    expiry: opts.expiry,
-  });
+  // `register: false` skips the registry entry (and the fee) for ephemeral
+  // sessions; the account-level authorization below is unaffected, and the
+  // key can be registered later with registerSessionKey.
+  const register = opts.register !== false;
+  let registerCalls: { to: Address; value: bigint; data: Hex }[] = [];
+  if (register) {
+    const fee = await readRegistrationFee(publicClient, network);
+    registerCalls = [
+      buildAdditionalRegisterCall({
+        publicKey: sessionSigner.publicKey,
+        fee,
+        network,
+        expiry: opts.expiry,
+      }),
+    ];
+  }
 
   // submitCalls auto-prepends initialRegisterKey(admin) on the wallet's
   // very first admin action, so the final intent ends up as:
-  //   [ initialRegisterKey(admin)?, registerKey(session), authorizeKeys=[session] ]
+  //   [ initialRegisterKey(admin)?, registerKey(session)?, authorizeKeys=[session] ]
   const callsId = await submitCalls(
     relayClient,
     wallet.address,
     adminSigner,
-    [registerSessionCall],
+    registerCalls,
     {
       feeToken,
       submittingKey: adminKeyDesc,
@@ -95,7 +108,7 @@ export async function grantSession(
   // hash". Wait until the new keyHash is visible from THIS process AND give
   // the relay's separate connection pool time to converge before we hand the
   // Session back to the caller.
-  const expectedKeyHash = computeAccountSecp256k1KeyHash(sessionSigner.address);
+  const expectedKeyHash = keyHashForSigner(sessionSigner);
   const startedWait = Date.now();
   await waitForSessionKeyVisible(
     publicClient,
@@ -143,20 +156,6 @@ const ACCOUNT_GET_KEYS_ABI = [
     ],
   },
 ] as const;
-
-function computeAccountSecp256k1KeyHash(address: Address): Hex {
-  // AltanaAccount stores Secp256k1 keys with publicKey = abi.encode(address),
-  // and the keyHash is keccak256(abi.encode(uint256(keyType), keccak256(publicKey))).
-  // keyType enum is { P256=0, WebAuthnP256=1, Secp256k1=2, External=3 }.
-  const encodedPubKey = padHex(address, { size: 32 });
-  const publicKeyHash = keccak256(encodedPubKey);
-  return keccak256(
-    encodeAbiParameters(
-      [{ type: "uint256" }, { type: "bytes32" }],
-      [2n, publicKeyHash],
-    ),
-  );
-}
 
 async function waitForSessionKeyVisible(
   publicClient: ReturnType<typeof buildPublicClient>,

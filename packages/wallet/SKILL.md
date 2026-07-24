@@ -37,9 +37,14 @@ const client = createClient({ chains: [BNB] });
 // client.createPasskeyWallet — smart account from a passkey (Face ID / Touch ID), browser
 // client.execute             — run calls as wallet admin OR as a session
 // client.grantSession        — admin authorizes a scoped session key on-chain
+// client.registerSessionKey  — lazily add a Keystore entry for a session granted with register: false
 // client.revokeSession       — admin pulls authority; effect is immediate
 // client.recoverFromPasskey  — browser: rebuild wallet handle from any saved passkey
 // client.balances            — read native + token balances for a wallet
+// client.fetchWithX402       — pay for an HTTP resource with a session key (x402)
+// client.signOrder           — session-key ERC-1271 signature over any digest (offline)
+// client.approveSignatureChecker — authorize who may verify a session's signatures
+// client.approveTokenForPermit2  — one-time ERC20 approve(Permit2) for the permit2 x402 rail
 ```
 
 The private key lives wherever your code runs — your laptop, your agent's process, an OS keychain. **Altana never sees it.** Custody is local to the integrator.
@@ -104,6 +109,10 @@ const session = await client.grantSession({
 // matches them byte-for-byte against the authorization committed at grant.
 ```
 
+The grant also registers the key in Keystore, making it verifiable on-chain by
+any third party. For ephemeral keys, `register: false` skips this (and the fee);
+register later anytime with `client.registerSessionKey({ wallet, signer, session })`.
+
 ### Agent acts using a session
 
 ```ts
@@ -112,6 +121,29 @@ const result = await client.execute({
   calls: [{ to: "0xUniswapRouter...", data: "0x...", value: 0n }],
 });
 ```
+
+### Agent pays for an HTTP resource (x402)
+
+A session key can pay for paid APIs via the x402 standard. Provision the rail once
+(as admin), then the agent pays transparently. `fetchWithX402` signs an ERC-1271
+payment authorization and retries the request with an `X-PAYMENT` header.
+
+```ts
+import { PERMIT2_ADDRESS } from "@altananetwork/sdk";
+
+// One-time, as admin — permit2 rail (any Permit2-approved token, incl. Binance B402):
+await client.approveTokenForPermit2({ wallet, signer: adminSigner, token: "0xUSDC..." });
+await client.approveSignatureChecker({ wallet, signer: adminSigner, session, checker: PERMIT2_ADDRESS });
+// EIP-3009 rail instead? The checker is the token: approveSignatureChecker({ ..., checker: "0xUSDC..." })
+
+// The agent pays + fetches:
+const res = await client.fetchWithX402({ session, url: "https://api.example.com/paid" });
+console.log(res.status, await res.text());
+```
+
+Run this server-side: third-party x402 endpoints often omit `X-PAYMENT` from CORS, so
+browsers can't POST the payment. The signature is a smart-account (ERC-1271) signature —
+a facilitator must verify via `isValidSignature`, not `ecrecover`.
 
 ### Verify any key on-chain (from any tool)
 

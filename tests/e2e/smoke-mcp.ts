@@ -10,7 +10,7 @@
  *   6. wallet_verification (confirm session is gone)
  *
  * Requires:
- *   - ALTANA_WALLET_DEFAULT_PRIVATE_KEY env var set to a funded Sepolia wallet
+ *   - ALTANA_WALLET_DEFAULT_PRIVATE_KEY env var set to a funded BNB testnet wallet
  *     (the env path is the simplest fallback, no keychain needed)
  *
  * Run: bun run packages/mcp/scripts/smoke-mcp.ts
@@ -20,7 +20,7 @@ import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { createWalletClient, http, parseEther, type Hex } from "viem";
-import { sepolia } from "viem/chains";
+import { bscTestnet } from "viem/chains";
 
 const ENTRY = join(
   import.meta.dir,
@@ -37,7 +37,7 @@ const ENTRY = join(
 const TEST_FUNDER_KEY = process.env.TEST_FUNDER_KEY as Hex;
 if (!TEST_FUNDER_KEY) {
   throw new Error(
-    "Set TEST_FUNDER_KEY env var to a funded Sepolia private key. " +
+    "Set TEST_FUNDER_KEY env var to a funded BNB testnet (tBNB) private key. " +
       "Locally: add to .env. CI: GitHub Actions secret.",
   );
 }
@@ -45,16 +45,16 @@ if (!TEST_FUNDER_KEY) {
 const adminPk = generatePrivateKey();
 const adminAccount = privateKeyToAccount(adminPk);
 
-console.log("MCP smoke — Path B session flow on Sepolia");
+console.log("MCP smoke — Path B session flow on BNB testnet");
 console.log("==========================================\n");
 console.log("Admin wallet (env):", adminAccount.address);
 
-// Fund admin from deployer (Sepolia public RPC).
+// Fund admin from deployer (BNB testnet public RPC).
 const deployer = privateKeyToAccount(TEST_FUNDER_KEY);
 const deployerClient = createWalletClient({
   account: deployer,
-  chain: sepolia,
-  transport: http("https://ethereum-sepolia-rpc.publicnode.com"),
+  chain: bscTestnet,
+  transport: http("https://bsc-testnet-rpc.publicnode.com"),
 });
 const fundTx = await deployerClient.sendTransaction({
   to: adminAccount.address,
@@ -66,7 +66,11 @@ await new Promise((r) => setTimeout(r, 15_000));
 
 // Boot the MCP server with the admin PK in env.
 const proc = spawn("bun", ["run", ENTRY], {
-  env: { ...process.env, ALTANA_WALLET_DEFAULT_PRIVATE_KEY: adminPk },
+  env: {
+    ...process.env,
+    ALTANA_WALLET_DEFAULT_PRIVATE_KEY: adminPk,
+    ALTANA_CHAIN: "bnb-testnet",
+  },
   stdio: ["pipe", "pipe", "inherit"],
 });
 

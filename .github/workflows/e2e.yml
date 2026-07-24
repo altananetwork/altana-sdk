@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   build-and-check:
-    name: Build & typecheck
+    name: Build, typecheck & unit tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -28,11 +28,69 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Build SDK
-        run: bun run --filter '@altananetwork/sdk' build
+        run: |
+          bun run --filter '@altananetwork/sdk' build
+          bun run --filter '@altananetwork/x402-server' build
 
       - name: Typecheck shipping packages
         run: |
           bun run --filter '@altananetwork/sdk' \
                   --filter '@altananetwork/mcp' \
                   --filter '@altananetwork/hypersigner-keystore-mcp' \
+                  --filter '@altananetwork/x402-server' \
                   typecheck
+
+      - name: Typecheck e2e (fork + demo harness)
+        run: bun run --filter '@altananetwork/e2e' typecheck
+
+      - name: Unit tests
+        # The sdk test files run one process per file: a bun loader bug (still
+        # present in bun 1.3.14) deadlocks multi-file runs on GitHub runners
+        # when sessionKeyRegistration.test.ts's mock.module hooks coexist with
+        # client.balances.test.ts — the run freezes mid-await until the job
+        # timeout. Per-file isolation is reliably green (bisected Jul 2026),
+        # and the 120s timeout turns any future hang into a fast failure.
+        run: |
+          cd packages/wallet
+          for f in src/*.test.ts src/internal/*.test.ts; do
+            [ -e "$f" ] || continue
+            echo "--- $f ---"
+            timeout 120 bun test "$f"
+          done
+          cd ../..
+          bun run --filter '@altananetwork/x402-server' test
+
+  fork-tests:
+    name: On-chain fork tests (anvil)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Fork tests fork BNB + Base. They read dedicated RPC endpoints from the
+    # BSC_FORK_RPC_URL / BASE_FORK_RPC_URL secrets (falling back to public nodes
+    # only for local runs without them). With dedicated RPCs they run reliably,
+    # so this is now a required gate rather than informational.
+    continue-on-error: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.11
+
+      - name: Setup Foundry (anvil)
+        uses: foundry-rs/foundry-toolchain@v1 # TODO: pin to a SHA for supply-chain consistency
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Build SDK
+        run: |
+          bun run --filter '@altananetwork/sdk' build
+          bun run --filter '@altananetwork/x402-server' build
+
+      - name: Run fork tests (ERC-1271, permit2, permit2-witness, eip3009)
+        env:
+          BSC_FORK_RPC_URL: ${{ secrets.BSC_FORK_RPC_URL }}
+          BASE_FORK_RPC_URL: ${{ secrets.BASE_FORK_RPC_URL }}
+        run: bun run --filter '@altananetwork/e2e' fork:all

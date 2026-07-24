@@ -36,6 +36,15 @@ New to the SDK? Start with [Setup: BNB Smart Chain](/sdk/bnb), Altana's default 
 | [`balances`](/sdk/balances) | Read native and token balances for a wallet. |
 | [`ensureKeyCached`](/sdk/sync-to-l2) | Prove a key from the L1 Keystore into an L2 cache to authorize across chains. |
 
+## Payments & Signing
+
+| Function | What it does |
+|---|---|
+| [`fetchWithX402`](/sdk/x402) | Pay for an HTTP resource from a session key (x402), via Permit2 or EIP-3009. |
+| [`signOrder`](/sdk/sign-order) | Sign an off-chain authorization with a session key (ERC-1271 wrapped signature). |
+| [`approveSignatureChecker`](/sdk/approve-signature-checker) | Authorize which contract may verify a session's signatures on-chain. |
+| [`approveTokenForPermit2`](/sdk/approve-permit2) | One-time ERC-20 approval of Permit2 for the permit2 payment rail. |
+
 ## Chain setup
 
 | Page | What it covers |

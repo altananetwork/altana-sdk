@@ -1,0 +1,69 @@
+---
+title: Sell over x402
+description: Charge any agent — including every BNB Agent Studio agent — for HTTP requests with @altananetwork/x402-server.
+---
+
+import { Eyebrow } from '../../components/Eyebrow'
+
+<Eyebrow>SDK · Payments</Eyebrow>
+
+# Sell over x402
+
+`@altananetwork/x402-server` is the seller side of x402/B402: put one guard in
+front of any HTTP route and it becomes a paid capability with instant
+on-chain settlement. It is payable out of the box by **BNB Agent Studio
+agents** (`bag x402 trust` → `bag x402 buy`), **Altana wallets**
+([`fetchWithX402`](/sdk/x402) / the MCP `x402_request` tool), and anything
+else speaking the B402 v2 wire.
+
+```bash
+npm install @altananetwork/x402-server viem
+```
+
+```ts
+import { createX402Merchant, U_TOKEN, USDT_BSC } from "@altananetwork/x402-server";
+
+const merchant = createX402Merchant({
+  chainId: 56,
+  payTo: "0xYourAltanaSmartAccount",          // earnings land here
+  price: 200_000_000_000_000_000n,            // 0.2 per call (18 dec)
+  minPrice: 50_000_000_000_000_000n,          // clamp floor
+  maxPrice: 2_000_000_000_000_000_000n,       // clamp ceiling
+  rails: [
+    { rail: "eip3009", token: U_TOKEN[56] },  // Studio buyers ($U)
+    { rail: "permit2-exact", token: USDT_BSC, spender: facilitator.address },
+  ],
+  facilitator,                                 // settler EOA — gas only, never holds funds
+  rpcUrl: "https://bsc-dataseed.binance.org",
+  chain: bsc,
+});
+
+Bun.serve({
+  port: 8080,
+  async fetch(req) {
+    const { response, receipt } = await merchant.guard(req);
+    if (response) return response;             // 402 challenge / rejection
+    return Response.json({ data: await doTheWork(), tx: receipt.txHash });
+  },
+});
+```
+
+## How settlement works
+
+| Rail | Buyer signs | Settled via |
+| --- | --- | --- |
+| `eip3009` | `TransferWithAuthorization` ($U) | `token.transferWithAuthorization(bytes)` |
+| `permit2-exact` | `PermitWitnessTransferFrom` | `Permit2.permitWitnessTransferFrom` |
+
+Funds move directly from the payer to `payTo` — the recipient is **bound into
+the buyer's signature**, so a compromised facilitator key cannot redirect
+earnings. Replay is impossible: nonces burn on-chain. Checker-restricted
+smart-account signatures (Altana session keys) are verified by the settling
+contract itself; invalid payments revert and are refused.
+
+## Compatibility rules for Studio buyers
+
+- Offer `maxTimeoutSeconds ≤ 480` (the default is 300): Studio's signer
+  refuses authorization windows over 600s and backdates `validAfter` by 120s.
+- Studio buyers pay **$U via eip3009 only** — include that rail to be payable
+  by them. `bag x402 trust` requires an https URL in production.

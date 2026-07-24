@@ -18,14 +18,20 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { createPublicClient, formatEther, http, parseEther, type Address, type Hex } from "viem";
+import { createPublicClient, formatEther, formatUnits, http, parseEther, parseUnits, type Address, type Hex } from "viem";
 import { keccak256 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import {
   createClient,
   signerFromPrivateKey,
+  fetchWithX402,
+  hireErc8183Agent,
+  getErc8183Job,
+  getErc8183DeliverableUrl,
+  settleErc8183Job,
   ETHEREUM,
   BNB,
+  BNB_TESTNET,
 } from "@altananetwork/sdk";
 import type { Signer, Wallet } from "@altananetwork/sdk";
 import {
@@ -49,14 +55,20 @@ import {
 // ---------- network ---------------------------------------------------------
 
 // Chain is selected at startup via the ALTANA_CHAIN env var. Defaults to BNB
-// Chain. Set ALTANA_CHAIN=ethereum to operate on Ethereum instead. All chains
-// use the Altana relay (see the SDK config's relayUrl). One MCP process serves
-// one chain; restart with a different ALTANA_CHAIN to switch.
+// Chain. Set ALTANA_CHAIN=ethereum to operate on Ethereum, or
+// ALTANA_CHAIN=bnb-testnet for the BSC testnet stack. All chains execute
+// through the Altana relay (mainnet relay for mainnets, testnet relay for
+// bnb-testnet — see the SDK config's relayUrl). One MCP process serves one
+// chain; restart with a different ALTANA_CHAIN to switch. Sepolia/Base Sepolia
+// are keystore-only (no relay) and so are not selectable here.
 const NETWORKS = {
   bnb: BNB,
   "56": BNB,
   ethereum: ETHEREUM,
   "1": ETHEREUM,
+  "bnb-testnet": BNB_TESTNET,
+  "bsc-testnet": BNB_TESTNET,
+  "97": BNB_TESTNET,
 } as const;
 
 const requestedChain = (process.env.ALTANA_CHAIN || "bnb").toLowerCase();
@@ -64,7 +76,7 @@ const NETWORK = NETWORKS[requestedChain as keyof typeof NETWORKS] ?? BNB;
 if (!(requestedChain in NETWORKS)) {
   console.error(
     `[altana-mcp] Unknown ALTANA_CHAIN="${requestedChain}". ` +
-      `Supported: bnb (default), ethereum. Falling back to bnb.`,
+      `Supported: bnb (default), ethereum, bnb-testnet. Falling back to bnb.`,
   );
 }
 console.error(
@@ -288,17 +300,24 @@ tool(
   },
 );
 
-// wallet_balance — native token balance for a named wallet.
+// wallet_balance — native (and optionally ERC-20) balances for a named wallet.
 tool(
   "wallet_balance",
   {
     title: "Wallet balance",
-    description: "Native token balance (ETH) for a wallet, by name.",
-    inputSchema: { name: z.string() },
+    description:
+      "Native token balance for a wallet, by name. Pass `tokens` (ERC-20 " +
+      "addresses) to include token balances; BEP-677 scaled-UI-amount tokens " +
+      "are detected via ERC-165 and their `display` value is scaled by " +
+      "uiMultiplier automatically (raw amounts stay unscaled).",
+    inputSchema: { name: z.string(), tokens: z.array(z.string()).optional() },
   },
-  async ({ name }: { name: string }) => {
+  async ({ name, tokens }: { name: string; tokens?: string[] }) => {
     const key = await getWalletKey(name);
-    const wei = await publicClient.getBalance({ address: key.address });
+    const res = await client.balances({
+      wallet: key.address,
+      ...(tokens !== undefined ? { tokens: tokens.map(assertAddress) } : {}),
+    });
     return {
       content: [
         {
@@ -307,8 +326,41 @@ tool(
             {
               name,
               address: key.address,
-              balanceWei: wei.toString(),
-              balanceEth: formatEther(wei),
+              balanceWei: res.native.toString(),
+              balanceEth: formatEther(res.native),
+              ...(res.tokens !== undefined
+                ? {
+                    tokens: res.tokens.map((t) =>
+                      t.ok
+                        ? {
+                            address: t.address,
+                            symbol: t.symbol,
+                            decimals: t.decimals,
+                            raw: t.raw.toString(),
+                            display: t.display,
+                            ...(t.scaled
+                              ? {
+                                  scaled: {
+                                    uiMultiplier: t.scaled.uiMultiplier.toString(),
+                                    scaledRaw: t.scaled.scaledRaw.toString(),
+                                    ...(t.scaled.pending
+                                      ? {
+                                          pending: {
+                                            newUIMultiplier:
+                                              t.scaled.pending.newUIMultiplier.toString(),
+                                            effectiveAt:
+                                              t.scaled.pending.effectiveAt.toString(),
+                                          },
+                                        }
+                                      : {}),
+                                  },
+                                }
+                              : {}),
+                          }
+                        : { address: t.address, error: t.error },
+                    ),
+                  }
+                : {}),
             },
             null,
             2,
@@ -388,7 +440,9 @@ tool(
       "Returns a boolean plus the keyId that was checked. Pass either " +
       "`{ walletAddress, keyId }` for a direct check or `{ sessionName }` " +
       "to look up a session this server granted (server resolves the " +
-      "wallet and keyId from local metadata).",
+      "wallet and keyId from local metadata). Note: this reads the public " +
+      "KeyStore registry — a session granted with register: false works " +
+      "on-chain but reports false here until it is registered.",
     inputSchema: {
       walletAddress: z.string().optional(),
       keyId: z.string().optional(),
@@ -566,6 +620,17 @@ tool(
       // Cap at 1 year. Sessions are short-lived delegations by design;
       // anything longer should be a fresh re-issue, not a single grant.
       lifetimeSeconds: z.number().int().positive().max(31_536_000).optional(),
+      register: z
+        .boolean()
+        .optional()
+        .describe(
+          "Register the session key in the public KeyStore registry " +
+            "(default true). Registered keys are verifiable on-chain by any " +
+            "third party via verify_authorization — keep the default unless " +
+            "the key is ephemeral and nothing will ever look it up. When " +
+            "false, verify_authorization reports the key as not authorized " +
+            "even though the session works.",
+        ),
     },
   },
   async ({
@@ -574,12 +639,14 @@ tool(
     recipient,
     dailyCapEth,
     lifetimeSeconds,
+    register,
   }: {
     walletName: string;
     sessionName: string;
     recipient: string;
     dailyCapEth?: string;
     lifetimeSeconds?: number;
+    register?: boolean;
   }) => {
     // Refuse to overwrite an existing session entry. Sessions live in their
     // own keychain namespace (altana-session), so this only collides with
@@ -617,6 +684,7 @@ tool(
         spend: [{ limit: capWei, period: "day" }],
       },
       expiry,
+      ...(register !== undefined ? { register } : {}),
     });
 
     // Persist:
@@ -804,6 +872,300 @@ tool(
               status: result.status,
               transactionHash: result.transactionHash,
               callsId: result.callsId,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
+  },
+);
+
+// x402_request — the agent pays for an HTTP resource. Fetches `url`; if the
+// server answers 402, signs an x402 payment (Permit2 or EIP-3009) with the
+// session key and retries with the X-PAYMENT header. The wallet must already
+// have the payment token approved to Permit2 (for the permit2 scheme) and the
+// verifying contract approved as a signature checker for the session.
+tool(
+  "x402_request",
+  {
+    title: "Pay for an HTTP resource (x402)",
+    description:
+      "Fetch an HTTP URL, transparently paying an x402/B402 payment challenge " +
+      "with a session key. On a 402 response the agent signs the payment " +
+      "(Permit2 or EIP-3009) and retries. Requires the wallet to have approved " +
+      "the payment token to Permit2 and approved the verifying contract as a " +
+      "signature checker for this session.",
+    inputSchema: {
+      sessionName: z.string(),
+      url: z.string(),
+      method: z.string().optional(),
+      body: z.string().optional(),
+    },
+  },
+  async ({
+    sessionName,
+    url,
+    method,
+    body,
+  }: {
+    sessionName: string;
+    url: string;
+    method?: string;
+    body?: string;
+  }) => {
+    const stored = await getSession(sessionName);
+    const key = await getSessionKey(sessionName);
+    const sessionSigner = signerFromPrivateKey(key.privateKey);
+
+    // Rebuild the Session shape from persisted metadata (same as
+    // session_execute): permissions + expiry must match the on-chain grant.
+    const permissionsRuntime = {
+      calls: stored.permissions.calls,
+      spend: stored.permissions.spend?.map((s) => ({
+        limit: BigInt(s.limit),
+        period: s.period,
+        ...(s.token ? { token: s.token } : {}),
+      })),
+    };
+    const session = {
+      walletAddress: stored.walletAddress,
+      signer: sessionSigner,
+      publicKey: stored.publicKey,
+      permissions: permissionsRuntime as any,
+      expiry: stored.expiry,
+    } as any;
+
+    const init: RequestInit = {};
+    if (method) init.method = method;
+    if (body !== undefined) {
+      init.body = body;
+      init.method = method ?? "POST";
+      init.headers = { "content-type": "application/json" };
+    }
+
+    const res = await fetchWithX402(session, url, init);
+    const text = await res.text();
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              sessionName,
+              walletAddress: stored.walletAddress,
+              url,
+              status: res.status,
+              paid: res.status !== 402,
+              body: text.slice(0, 4000),
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
+  },
+);
+
+// ---------- ERC-8183 (BNB agent economy job escrow) -------------------------
+
+/** Rebuild the runtime Session shape from persisted metadata. */
+async function sessionFromName(sessionName: string) {
+  const stored = await getSession(sessionName);
+  const key = await getSessionKey(sessionName);
+  const sessionSigner = signerFromPrivateKey(key.privateKey);
+  const permissionsRuntime = {
+    calls: stored.permissions.calls,
+    spend: stored.permissions.spend?.map((s) => ({
+      limit: BigInt(s.limit),
+      period: s.period,
+      ...(s.token ? { token: s.token } : {}),
+    })),
+  };
+  return {
+    stored,
+    session: {
+      walletAddress: stored.walletAddress,
+      signer: sessionSigner,
+      publicKey: stored.publicKey,
+      permissions: permissionsRuntime as any,
+      expiry: stored.expiry,
+    } as any,
+  };
+}
+
+// erc8183_create_job — hire an ERC-8183 seller agent (e.g. any BNB Agent
+// Studio agent): escrow $U against a provider for a task, in one atomic
+// relay intent (createJob → registerJob → setBudget → approve → fund).
+tool(
+  "erc8183_create_job",
+  {
+    title: "Hire an agent (ERC-8183 job escrow)",
+    description:
+      "Hire an ERC-8183 seller agent — e.g. any BNB Agent Studio agent — by " +
+      "escrowing $U against its provider address for a task. Runs the whole " +
+      "buyer flow (createJob, registerJob, setBudget, approve $U, fund) as ONE " +
+      "atomic relay intent signed by the session key. The seller detects the " +
+      "funded job, does the work, and submits a deliverable; escrow releases " +
+      "after the dispute window via erc8183_settle. budgetU is a decimal $U " +
+      "amount, e.g. \"0.2\".",
+    inputSchema: {
+      sessionName: z.string(),
+      provider: z.string().describe("The seller agent's wallet address"),
+      task: z.string().describe("The job description the seller will fulfil (≤4096 bytes)"),
+      budgetU: z.string().describe("Budget in $U, decimal (e.g. \"0.2\")"),
+      deadlineMinutes: z.number().optional(),
+    },
+  },
+  async ({
+    sessionName,
+    provider,
+    task,
+    budgetU,
+    deadlineMinutes,
+  }: {
+    sessionName: string;
+    provider: string;
+    task: string;
+    budgetU: string;
+    deadlineMinutes?: number;
+  }) => {
+    const { stored, session } = await sessionFromName(sessionName);
+    const result = await hireErc8183Agent(
+      session,
+      {
+        provider: provider as Address,
+        task,
+        budget: parseUnits(budgetU, 18),
+        ...(deadlineMinutes ? { deadlineSeconds: deadlineMinutes * 60 } : {}),
+      },
+      { network: NETWORK },
+    );
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              sessionName,
+              walletAddress: stored.walletAddress,
+              jobId: result.jobId.toString(),
+              provider,
+              budgetU,
+              expiredAt: result.expiredAt.toString(),
+              status: result.status,
+              transactionHash: result.transactionHash,
+              next: "Poll erc8183_job_status until SUBMITTED, then erc8183_settle after the dispute window.",
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
+  },
+);
+
+// erc8183_job_status — read-only job state + deliverable retrieval.
+tool(
+  "erc8183_job_status",
+  {
+    title: "Check an ERC-8183 job",
+    description:
+      "Read an ERC-8183 job's on-chain state (OPEN/FUNDED/SUBMITTED/COMPLETED/" +
+      "REJECTED/EXPIRED). When the seller has submitted, also resolves the " +
+      "deliverable URL and, for http(s) URLs, fetches the deliverable content.",
+    inputSchema: {
+      jobId: z.string().describe("The on-chain job id (1-indexed)"),
+    },
+  },
+  async ({ jobId }: { jobId: string }) => {
+    const job = await getErc8183Job(NETWORK, BigInt(jobId));
+    let deliverableUrl: string | undefined;
+    let deliverableContent: string | undefined;
+    if (job.submittedAt > 0n) {
+      deliverableUrl = await getErc8183DeliverableUrl(NETWORK, BigInt(jobId));
+      if (deliverableUrl?.startsWith("http")) {
+        try {
+          const res = await fetch(deliverableUrl);
+          const manifest: any = await res.json();
+          deliverableContent = manifest?.response?.content;
+        } catch {
+          // leave content undefined — the URL is still returned
+        }
+      }
+    }
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              jobId,
+              status: job.statusName,
+              client: job.client,
+              provider: job.provider,
+              budgetU: formatUnits(job.budget, 18),
+              expiredAt: job.expiredAt.toString(),
+              submittedAt: job.submittedAt.toString(),
+              deliverableUrl,
+              deliverableContent: deliverableContent?.slice(0, 4000),
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
+  },
+);
+
+// erc8183_settle — release (approve) or contest (dispute) a job's escrow.
+tool(
+  "erc8183_settle",
+  {
+    title: "Settle or dispute an ERC-8183 job",
+    description:
+      "Settle an ERC-8183 job. action=\"approve\" (default) releases the escrow " +
+      "to the seller — valid once the dispute window after submission has " +
+      "elapsed. action=\"dispute\" contests the deliverable — client-only, valid " +
+      "only INSIDE the dispute window.",
+    inputSchema: {
+      sessionName: z.string(),
+      jobId: z.string(),
+      action: z.enum(["approve", "dispute"]).optional(),
+    },
+  },
+  async ({
+    sessionName,
+    jobId,
+    action,
+  }: {
+    sessionName: string;
+    jobId: string;
+    action?: "approve" | "dispute";
+  }) => {
+    const { stored, session } = await sessionFromName(sessionName);
+    const result = await settleErc8183Job(
+      session,
+      { jobId: BigInt(jobId), ...(action ? { action } : {}) },
+      { network: NETWORK },
+    );
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              sessionName,
+              walletAddress: stored.walletAddress,
+              jobId,
+              action: action ?? "approve",
+              status: result.status,
+              transactionHash: result.transactionHash,
             },
             null,
             2,

@@ -1,0 +1,54 @@
+{
+  "name": "@altananetwork/x402-server",
+  "version": "0.1.0",
+  "description": "Seller-side x402/B402 payments: 402 challenges, X-PAYMENT verification (EOA + ERC-1271), and on-chain settlement for agents charging per request.",
+  "license": "GPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/altananetwork/sdk.git",
+    "directory": "packages/x402-server"
+  },
+  "homepage": "https://docs.altana.network",
+  "bugs": {
+    "url": "https://github.com/altananetwork/sdk/issues"
+  },
+  "keywords": [
+    "x402",
+    "b402",
+    "payments",
+    "agentic",
+    "merchant",
+    "eip-3009",
+    "permit2",
+    "altana"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "bun test",
+    "prepublishOnly": "node ../../scripts/check-publishable.mjs && bun run build"
+  },
+  "dependencies": {
+    "@altananetwork/sdk": "^0.6.0",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

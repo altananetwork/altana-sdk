@@ -17,6 +17,22 @@ The same key is set as a GitHub Actions secret of the same name for CI runs.
 
 **Never put this key on mainnet.** Treat it as known-leaked: it's used by anyone with repo access.
 
+### Fork RPC endpoints
+
+The fork tests fork BNB Smart Chain and Base. They read dedicated RPC endpoints
+from env, falling back to public nodes when unset (fine locally, rate-limited in
+CI). Point these at a dedicated provider (Alchemy/QuickNode/Ankr, key in the URL)
+for reliable runs:
+
+```bash
+# .env at repo root (gitignored)
+BSC_FORK_RPC_URL=https://.../<KEY>   # fork-x402, fork-x402-witness, fork-erc1271, fork-bep677
+BASE_FORK_RPC_URL=https://.../<KEY>  # fork-eip3009
+```
+
+Both are set as GitHub Actions secrets of the same names and passed to the
+"On-chain fork tests" job.
+
 ## Run
 
 ```bash
@@ -35,3 +51,10 @@ bun run --filter '@altananetwork/e2e' smoke:all
 - `smoke-grant-first.ts` — registers admin via grantSession instead of first execute
 - `smoke-mcp.ts` — drives the MCP server over JSON-RPC stdio, end-to-end Path B flow
 - `spike-*.ts` — research scripts; not part of the smoke suite, kept for reference
+
+## Fork tests
+
+Self-contained anvil mainnet forks; no env vars or funded keys needed (requires `anvil` on PATH). Run directly, e.g. `bun tests/e2e/fork-bep677.ts`.
+
+- `fork-x402.ts`, `fork-x402-witness.ts`, `fork-eip3009.ts`, `fork-erc1271.ts` — x402 payment rails against real tokens
+- `fork-bep677.ts` — BEP-677 scaled-UI-amount display in `client.balances` (mock BEP-677 tokens + real USDT on a BSC fork)

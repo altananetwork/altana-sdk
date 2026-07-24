@@ -9,7 +9,7 @@ import { Eyebrow } from '../../components/Eyebrow'
 
 # Tools
 
-The Altana MCP server exposes 11 tools. AI hosts call them by name; users can also invoke them as slash commands via the prompt interface (e.g. `/altana-agentic-wallet:create-wallet`).
+The Altana MCP server exposes 15 tools. AI hosts call them by name; users can also invoke them as slash commands via the prompt interface (e.g. `/altana-agentic-wallet:create-wallet`).
 
 ## Discovery
 
@@ -23,7 +23,7 @@ The Altana MCP server exposes 11 tools. AI hosts call them by name; users can al
 |---|---|
 | `create_wallet` | Generates a new private key, stores it in the OS keychain under the given name, returns the address. |
 | `list_wallets` | Lists wallet names available on this machine (across keychain, file, env). |
-| `wallet_balance` | Reads native + ERC-20 balances for a stored wallet. |
+| `wallet_balance` | Reads native + optional ERC-20 balances for a stored wallet (pass `tokens`). [BEP-677](https://github.com/bnb-chain/BEPs/blob/master/BEPs/BEP-677.md) scaled-UI-amount tokens are detected via ERC-165 and their `display` value is scaled automatically; `raw` stays the on-chain amount. |
 | `wallet_execute` | Submits one or more calls signed by the wallet's admin key. |
 
 ## Verification
@@ -41,6 +41,15 @@ The Altana MCP server exposes 11 tools. AI hosts call them by name; users can al
 | `list_sessions` | Lists local session metadata (those granted from this machine). |
 | `session_execute` | Submits calls signed by a stored session key. |
 | `revoke_session` | Deactivates the session in Keystore and pulls onchain authority. |
+
+## Agent commerce
+
+| Tool | Purpose |
+|---|---|
+| `x402_request` | Fetches an HTTP URL, transparently paying an x402/B402 payment challenge with a session key (Permit2 or EIP-3009), and returns the paid resource. |
+| `erc8183_create_job` | Hires an ERC-8183 seller agent (e.g. any BNB Agent Studio agent): escrows $U against its address for a task — the whole buyer flow as one atomic relay intent. |
+| `erc8183_job_status` | Reads a job's on-chain state; once the seller submits, resolves and fetches the deliverable. |
+| `erc8183_settle` | Releases the escrow to the seller after the dispute window (`approve`), or contests inside it (`dispute`). |
 
 ## Slash command equivalents
 

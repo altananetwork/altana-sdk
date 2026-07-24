@@ -1,0 +1,62 @@
+---
+title: approveSignatureChecker
+description: Approve (or revoke) a contract as an ERC-1271 signature checker for a session key, so its off-chain signatures verify on-chain.
+---
+
+import { Eyebrow } from '../../components/Eyebrow'
+
+<Eyebrow>SDK</Eyebrow>
+
+# approveSignatureChecker
+
+A session key's [ERC-1271](/concepts/off-chain-signatures) `isValidSignature` only returns the magic value when the **caller** (`msg.sender`) is an approved checker for that key. This authorizes that caller. Run it once per session, per rail.
+
+```ts
+import { createClient, BNB, PERMIT2_ADDRESS } from "@altananetwork/sdk";
+
+const client = createClient({ chains: [BNB] });
+
+// permit2-exact rail → checker is Permit2:
+await client.approveSignatureChecker({
+  wallet,
+  signer: admin,        // the wallet's admin
+  session,              // the session whose signatures should verify
+  checker: PERMIT2_ADDRESS,
+});
+
+// EIP-3009 rail → checker is the token contract:
+await client.approveSignatureChecker({ wallet, signer: admin, session, checker: USDC });
+
+// Later, to remove it:
+await client.revokeSignatureChecker({ wallet, signer: admin, session, checker: PERMIT2_ADDRESS });
+```
+
+## Which checker?
+
+| Rail | `checker` |
+|---|---|
+| Permit2 / permit2-exact (x402) | the canonical Permit2 (`PERMIT2_ADDRESS`) |
+| EIP-3009 (x402 `exact`) | the token contract (e.g. USDC) |
+
+## Parameters
+
+```ts
+client.approveSignatureChecker(opts: ClientApproveSignatureCheckerOptions): Promise<ExecuteResult>;
+client.revokeSignatureChecker(opts: ClientApproveSignatureCheckerOptions): Promise<ExecuteResult>;
+
+type ClientApproveSignatureCheckerOptions = {
+  wallet: Wallet;
+  signer: Signer;      // the wallet's admin signer
+  session: Session;
+  checker: Address;
+  feeToken?: Address;  // default: native token
+  chainId?: number;    // default: the client's default chain
+};
+```
+
+Under the hood this is a self-call to `setSignatureCheckerApproval(sessionKeyHash, checker, isApproved)` submitted via the relay.
+
+## Notes
+
+- This authorizes *who may verify* the session's signatures; it does not grant the session any spend or call permissions (those come from [grantSession](/sdk/grant-session)).
+- Super-admin keys skip the checker gate entirely; the gate applies to scoped session keys.

@@ -11,13 +11,23 @@
     "smoke:grant-first": "bun run smoke-grant-first.ts",
     "smoke:mcp": "bun run smoke-mcp.ts",
     "smoke:all": "bun run smoke-test.ts && bun run smoke-session.ts && bun run smoke-passkey.ts && bun run smoke-grant-first.ts && bun run smoke-mcp.ts",
-    "typecheck": "tsc --noEmit"
+    "fork:erc1271": "bun run fork-erc1271.ts",
+    "fork:x402": "bun run fork-x402.ts",
+    "fork:x402-witness": "bun run fork-x402-witness.ts",
+    "fork:eip3009": "bun run fork-eip3009.ts",
+    "fork:all": "bun run fork-erc1271.ts && bun run fork-x402.ts && bun run fork-x402-witness.ts && bun run fork-eip3009.ts",
+    "demo:b402": "bun run demo-b402.ts",
+    "typecheck": "tsc --noEmit",
+    "fork:x402-server": "bun run fork-x402-server.ts",
+    "fork:erc8183-buyer": "bun run fork-erc8183.ts",
+    "demo:hire-studio-agent": "bun run demo-hire-studio-agent.ts"
   },
   "dependencies": {
     "@altananetwork/sdk": "workspace:*",
     "@altananetwork/mcp": "workspace:*",
     "porto": "0.2.37",
-    "viem": "^2.21.0"
+    "viem": "^2.21.0",
+    "@altananetwork/x402-server": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.6.3",

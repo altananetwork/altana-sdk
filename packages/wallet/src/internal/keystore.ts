@@ -84,6 +84,16 @@ const KEYSTORE_ABI = [
     ],
     outputs: [],
   },
+  {
+    name: "isValidKey",
+    type: "function",
+    stateMutability: "view",
+    inputs: [
+      { name: "user", type: "address" },
+      { name: "keyId", type: "bytes32" },
+    ],
+    outputs: [{ type: "bool" }],
+  },
 ] as const;
 
 const UINT40_MAX = 2 ** 40 - 1;
@@ -142,6 +152,27 @@ export function readPublicKey(
     functionName: "getPublicKey",
     args: [user, keyId],
   }) as Promise<Hex>;
+}
+
+/**
+ * Reads whether (user, keyId) is a currently valid KeyStore entry —
+ * registered, unexpired, unrevoked. The same check `verify_authorization`
+ * uses. revokeSession gates its KeyStore call on this (a never-registered
+ * key would revert the whole revoke bundle), and registerSessionKey uses it
+ * for idempotency.
+ */
+export function readIsValidKey(
+  publicClient: PublicClient,
+  network: NetworkConfig,
+  user: Address,
+  keyId: Hex,
+): Promise<boolean> {
+  return publicClient.readContract({
+    address: network.keyStore,
+    abi: KEYSTORE_ABI,
+    functionName: "isValidKey",
+    args: [user, keyId],
+  }) as Promise<boolean>;
 }
 
 /**

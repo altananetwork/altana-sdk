@@ -32,10 +32,14 @@ variable. It defaults to **BNB Smart Chain**.
 | --- | --- |
 | `bnb` (default) | BNB Smart Chain (56) |
 | `ethereum` | Ethereum (1) |
+| `bnb-testnet` | BNB Smart Chain Testnet (97) |
 
 ```bash
 # Operate on Ethereum instead of the BNB default
 claude mcp add altana -e ALTANA_CHAIN=ethereum -- bunx @altananetwork/mcp
+
+# Operate on BNB testnet (chain 97) — see the Testnet networks page
+claude mcp add altana -e ALTANA_CHAIN=bnb-testnet -- bunx @altananetwork/mcp
 ```
 
 One server process serves one chain. Restart with a different `ALTANA_CHAIN` to switch.
