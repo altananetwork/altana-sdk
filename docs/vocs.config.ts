@@ -98,6 +98,7 @@ export default defineConfig({
     { text: "Guides", link: "/use-cases" },
     { text: "SDK", link: "/sdk" },
     { text: "MCP", link: "/mcp" },
+    { text: "Skills", link: "/skills" },
   ],
   sidebar: [
     { text: "Welcome", link: "/", items: [] },
@@ -179,6 +180,13 @@ export default defineConfig({
         { text: "Install", link: "/mcp/install" },
         { text: "Tools", link: "/mcp/tools" },
         { text: "Claude Skill", link: "/mcp/skill" },
+      ],
+    },
+    {
+      text: "Skills Registry",
+      items: [
+        { text: "Overview", link: "/skills" },
+        { text: "Submit a skill", link: "/skills/submit" },
       ],
     },
     {

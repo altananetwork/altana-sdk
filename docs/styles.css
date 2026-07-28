@@ -604,6 +604,80 @@ a.pathway-head:hover .pathway-title {
 }
 
 /* ------------------------------------------------------------------ */
+/* Copyable text blocks (.altana-copyblock) and the primary link       */
+/* button (.altana-button). Used by the Skills Registry submit flow,   */
+/* which mirrors the one on skills.altana.network.                     */
+/* ------------------------------------------------------------------ */
+
+.altana-copyblock {
+  position: relative;
+  border: 1px solid var(--vocs-color_border);
+  border-radius: 10px;
+  background: var(--vocs-color_background2);
+  padding: 14px 16px;
+  margin: 16px 0;
+}
+
+.altana-copyblock .copyblock-label {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--vocs-color_text3);
+  margin-bottom: 8px;
+}
+
+.altana-copyblock .copyblock-body {
+  margin: 0;
+  padding-right: 64px;
+  font-family: var(--vocs-fontFamily_mono);
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--vocs-color_text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: none;
+  border: none;
+}
+
+.altana-copyblock .copyblock-button {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  padding: 4px 10px;
+  border: 1px solid var(--vocs-color_border);
+  border-radius: 6px;
+  background: var(--vocs-color_background);
+  color: var(--vocs-color_text2);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.altana-copyblock .copyblock-button:hover {
+  border-color: var(--altana-blue);
+  color: var(--altana-blue);
+}
+
+.altana-button {
+  display: inline-block;
+  margin: 4px 0 8px;
+  padding: 9px 18px;
+  border-radius: 8px;
+  background: var(--altana-blue);
+  color: #ffffff !important;
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none !important;
+  transition: background 0.15s ease;
+}
+
+.altana-button:hover {
+  background: var(--altana-blue-deep);
+}
+
+/* ------------------------------------------------------------------ */
 /* "Copy page for AI" — transforms the built in ChatGPT aiCta link.    */
 /* Moved verbatim from vocs.config.ts head(); behavior unchanged.      */
 /* ------------------------------------------------------------------ */
