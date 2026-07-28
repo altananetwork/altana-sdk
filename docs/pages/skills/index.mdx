@@ -33,12 +33,12 @@ The two are deliberately separate, and the split is what makes skills safe to sh
 
 A skill is public, readable text. It cannot grant anything. It can only describe what a protocol does and how to use it well. The authority to spend lives entirely in the [session](/concepts/sessions) you grant: which contracts are callable, how much can move per period, when it all expires. An agent holding the PancakeSwap skill and no session can do exactly nothing.
 
-That is why each catalog entry publishes its scope alongside the skill. Aave V3 Lending, for example, declares what it may do and what it may not:
+That is why each catalog entry publishes its scope alongside the skill. A lending skill, for example, declares what it may do and what it may not:
 
 | May | May not |
 |---|---|
-| Supply USDT to Aave V3 | Borrow |
-| Withdraw your position | Send funds anywhere else |
+| Supply a stablecoin to the pool | Borrow against it |
+| Withdraw the position | Send funds anywhere else |
 | Spend up to the cap you set | Touch any other app or token |
 
 The right-hand column is not a promise from the skill author. It is what your session enforces onchain, and what anyone can verify from the [Keystore](/concepts/keystore) without trusting Altana or the agent.
@@ -47,35 +47,28 @@ Read [Sessions](/concepts/sessions) for the permission shape, or [Verify agent a
 
 ## What is in the catalog
 
-Ten skills are live today, across six categories.
+Skills span trading, liquidity, lending, payments, staking, and research. What each kind gives an agent:
 
-| Category | Skills |
-|---|---|
-| Trading | [PancakeSwap Trading](https://skills.altana.network/skill/pancakeswap-trading), [Four.meme Trading](https://skills.altana.network/skill/four-meme), [Copy Trade](https://skills.altana.network/skill/copy-trade) |
-| Liquidity | [PancakeSwap Liquidity](https://skills.altana.network/skill/pancakeswap-liquidity) |
-| Lending | [Venus Lending](https://skills.altana.network/skill/venus-lending), [Aave V3 Lending](https://skills.altana.network/skill/aave-v3-lending) |
-| Payments | [x402 API Payments](https://skills.altana.network/skill/x402-payments) (see also [x402 in the SDK](/sdk/x402)) |
-| Staking | [Lista Liquid Staking](https://skills.altana.network/skill/lista-staking) |
-| Research | [Token Radar](https://skills.altana.network/skill/dexscreener-token-radar), [Wallet Tracker](https://skills.altana.network/skill/wallet-tracker) |
-
-A few, concretely:
-
-- **PancakeSwap Trading.** Buy and sell tokens on BNB Chain with quotes, slippage floors, and full-balance exits. Suggested cap: 50 USDT. Try: _"ape $20 into $TOKEN on pancakeswap, sell if it 2x's"_.
-- **Venus Lending.** Supply and withdraw stablecoins on Venus. Suggested cap: 100 USDT. Try: _"lend $100 USDT on venus"_.
-- **Aave V3 Lending.** Supply USDT for yield and withdraw on command, with borrowing explicitly out of scope. Try: _"park 30 USDT in aave and tell me the APY"_.
-- **Lista Liquid Staking.** Stake BNB for slisBNB and request withdrawals back. Suggested cap: 0.5 BNB. Try: _"stake 0.2 BNB on lista and show me the yield"_.
-- **Token Radar.** Screen trending BNB Chain tokens for liquidity and risk. Research only: the session permits no onchain calls at all.
-- **Wallet Tracker.** Watch a wallet's trades live and find a token's early buyers. Also research only.
+- **Trading.** Buy and sell tokens on a DEX or a launchpad, with quotes, slippage floors, and full-balance exits.
+- **Liquidity.** Add and remove pool positions, and read your share of one.
+- **Lending.** Supply assets for yield and withdraw on command. Borrowing is usually out of scope on purpose.
+- **Payments.** Pay per API call, machine to machine, under a per-payment maximum. See also [x402 in the SDK](/sdk/x402).
+- **Staking.** Stake a native asset for a liquid staking token, and queue withdrawals back.
+- **Research.** Screen tokens or watch a wallet. Read only, so the session permits no onchain calls at all.
 
 Research skills are worth noticing. Because a skill carries no authority of its own, a read-only skill paired with a zero-scope session is a genuinely safe way to let an agent look around before you give it anything to spend.
+
+Each catalog entry publishes its suggested spend cap, an example ask, and the exact may and may-not scope. Those come from the registry itself, so the catalog is always the current answer.
 
 [Browse the full catalog →](https://skills.altana.network/)
 
 ## What a skill looks like
 
-Every skill is one file with four parts. Here is the shape, using the PancakeSwap Trading skill as the example.
+Every skill is one file with four parts. The excerpts below come from PancakeSwap Trading, which the [contributing guide](https://github.com/altananetwork/skills/blob/main/CONTRIBUTING.md) names as the model of a finished skill.
 
-**Frontmatter.** An id and one sentence starting with a verb, naming the protocol and the chain. This is what an agent matches against when it searches.
+They are a snapshot of a versioned file. Read [the current version on GitHub](https://github.com/altananetwork/skills/blob/main/skills/pancakeswap-trading/SKILL.md) before you copy anything into production.
+
+**Frontmatter.**
 
 ```md
 ---
@@ -86,7 +79,11 @@ description: Buy and sell tokens on PancakeSwap on BNB Chain through an
 ---
 ```
 
-**Reference.** The facts an agent cannot infer. Addresses in a checksummed table, then the three to six quirks that break naive integrations:
+- `name` is the skill id, and matches the directory name in the repo.
+- `description` is one sentence starting with a verb, naming the protocol and the chain.
+- This is the text an agent matches against when it searches the registry.
+
+**Reference.**
 
 ```md
 | Contract | Address |
@@ -103,9 +100,12 @@ description: Buy and sell tokens on PancakeSwap on BNB Chain through an
 - Approve before each swap direction.
 ```
 
-That address table does double duty: it is also where the suggested session scope comes from.
+- Addresses go in a checksummed table, listing only the contracts the plays actually touch.
+- Quirks are the three to six protocol facts that break naive integrations, one line each.
+- USDT having 18 decimals on BNB Chain instead of 6 is exactly the kind of fact an agent cannot infer.
+- The address table does double duty: the suggested session scope is derived from it.
 
-**Playbook.** Two to five plays, one per common action, each with its parameters, a typical time, and numbered steps an agent can run in a single script:
+**Playbook.**
 
 ```md
 ### Play: enter-position
@@ -119,7 +119,11 @@ Buy a token with USDT. Parameters: token address, USDT amount, slippage (default
 3. Verify the token balance increased before reporting success.
 ```
 
-**Guards.** The safety decisions pinned in place, which certification checks and which a submission may not drop:
+- One play per common action, two to five in total.
+- Each play names its parameters and a typical time, so the caller knows what to expect.
+- Steps are numbered so an agent can run the whole play in a single script.
+
+**Guards.**
 
 ```md
 - `amountOutMin` is always a fresh quote minus slippage. Never 0.
@@ -128,13 +132,22 @@ Buy a token with USDT. Parameters: token address, USDT amount, slippage (default
   otherwise stop and report. Do not improvise outside the session scope.
 ```
 
+- Guards pin the safety decisions in place: output floors, onchain verification after every state change, retry limits.
+- Certification verifies them, so a submission cannot trim them for brevity.
+- They also say what to do on failure: stop and report, never improvise outside the session scope.
+
 Notice what the plays never do: they do not sign. Every onchain write goes through the Altana session executor, `client.execute({ session, calls })`. Reads go straight to the RPC. That one rule is what keeps a skill from being able to widen its own scope.
 
-The [full file is on GitHub](https://github.com/altananetwork/skills/blob/main/skills/pancakeswap-trading/SKILL.md), and [Submit a skill](/skills/submit) walks through the complete worked example.
+[Submit a skill](/skills/submit) reproduces this file in full, as the worked example to copy from.
 
 ## Using a skill with your agent
 
-Give the agent the skill file and a session scoped to the contracts that skill's address table names. The scope is the same information, in a different shape.
+Give the agent two things.
+
+- The skill file, which says how the protocol works.
+- A session scoped to the contracts that skill's address table names, which says what the agent may spend.
+
+The scope is the same information as the address table, in a different shape. Copy the addresses from the skill you are actually using rather than from this page.
 
 ```ts
 import { createClient, BNB, signerFromPrivateKey } from "@altananetwork/sdk";
