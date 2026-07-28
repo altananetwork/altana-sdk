@@ -67,7 +67,7 @@ const authorized = await client.readContract({
 });
 ```
 
-`isValidKey` returns true only when the key exists, has not been revoked, and has not expired. If you want the whole set of keys on a wallet instead of a single yes or no, read `getKeys(walletAddress)` for the registered key ids, then check each one with `isValidKey` — `getKeys` does not filter out revoked or expired entries on its own.
+`isValidKey` returns true only when the key exists, has not been revoked, and has not expired. If you want the whole set of keys on a wallet instead of a single yes or no, read `getKeys(walletAddress)` for the key ids, then check each one with `isValidKey`. Revocation drops a key from `getKeys` immediately, but expiry does not, so a key can still be listed there long after it stopped being usable.
 
 Run this from your own script against your own wallet. This is exactly what a DEX or a counterparty agent would run, for free, from any RPC.
 

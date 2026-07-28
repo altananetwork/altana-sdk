@@ -169,8 +169,9 @@ const authorized = await publicClient.readContract({
 ```
 
 `isValidKey` answers *exists AND not revoked AND not expired* in one call. To enumerate every key
-on a wallet instead, read `getKeys(user) -> bytes32[]` — note that it returns all registered key
-ids and does **not** filter revoked or expired ones, so check each with `isValidKey`.
+on a wallet instead, read `getKeys(user) -> bytes32[]`. Revoked keys are removed from that list at
+revocation, but **expired keys are not** — expiry is a passive timestamp, so nothing prunes the
+list when it passes. Check each id with `isValidKey` before trusting it.
 
 This is the killer feature: a wallet that has never heard of your app can still verify whether a given key is authorized. No vendor lock-in.
 
