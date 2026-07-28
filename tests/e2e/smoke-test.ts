@@ -7,7 +7,7 @@
  *   3. Fund the new wallet from the Altana deployer wallet (direct native token)
  *   4. execute(wallet, signer, sendOneWeiBack) — first execute, so SDK
  *      prepends KeyStoreController.initialRegisterKey atomically
- *   5. balances(wallet) + KeyStore.getActiveKeys verification
+ *   5. balances(wallet) + KeyStore.getKeys verification
  *
  * Run:  bun run packages/wallet/scripts/smoke-test.ts
  */
@@ -78,7 +78,7 @@ async function main() {
   console.log(`    confirmed [${ms(t0)}]`);
 
   const keysBefore = await readActiveKeys(publicClient, BNB_TESTNET, wallet.address);
-  console.log("    KeyStore.getActiveKeys before:", keysBefore.length);
+  console.log("    KeyStore.getKeys before:", keysBefore.length);
 
   // Step 4: execute (first call prepends KeyStore registration)
   console.log("\n[3] execute (first call → prepends KeyStore registration)");
@@ -98,7 +98,7 @@ async function main() {
   // Step 5: verify
   console.log("\n[4] Verify");
   const keysAfter = await readActiveKeys(publicClient, BNB_TESTNET, wallet.address);
-  console.log("    KeyStore.getActiveKeys after: ", keysAfter.length);
+  console.log("    KeyStore.getKeys after: ", keysAfter.length);
   if (keysAfter.length > 0) {
     console.log("    Registered keyId:             ", keysAfter[0]);
   }

@@ -149,24 +149,28 @@ a facilitator must verify via `isValidSignature`, not `ecrecover`.
 
 ```ts
 import { createPublicClient, http, keccak256 } from "viem";
-import { mainnet } from "viem/chains";
-import { ETHEREUM } from "@altananetwork/sdk";
+import { bsc } from "viem/chains";
+import { BNB } from "@altananetwork/sdk";
 
-const publicClient = createPublicClient({ chain: mainnet, transport: http() });
+const publicClient = createPublicClient({ chain: bsc, transport: http() });
 const KEYSTORE_ABI = [{
-  name: "getActiveKeys", type: "function", stateMutability: "view",
-  inputs: [{ name: "user", type: "address" }],
-  outputs: [{ type: "bytes32[]" }],
+  name: "isValidKey", type: "function", stateMutability: "view",
+  inputs: [{ name: "user", type: "address" }, { name: "keyId", type: "bytes32" }],
+  outputs: [{ type: "bool" }],
 }] as const;
 
-const active = await publicClient.readContract({
-  address: ETHEREUM.keyStore,
+// keyId is keccak256 of the SEC1 public key.
+const authorized = await publicClient.readContract({
+  address: BNB.keyStore,
   abi: KEYSTORE_ABI,
-  functionName: "getActiveKeys",
-  args: [walletAddress],
+  functionName: "isValidKey",
+  args: [walletAddress, keccak256(sessionPublicKey)],
 });
-const authorized = active.includes(keccak256(sessionPublicKey));
 ```
+
+`isValidKey` answers *exists AND not revoked AND not expired* in one call. To enumerate every key
+on a wallet instead, read `getKeys(user) -> bytes32[]` — note that it returns all registered key
+ids and does **not** filter revoked or expired ones, so check each with `isValidKey`.
 
 This is the killer feature: a wallet that has never heard of your app can still verify whether a given key is authorized. No vendor lock-in.
 
@@ -218,6 +222,9 @@ import { ETHEREUM, BNB, BASE } from "@altananetwork/sdk";
 //
 // ETHEREUM.keyStore           = 0xb70fDa90C1d576Ba8399946a0c10ECD9d9Ea923b
 // ETHEREUM.keyStoreController = 0x30a188Eecf14F4142B0d828ce838C9E1134e7FaA
+//
+// BNB.keyStore                = 0x6572427ED530BadcF7375Cf9A4709D8d2b0E7E0a
+// BNB.keyStoreController      = 0x0834Ee2C9BdC3E3efF0a2dC34393D4B0e546A555
 ```
 
 ## What never changes

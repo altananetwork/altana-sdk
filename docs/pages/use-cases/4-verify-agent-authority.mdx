@@ -16,7 +16,7 @@ import { UseCaseMeta } from '../../components/UseCaseMeta'
   rows={[
   { label: "Goal", value: "I want any app, or a second agent, to confirm an agent's authority on a wallet without integrating Altana." },
   { label: "Who it's for", value: "Developers or protocols that need to confirm an agent's authority without integrating Altana or trusting a vendor." },
-  { label: "What you'll use", value: <>The Keystore read: <code>getActiveKeys</code> plus a <code>keccak256</code> of the public key. Free, unlimited, from any RPC.</> },
+  { label: "What you'll use", value: <>The Keystore read: <code>isValidKey</code> plus a <code>keccak256</code> of the public key. Free, unlimited, from any RPC.</> },
   { label: "Prerequisites", value: <>A wallet with an active agent session, granted in <a href="/use-cases/1-agent-wallet-policy">Give an agent a wallet and a policy</a>.</> },
 ]} />
 
@@ -36,33 +36,38 @@ const client = createPublicClient({
 });
 ```
 
-## Step 2: Read the active keys from the Keystore
+## Step 2: Derive the agent's key id
 
-Call `getActiveKeys` on the Keystore for the wallet you care about.<br />This is a plain `eth_call`: free, unlimited, and available from any RPC.
+Keystore identifies a key by its **key id**, the `keccak256` hash of the SEC1-encoded public key. Hash the agent's session public key to get the value you will ask about.
+
+```ts
+const keyId = keccak256(sessionPublicKey);
+```
+
+## Step 3: Ask the Keystore whether that key is authorized
+
+Call `isValidKey` on the Keystore for the wallet you care about.<br />This is a plain `eth_call`: free, unlimited, and available from any RPC.
 
 ```ts
 const KEYSTORE_ABI = [{
-  name: "getActiveKeys", type: "function", stateMutability: "view",
-  inputs: [{ name: "user", type: "address" }],
-  outputs: [{ type: "bytes32[]" }],
+  name: "isValidKey", type: "function", stateMutability: "view",
+  inputs: [
+    { name: "user", type: "address" },
+    { name: "keyId", type: "bytes32" },
+  ],
+  outputs: [{ type: "bool" }],
 }] as const;
 
-const active = await client.readContract({
+// One eth_call answers: is this key allowed to act on this wallet right now?
+const authorized = await client.readContract({
   address: BNB.keyStore,
   abi: KEYSTORE_ABI,
-  functionName: "getActiveKeys",
-  args: [walletAddress],
+  functionName: "isValidKey",
+  args: [walletAddress, keyId],
 });
 ```
 
-## Step 3: Check whether the agent's key is authorized
-
-Hash the agent's public key and check whether it is in the active set.<br />One call answers whether that key can act on the wallet right now.
-
-```ts
-// One eth_call answers: is this key allowed to act on this wallet right now?
-const authorized = active.includes(keccak256(sessionPublicKey));
-```
+`isValidKey` returns true only when the key exists, has not been revoked, and has not expired. If you want the whole set of keys on a wallet instead of a single yes or no, read `getKeys(walletAddress)` for the registered key ids, then check each one with `isValidKey` — `getKeys` does not filter out revoked or expired entries on its own.
 
 Run this from your own script against your own wallet. This is exactly what a DEX or a counterparty agent would run, for free, from any RPC.
 
