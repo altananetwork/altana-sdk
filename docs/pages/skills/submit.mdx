@@ -1,0 +1,249 @@
+---
+title: Submit a skill
+description: Put your protocol in every agent. Write one SKILL.md, self-test it on a mainnet fork, open a pull request.
+---
+
+import { Eyebrow } from '../../components/Eyebrow'
+import { CopyBlock } from '../../components/CopyBlock'
+
+<Eyebrow>Skills</Eyebrow>
+
+# Submit a skill
+
+Put your protocol in every agent.
+
+A skill is one markdown file that teaches AI agents how to use your protocol, always inside the limits their owner sets. Submit one, and every agent connected to Altana can find it and act on it. The whole process is a pull request against [`altananetwork/skills`](https://github.com/altananetwork/skills).
+
+Three steps.
+
+1. **Write it.** One `SKILL.md` with your protocol's know-how and plays.
+2. **We test it.** Real agents trade with it on a private copy of the chain.
+3. **It's live.** Every AI agent can find and use it, safely.
+
+## Step 1. Get the file written
+
+Two ways to produce the same thing: one `SKILL.md` in `skills/<your-skill-id>/`.
+
+### Let your agent write it
+
+Fastest path. Paste this into Claude Code, Cursor, or any coding agent with your protocol's name filled in. It reads the template and a finished example, writes the skill, and tests it.
+
+<CopyBlock
+  label="Prompt"
+  text={`Read the Altana skill template at https://github.com/altananetwork/skills/blob/main/skills/_template/SKILL.md and the example at https://github.com/altananetwork/skills/blob/main/skills/pancakeswap-trading/SKILL.md. Write a SKILL.md for <protocol> following the template exactly: one capability, checksummed addresses in a table, plays with parameters and Typical time lines, and explicit guards. Then write the test scenario described in tools/skill-test/scenarios and self-test with the harness.`}
+/>
+
+### Or write it yourself
+
+Copy the annotated template and fill in your protocol's addresses, quirks, and plays.
+
+```md [skills/_template/SKILL.md]
+---
+name: your-skill-id
+description: One sentence saying what the skill does for the user, starting with a verb. Mention the protocol and the chain.
+---
+
+# Your Skill Name
+
+One short paragraph: what this skill lets an agent do, and the one rule of the house:
+onchain writes go only through the Altana session executor; reads can go directly
+against the RPC. If the skill is research only, say the session permits no onchain
+calls at all.
+
+## Reference
+
+Facts an agent needs to act correctly. Keep it tight; the agent already knows DeFi
+generally. Cover only what is protocol specific.
+
+### Addresses (chain name)
+
+| Contract | Address |
+|---|---|
+| Main contract the plays call | `0xChecksummedAddress` |
+| Token or helper it needs | `0xChecksummedAddress` |
+
+Every address checksummed (run `cast to-check-sum-address`). Only list contracts the
+plays actually touch; the session scope is derived from this table.
+
+### Quirks that cause mistakes
+
+- The three to six protocol facts that break naive integrations: decimals surprises,
+  approve-before-call patterns, functions that return error codes instead of
+  reverting, timing windows, fee-on-transfer behavior. One line each.
+
+### Functions (if the protocol is unusual)
+
+Signatures for the calls the plays make, only when the agent is unlikely to know them.
+
+## Playbook
+
+One `### Play:` per common action. Two to five plays. Each play: parameters, a
+Typical time line, and numbered steps an agent can execute in one script.
+
+### Play: action-name
+
+What it does in one line. Parameters: the two or three things the user chooses.
+
+**Typical time:** ~15s
+
+1. The read that sizes or quotes the action.
+2. The `execute([...])` calls, in order.
+3. The onchain verification before reporting success.
+
+## Guards (do not remove)
+
+- The safety decisions pinned in place: minimum output floors, balance verification
+  after every state change, retry limits, stop conditions.
+- Always verify outcomes from chain state, never from transaction success alone.
+- What the agent must do when something fails: stop and report, never improvise
+  outside the session scope.
+```
+
+The rules the template encodes, stated plainly:
+
+- **One capability per skill**, which means one session scope. A skill needing two unrelated scopes is two skills.
+- **Every play declares its parameters and keeps its guards explicit.** Guards are part of what certification verifies, so they cannot be trimmed for brevity.
+- **Plain language, no em dashes. Addresses in tables, checksummed.**
+
+### Self-test before you open the PR
+
+Run the same harness Altana uses for certification, on your own machine and your own model API keys. It has real agents exercise the skill on a private copy of the chain.
+
+<CopyBlock
+  label="Shell"
+  text={`cd tools/skill-test && bun install && bun run skill-test --skill ../../skills/<your-skill-id> --trials 3`}
+/>
+
+If your skill needs a new scenario (a task, a session scope, and an onchain judge), add `tools/skill-test/scenarios/<your-skill-id>.ts` implementing the `Scenario` interface and include it in the pull request.
+
+## Step 2. Open the pull request
+
+Add your skill directory to the repo and open a PR.
+
+<a
+  className="altana-button"
+  href="https://github.com/altananetwork/skills/compare"
+  target="_blank"
+  rel="noreferrer"
+>
+  Open a pull request →
+</a>
+
+Here is what happens next.
+
+1. **Maintainers review it like code:** one capability per skill, guards in every play, checksummed addresses, a test scenario included. Address checksums are re-verified with `cast`. A submission with an unverified or invalid address is corrected or rejected, even when the uncertainty is flagged.
+2. **Certification runs on Altana infrastructure:** N fresh-agent trials on a mainnet fork, judged from onchain state. A single attempted action outside the declared scope disqualifies. On a fail, you get the trial transcripts.
+3. **On a pass it goes live** on the [catalog](https://skills.altana.network/), and every agent connected to Altana can use it. Maintainers add the entry to `index.json` with the content hash. `index.json` is never edited by a submitting PR.
+
+Certification re-runs on every version change of the skill.
+
+## A finished skill, end to end
+
+This is `skills/pancakeswap-trading/SKILL.md` in full: the model of what a passing submission looks like. Read it once before you write yours.
+
+```md [skills/pancakeswap-trading/SKILL.md]
+---
+name: pancakeswap-trading
+description: Buy and sell tokens on PancakeSwap on BNB Chain through an Altana session. In and out of positions fast, with quotes, slippage protection, and full-balance exits.
+---
+
+# PancakeSwap Trading
+
+Trade tokens on PancakeSwap V2 on BNB Chain as an Altana session. Submit onchain writes
+only through your Altana session executor (`execute(calls)` with the SDK, or the
+`session_execute` MCP tool). Reads can go directly against the RPC.
+
+## Reference
+
+Everything you need to trade PancakeSwap well: the right contracts, quoting, token
+quirks, and safe slippage habits.
+
+### Addresses (BNB Chain mainnet)
+
+| Contract | Address |
+|---|---|
+| PancakeSwap V2 Router | `0x10ED43C718714eb63d5aA57B78B54704E256024E` |
+| WBNB | `0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c` |
+| USDT (BSC-USD) | `0x55d398326f99059fF775485246999027B3197955` |
+
+### Quirks that cause mistakes
+
+- USDT on BNB Chain has 18 decimals, not 6 like Ethereum. $20 is `20n * 10n**18n`.
+- The target token may have different decimals. Read `decimals()` before computing amounts.
+- Route selection: quote the direct pair AND the WBNB hop (`[USDT, WBNB, TOKEN]`) with
+  `getAmountsOut`, then use whichever quotes better. Deep majors often have a direct
+  USDT pool; most tokens only have a WBNB pool.
+- Approve before each swap direction: `approve(router, amount)` on the input token
+  (USDT before buying, the token before selling back).
+- Fee-on-transfer tokens (transfer taxes) need the
+  `swapExactTokensForTokensSupportingFeeOnTransferTokens` variant. Detect by simulating
+  the standard swap first; if it reverts with sufficient allowance and balance, switch.
+
+### Router functions (Uniswap V2 style)
+
+- Quote: `getAmountsOut(uint256 amountIn, address[] path) returns (uint256[])`
+- Swap: `swapExactTokensForTokens(uint256 amountIn, uint256 amountOutMin, address[] path, address to, uint256 deadline)`
+- `amountOutMin`: quote minus 1 to 3 percent slippage. Never 0.
+- `deadline`: unix seconds, now + 600.
+
+## Playbook
+
+### Play: enter-position
+
+Buy a token with USDT. Parameters: token address, USDT amount, slippage (default 1%).
+
+**Typical time:** ~15s
+
+1. Read the token's `decimals()`. Quote both routes with `getAmountsOut`; pick the better.
+2. `execute([approve(USDT, router, amount), swap(amount, quote minus slippage, path, wallet, now+600)])`
+3. Verify the token balance increased before reporting success.
+
+### Play: exit-position
+
+Sell part or all of a position back to USDT. Parameters: token address, amount or "all".
+
+**Typical time:** ~15s
+
+1. For "all", read the live token balance and use the full amount.
+2. Quote the reverse path. `execute([approve(TOKEN, router, amount), swap(...)])`
+3. Verify USDT increased and the token balance decreased accordingly.
+
+### Play: round-trip
+
+In and out in one move: buy, confirm, sell. Parameters: token, USDT amount, slippage.
+
+**Typical time:** ~50s including your own verification reads
+
+Write one script that quotes, buys, reads the received token balance in the same run,
+then approves and sells that exact balance back. One script, four transactions, no
+pauses between steps. Verify final balances onchain and report amounts and tx hashes.
+
+### Play: tp-sl-watch
+
+Enter, then monitor and exit at take profit or stop loss. Parameters: token, amount,
+take-profit %, stop-loss %.
+
+**Typical time:** runs until an exit triggers
+
+1. Run enter-position. Record the entry quote.
+2. Loop: every few seconds re-quote the position's USDT value with `getAmountsOut`.
+3. When value crosses take-profit or stop-loss, run exit-position with "all".
+4. Report entry, exit, and realized result. Re-quote before exiting; never sell on a
+   stale quote.
+
+## Guards (do not remove)
+
+- `amountOutMin` is always a fresh quote minus slippage. Never 0.
+- Verify balances onchain after each leg; report only what the chain confirms.
+- If a swap reverts, requote once with +1% slippage and retry a single time; otherwise
+  stop and report. Do not improvise outside the session scope.
+```
+
+Four plays, one scope, guards that survive contact with a bad fill. That is the bar.
+
+## Next
+
+- [Skills Registry](/skills). What skills are and how sessions bound them.
+- [Contributing guide](https://github.com/altananetwork/skills/blob/main/CONTRIBUTING.md). The full rules, in the repo.
+- [Sessions](/concepts/sessions). The permission shape your address table maps onto.
+- [MCP Server](/mcp). How agents execute a skill's plays in practice.
