@@ -49,7 +49,7 @@ type ClientRevokeSessionOptions = {
 
 In a single userOp:
 
-1. The session is **revoked in Keystore** (skipped if the session was never registered). Any tool reading `getActiveKeys` will no longer see it.
+1. The session is **revoked in Keystore** (skipped if the session was never registered). From the next block onward, `isValidKey` returns `false` for that key and the key id is dropped from `getKeys`.
 2. The session's authority on the wallet's smart account is pulled.
 
 Both atomic. After the userOp confirms, the session is dead everywhere simultaneously.
