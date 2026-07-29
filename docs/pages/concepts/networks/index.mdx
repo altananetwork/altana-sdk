@@ -75,6 +75,29 @@ privileged change is queued and visible onchain for two days before it can execu
 The admin Safe holds `PROPOSER_ROLE` on both timelocks and is separate from the treasury Safe.
 Both are Safe multisigs at a 4 of 6 threshold.
 
+### What the privileged roles can and cannot do
+
+The KeyStore is not upgradeable. There is no proxy, no `delegatecall` and no initializer, so the
+deployed bytecode is final and the storage layout cannot be changed.
+
+The owner has exactly two functions: `transferOwnership`, which is two-step and requires the new
+owner to call `acceptOwnership`, and `setAuthorizedContract`, which sets which contracts may write
+to the registry.
+
+**The owner cannot touch a permission you have already granted.** A registered key has no setter.
+Validator, public key, metadata, expiry and root status are written once at registration and never
+mutated afterwards. `revokeKey` and `updateNonce` are gated on the key's own account or that key's
+validator, so the owner cannot revoke your key, extend an expiry, or change what a key is allowed
+to do. Revocation is monotonic, so the owner cannot un-revoke one either.
+
+**What the owner can do is authorize a new writer.** Any authorized writer can add a further key to
+an account that is already bootstrapped. It cannot be a root key: `initialRegisterKey` only accepts
+an account with no keys, and `registerKey` writes `isRoot: false` unconditionally. In the live
+deployment the only authorized writer is `KeyStoreController`, which passes `msg.sender` straight
+through, so an account can only register keys to itself. Changing that set runs through the 48 hour
+timelock and emits `AuthorizedContractUpdated`, so it is queued in public two days before it can
+execute and permanently visible after it does.
+
 Nothing here needs to be taken on trust. Check it yourself:
 
 ```bash
