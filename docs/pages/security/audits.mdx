@@ -1,0 +1,45 @@
+---
+title: Audit reports
+description: Third-party security audits of the Altana Keystore contracts.
+---
+
+# Audit reports
+
+The Altana Keystore contracts were audited by [CertiK](https://www.certik.com). The full report, the finding-by-finding detail and the current status of each item are published on CertiK Skynet.
+
+| Audit | Scope | Auditor | Completed | Report |
+| --- | --- | --- | --- | --- |
+| Altana Keystore | `KeyStore.sol` and `KeyStoreCacheOPStack.sol`, plus six further files listed in the report | CertiK | 15 July 2026 | [View on CertiK Skynet](https://skynet.certik.com/projects/altana) |
+
+Review methods were manual review and static analysis. The audit was requested on 22 June 2026. Altana's current CertiK Skynet security score is 73.67, grade BBB.
+
+## Findings
+
+| Severity | Findings |
+| --- | --- |
+| Critical | 0 |
+| Major | 0 |
+| Medium | 1 |
+| Minor | 2 |
+| Informational | 4 |
+| Centralization | 1 |
+
+Eight findings in total: the seven graded above, plus one centralization item covering privileged roles, which CertiK tracks outside the severity buckets. Five are resolved, two are acknowledged and one, the centralization item, is partially resolved. CertiK Skynet carries the current status of each.
+
+## What the audit covers
+
+The scope is the Keystore: the onchain registry that stores session-key permissions, and the L2 cache contract that mirrors them to Base. These are the contracts that decide whether an agent is authorized to act, so they are the ones worth auditing.
+
+The audited source is deployed and source-verified, exact match, on all three networks Altana runs on. You can read it directly:
+
+| Network | Contract | Explorer |
+| --- | --- | --- |
+| Ethereum | KeyStore | [Etherscan](https://etherscan.io/address/0xb70fDa90C1d576Ba8399946a0c10ECD9d9Ea923b#code) |
+| BNB Smart Chain | KeyStore | [BscScan](https://bscscan.com/address/0x6572427ED530BadcF7375Cf9A4709D8d2b0E7E0a#code) |
+| Base | KeyStoreCacheOPStack | [Basescan](https://basescan.org/address/0x6572427ED530BadcF7375Cf9A4709D8d2b0E7E0a#code) |
+
+Addresses for every deployed contract are listed under [Networks & Addresses](/concepts/networks).
+
+:::info[Privileged roles]
+Keystore contracts sit behind a 48 hour timelock, with a separate admin Safe and treasury Safe. This is the centralization surface the audit flags, and the timelock is what bounds it: any privileged change is visible onchain for 48 hours before it can execute. Addresses and the `getMinDelay()` call to check the delay yourself are under [Networks & Addresses](/concepts/networks#governance).
+:::

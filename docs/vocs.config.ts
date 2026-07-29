@@ -174,6 +174,10 @@ export default defineConfig({
       ],
     },
     {
+      text: "Security",
+      items: [{ text: "Audit reports", link: "/security/audits" }],
+    },
+    {
       text: "MCP Server",
       items: [
         { text: "Overview", link: "/mcp" },
