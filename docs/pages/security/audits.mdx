@@ -41,5 +41,5 @@ The audited source is deployed and source-verified, exact match, on all three ne
 Addresses for every deployed contract are listed under [Networks & Addresses](/concepts/networks).
 
 :::info[Privileged roles]
-Keystore contracts sit behind a 48 hour timelock, with a separate admin Safe and treasury Safe. This is the centralization surface the audit flags, and the timelock is what bounds it: any privileged change is visible onchain for 48 hours before it can execute. Addresses and the `getMinDelay()` call to check the delay yourself are under [Networks & Addresses](/concepts/networks#governance).
+Keystore contracts sit behind a 48 hour timelock, with a separate admin Safe and treasury Safe. This is the centralization surface the audit flags, and the timelock is what bounds it: any privileged change is visible onchain for 48 hours before it can execute. The Keystore itself is not upgradeable, and no privileged role can revoke or alter a permission a user has already granted.
 :::

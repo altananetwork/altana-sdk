@@ -34,7 +34,6 @@ KeyStore contracts:
 | --- | --- |
 | KeyStore | `0x6572427ED530BadcF7375Cf9A4709D8d2b0E7E0a` |
 | KeyStoreController | `0x0834Ee2C9BdC3E3efF0a2dC34393D4B0e546A555` |
-| TimelockController | `0xB8A02c99176c58D49747ed4f42b4e5DB3684da2D` |
 
 ## Ethereum: `ETHEREUM`
 
@@ -47,7 +46,6 @@ KeyStore contracts:
 | --- | --- |
 | KeyStore | `0xb70fDa90C1d576Ba8399946a0c10ECD9d9Ea923b` |
 | KeyStoreController | `0x30a188Eecf14F4142B0d828ce838C9E1134e7FaA` |
-| TimelockController | `0x538F7e830AAefF9CFcdDB3a66A6DF67Cc4FD466B` |
 
 ## Base: `BASE`
 
@@ -58,64 +56,6 @@ Used for cross-chain session-key verification when operating on Ethereum. Not us
 | KeyStoreCache | `0x6572427ED530BadcF7375Cf9A4709D8d2b0E7E0a` |
 
 Chain id 8453 · RPC `https://base-rpc.publicnode.com`.
-
-## Governance
-
-The KeyStore and KeyStoreController on Ethereum and BNB Smart Chain are owned by a
-`TimelockController`, not by an EOA. The minimum delay is 172800 seconds, 48 hours, so any
-privileged change is queued and visible onchain for two days before it can execute.
-
-| Role | Address | Chains |
-| --- | --- | --- |
-| TimelockController | `0x538F7e830AAefF9CFcdDB3a66A6DF67Cc4FD466B` | Ethereum |
-| TimelockController | `0xB8A02c99176c58D49747ed4f42b4e5DB3684da2D` | BNB Smart Chain |
-| Admin Safe (proposer) | `0x83Ee9c976389A6D708504490eFf2DAfC665637B6` | Ethereum, BNB Smart Chain |
-| Treasury Safe | `0x779faCC9cA0e5D07F70eEfe26A33D579c04cc38e` | Ethereum, BNB Smart Chain |
-
-The admin Safe holds `PROPOSER_ROLE` on both timelocks and is separate from the treasury Safe.
-Both are Safe multisigs at a 4 of 6 threshold.
-
-### What the privileged roles can and cannot do
-
-The KeyStore is not upgradeable. There is no proxy, no `delegatecall` and no initializer, so the
-deployed bytecode is final and the storage layout cannot be changed.
-
-The owner has exactly two functions: `transferOwnership`, which is two-step and requires the new
-owner to call `acceptOwnership`, and `setAuthorizedContract`, which sets which contracts may write
-to the registry.
-
-**The owner cannot touch a permission you have already granted.** A registered key has no setter.
-Validator, public key, metadata, expiry and root status are written once at registration and never
-mutated afterwards. `revokeKey` and `updateNonce` are gated on the key's own account or that key's
-validator, so the owner cannot revoke your key, extend an expiry, or change what a key is allowed
-to do. Revocation is monotonic, so the owner cannot un-revoke one either.
-
-**What the owner can do is authorize a new writer.** Any authorized writer can add a further key to
-an account that is already bootstrapped. It cannot be a root key: `initialRegisterKey` only accepts
-an account with no keys, and `registerKey` writes `isRoot: false` unconditionally. In the live
-deployment the only authorized writer is `KeyStoreController`, which passes `msg.sender` straight
-through, so an account can only register keys to itself. Changing that set runs through the 48 hour
-timelock and emits `AuthorizedContractUpdated`, so it is queued in public two days before it can
-execute and permanently visible after it does.
-
-Nothing here needs to be taken on trust. Check it yourself:
-
-```bash
-# 48 hour delay
-cast call 0x538F7e830AAefF9CFcdDB3a66A6DF67Cc4FD466B "getMinDelay()(uint256)" \
-  --rpc-url https://ethereum-rpc.publicnode.com
-
-# KeyStore is owned by the timelock
-cast call 0xb70fDa90C1d576Ba8399946a0c10ECD9d9Ea923b "owner()(address)" \
-  --rpc-url https://ethereum-rpc.publicnode.com
-
-# Safe threshold
-cast call 0x83Ee9c976389A6D708504490eFf2DAfC665637B6 "getThreshold()(uint256)" \
-  --rpc-url https://ethereum-rpc.publicnode.com
-```
-
-Base runs `KeyStoreCacheOPStack`, which mirrors the Ethereum Keystore through OP Stack state
-proofs rather than holding its own privileged roles.
 
 > Addresses are the source of truth in the Keystore repo's deployment manifests
 > (`deployments/*.json`) and the SDK's `packages/wallet/src/config.ts`. If contracts are
