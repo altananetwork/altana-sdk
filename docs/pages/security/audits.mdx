@@ -5,29 +5,9 @@ description: Third-party security audits of the Altana Keystore contracts.
 
 # Audit reports
 
-The Altana Keystore contracts were audited by [CertiK](https://www.certik.com). The full report, the finding-by-finding detail and the current status of each item are published on CertiK Skynet.
+The Altana Keystore contracts were audited by [CertiK](https://www.certik.com), completed 15 July 2026. The full report, the finding-by-finding detail and the current status of every item are published on [CertiK Skynet](https://skynet.certik.com/projects/altana).
 
-| Audit | Scope | Auditor | Completed | Report |
-| --- | --- | --- | --- | --- |
-| Altana Keystore | `KeyStore.sol` and `KeyStoreCacheOPStack.sol`, plus six further files listed in the report | CertiK | 15 July 2026 | [View on CertiK Skynet](https://skynet.certik.com/projects/altana) |
-
-Review methods were manual review and static analysis. The audit was requested on 22 June 2026. Altana's current CertiK Skynet security score is 73.67, grade BBB.
-
-## Findings
-
-| Severity | Findings |
-| --- | --- |
-| Critical | 0 |
-| Major | 0 |
-| Medium | 1 |
-| Minor | 2 |
-| Informational | 4 |
-
-Seven graded findings, none critical and none major. Five are resolved and two are acknowledged. CertiK Skynet carries the full report and the current status of every finding.
-
-## What the audit covers
-
-The scope is the Keystore: the onchain registry that stores session-key permissions, and the L2 cache contract that mirrors them to Base. These are the contracts that decide whether an agent is authorized to act, so they are the ones worth auditing.
+Scope was `KeyStore.sol` and `KeyStoreCacheOPStack.sol`, plus six further files listed in the report: the onchain registry that stores session-key permissions, and the L2 cache contract that mirrors them to Base. These are the contracts that decide whether an agent is authorized to act.
 
 The audited source is deployed and source-verified, exact match, on all three networks Altana runs on. You can read it directly:
 
