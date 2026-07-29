@@ -22,9 +22,8 @@ Review methods were manual review and static analysis. The audit was requested o
 | Medium | 1 |
 | Minor | 2 |
 | Informational | 4 |
-| Centralization | 1 |
 
-Eight findings in total: the seven graded above, plus one centralization item covering privileged roles, which CertiK tracks outside the severity buckets. Five are resolved, two are acknowledged and one, the centralization item, is partially resolved. CertiK Skynet carries the current status of each.
+Seven graded findings, none critical and none major. Five are resolved and two are acknowledged. CertiK Skynet carries the full report and the current status of every finding.
 
 ## What the audit covers
 
@@ -39,7 +38,3 @@ The audited source is deployed and source-verified, exact match, on all three ne
 | Base | KeyStoreCacheOPStack | [Basescan](https://basescan.org/address/0x6572427ED530BadcF7375Cf9A4709D8d2b0E7E0a#code) |
 
 Addresses for every deployed contract are listed under [Networks & Addresses](/concepts/networks).
-
-:::info[Privileged roles]
-Keystore contracts sit behind a 48 hour timelock, with a separate admin Safe and treasury Safe. This is the centralization surface the audit flags, and the timelock is what bounds it: any privileged change is visible onchain for 48 hours before it can execute. The Keystore itself is not upgradeable, and no privileged role can revoke or alter a permission a user has already granted.
-:::
