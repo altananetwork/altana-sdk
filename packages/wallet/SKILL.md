@@ -3,7 +3,7 @@ name: altana-agentic-wallet
 description: Use when building agents, bots, or apps that need non-custodial wallets with on-chain session-key delegation. Triggers on requests involving agent wallets, scoped permissions, session keys, programmatic spending, passkey wallets, cross-agent authorization checks, or "an AI that can act on my wallet". The SDK lives at @altananetwork/sdk; this skill teaches how to wire it.
 ---
 
-# Altana Agentic Wallet
+# Altana Smart Agentic Wallet
 
 Altana gives apps non-custodial smart-account wallets and a **public, on-chain registry of who is authorized to act on each wallet**. Permissions are first-class on-chain objects — any agent, app, or chain can verify them; no platform sits in the middle.
 

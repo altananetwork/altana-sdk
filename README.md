@@ -2,7 +2,7 @@
 
 **Let your AI agents pay, invest, and operate. Safely.**
 
-Altana is noncustodial infrastructure that gives your agents real authority to transact — always inside limits you set and can revoke at any moment. Three pieces make it work: an agentic wallet your agent acts from, the **KeyStore** permission registry that records exactly what each agent may do, and an intent relay that turns an approved intent into a real onchain transaction with gas handled for you.
+Altana is noncustodial infrastructure that gives your agents real authority to transact — always inside limits you set and can revoke at any moment. Three pieces make it work: an Altana smart agentic wallet your agent acts from, the **KeyStore** permission registry that records exactly what each agent may do, and an intent relay that turns an approved intent into a real onchain transaction with gas handled for you.
 
 Every permission lives in a neutral onchain registry — openly verifiable, revocable in one transaction, and accessible by any agent on any chain. That unlocks:
 
@@ -79,7 +79,7 @@ By default the session is **on-chain in KeyStore** the moment `grantSession` con
 
 Full docs, guides, and SDK reference: **[docs.altana.network](https://docs.altana.network/)**.
 
-- Getting started: [create an agentic wallet](https://docs.altana.network/getting-started/create-agentic-wallet) (passkey or private key), [connect an AI tool](https://docs.altana.network/getting-started/build-with-claude)
+- Getting started: [create a smart agentic wallet](https://docs.altana.network/getting-started/create-agentic-wallet) (passkey or private key), [connect an AI tool](https://docs.altana.network/getting-started/build-with-claude)
 - Concepts: [KeyStore](https://docs.altana.network/concepts/keystore), [sessions](https://docs.altana.network/concepts/sessions), [how Altana compares](https://docs.altana.network/concepts/comparison)
 - SDK reference: [`createWallet`](https://docs.altana.network/sdk/create-wallet), [`createPasskeyWallet`](https://docs.altana.network/sdk/create-passkey-wallet), [`grantSession`](https://docs.altana.network/sdk/grant-session), [`execute`](https://docs.altana.network/sdk/execute), [`revokeSession`](https://docs.altana.network/sdk/revoke-session), [`recoverFromPasskey`](https://docs.altana.network/sdk/recover-from-passkey)
 - MCP server: [overview](https://docs.altana.network/mcp), [install](https://docs.altana.network/mcp/install), [tools](https://docs.altana.network/mcp/tools)
