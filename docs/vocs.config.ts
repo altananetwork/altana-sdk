@@ -105,7 +105,7 @@ export default defineConfig({
     {
       text: "Get Started",
       items: [
-        { text: "Create an agentic wallet", link: "/getting-started/create-agentic-wallet" },
+        { text: "Create a smart agentic wallet", link: "/getting-started/create-agentic-wallet" },
         { text: "Passkey wallet quickstart", link: "/getting-started/passkey" },
         { text: "Private key wallet quickstart", link: "/getting-started/private-key" },
         { text: "Connect an AI tool", link: "/getting-started/build-with-claude" },

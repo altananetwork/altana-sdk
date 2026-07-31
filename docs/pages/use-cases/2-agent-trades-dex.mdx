@@ -17,7 +17,7 @@ import { UseCaseMeta } from '../../components/UseCaseMeta'
   { label: "Goal", value: "I want my agent to trade on a DEX, but capped so it can only spend what I allow and only on that exchange." },
   { label: "Who it's for", value: "Developers giving a trading agent access to one DEX on BNB Smart Chain, without exposing the rest of the wallet." },
   { label: "What you'll use", value: <><code>grantSession</code> scoped to the DEX router with a spend cap and expiry, then <code>execute</code> to run the swap.</> },
-  { label: "Prerequisites", value: <>An agentic wallet set up in <a href="/use-cases/1-agent-wallet-policy">Give an agent a wallet and a policy</a>, funded on BNB with a stablecoin to trade.</> },
+  { label: "Prerequisites", value: <>A smart agentic wallet set up in <a href="/use-cases/1-agent-wallet-policy">Give an agent a wallet and a policy</a>, funded on BNB with a stablecoin to trade.</> },
 ]} />
 
 The example below uses **PancakeSwap** on BNB. Swap in any DEX router address to use a different exchange; the pattern is identical. The flow is three steps: connect to the chain, grant a session scoped to the DEX, then let the agent trade within it.
