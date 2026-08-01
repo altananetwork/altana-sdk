@@ -6,7 +6,7 @@
  *      saved on this device for the given rpId; they pick one.
  *   2. Extract the wallet address from the assertion's userHandle, which
  *      was baked in at creation time via createPasskeyWallet.
- *   3. Read getActiveKeys(wallet) + getPublicKey(wallet, keyId) from
+ *   3. Read getKeys(wallet) + getPublicKey(wallet, keyId) from
  *      KeyStore to retrieve the P256 public key the wallet authorized.
  *   4. Rebuild the PasskeySigner from { credentialId, publicKey, rpId }.
  *

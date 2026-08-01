@@ -22,13 +22,13 @@ const wallet = await client.recoverFromPasskey({ rpId: "myapp.example" });
 
 ## Keystore impact
 
-Recovery is a pure read: two `eth_call`s against Keystore (`getActiveKeys` + `getPublicKey`). No onchain write, no transaction. An app can recover a user's wallet handle a million times a day at zero cost.
+Recovery is a pure read: two `eth_call`s against Keystore (`getKeys` + `getPublicKey`). No onchain write, no transaction. An app can recover a user's wallet handle a million times a day at zero cost.
 
 ## Flow
 
 1. **Discoverable-credential picker.** `allowCredentials: []` tells the OS to show all passkeys saved on this device for the given `rpId`. The user picks one, then completes biometric verification.
 2. **Extract the wallet address.** The assertion's `userHandle` carries the 20-byte wallet address that `createPasskeyWallet` baked in at creation time.
-3. **Read Keystore.** `getActiveKeys(wallet) + getPublicKey(wallet, keyId)` to retrieve the P-256 public key the wallet authorized.
+3. **Read Keystore.** `getKeys(wallet) + getPublicKey(wallet, keyId)` to retrieve the P-256 public key the wallet authorized.
 4. **Rebuild the signer.** From `{ credentialId, publicKey, rpId }`.
 
 Two `eth_call`s, one biometric prompt. No server side-channel.

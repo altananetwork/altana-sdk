@@ -1,10 +1,10 @@
 ---
 title: Acknowledgments
-description: Credit to the wallet infrastructure that makes Keystore possible.
+description: Credit for the upstream work the Altana SDK builds on.
 ---
 
 # Acknowledgments
 
-Altana Keystore sits on top of wallet infrastructure: smart accounts, session keys, relayers, validator hooks.
+The Altana SDK builds on [Porto](https://porto.sh) (MIT), extended for Keystore compatibility. Credit to the Porto team for that work.
 
-For the EVM ecosystem, [**Porto Wallet**](https://porto.sh) is the best implementation of wallet infrastructure we've tested, and the Altana SDK was built on top of it with our own modifications to have Keystore compatibility. Thanks to the Porto team for the work that made this possible.
+Porto is no longer actively developed. Altana maintains the stack it runs: we operate it in production on Ethereum, BNB Chain and Base, and the layers you integrate against are ours. The SDK imports `porto` as a pinned dependency rather than forking it, so the surface you build on is one we control.
