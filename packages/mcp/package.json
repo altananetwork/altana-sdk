@@ -1,6 +1,6 @@
 {
   "name": "@altananetwork/mcp",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "MCP server that lets AI hosts employ agents on Altana wallets",
   "license": "GPL-3.0-or-later",
   "repository": {
@@ -35,6 +35,7 @@
   ],
   "scripts": {
     "start": "bun run src/index.ts",
+    "test": "bun test",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "node ../../scripts/check-publishable.mjs"
   },

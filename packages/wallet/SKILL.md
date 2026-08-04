@@ -145,6 +145,11 @@ Run this server-side: third-party x402 endpoints often omit `X-PAYMENT` from COR
 browsers can't POST the payment. The signature is a smart-account (ERC-1271) signature —
 a facilitator must verify via `isValidSignature`, not `ecrecover`.
 
+The envelope is emitted in both wire dialects, so b402 merchants and Altana-integrated
+services can each read it: it carries a top-level `resource` echoed from the 402, Permit2
+authorizations under both `permit` and `permit2Authorization`, and the payment under both
+`X-PAYMENT` and `PAYMENT-SIGNATURE`. No configuration needed.
+
 ### Verify any key on-chain (from any tool)
 
 ```ts

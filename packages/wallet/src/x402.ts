@@ -57,6 +57,43 @@ export type Eip3009PaymentInput = {
 };
 
 /**
+ * The x402-v2 `resource` descriptor: what the payment buys.
+ *
+ * Real B402 challenges (CoinMarketCap and friends) put this at the top of the
+ * 402 body as an object; our own x402-server emits it as a bare URL string.
+ * `normalizeResource` accepts either.
+ */
+export type X402Resource = {
+  url: string;
+  description?: string;
+  mimeType?: string;
+};
+
+/**
+ * Coerce a 402 body's `resource` into the object form B402 merchants expect.
+ * Accepts the object dialect, the bare-string dialect, or a fallback URL.
+ */
+export function normalizeResource(
+  resource: unknown,
+  fallbackUrl?: string,
+): X402Resource | undefined {
+  if (typeof resource === "string" && resource.length > 0) {
+    return { url: resource };
+  }
+  if (resource && typeof resource === "object") {
+    const r = resource as Record<string, unknown>;
+    if (typeof r.url === "string" && r.url.length > 0) {
+      return {
+        url: r.url,
+        ...(typeof r.description === "string" ? { description: r.description } : {}),
+        ...(typeof r.mimeType === "string" ? { mimeType: r.mimeType } : {}),
+      };
+    }
+  }
+  return fallbackUrl ? { url: fallbackUrl } : undefined;
+}
+
+/**
  * A single payment option from an HTTP 402 response body (`accepts[i]`).
  *
  * Real Binance B402 always sends `scheme: "exact"` and puts the actual rail in
@@ -77,6 +114,15 @@ export type X402Requirement = {
   maxTimeoutSeconds?: number;
   /** Echoed into the X-PAYMENT so it matches the challenge (real B402 = 2). */
   x402Version?: number;
+  /**
+   * What the payment buys. Carried from the 402 body (top-level `resource`) so
+   * `signX402Payment` can echo it — b402 merchants reject an envelope without
+   * it ("payment header resource is null"). Transport-only, like x402Version:
+   * stripped from `accepted` so that mirrors the requirement verbatim.
+   */
+  resource?: X402Resource | string;
+  /** Content type of the resource, when the challenge carries it separately. */
+  mimeType?: string;
   extra?: {
     /** EIP-3009 / permit2 token EIP-712 domain. */
     name?: string;
@@ -103,6 +149,11 @@ export type X402PaymentPayload = {
    * "Unsupported x402 payload". Mirrors the documented `paymentPayload.accepted`.
    */
   accepted?: X402Requirement;
+  /**
+   * What the payment buys (x402 v2). Real b402 merchants reject an envelope
+   * without it: CoinMarketCap answers "payment header resource is null".
+   */
+  resource?: X402Resource;
   payload: Record<string, unknown>;
 };
 
@@ -227,16 +278,23 @@ export async function signX402Payment(
           validAfter,
         }) as any,
       );
+      const permit = {
+        permitted: { token: req.asset, amount: amount.toString() },
+        spender,
+        nonce: nonce.toString(),
+        deadline: deadline.toString(),
+        witness: { to: req.payTo, validAfter: validAfter.toString() },
+      };
       inner = {
         signature,
         from: session.walletAddress,
-        permit: {
-          permitted: { token: req.asset, amount: amount.toString() },
-          spender,
-          nonce: nonce.toString(),
-          deadline: deadline.toString(),
-          witness: { to: req.payTo, validAfter: validAfter.toString() },
-        },
+        permit,
+        // Same values under the b402 wire's key: merchants parse
+        // `payload.permit2Authorization` (with `from` inside) and answer
+        // "payment payload permit2 authorization or witness is null"
+        // otherwise. Emitted alongside `permit` so existing consumers of the
+        // Altana dialect keep working.
+        permit2Authorization: { ...permit, from: session.walletAddress },
       };
     } else {
       const signature = await signOrderTypedData(
@@ -250,17 +308,20 @@ export async function signX402Payment(
           deadline,
         }) as any,
       );
+      const permit = {
+        permitted: { token: req.asset, amount: amount.toString() },
+        spender,
+        nonce: nonce.toString(),
+        deadline: deadline.toString(),
+      };
       inner = {
         signature,
         // The token owner (payer) — the facilitator needs it for
         // Permit2.permitTransferFrom(owner, …).
         from: session.walletAddress,
-        permit: {
-          permitted: { token: req.asset, amount: amount.toString() },
-          spender,
-          nonce: nonce.toString(),
-          deadline: deadline.toString(),
-        },
+        permit,
+        // b402 wire dialect of the same authorization (see the witness branch).
+        permit2Authorization: { ...permit, from: session.walletAddress },
       };
     }
   } else {
@@ -302,15 +363,28 @@ export async function signX402Payment(
   }
 
   // Echo the chosen requirement as `accepted` so the facilitator can match it
-  // to its config. Strip our transport-only x402Version so `accepted` mirrors
-  // the 402's requirement verbatim.
-  const { x402Version: _txVersion, ...accepted } = req;
+  // to its config. Strip our transport-only fields (x402Version, resource,
+  // mimeType) so `accepted` mirrors the 402's requirement verbatim.
+  const {
+    x402Version: _txVersion,
+    resource: _txResource,
+    mimeType: _txMimeType,
+    ...accepted
+  } = req;
+
+  const resource = normalizeResource(req.resource);
+  if (resource && req.mimeType && !resource.mimeType) {
+    resource.mimeType = req.mimeType;
+  }
 
   const payload: X402PaymentPayload = {
     x402Version: version,
     scheme: req.scheme,
     network: req.network,
     accepted,
+    // b402 merchants require this; omitted entirely when the challenge gave us
+    // nothing to echo, so we never invent a resource the merchant didn't quote.
+    ...(resource ? { resource } : {}),
     payload: inner,
   };
   return { header: encodeXPaymentHeader(payload), payload };
@@ -383,10 +457,14 @@ export async function fetchWithX402(
     : body?.scheme
       ? [body]
       : [];
-  // The version lives at the top of the 402 body; carry it onto each option so
-  // the X-PAYMENT echoes it (real B402 = 2).
+  // The version and `resource` live at the top of the 402 body; carry them onto
+  // each option so the X-PAYMENT echoes them (real B402 = 2, and b402 merchants
+  // reject an envelope with no resource). Fall back to the URL we requested.
+  const resource = normalizeResource(body?.resource, url);
   const options = rawOptions.map((o) => ({
     x402Version: o.x402Version ?? body?.x402Version,
+    ...(resource ? { resource } : {}),
+    ...(typeof body?.mimeType === "string" ? { mimeType: body.mimeType } : {}),
     ...o,
   }));
 
@@ -402,6 +480,9 @@ export async function fetchWithX402(
   const { header } = await signX402Payment(session, req);
   const headers = new Headers(init?.headers);
   headers.set("X-PAYMENT", header);
+  // Some b402 merchants (CoinMarketCap among them) read PAYMENT-SIGNATURE
+  // instead. Binance's own Studio buyer sends both; it is ignored where unused.
+  headers.set("PAYMENT-SIGNATURE", header);
   return fetch(url, { ...init, headers });
 }
 

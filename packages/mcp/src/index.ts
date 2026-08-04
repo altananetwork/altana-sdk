@@ -51,6 +51,7 @@ import {
   deleteSession,
   type SessionPermissions,
 } from "./sessions.js";
+import { searchSkills, getSkill } from "./skills.js";
 
 // ---------- network ---------------------------------------------------------
 
@@ -167,7 +168,7 @@ const SERVER_INSTRUCTIONS = `Altana Agentic Wallet enables a global registry of 
 const server = new McpServer(
   {
     name: "altana-agentic-wallet",
-    version: "0.2.0",
+    version: "0.6.0",
   },
   {
     instructions: SERVER_INSTRUCTIONS,
@@ -1170,6 +1171,74 @@ tool(
             null,
             2,
           ),
+        },
+      ],
+    };
+  },
+);
+
+// ---------- skills registry (certified protocol playbooks) -----------------
+
+// search_skills — keyword search over the Altana certified-skills registry.
+tool(
+  "search_skills",
+  {
+    title: "Find a certified skill",
+    description:
+      "Find certified protocol skills (trading, lending, payments) this " +
+      "wallet's agent can use on chain. Call when the user asks to trade or " +
+      "interact with a DeFi protocol (e.g. \"buy a token on PancakeSwap\"). " +
+      "Returns matching skills with their scope and certification scorecard; " +
+      "then call get_skill for the one you want to run.",
+    inputSchema: { query: z.string() },
+  },
+  async ({ query }: { query: string }) => {
+    const matches = await searchSkills(query);
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              query,
+              count: matches.length,
+              matches,
+              note:
+                matches.length > 0
+                  ? "Call get_skill with a match's id to fetch its verified SKILL.md playbook before acting."
+                  : "No certified skills matched. Try broader terms (e.g. a protocol or action name).",
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
+  },
+);
+
+// get_skill — fetch one skill's verified SKILL.md playbook by id.
+tool(
+  "get_skill",
+  {
+    title: "Get a certified skill",
+    description:
+      "Fetch the full SKILL.md playbook for one certified skill by id (from " +
+      "search_skills). The content is integrity-checked against the " +
+      "registry's sha256 before being returned, so you can follow it to " +
+      "operate the protocol. Also returns the skill's scope (allowed " +
+      "contracts, suggested spend cap) and certification scorecard.",
+    inputSchema: {
+      id: z.string().describe("The skill id, e.g. \"pancakeswap-trading\""),
+    },
+  },
+  async ({ id }: { id: string }) => {
+    const skill = await getSkill(id);
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(skill, null, 2),
         },
       ],
     };

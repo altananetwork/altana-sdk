@@ -1,6 +1,6 @@
 {
   "name": "@altananetwork/x402-server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Seller-side x402/B402 payments: 402 challenges, X-PAYMENT verification (EOA + ERC-1271), and on-chain settlement for agents charging per request.",
   "license": "GPL-3.0-or-later",
   "repository": {
@@ -42,7 +42,7 @@
     "prepublishOnly": "node ../../scripts/check-publishable.mjs && bun run build"
   },
   "dependencies": {
-    "@altananetwork/sdk": "^0.6.0",
+    "@altananetwork/sdk": "^0.7.0",
     "viem": "^2.21.0"
   },
   "devDependencies": {

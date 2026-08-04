@@ -55,10 +55,11 @@ jobs:
           for f in src/*.test.ts src/internal/*.test.ts; do
             [ -e "$f" ] || continue
             echo "--- $f ---"
-            timeout 120 bun test "$f"
+            timeout 120 bun test "$f" || exit 1
           done
           cd ../..
           bun run --filter '@altananetwork/x402-server' test
+          bun run --filter '@altananetwork/mcp' test
 
   fork-tests:
     name: On-chain fork tests (anvil)

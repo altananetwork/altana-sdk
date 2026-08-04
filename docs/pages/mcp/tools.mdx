@@ -9,7 +9,7 @@ import { Eyebrow } from '../../components/Eyebrow'
 
 # Tools
 
-The Altana MCP server exposes 15 tools. AI hosts call them by name; users can also invoke them as slash commands via the prompt interface (e.g. `/altana-agentic-wallet:create-wallet`).
+The Altana MCP server exposes 17 tools. AI hosts call them by name; users can also invoke them as slash commands via the prompt interface (e.g. `/altana-agentic-wallet:create-wallet`).
 
 ## Discovery
 
@@ -50,6 +50,15 @@ The Altana MCP server exposes 15 tools. AI hosts call them by name; users can al
 | `erc8183_create_job` | Hires an ERC-8183 seller agent (e.g. any BNB Agent Studio agent): escrows $U against its address for a task — the whole buyer flow as one atomic relay intent. |
 | `erc8183_job_status` | Reads a job's on-chain state; once the seller submits, resolves and fetches the deliverable. |
 | `erc8183_settle` | Releases the escrow to the seller after the dispute window (`approve`), or contests inside it (`dispute`). |
+
+## Skills
+
+Certified protocol playbooks from the [Altana skills registry](https://github.com/altananetwork/skills). The registry URL defaults to the public repo's main branch and is overridable with the `ALTANA_SKILLS_INDEX_URL` environment variable.
+
+| Tool | Purpose |
+|---|---|
+| `search_skills` | Keyword search over the registry (name, description, tags). Returns matching skills with their scope and certification scorecard, ranked by how many query words match. Call when the user asks to trade or interact with a DeFi protocol. |
+| `get_skill` | Fetches one skill's full `SKILL.md` playbook by id. The content is integrity checked against the registry's `sha256` before it is returned, so a tampered playbook is rejected rather than followed. Also returns the skill's scope (allowed contracts, suggested spend cap) and scorecard. |
 
 ## Slash command equivalents
 
