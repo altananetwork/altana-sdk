@@ -14,6 +14,14 @@
  *      permit2-exact rail (fetchWithX402, chainId 56) and retries.
  *   4. Prints exactly what the real facilitator replies.
  *
+ * NOTE ON THE BUILD: this resolves @altananetwork/sdk through the workspace
+ * symlink, whose entry points are `packages/wallet/dist` — a build artifact, not
+ * the source. An SDK edit or a branch switch without a rebuild makes this script
+ * silently exercise stale code and print a confident, wrong verdict. The
+ * `pay-real-b402` script therefore rebuilds the wallet first; if you invoke this
+ * file directly with `bun pay-real-b402.ts`, rebuild yourself. The archived
+ * evidence records the SDK version and whether dist was stale.
+ *
  * NOTE ON FULL SETTLEMENT: signing is free and always works. For the facilitator
  * to actually SETTLE, the payer wallet must (a) be a deployed Altana wallet on
  * BNB, (b) hold the token, (c) have approved Permit2 on the token, (d) have
@@ -23,7 +31,7 @@
  * wire is correct end-to-end up to settlement.
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   createPrivateKeySigner,
@@ -35,6 +43,42 @@ import {
 
 const BAZAAR =
   "https://www.binance.com/bapi/ramp/v1/public/ramp/b402/bazaar/resources?limit=50";
+
+const WALLET_PKG = join(import.meta.dir, "..", "..", "packages", "wallet");
+
+/** Newest mtime under a directory tree, or 0 when it does not exist. */
+function newestMtime(dir: string): number {
+  let newest = 0;
+  try {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      newest = Math.max(
+        newest,
+        entry.isDirectory() ? newestMtime(path) : statSync(path).mtimeMs,
+      );
+    }
+  } catch {
+    return 0;
+  }
+  return newest;
+}
+
+/**
+ * Which SDK build produced this evidence. A run against a stale `dist` transmits
+ * an envelope that does not match the source, so record it rather than asking a
+ * reader to take the result on trust.
+ */
+function sdkBuildInfo(): { version: string; distIsStale: boolean } {
+  let version = "unknown";
+  try {
+    version = JSON.parse(readFileSync(join(WALLET_PKG, "package.json"), "utf8")).version;
+  } catch {
+    /* keep "unknown" */
+  }
+  const src = newestMtime(join(WALLET_PKG, "src"));
+  const dist = newestMtime(join(WALLET_PKG, "dist"));
+  return { version, distIsStale: dist === 0 || src > dist };
+}
 
 type Accept = {
   scheme: string;
@@ -79,6 +123,17 @@ function pickTarget(items: Resource[]): Resource | undefined {
 
 async function main() {
   const arg = process.argv[2];
+
+  const build = sdkBuildInfo();
+  console.log(`▶ @altananetwork/sdk ${build.version} (from packages/wallet/dist)`);
+  if (build.distIsStale) {
+    console.warn(
+      "  ⚠ dist is OLDER than src — this run would exercise stale SDK code and\n" +
+        "    report a result that does not match the source. Run:\n" +
+        "      bun run --filter '@altananetwork/sdk' build\n" +
+        "    (or use `bun run pay-real-b402`, which rebuilds first).",
+    );
+  }
 
   console.log("▶ Discovering live services from the real B402 Bazaar…");
   const items = await discover();
@@ -210,6 +265,7 @@ async function main() {
       {
         collectedAt: new Date().toISOString(),
         url,
+        sdk: sdkBuildInfo(),
         payer: session.walletAddress,
         challenge: challengeBody,
         // Exactly what went on the wire, captured from the paid retry.
