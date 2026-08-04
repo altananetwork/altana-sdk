@@ -82,9 +82,32 @@ import {
   buildEip3009TypedData,        // TransferWithAuthorization
   encodeXPaymentHeader,
   networkToChainId,             // CAIP-2 "eip155:56" → 56
+  normalizeResource,            // 402 `resource` (object or URL string) → { url, ... }
   PERMIT2_ADDRESS,
 } from "@altananetwork/sdk";
 ```
+
+## B402 wire compatibility
+
+Real b402 merchants (CoinMarketCap and the BNB Agent Studio ecosystem) read a
+few envelope fields under different names than the plain x402 sample does.
+`fetchWithX402` and `signX402Payment` emit both dialects, so the same payment is
+readable by b402 merchants and by anything already integrated against Altana:
+
+- **`resource`.** The envelope carries a top-level `resource` object saying what
+  the payment buys, echoed from the 402 body. Merchants reject an envelope
+  without it: CoinMarketCap answers `payment header resource is null`.
+  `fetchWithX402` carries it across automatically, accepting either the object
+  form or a bare URL string, and falling back to the requested URL.
+- **`permit2Authorization`.** Permit2 payloads carry the authorization twice:
+  under `permit` with a sibling `from` (the Altana dialect), and under
+  `permit2Authorization` with `from` nested inside (the b402 dialect). Same
+  values, one signature.
+- **`PAYMENT-SIGNATURE`.** The envelope is sent under both `X-PAYMENT` and
+  `PAYMENT-SIGNATURE`, since some b402 merchants read only the latter.
+
+When passing a requirement to `signX402Payment` yourself, set `resource` on it
+so the envelope carries one.
 
 ## Notes
 

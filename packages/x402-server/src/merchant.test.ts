@@ -19,6 +19,7 @@ import { verifyTypedData } from "viem";
 import { buildEip3009TypedData, buildPermit2WitnessTypedData } from "@altananetwork/sdk";
 
 import { buildChallenge } from "./challenge.js";
+import { createX402Merchant } from "./merchant.js";
 import { decodeXPayment } from "./decode.js";
 import { verifyPayment } from "./verify.js";
 import { U_TOKEN, USDT_BSC } from "./tokens.js";
@@ -150,6 +151,78 @@ describe("decodeXPayment", () => {
     expect(d.payer).toBe("0x00000000000000000000000000000000000000A0");
     expect(d.amount).toBe(5n);
     expect(d.permit!.witness!.to).toBe(MERCHANT);
+  });
+
+  test("decodes the b402 permit2Authorization dialect (from nested, no payload.from)", () => {
+    // What a real b402 buyer sends: the same authorization under a different
+    // key, with `from` inside it rather than as a sibling field.
+    const envelope = {
+      x402Version: 2,
+      scheme: "exact",
+      network: "eip155:56",
+      resource: { url: "https://merchant.example/premium", mimeType: "application/json" },
+      accepted: { scheme: "exact", network: "eip155:56", asset: USDT_BSC.address, payTo: MERCHANT, amount: "5", extra: { assetTransferMethod: "permit2-exact", spenderAddress: FACILITATOR } },
+      payload: {
+        signature: "0x" + "ab".repeat(98),
+        permit2Authorization: {
+          permitted: { token: USDT_BSC.address, amount: "5" },
+          from: "0x00000000000000000000000000000000000000A0",
+          spender: FACILITATOR,
+          nonce: "42",
+          deadline: String(NOW + 600),
+          witness: { to: MERCHANT, validAfter: "0" },
+        },
+      },
+    };
+    const d = decodeXPayment(Buffer.from(JSON.stringify(envelope)).toString("base64"));
+    expect(d.rail).toBe("permit2-witness");
+    expect(d.payer).toBe("0x00000000000000000000000000000000000000A0");
+    expect(d.amount).toBe(5n);
+    expect(d.permit!.witness!.to).toBe(MERCHANT);
+    expect(d.permit!.spender).toBe(FACILITATOR);
+  });
+
+  test("both permit2 dialects decode identically when a buyer sends both", () => {
+    // Our own buyer emits `permit` + `from` AND `permit2Authorization`.
+    const permitted = { token: USDT_BSC.address, amount: "5" };
+    const common = {
+      spender: FACILITATOR,
+      nonce: "42",
+      deadline: String(NOW + 600),
+      witness: { to: MERCHANT, validAfter: "0" },
+    };
+    const base = {
+      x402Version: 2,
+      scheme: "exact",
+      network: "eip155:56",
+      accepted: { scheme: "exact", network: "eip155:56", asset: USDT_BSC.address, payTo: MERCHANT, amount: "5", extra: { assetTransferMethod: "permit2-exact", spenderAddress: FACILITATOR } },
+    };
+    const from = "0x00000000000000000000000000000000000000A0";
+    const signature = "0x" + "ab".repeat(98);
+
+    const both = decodeXPayment(
+      Buffer.from(
+        JSON.stringify({
+          ...base,
+          payload: {
+            signature,
+            from,
+            permit: { permitted, ...common },
+            permit2Authorization: { permitted, from, ...common },
+          },
+        }),
+      ).toString("base64"),
+    );
+    const legacyOnly = decodeXPayment(
+      Buffer.from(
+        JSON.stringify({ ...base, payload: { signature, from, permit: { permitted, ...common } } }),
+      ).toString("base64"),
+    );
+
+    expect(both.rail).toBe(legacyOnly.rail);
+    expect(both.payer).toBe(legacyOnly.payer);
+    expect(both.amount).toBe(legacyOnly.amount);
+    expect(both.permit).toEqual(legacyOnly.permit);
   });
 
   test("rejects garbage", () => {
@@ -300,5 +373,69 @@ describe("verifyPayment (off-chain checks + EOA signature)", () => {
     const r = await verify(Buffer.from(JSON.stringify(envelope)).toString("base64"));
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toContain("spender");
+  });
+});
+
+describe("b402 wire compatibility", () => {
+  test("buildChallenge normalizes a bare-string resource into the object form", () => {
+    const c = buildChallenge({ ...CFG, resource: "https://api.example.com/audit" });
+    // Real b402 challenges carry an object; buyers echo it into the envelope.
+    expect(c.resource).toEqual({ url: "https://api.example.com/audit" });
+  });
+
+  test("buildChallenge passes an object resource through untouched", () => {
+    const resource = {
+      url: "https://api.example.com/audit",
+      description: "Supply chain audit",
+      mimeType: "application/json",
+    };
+    const c = buildChallenge({ ...CFG, resource });
+    expect(c.resource).toEqual(resource);
+  });
+
+  test("buildChallenge omits resource when the merchant configured none", () => {
+    const { resource: _drop, ...noResource } = CFG;
+    expect(buildChallenge(noResource).resource).toBeUndefined();
+  });
+
+  test("guard reads the payment from PAYMENT-SIGNATURE when X-PAYMENT is absent", async () => {
+    const merchant = createX402Merchant({
+      ...CFG,
+      facilitator: privateKeyToAccount(generatePrivateKey()),
+      rpcUrl: "http://127.0.0.1:1", // never dialed: decode fails first
+    });
+
+    // A header that reaches the decoder produces an "invalid X-PAYMENT" error;
+    // a header that was never read produces the bare challenge with no error.
+    const read = await merchant.guard(
+      new Request("https://api.example.com/audit", {
+        headers: { "PAYMENT-SIGNATURE": "not base64 json !!!" },
+      }),
+    );
+    const body = await read.response!.json();
+    expect(read.response!.status).toBe(402);
+    expect(String(body.error)).toContain("invalid X-PAYMENT");
+
+    const unpaid = await merchant.guard(new Request("https://api.example.com/audit"));
+    expect((await unpaid.response!.json()).error).toBe("payment required");
+  });
+
+  test("guard still prefers X-PAYMENT when both headers are present", async () => {
+    const merchant = createX402Merchant({
+      ...CFG,
+      facilitator: privateKeyToAccount(generatePrivateKey()),
+      rpcUrl: "http://127.0.0.1:1",
+    });
+
+    const res = await merchant.guard(
+      new Request("https://api.example.com/audit", {
+        headers: {
+          "X-PAYMENT": "not base64 json !!!",
+          "PAYMENT-SIGNATURE": "not base64 json !!!",
+        },
+      }),
+    );
+    const body = await res.response!.json();
+    expect(String(body.error)).toContain("invalid X-PAYMENT");
   });
 });

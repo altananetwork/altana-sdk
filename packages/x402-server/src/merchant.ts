@@ -100,7 +100,10 @@ export function createX402Merchant(opts: MerchantOptions) {
 
   /** Fetch-API sugar: returns null when paid (proceed), or a Response to send. */
   async function guard(request: Request): Promise<{ response: Response | null; receipt?: PaymentReceipt }> {
-    const result = await requirePayment(request.headers.get("X-PAYMENT"));
+    // b402 buyers send the envelope under PAYMENT-SIGNATURE; ours sends both.
+    const result = await requirePayment(
+      request.headers.get("X-PAYMENT") ?? request.headers.get("PAYMENT-SIGNATURE"),
+    );
     if (result.status === 200) return { response: null, receipt: result.receipt };
     return {
       response: new Response(JSON.stringify(result.body), {

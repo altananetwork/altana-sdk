@@ -14,6 +14,14 @@
  *      permit2-exact rail (fetchWithX402, chainId 56) and retries.
  *   4. Prints exactly what the real facilitator replies.
  *
+ * NOTE ON THE BUILD: this resolves @altananetwork/sdk through the workspace
+ * symlink, whose entry points are `packages/wallet/dist` — a build artifact, not
+ * the source. An SDK edit or a branch switch without a rebuild makes this script
+ * silently exercise stale code and print a confident, wrong verdict. The
+ * `pay-real-b402` script therefore rebuilds the wallet first; if you invoke this
+ * file directly with `bun pay-real-b402.ts`, rebuild yourself. The archived
+ * evidence records the SDK version and whether dist was stale.
+ *
  * NOTE ON FULL SETTLEMENT: signing is free and always works. For the facilitator
  * to actually SETTLE, the payer wallet must (a) be a deployed Altana wallet on
  * BNB, (b) hold the token, (c) have approved Permit2 on the token, (d) have
@@ -23,6 +31,8 @@
  * wire is correct end-to-end up to settlement.
  */
 
+import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   createPrivateKeySigner,
   fetchWithX402,
@@ -33,6 +43,42 @@ import {
 
 const BAZAAR =
   "https://www.binance.com/bapi/ramp/v1/public/ramp/b402/bazaar/resources?limit=50";
+
+const WALLET_PKG = join(import.meta.dir, "..", "..", "packages", "wallet");
+
+/** Newest mtime under a directory tree, or 0 when it does not exist. */
+function newestMtime(dir: string): number {
+  let newest = 0;
+  try {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      newest = Math.max(
+        newest,
+        entry.isDirectory() ? newestMtime(path) : statSync(path).mtimeMs,
+      );
+    }
+  } catch {
+    return 0;
+  }
+  return newest;
+}
+
+/**
+ * Which SDK build produced this evidence. A run against a stale `dist` transmits
+ * an envelope that does not match the source, so record it rather than asking a
+ * reader to take the result on trust.
+ */
+function sdkBuildInfo(): { version: string; distIsStale: boolean } {
+  let version = "unknown";
+  try {
+    version = JSON.parse(readFileSync(join(WALLET_PKG, "package.json"), "utf8")).version;
+  } catch {
+    /* keep "unknown" */
+  }
+  const src = newestMtime(join(WALLET_PKG, "src"));
+  const dist = newestMtime(join(WALLET_PKG, "dist"));
+  return { version, distIsStale: dist === 0 || src > dist };
+}
 
 type Accept = {
   scheme: string;
@@ -78,6 +124,17 @@ function pickTarget(items: Resource[]): Resource | undefined {
 async function main() {
   const arg = process.argv[2];
 
+  const build = sdkBuildInfo();
+  console.log(`▶ @altananetwork/sdk ${build.version} (from packages/wallet/dist)`);
+  if (build.distIsStale) {
+    console.warn(
+      "  ⚠ dist is OLDER than src — this run would exercise stale SDK code and\n" +
+        "    report a result that does not match the source. Run:\n" +
+        "      bun run --filter '@altananetwork/sdk' build\n" +
+        "    (or use `bun run pay-real-b402`, which rebuilds first).",
+    );
+  }
+
   console.log("▶ Discovering live services from the real B402 Bazaar…");
   const items = await discover();
   console.log(`  ${items.length} live resources listed.`);
@@ -103,11 +160,14 @@ async function main() {
   };
 
   // Show the real 402 first.
+  let challengeBody: unknown;
+  let sentEnvelope: unknown;
   console.log(`\n▶ GET ${url}  (expect a real 402)…`);
   const probe = await fetch(url);
   console.log(`  ← HTTP ${probe.status}`);
   if (probe.status === 402) {
     const body: any = await probe.clone().json();
+    challengeBody = body;
     const chosen = selectX402Requirement(body.accepts ?? [], { chainId: 56 });
     console.log(`  offered ${body.accepts?.length ?? 0} option(s); paying:`);
     console.log(
@@ -122,6 +182,7 @@ async function main() {
         ...(chosen as any),
         x402Version: body.x402Version,
       });
+      sentEnvelope = payload;
       console.log(`\n▶ Session signed a REAL X-PAYMENT (${header.length} b64 chars):`);
       console.log(JSON.stringify(payload, null, 2));
       const sigBytes = ((payload.payload as any).signature.length - 2) / 2;
@@ -134,9 +195,28 @@ async function main() {
     }
   }
 
-  // The entire agent integration: one call.
+  // The entire agent integration: one call. Wrap fetch so the archive records
+  // the envelope that was ACTUALLY transmitted, not a separately-signed preview
+  // (the preview omits `resource`, which lives on the 402 body rather than on
+  // the chosen requirement — archiving it would misrepresent the wire).
   console.log(`\n▶ fetchWithX402(session, url) — pays the 402 and retries…`);
-  const res = await fetchWithX402(session, url, undefined, { chainId: 56 });
+  const realFetch = globalThis.fetch;
+  let sentHeaders: Record<string, string> | undefined;
+  globalThis.fetch = (async (input: any, init?: RequestInit) => {
+    const h = new Headers(init?.headers);
+    const xPayment = h.get("X-PAYMENT");
+    if (xPayment) {
+      sentHeaders = Object.fromEntries(h.entries());
+      sentEnvelope = JSON.parse(Buffer.from(xPayment, "base64").toString("utf8"));
+    }
+    return realFetch(input, init);
+  }) as typeof fetch;
+  let res: Response;
+  try {
+    res = await fetchWithX402(session, url, undefined, { chainId: 56 });
+  } finally {
+    globalThis.fetch = realFetch;
+  }
   const text = await res.text();
   console.log(`  ← HTTP ${res.status}`);
   console.log(`  ← body: ${text.slice(0, 600)}`);
@@ -157,9 +237,48 @@ async function main() {
         "wallet (USDC + Permit2 approval + checker) to actually settle — a dead " +
         "address can't pay.",
     );
+  } else if (errField === "invalid_exact_evm_payload_signature") {
+    // The merchant parsed the envelope and the facilitator reached its
+    // signature check. That check ecrecovers, which no smart account can
+    // satisfy, so this is the expected stopping point for a smart-account
+    // buyer until Binance supports ERC-1271 payers in /verify. Reaching it
+    // proves the envelope itself is accepted: envelope faults surface earlier
+    // as "payment header resource is null" or "permit2 authorization ... null".
+    console.log(
+      "\n✓ Envelope ACCEPTED by the merchant; stopped at the facilitator's" +
+        " signature check (invalid_exact_evm_payload_signature). That is the" +
+        " ERC-1271 blocker on Binance's side, not an envelope fault.",
+    );
   } else {
     console.log(`\n· Facilitator rejected the envelope: ${errField ?? "(see body)"}.`);
   }
+
+  // Archive the raw exchange so a run is auditable evidence we can hand to
+  // Binance and to ecosystem reporters, rather than console output only.
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const dir = join(import.meta.dir, "results");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `pay-real-b402-${stamp}.json`);
+  writeFileSync(
+    file,
+    JSON.stringify(
+      {
+        collectedAt: new Date().toISOString(),
+        url,
+        sdk: sdkBuildInfo(),
+        payer: session.walletAddress,
+        challenge: challengeBody,
+        // Exactly what went on the wire, captured from the paid retry.
+        sentHeaders,
+        sentEnvelope,
+        response: { status: res.status, body: text.slice(0, 4000) },
+        error: errField,
+      },
+      null,
+      2,
+    ),
+  );
+  console.log(`\n  raw exchange archived: ${file}`);
 }
 
 main().catch((e) => {

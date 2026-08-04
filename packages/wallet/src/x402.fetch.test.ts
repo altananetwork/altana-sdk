@@ -7,6 +7,7 @@ import { fetchWithX402 } from "./x402.js";
 const WALLET: Address = "0x1111111111111111111111111111111111111111";
 const TOKEN: Address = "0x55d398326f99059fF775485246999027B3197955";
 const PAYTO: Address = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const SPENDER: Address = "0x3038f7ac3b4D1a3fe886BdCB5cD01e9f6BDd8633";
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -138,4 +139,133 @@ test("fetchWithX402 passes non-402 responses through untouched", async () => {
   const res = await fetchWithX402(session, "https://api.example.com/free");
   expect(res.status).toBe(200);
   expect(count).toBe(1); // no retry
+});
+
+test("fetchWithX402 sends the envelope under both X-PAYMENT and PAYMENT-SIGNATURE", async () => {
+  // Some b402 merchants (CoinMarketCap among them) read PAYMENT-SIGNATURE and
+  // ignore X-PAYMENT; Binance's own Studio buyer sends both.
+  const session = makeSession(createPrivateKeySigner());
+  const calls: { url: string; init?: RequestInit }[] = [];
+
+  globalThis.fetch = (async (url: any, init?: RequestInit) => {
+    calls.push({ url: String(url), init });
+    if (calls.length === 1) {
+      return new Response(
+        JSON.stringify({
+          x402Version: 2,
+          resource: {
+            url: "https://api.example.com/resource",
+            mimeType: "application/json",
+          },
+          accepts: [
+            {
+              scheme: "exact",
+              network: "eip155:56",
+              asset: TOKEN,
+              amount: "10000",
+              payTo: PAYTO,
+              maxTimeoutSeconds: 600,
+              extra: {
+                name: "Tether USD",
+                version: "1",
+                assetTransferMethod: "permit2-exact",
+                spenderAddress: SPENDER,
+              },
+            },
+          ],
+        }),
+        { status: 402 },
+      );
+    }
+    return new Response("paid-content", { status: 200 });
+  }) as typeof fetch;
+
+  const res = await fetchWithX402(session, "https://api.example.com/resource");
+  expect(res.status).toBe(200);
+
+  const retryHeaders = new Headers(calls[1]!.init!.headers);
+  const xPayment = retryHeaders.get("X-PAYMENT");
+  const paymentSignature = retryHeaders.get("PAYMENT-SIGNATURE");
+  expect(xPayment).toBeTruthy();
+  // Byte-identical: the same envelope under both names, never two signatures.
+  expect(paymentSignature).toBe(xPayment);
+
+  const decoded = JSON.parse(Buffer.from(xPayment!, "base64").toString("utf8"));
+  expect(decoded.resource).toEqual({
+    url: "https://api.example.com/resource",
+    mimeType: "application/json",
+  });
+  expect(decoded.payload.permit2Authorization).toBeDefined();
+});
+
+test("fetchWithX402 falls back to the requested URL when the 402 quotes no resource", async () => {
+  const session = makeSession(createPrivateKeySigner());
+  const calls: { url: string; init?: RequestInit }[] = [];
+
+  globalThis.fetch = (async (url: any, init?: RequestInit) => {
+    calls.push({ url: String(url), init });
+    if (calls.length === 1) {
+      return new Response(
+        JSON.stringify({
+          x402Version: 2,
+          accepts: [
+            {
+              scheme: "exact",
+              network: "eip155:56",
+              asset: TOKEN,
+              amount: "10000",
+              payTo: PAYTO,
+              maxTimeoutSeconds: 600,
+              extra: { name: "USD Coin", version: "2", assetTransferMethod: "eip3009" },
+            },
+          ],
+        }),
+        { status: 402 },
+      );
+    }
+    return new Response("paid-content", { status: 200 });
+  }) as typeof fetch;
+
+  await fetchWithX402(session, "https://api.example.com/resource");
+
+  const header = new Headers(calls[1]!.init!.headers).get("X-PAYMENT")!;
+  const decoded = JSON.parse(Buffer.from(header, "base64").toString("utf8"));
+  expect(decoded.resource).toEqual({ url: "https://api.example.com/resource" });
+});
+
+test("fetchWithX402 normalizes a bare-string resource from the challenge", async () => {
+  const session = makeSession(createPrivateKeySigner());
+  const calls: { url: string; init?: RequestInit }[] = [];
+
+  globalThis.fetch = (async (url: any, init?: RequestInit) => {
+    calls.push({ url: String(url), init });
+    if (calls.length === 1) {
+      return new Response(
+        JSON.stringify({
+          x402Version: 2,
+          // Our own x402-server historically emitted a bare URL string here.
+          resource: "https://merchant.example/premium",
+          accepts: [
+            {
+              scheme: "exact",
+              network: "eip155:56",
+              asset: TOKEN,
+              amount: "10000",
+              payTo: PAYTO,
+              maxTimeoutSeconds: 600,
+              extra: { name: "USD Coin", version: "2", assetTransferMethod: "eip3009" },
+            },
+          ],
+        }),
+        { status: 402 },
+      );
+    }
+    return new Response("paid-content", { status: 200 });
+  }) as typeof fetch;
+
+  await fetchWithX402(session, "https://api.example.com/resource");
+
+  const header = new Headers(calls[1]!.init!.headers).get("X-PAYMENT")!;
+  const decoded = JSON.parse(Buffer.from(header, "base64").toString("utf8"));
+  expect(decoded.resource).toEqual({ url: "https://merchant.example/premium" });
 });

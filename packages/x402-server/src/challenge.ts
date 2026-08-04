@@ -40,7 +40,14 @@ export function buildChallenge(cfg: MerchantConfig): ChallengeBody {
   return {
     x402Version: 2,
     error: "payment required",
-    ...(cfg.resource ? { resource: cfg.resource } : {}),
+    // Real b402 challenges carry `resource` as an object; a bare URL string is
+    // normalized so buyers always see the shape their merchants expect.
+    ...(cfg.resource
+      ? {
+          resource:
+            typeof cfg.resource === "string" ? { url: cfg.resource } : cfg.resource,
+        }
+      : {}),
     ...(cfg.description ? { description: cfg.description } : {}),
     accepts,
   };
