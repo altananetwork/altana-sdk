@@ -86,9 +86,11 @@ export {
   buildEip3009TypedData,
   encodeXPaymentHeader,
   networkToChainId,
+  normalizeResource,
   PERMIT2_ADDRESS,
 } from "./x402.js";
 export type {
+  X402Resource,
   X402Requirement,
   X402PaymentPayload,
   SignX402Options,

@@ -43,7 +43,9 @@ function chainIdOf(envelope: Record<string, unknown>, accepted: Record<string, u
  *
  * Tolerates both buyer envelope dialects:
  *  - Studio: `{x402Version, resource, accepted, payload:{signature, authorization}}`
- *  - Altana: `{x402Version, scheme, network, accepted?, payload:{signature, authorization | from+permit}}`
+ *  - Altana: `{x402Version, scheme, network, resource?, accepted?, payload:{signature, authorization | from+permit}}`
+ *  - b402:   permit2 authorizations arrive as `payload.permit2Authorization`
+ *            with `from` nested inside, rather than `permit` + `payload.from`.
  *
  * Throws on malformed input; business-rule checks live in `verifyPayment`.
  */
@@ -91,9 +93,13 @@ export function decodeXPayment(header: string): DecodedPayment {
     };
   }
 
-  // permit2 / permit2-witness: payload.permit + payload.from.
-  if (payload.permit) {
-    const p = payload.permit as Record<string, unknown>;
+  // permit2 / permit2-witness. Two dialects carry the same authorization:
+  //  - Altana: `payload.permit` + a sibling `payload.from`
+  //  - b402:   `payload.permit2Authorization` with `from` nested inside
+  // Our buyer emits both; third-party b402 buyers send only the latter.
+  const permitField = payload.permit ?? payload.permit2Authorization;
+  if (permitField) {
+    const p = permitField as Record<string, unknown>;
     const permitted = p.permitted as Record<string, unknown> | undefined;
     if (!permitted) throw new Error("X-PAYMENT: missing permit.permitted");
     const witness = p.witness as Record<string, unknown> | undefined;
@@ -116,7 +122,7 @@ export function decodeXPayment(header: string): DecodedPayment {
     };
     return {
       rail: witness ? "permit2-witness" : "permit2",
-      payer: asAddress(payload.from, "payload.from"),
+      payer: asAddress(payload.from ?? p.from, "payload.from"),
       amount: BigInt(permit.permitted.amount),
       token: permit.permitted.token,
       signature,
@@ -127,5 +133,7 @@ export function decodeXPayment(header: string): DecodedPayment {
     };
   }
 
-  throw new Error("X-PAYMENT: payload carries neither authorization (eip3009) nor permit (permit2)");
+  throw new Error(
+    "X-PAYMENT: payload carries neither authorization (eip3009) nor permit/permit2Authorization (permit2)",
+  );
 }

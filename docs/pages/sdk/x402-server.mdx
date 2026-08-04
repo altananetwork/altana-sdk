@@ -67,3 +67,17 @@ contract itself; invalid payments revert and are refused.
   refuses authorization windows over 600s and backdates `validAfter` by 120s.
 - Studio buyers pay **$U via eip3009 only** — include that rail to be payable
   by them. `bag x402 trust` requires an https URL in production.
+
+## Buyer envelope dialects
+
+The decoder accepts every dialect on the b402 wire, so you do not need to know
+which client is paying:
+
+- **Permit2 authorizations** arrive either as `payload.permit` with a sibling
+  `payload.from` (Altana buyers) or as `payload.permit2Authorization` with
+  `from` nested inside (b402 buyers). Both decode identically.
+- **The payment header** is read from `X-PAYMENT`, falling back to
+  `PAYMENT-SIGNATURE`, which some b402 clients send instead.
+- **`resource`** in your challenge may be a bare URL string or an object
+  (`{ url, description?, mimeType? }`). It is always emitted as the object form
+  that b402 buyers echo back into their payment.

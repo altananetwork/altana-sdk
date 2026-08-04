@@ -23,6 +23,8 @@
  * wire is correct end-to-end up to settlement.
  */
 
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   createPrivateKeySigner,
   fetchWithX402,
@@ -103,11 +105,14 @@ async function main() {
   };
 
   // Show the real 402 first.
+  let challengeBody: unknown;
+  let sentEnvelope: unknown;
   console.log(`\n▶ GET ${url}  (expect a real 402)…`);
   const probe = await fetch(url);
   console.log(`  ← HTTP ${probe.status}`);
   if (probe.status === 402) {
     const body: any = await probe.clone().json();
+    challengeBody = body;
     const chosen = selectX402Requirement(body.accepts ?? [], { chainId: 56 });
     console.log(`  offered ${body.accepts?.length ?? 0} option(s); paying:`);
     console.log(
@@ -122,6 +127,7 @@ async function main() {
         ...(chosen as any),
         x402Version: body.x402Version,
       });
+      sentEnvelope = payload;
       console.log(`\n▶ Session signed a REAL X-PAYMENT (${header.length} b64 chars):`);
       console.log(JSON.stringify(payload, null, 2));
       const sigBytes = ((payload.payload as any).signature.length - 2) / 2;
@@ -157,9 +163,45 @@ async function main() {
         "wallet (USDC + Permit2 approval + checker) to actually settle — a dead " +
         "address can't pay.",
     );
+  } else if (errField === "invalid_exact_evm_payload_signature") {
+    // The merchant parsed the envelope and the facilitator reached its
+    // signature check. That check ecrecovers, which no smart account can
+    // satisfy, so this is the expected stopping point for a smart-account
+    // buyer until Binance supports ERC-1271 payers in /verify. Reaching it
+    // proves the envelope itself is accepted: envelope faults surface earlier
+    // as "payment header resource is null" or "permit2 authorization ... null".
+    console.log(
+      "\n✓ Envelope ACCEPTED by the merchant; stopped at the facilitator's" +
+        " signature check (invalid_exact_evm_payload_signature). That is the" +
+        " ERC-1271 blocker on Binance's side, not an envelope fault.",
+    );
   } else {
     console.log(`\n· Facilitator rejected the envelope: ${errField ?? "(see body)"}.`);
   }
+
+  // Archive the raw exchange so a run is auditable evidence we can hand to
+  // Binance and to ecosystem reporters, rather than console output only.
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const dir = join(import.meta.dir, "results");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `pay-real-b402-${stamp}.json`);
+  writeFileSync(
+    file,
+    JSON.stringify(
+      {
+        collectedAt: new Date().toISOString(),
+        url,
+        payer: session.walletAddress,
+        challenge: challengeBody,
+        sentEnvelope,
+        response: { status: res.status, body: text.slice(0, 4000) },
+        error: errField,
+      },
+      null,
+      2,
+    ),
+  );
+  console.log(`\n  raw exchange archived: ${file}`);
 }
 
 main().catch((e) => {
