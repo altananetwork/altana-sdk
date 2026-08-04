@@ -35,6 +35,7 @@
   ],
   "scripts": {
     "start": "bun run src/index.ts",
+    "test": "bun test",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "node ../../scripts/check-publishable.mjs"
   },
