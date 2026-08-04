@@ -13,7 +13,7 @@ The at-a-glance map. Find your goal, then follow the path.
 | [Passkey: give an agent a wallet and a policy](/use-cases/1b-passkey-delegates-to-agent) | `createPasskeyWallet`, `grantSession`, `recoverFromPasskey` | (browser SDK) | BNB |
 | [Agent trades on DEX, capped](/use-cases/2-agent-trades-dex) | `grantSession` (scoped), `execute` | grant-session, session-execute | BNB |
 | [Portfolio with multiple agents](/use-cases/3-portfolio-multiple-agents) | `grantSession` (×2), `execute`, Keystore read, `revokeSession` | grant-session, session-execute, verify-session, revoke-session | BNB |
-| [Verify agent authority from anywhere](/use-cases/4-verify-agent-authority) | Keystore read (`getActiveKeys` + `keccak256`) | verify-session | any |
+| [Verify agent authority from anywhere](/use-cases/4-verify-agent-authority) | Keystore read (`isValidKey` + `keccak256`) | verify-session | any |
 | [Authorization across chains](/use-cases/5-cross-chain-authorization) | `grantSession`, `ensureKeyCached`, `execute` | (SDK) | Ethereum → Base |
 | [Agent pays for an API with x402](/use-cases/6-agent-pays-api-x402) | `grantSession`, `approveTokenForPermit2`, `approveSignatureChecker`, `fetchWithX402` | x402-request | BNB / Base |
 

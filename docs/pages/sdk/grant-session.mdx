@@ -39,7 +39,7 @@ const session = await client.grantSession({
 
 The session's public key is written to [Keystore](/concepts/keystore) via the Controller, batched into the same userOp — controlled by the `register` flag, on by default. Registration is what makes the key's authority **provable to anyone**:
 
-- **Third parties can verify it on-chain** — other agents, counterparties, dashboards, and compliance tools can check the key's authority, expiry, and revocation state (`getActiveKeys` / `isValidKey`, or the MCP `verify_authorization` tool) without trusting you or Altana. Reads are free and unlimited.
+- **Third parties can verify it on-chain** — other agents, counterparties, dashboards, and compliance tools can check the key's authority, expiry, and revocation state (`getKeys` / `isValidKey`, or the MCP `verify_authorization` tool) without trusting you or Altana. Reads are free and unlimited.
 - **Keys are discoverable** — a wallet's keys can be enumerated from chain for recovery and auditing.
 - **Grants and revokes leave an on-chain trail** — timestamped, monotonic revocation.
 - **(Ethereum)** one registration extends across chains via [`ensureKeyCached`](/sdk/sync-to-l2).

@@ -29,7 +29,7 @@ export type ExecuteOptions = {
  *
  * On the wallet's first execute (whichever path), this prepends a
  * KeyStoreController.initialRegisterKey call to register the admin key.
- * Detection is on-chain (single getActiveKeys read).
+ * Detection is on-chain (single getKeys read).
  */
 export function execute(
   wallet: Wallet,

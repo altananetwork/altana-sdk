@@ -1,0 +1,202 @@
+---
+title: Skills Registry
+description: A catalog of protocol know-how written for AI agents. Each skill is one markdown file, fork-tested by Altana, that runs inside the limits you set on the session.
+---
+
+import { Eyebrow } from '../../components/Eyebrow'
+
+<Eyebrow>Skills</Eyebrow>
+
+# Skills Registry
+
+A session gives your agent authority. A skill gives it competence.
+
+The [Skills Registry](https://skills.altana.network/) is a catalog of protocol know-how written for AI agents. Each skill is a single `SKILL.md` file that teaches an agent how one protocol actually works: the right contracts, the quirks that break naive integrations, and the exact sequence of calls for each common action. Altana tests every one with real agents on a private fork of mainnet before it goes live.
+
+The registry is free to use, and agents search it themselves.
+
+:::info
+Not to be confused with the [Claude Skill](/mcp/skill), which teaches a coding agent how to write code against `@altananetwork/sdk`. Registry skills teach a running agent how to use a protocol. One is for building with Altana, the other is for acting through it.
+:::
+
+## The problem it solves
+
+Give an agent a wallet and a scoped session and it can sign. It still does not know that USDT on BNB Chain has 18 decimals instead of 6, or that PancakeSwap often routes better through WBNB than through a direct pair, or that a fee-on-transfer token needs a different swap function entirely.
+
+Without a skill, someone hand-teaches the agent each of those facts, per protocol, per project. Every integration is bespoke, and nobody has tested it against the chain until it runs with real money.
+
+With a skill, that knowledge is written once, validated against a private copy of the chain, and available to every agent connected to Altana.
+
+## Skills describe capability. Sessions bound authority.
+
+The two are deliberately separate, and the split is what makes skills safe to share.
+
+A skill is public, readable text. It cannot grant anything. It can only describe what a protocol does and how to use it well. The authority to spend lives entirely in the [session](/concepts/sessions) you grant: which contracts are callable, how much can move per period, when it all expires. An agent holding the PancakeSwap skill and no session can do exactly nothing.
+
+That is why each catalog entry publishes its scope alongside the skill. A lending skill, for example, declares what it may do and what it may not:
+
+| May | May not |
+|---|---|
+| Supply a stablecoin to the pool | Borrow against it |
+| Withdraw the position | Send funds anywhere else |
+| Spend up to the cap you set | Touch any other app or token |
+
+The right-hand column is not a promise from the skill author. It is what your session enforces onchain, and what anyone can verify from the [Keystore](/concepts/keystore) without trusting Altana or the agent.
+
+Read [Sessions](/concepts/sessions) for the permission shape, or [Verify agent authority](/use-cases/4-verify-agent-authority) for how a third party checks it.
+
+## What is in the catalog
+
+Skills span trading, liquidity, lending, payments, staking, and research. What each kind gives an agent:
+
+- **Trading.** Buy and sell tokens on a DEX or a launchpad, with quotes, slippage floors, and full-balance exits.
+- **Liquidity.** Add and remove pool positions, and read your share of one.
+- **Lending.** Supply assets for yield and withdraw on command. Borrowing is usually out of scope on purpose.
+- **Payments.** Pay per API call, machine to machine, under a per-payment maximum. See also [x402 in the SDK](/sdk/x402).
+- **Staking.** Stake a native asset for a liquid staking token, and queue withdrawals back.
+- **Research.** Screen tokens or watch a wallet. Read only, so the session permits no onchain calls at all.
+
+Research skills are worth noticing. Because a skill carries no authority of its own, a read-only skill paired with a zero-scope session is a genuinely safe way to let an agent look around before you give it anything to spend.
+
+Each catalog entry publishes its suggested spend cap, an example ask, and the exact may and may-not scope. Those come from the registry itself, so the catalog is always the current answer.
+
+[Browse the full catalog →](https://skills.altana.network/)
+
+## What a skill looks like
+
+Every skill is one file with four parts. The excerpts below come from PancakeSwap Trading, which the [contributing guide](https://github.com/altananetwork/skills/blob/main/CONTRIBUTING.md) names as the model of a finished skill.
+
+They are a snapshot of a versioned file. Read [the current version on GitHub](https://github.com/altananetwork/skills/blob/main/skills/pancakeswap-trading/SKILL.md) before you copy anything into production.
+
+**Frontmatter.**
+
+```md
+---
+name: pancakeswap-trading
+description: Buy and sell tokens on PancakeSwap on BNB Chain through an
+  Altana session. In and out of positions fast, with quotes, slippage
+  protection, and full-balance exits.
+---
+```
+
+- `name` is the skill id, and matches the directory name in the repo.
+- `description` is one sentence starting with a verb, naming the protocol and the chain.
+- This is the text an agent matches against when it searches the registry.
+
+**Reference.**
+
+```md
+| Contract | Address |
+|---|---|
+| PancakeSwap V2 Router | `0x10ED43C718714eb63d5aA57B78B54704E256024E` |
+| WBNB | `0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c` |
+| USDT (BSC-USD) | `0x55d398326f99059fF775485246999027B3197955` |
+
+### Quirks that cause mistakes
+
+- USDT on BNB Chain has 18 decimals, not 6 like Ethereum. $20 is `20n * 10n**18n`.
+- Route selection: quote the direct pair AND the WBNB hop with `getAmountsOut`,
+  then use whichever quotes better.
+- Approve before each swap direction.
+```
+
+- Addresses go in a checksummed table, listing only the contracts the plays actually touch.
+- Quirks are the three to six protocol facts that break naive integrations, one line each.
+- USDT having 18 decimals on BNB Chain instead of 6 is exactly the kind of fact an agent cannot infer.
+- The address table does double duty: the suggested session scope is derived from it.
+
+**Playbook.**
+
+```md
+### Play: enter-position
+
+Buy a token with USDT. Parameters: token address, USDT amount, slippage (default 1%).
+
+**Typical time:** ~15s
+
+1. Read the token's `decimals()`. Quote both routes with `getAmountsOut`; pick the better.
+2. `execute([approve(USDT, router, amount), swap(amount, quote minus slippage, path, wallet, now+600)])`
+3. Verify the token balance increased before reporting success.
+```
+
+- One play per common action, two to five in total.
+- Each play names its parameters and a typical time, so the caller knows what to expect.
+- Steps are numbered so an agent can run the whole play in a single script.
+
+**Guards.**
+
+```md
+- `amountOutMin` is always a fresh quote minus slippage. Never 0.
+- Verify balances onchain after each leg; report only what the chain confirms.
+- If a swap reverts, requote once with +1% slippage and retry a single time;
+  otherwise stop and report. Do not improvise outside the session scope.
+```
+
+- Guards pin the safety decisions in place: output floors, onchain verification after every state change, retry limits.
+- Certification verifies them, so a submission cannot trim them for brevity.
+- They also say what to do on failure: stop and report, never improvise outside the session scope.
+
+Notice what the plays never do: they do not sign. Every onchain write goes through the Altana session executor, `client.execute({ session, calls })`. Reads go straight to the RPC. That one rule is what keeps a skill from being able to widen its own scope.
+
+[Submit a skill](/skills/submit) reproduces this file in full, as the worked example to copy from.
+
+## Using a skill with your agent
+
+Give the agent two things.
+
+- The skill file, which says how the protocol works.
+- A session scoped to the contracts that skill's address table names, which says what the agent may spend.
+
+The scope is the same information as the address table, in a different shape. Copy the addresses from the skill you are actually using rather than from this page.
+
+```ts
+import { createClient, BNB, signerFromPrivateKey } from "@altananetwork/sdk";
+
+const client = createClient({ chains: [BNB] });
+const admin = signerFromPrivateKey(process.env.ADMIN_KEY as `0x${string}`);
+const wallet = await client.createWallet({ signer: admin });
+
+// Scope taken straight from the PancakeSwap Trading skill's address table.
+const PANCAKE_ROUTER = "0x10ED43C718714eb63d5aA57B78B54704E256024E";
+const USDT = "0x55d398326f99059fF775485246999027B3197955";
+
+const session = await client.grantSession({
+  wallet,
+  signer: admin,
+  permissions: {
+    calls: [{ to: PANCAKE_ROUTER }, { to: USDT }],
+    spend: [{
+      limit: 50n * 10n ** 18n,   // 50 USDT. Note: 18 decimals on BNB Chain.
+      period: "day",
+      token: USDT,
+    }],
+  },
+  expiry: Math.floor(Date.now() / 1000) + 24 * 60 * 60,
+});
+
+// Hand `session` to the agent. It reads the skill for how, and is bound
+// by these permissions for what.
+```
+
+The agent then executes the skill's plays through that session:
+
+```ts
+await client.execute({
+  session,
+  calls: [
+    { to: USDT, data: approveCalldata },
+    { to: PANCAKE_ROUTER, data: swapCalldata },
+  ],
+});
+```
+
+Anything outside `calls` or over the spend cap reverts onchain, whatever the skill says. When you are done, [`revokeSession`](/sdk/revoke-session) ends it.
+
+If you operate through Claude or Cursor rather than code, the [MCP server](/mcp) exposes the same grant and execute steps as tools, so an agent can hold a skill and a session without you writing any of the above.
+
+## Next
+
+- [Submit a skill](/skills/submit). Write one `SKILL.md`, self-test it on a fork, open a pull request.
+- [MCP Server](/mcp). Run skills from Claude, Cursor, or any MCP client.
+- [Sessions](/concepts/sessions). The permission shape a skill's scope maps onto.
+- [Let an agent trade on a DEX](/use-cases/2-agent-trades-dex). The same PancakeSwap flow, end to end, in code.

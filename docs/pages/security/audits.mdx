@@ -1,0 +1,20 @@
+---
+title: Audit reports
+description: Third-party security audits of the Altana Keystore contracts.
+---
+
+# Audit reports
+
+The Altana Keystore contracts were audited by [CertiK](https://www.certik.com), completed 15 July 2026. The full report, the finding-by-finding detail and the current status of every item are published on [CertiK Skynet](https://skynet.certik.com/projects/altana).
+
+Scope was `KeyStore.sol` and `KeyStoreCacheOPStack.sol`, plus six further files listed in the report: the onchain registry that stores session-key permissions, and the L2 cache contract that mirrors them to Base. These are the contracts that decide whether an agent is authorized to act.
+
+The audited source is deployed and source-verified, exact match, on all three networks Altana runs on. You can read it directly:
+
+| Network | Contract | Explorer |
+| --- | --- | --- |
+| Ethereum | KeyStore | [Etherscan](https://etherscan.io/address/0xb70fDa90C1d576Ba8399946a0c10ECD9d9Ea923b#code) |
+| BNB Smart Chain | KeyStore | [BscScan](https://bscscan.com/address/0x6572427ED530BadcF7375Cf9A4709D8d2b0E7E0a#code) |
+| Base | KeyStoreCacheOPStack | [Basescan](https://basescan.org/address/0x6572427ED530BadcF7375Cf9A4709D8d2b0E7E0a#code) |
+
+Addresses for every deployed contract are listed under [Networks & Addresses](/concepts/networks).
