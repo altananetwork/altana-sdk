@@ -168,7 +168,7 @@ const SERVER_INSTRUCTIONS = `Altana Agentic Wallet enables a global registry of 
 const server = new McpServer(
   {
     name: "altana-agentic-wallet",
-    version: "0.6.0",
+    version: "0.7.0",
   },
   {
     instructions: SERVER_INSTRUCTIONS,
