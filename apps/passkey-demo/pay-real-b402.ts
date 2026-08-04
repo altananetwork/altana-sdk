@@ -140,9 +140,28 @@ async function main() {
     }
   }
 
-  // The entire agent integration: one call.
+  // The entire agent integration: one call. Wrap fetch so the archive records
+  // the envelope that was ACTUALLY transmitted, not a separately-signed preview
+  // (the preview omits `resource`, which lives on the 402 body rather than on
+  // the chosen requirement — archiving it would misrepresent the wire).
   console.log(`\n▶ fetchWithX402(session, url) — pays the 402 and retries…`);
-  const res = await fetchWithX402(session, url, undefined, { chainId: 56 });
+  const realFetch = globalThis.fetch;
+  let sentHeaders: Record<string, string> | undefined;
+  globalThis.fetch = (async (input: any, init?: RequestInit) => {
+    const h = new Headers(init?.headers);
+    const xPayment = h.get("X-PAYMENT");
+    if (xPayment) {
+      sentHeaders = Object.fromEntries(h.entries());
+      sentEnvelope = JSON.parse(Buffer.from(xPayment, "base64").toString("utf8"));
+    }
+    return realFetch(input, init);
+  }) as typeof fetch;
+  let res: Response;
+  try {
+    res = await fetchWithX402(session, url, undefined, { chainId: 56 });
+  } finally {
+    globalThis.fetch = realFetch;
+  }
   const text = await res.text();
   console.log(`  ← HTTP ${res.status}`);
   console.log(`  ← body: ${text.slice(0, 600)}`);
@@ -193,6 +212,8 @@ async function main() {
         url,
         payer: session.walletAddress,
         challenge: challengeBody,
+        // Exactly what went on the wire, captured from the paid retry.
+        sentHeaders,
         sentEnvelope,
         response: { status: res.status, body: text.slice(0, 4000) },
         error: errField,
