@@ -69,12 +69,12 @@
     },
     "packages/mcp": {
       "name": "@altananetwork/mcp",
-      "version": "0.5.0",
+      "version": "0.7.0",
       "bin": {
         "altana-mcp": "./src/index.ts",
       },
       "dependencies": {
-        "@altananetwork/sdk": "^0.6.0",
+        "@altananetwork/sdk": "^0.7.0",
         "@modelcontextprotocol/sdk": "^1.0.0",
         "@napi-rs/keyring": "^1.1.0",
         "viem": "^2.21.0",
@@ -1680,8 +1680,6 @@
     "zustand": ["zustand@5.0.13", "", { "peerDependencies": { "@types/react": ">=18.0.0", "immer": ">=9.0.6", "react": ">=18.0.0", "use-sync-external-store": ">=1.2.0" }, "optionalPeers": ["@types/react", "immer", "react", "use-sync-external-store"] }, "sha512-efI2tVaVQPqtOh114loML/Z80Y4NP3yc+Ff0fYiZJPauNeWZeIp/bRFD7I9bfmCOYBh/PHxlglQ9+wvlwnPikQ=="],
 
     "zwitch": ["zwitch@2.0.4", "", {}, "sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A=="],
-
-    "@altananetwork/mcp/@altananetwork/sdk": ["@altananetwork/sdk@0.6.0", "", { "dependencies": { "ox": "^0.14.0", "porto": "0.2.37", "viem": "^2.21.0" } }, "sha512-ocP/V/KyBHJlRgxRHjBqVkjh3fK4O+ZkX/i0kVS4UtOoL7/pD/qCk7bUDwpsHX6OndEsSLX4DAyZ3/WvSlO32Q=="],
 
     "@babel/core/debug": ["debug@4.4.3", "", { "dependencies": { "ms": "^2.1.3" } }, "sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA=="],
 
