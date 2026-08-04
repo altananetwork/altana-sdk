@@ -47,5 +47,6 @@ One server process serves one chain, so restart with a different `ALTANA_CHAIN` 
 - **Bootstrap:** `create_wallet`
 - **Inspect:** `list_wallets`, `wallet_balance`, `wallet_verification`, `verify_authorization`, `list_sessions`
 - **Operate:** `wallet_execute`, `grant_session`, `revoke_session`, `session_execute`
+- **Skills:** `search_skills`, `get_skill`
 
 Built on [`@altananetwork/sdk`](https://www.npmjs.com/package/@altananetwork/sdk).
