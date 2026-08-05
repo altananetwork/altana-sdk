@@ -113,7 +113,7 @@ const wallet = await client.recoverFromPasskey({ rpId: "myapp.example" });
 
 ## Step 5: Revoke the agent
 
-One transaction. Effect is global and immediate.
+One transaction, effective immediately on this chain. This flow is BNB-only, so there is no L2 cache to keep in sync; see [revokeSession](/sdk/revoke-session#cross-chain-revocation) if you are working across chains.
 
 ```ts
 await client.revokeSession({ wallet, signer: wallet.signer, session });

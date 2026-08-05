@@ -1,0 +1,109 @@
+---
+title: Errors
+description: What FAILED means, how to tell a policy revert from a funding problem, and every error the SDK throws.
+---
+
+import { Eyebrow } from '../../components/Eyebrow'
+
+<Eyebrow>SDK</Eyebrow>
+
+# Errors
+
+Two different things can go wrong, and they surface differently.
+
+**Failures before submission throw.** Bad configuration, an unsupported signer, a chain with no relay. These are JavaScript `Error`s with a message string. Catch them with `try/catch`.
+
+**Failures at or after submission do not throw.** [`execute`](/sdk/execute) and [`revokeSession`](/sdk/revoke-session) return an `ExecuteResult` with `status: "FAILED"`. Nothing is raised. If you only wrap calls in `try/catch`, you will not notice these.
+
+```ts
+const result = await client.execute({ wallet, signer, calls });
+if (result.status !== "CONFIRMED") {
+  // Handle it here. No exception was thrown.
+}
+```
+
+[`grantSession`](/sdk/grant-session) is the exception: it throws `Session grant did not confirm: status=<status>` rather than returning a failed result, because there is no useful `Session` object to hand back.
+
+## Reading `ExecuteResult`
+
+```ts
+type ExecuteResult = {
+  callsId: Hex;
+  status: "CONFIRMED" | "FAILED" | "PENDING";
+  transactionHash?: Hex;
+};
+```
+
+| Status | Meaning |
+|---|---|
+| `CONFIRMED` | Included and succeeded. `transactionHash` is populated. |
+| `FAILED` | The relay reported the bundle as failed. No reason, no receipt, no `transactionHash`. |
+| `PENDING` | Either you passed `noWait: true`, or the SDK polled for four minutes without a verdict. |
+
+:::warning[`PENDING` means two very different things]
+With `noWait: true` you get `PENDING` immediately: that is expected, and you poll later using `callsId`.
+
+Without it, `PENDING` means the SDK polled the relay every 2 seconds for 240 seconds and never saw `CONFIRMED` or `FAILED`. Relay errors during that window are swallowed and retried, so a relay that is down for the whole four minutes is indistinguishable from one that is merely slow. Both surface as `PENDING`.
+
+Treat an unexpected `PENDING` as unknown, not as failed. The bundle may still land. Poll `callsId` before retrying, or you risk submitting the same intent twice.
+:::
+
+## `FAILED` carries no reason
+
+The SDK returns `{ status: "FAILED" }` and nothing else. There is no revert string, no error code, and no receipt to inspect. Diagnosis is by elimination, using the table below.
+
+If you need the onchain reason, look up the userOp yourself. You have `callsId`; the wallet address and chain are yours. Search the wallet address on the chain's explorer ([BscScan](https://bscscan.com) for BNB, [Etherscan](https://etherscan.io) for Ethereum) and inspect the most recent transaction to the account. The revert reason is in the trace.
+
+### Telling the failure classes apart
+
+| What went wrong | How to recognize it | Fix |
+|---|---|---|
+| **Policy revert.** The session exceeded its spend cap, called a contract outside `permissions.calls`, or is past `expiry`. | The session worked before and stopped, or fails only for certain calls or amounts. Read the key onchain with `isValidKey`; check your `spend` limits against the token's decimals. | Grant a new session with the right scope. Permissions are fixed at grant and cannot be widened. |
+| **Wrong decimals in a spend cap.** A cap orders of magnitude smaller than intended. | Small payments revert against a limit that reads as generous. Extremely common on BNB Chain, where stablecoins use 18 decimals rather than 6. | See the decimals warning on [grantSession](/sdk/grant-session). |
+| **Unfunded counterfactual wallet.** The wallet has no native balance to pay for the first transaction. | Happens on the very first `execute` for a new wallet. `createWallet` does not touch the chain, so the address exists but holds nothing. | Send native tokens to `wallet.address` first. See [createWallet](/sdk/create-wallet). |
+| **Session not byte-exact.** The stored `Session` no longer matches what was granted. | Every `execute` with that session fails, including ones that previously worked. Usually follows a JSON round-trip that turned bigints into numbers. | Persist the `Session` verbatim. See [Sessions](/concepts/sessions). |
+| **Relay rejection.** The relay refused or dropped the bundle. | Often accompanies malformed input, since validation beyond client configuration happens relay-side rather than in the SDK. | Check the call shape, then retry. |
+
+## Errors the SDK throws
+
+There is no error class and no error code: every one of these is a plain `Error`, so match on the message if you must branch on them.
+
+### Configuration
+
+| Message | Cause |
+|---|---|
+| `createClient: at least one chain is required.` | Empty `chains` array. |
+| `createClient: duplicate chainId <id> in chains.` | The same chain passed twice. |
+| `createClient: defaultChainId <id> is not one of the configured chains (...)` | `defaultChainId` names a chain you did not configure. |
+| `Chain <id> is not configured on this client. Configured chains: ...` | A `chainId` argument the client does not hold. |
+| `createWallet: at least one network is required.` | Empty `networks`. Also applies to `createPasskeyWallet`. |
+
+### Chain and relay
+
+| Message | Cause |
+|---|---|
+| `No Altana relay serves chain <id> (<name>). ...` | The chain has no relay and cannot execute. `BASE` is read-only in this sense: it is an L2 cache target, not an execution chain. |
+| `Balance for <address> did not reach <n> wei within <ms>ms` | A funding wait timed out. |
+
+### Signers
+
+Passing a signer the SDK cannot use produces a multi-line message naming every supported constructor, e.g. *"Injected wallet signers (e.g. MetaMask) need to sign a transaction but the current build of @altananetwork/sdk doesn't accept them as a signer type."* Use `signerFromPrivateKey`, `createPrivateKeySigner`, `createPasskey`, or `createHeadlessPasskey`.
+
+### Cross-chain sync
+
+| Message | Cause |
+|---|---|
+| `syncKeyToL2: tx reverted (L1Block anchor moved); refresh to retry` | The L1 anchor advanced between proof construction and inclusion. Call again. |
+| `ensureKeyCached: L2 did not anchor past L1 block <n> within <ms>ms` | Base did not catch up within 5 minutes. Base normally anchors 1 to 3 minutes behind L1. |
+| `L2 L1Block predeploy reports zero hash — chain not anchored yet` | The L2 has no anchored L1 block. |
+| `l2WalletClient has no account configured` / `... no chain configured` | The L2 wallet client is missing an account or chain. |
+
+### Recovery
+
+`recoverFromPasskey` needs at least one active key in Keystore, which means the wallet must have executed at least once. A wallet that was created but never used has nothing to recover from.
+
+## Related
+
+- [execute](/sdk/execute) for the call itself
+- [Sessions](/concepts/sessions) for what makes a session valid
+- [createWallet](/sdk/create-wallet) for counterfactual wallets and funding
