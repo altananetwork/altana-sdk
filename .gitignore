@@ -4,7 +4,11 @@ dist/
 *.tsbuildinfo
 .env
 .env.local
+*.env
 .DS_Store
+
+# Internal working notes, kept local and never published
+AGENTS.md
 
 # Local security audit reports (contain finding details)
 .gstack/
@@ -13,3 +17,4 @@ docs/public/skill.md
 
 # live-run state (contains private keys)
 tests/e2e/.live-hire-*.json
+tests/e2e/.sweep.env

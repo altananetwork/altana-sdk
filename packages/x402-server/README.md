@@ -8,9 +8,9 @@ header are settled **on-chain, immediately** and passed through.
 
 Payable out of the box by:
 
-- **BNB Agent Studio agents** (`bag x402 trust <your-url>` → `bag x402 buy`) —
-  they sign EIP-3009 `TransferWithAuthorization` on $U (United Stables).
-- **Altana SDK agents** (`fetchWithX402` / the MCP `x402_request` tool) —
+- **BNB Agent Studio agents** (`bag x402 trust <your-url>` → `bag x402 buy`).
+  They sign EIP-3009 `TransferWithAuthorization` on $U (United Stables).
+- **Altana SDK agents** (`fetchWithX402` / the MCP `x402_request` tool):
   smart-account session keys signing the B402 permit2-exact rail (ERC-1271).
 - Anything else speaking the B402 v2 wire (CAIP-2 networks, `scheme:"exact"`,
   `extra.assetTransferMethod`).
@@ -55,7 +55,7 @@ Bun.serve({
 | `eip3009` | `TransferWithAuthorization` ($U) | `token.transferWithAuthorization(bytes)` | the token contract |
 | `permit2-exact` | `PermitWitnessTransferFrom` (any Permit2-approved token) | `Permit2.permitWitnessTransferFrom` | Permit2 |
 
-The facilitator account only broadcasts and pays gas — funds move directly
+The facilitator account only broadcasts and pays gas. Funds move directly
 from the payer to `payTo`. The recipient is **bound into the buyer's
 signature** (EIP-3009 `to` / the permit2 `Witness`), so a compromised
 facilitator key cannot redirect earnings.
@@ -63,8 +63,8 @@ facilitator key cannot redirect earnings.
 Off-chain checks run first (token, amount within `[minPrice, maxPrice]`,
 recipient, expiry, signature). Checker-restricted smart accounts (Altana
 session keys answer `isValidSignature` only to their approved checker) defer
-the signature check to the settling contract — an invalid signature reverts
-the settlement, and the request is refused. Replay is impossible: EIP-3009
+the signature check to the settling contract, so an invalid signature reverts
+the settlement and the request is refused. Replay is impossible: EIP-3009
 nonces and the Permit2 nonce bitmap burn on-chain.
 
 ## Verified end-to-end

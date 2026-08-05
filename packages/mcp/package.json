@@ -2,7 +2,7 @@
   "name": "@altananetwork/mcp",
   "version": "0.7.0",
   "description": "MCP server that lets AI hosts employ agents on Altana wallets",
-  "license": "GPL-3.0-or-later",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/altananetwork/altana-sdk.git",

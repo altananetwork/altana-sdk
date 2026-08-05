@@ -2,15 +2,15 @@
   "name": "@altananetwork/sdk",
   "version": "0.7.0",
   "description": "TypeScript SDK for creating non-custodial agentic wallets with on-chain session-key delegation.",
-  "license": "GPL-3.0-or-later",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/altananetwork/sdk.git",
+    "url": "git+https://github.com/altananetwork/altana-sdk.git",
     "directory": "packages/wallet"
   },
   "homepage": "https://docs.altana.network",
   "bugs": {
-    "url": "https://github.com/altananetwork/sdk/issues"
+    "url": "https://github.com/altananetwork/altana-sdk/issues"
   },
   "keywords": [
     "wallet",
