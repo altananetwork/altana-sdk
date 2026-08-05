@@ -61,16 +61,18 @@ import { signerFromPrivateKey } from "@altananetwork/sdk";
 const signer = signerFromPrivateKey(process.env.PRIVATE_KEY as `0x${string}`);
 ```
 
-**`createPrivateKeySigner()`**: generates a fresh random secp256k1 key and returns the signer. Use this when you want the SDK to create the key. **You are responsible for persisting it**: it is not stored anywhere automatically.
+**Need a new key?** Generate it yourself, then wrap it. The SDK never stores key material and has no supported way to hand a key back to you, so the copy you make here is the only one.
 
 ```ts
-import { createPrivateKeySigner, createClient, BNB } from "@altananetwork/sdk";
+import { generatePrivateKey } from "viem/accounts";
+import { signerFromPrivateKey, createClient, BNB } from "@altananetwork/sdk";
 
-const signer = createPrivateKeySigner();
-console.log("Save this key:", signer._privateKey); // persist before continuing
+const privateKey = generatePrivateKey();
+console.log("Save this key:", privateKey); // persist before continuing
 
+const signer = signerFromPrivateKey(privateKey);
 const client = createClient({ chains: [BNB] });
 const wallet = await client.createWallet({ signer });
 ```
 
-Calling `createWallet()` with no `signer` argument is equivalent: it calls `createPrivateKeySigner()` internally and attaches the result to `wallet.signer`.
+`createPrivateKeySigner()` also generates a fresh secp256k1 key, and `createWallet()` with no `signer` argument calls it internally and attaches the result to `wallet.signer`. Both are fine when the key is ephemeral, for a test or a throwaway wallet. Neither is a good fit when you need to keep the key: `wallet.signer` is typed as a `Signer`, which exposes an address, a public key, and the ability to sign, and nothing that yields the private key. Generate the key yourself whenever you intend to persist it.

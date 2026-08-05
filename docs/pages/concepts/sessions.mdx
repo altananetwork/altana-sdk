@@ -46,10 +46,12 @@ calls: [
 
 ```ts
 spend: [
-  { limit: 100_000_000n, period: "day", token: "0xUSDC..." }, // 100 USDC/day
+  { limit: 100_000_000n, period: "day", token: "0xUSDC..." }, // 100 USDC/day on Ethereum (6 decimals)
   { limit: 10n ** 16n, period: "hour" },                       // 0.01 ETH/hour (native)
 ]
 ```
+
+`limit` is in the token's smallest unit, so the number depends on that token's decimals **on that chain**. The same stablecoin uses 6 decimals on Ethereum and 18 on BNB Chain: 100 USDT/day on BNB is `100n * 10n ** 18n`, not `100_000_000n`.
 
 ## Lifecycle
 
@@ -65,5 +67,5 @@ Reads are free and unlimited, which is what makes cross-agent and cross-app veri
 
 ## Notes
 
-- **Sessions must be byte-exact on execute.** The onchain validator matches `permissions + expiry + role + publicKey` exactly to the hash committed at grant time. Persist the `Session` object verbatim. Sloppy JSON round-trips (bigints to numbers, key reordering) break the match.
+- **Sessions must be byte-exact on execute.** The session's `permissions + expiry + publicKey` must match what was committed at grant time. Persist the `Session` object verbatim. Sloppy JSON round-trips (bigints to numbers, key reordering) break the match.
 - **`permissions.calls` omitted = unrestricted.** If you don't pass `calls`, the session can call any contract within its spend cap. Set both unless that's truly what you want.

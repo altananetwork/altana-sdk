@@ -2,15 +2,15 @@
   "name": "@altananetwork/x402-server",
   "version": "0.2.0",
   "description": "Seller-side x402/B402 payments: 402 challenges, X-PAYMENT verification (EOA + ERC-1271), and on-chain settlement for agents charging per request.",
-  "license": "GPL-3.0-or-later",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/altananetwork/sdk.git",
+    "url": "git+https://github.com/altananetwork/altana-sdk.git",
     "directory": "packages/x402-server"
   },
   "homepage": "https://docs.altana.network",
   "bugs": {
-    "url": "https://github.com/altananetwork/sdk/issues"
+    "url": "https://github.com/altananetwork/altana-sdk/issues"
   },
   "keywords": [
     "x402",
@@ -33,7 +33,8 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",

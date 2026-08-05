@@ -9,9 +9,13 @@ import { Eyebrow } from '../../components/Eyebrow'
 
 # ensureKeyCached
 
-A session you granted via [`grantSession`](/sdk/grant-session) is registered in the [Keystore](/concepts/keystore) on L1 (Ethereum). For another chain to honor that session, the registry state has to be mirrored to an L2 cache on that chain. `ensureKeyCached` does that.
+A session you granted on Ethereum via [`grantSession`](/sdk/grant-session) is registered in the [Keystore](/concepts/keystore) on L1. For another chain to honor that session, the registry state has to be mirrored to an L2 cache on that chain. `ensureKeyCached` does that.
+
+This page is about the Ethereum → Base path specifically. Sessions granted on BNB Smart Chain, the SDK default, live in that chain's standalone Keystore and do not use this flow.
 
 It's idempotent: if the L2 cache already has the key, it returns immediately. Otherwise it waits for the L2 to anchor past the relevant L1 block, then submits a storage proof.
+
+Call it yourself before the first action on an L2; [`execute`](/sdk/execute) does not call it for you. Base is a verification target only: it hosts a cache and no relay, so `BASE` cannot be passed to `createClient`.
 
 ```ts
 import { ensureKeyCached, ETHEREUM, BASE } from "@altananetwork/sdk";
@@ -136,7 +140,7 @@ isCachedKeyValid(l2Client, l2Cache, user, keyId): Promise<boolean>;
 
 ## Notes
 
-- **L1 Keystore is the source of truth.** The L2 cache is only as fresh as the last proof submitted. Revocations on L1 do **not** propagate automatically; until someone submits a post-revocation proof, the L2 cache still reports the key as valid. Call `syncKeyToL2` right after `revokeSession` to push the revocation through, or rely on `ensureKeyCached` running again on the next action.
+- **L1 Keystore is the source of truth.** The L2 cache is only as fresh as the last proof submitted. Revocations on L1 do **not** propagate automatically; until someone submits a post-revocation proof, the L2 cache still reports the key as valid. Call `syncKeyToL2` right after [`revokeSession`](/sdk/revoke-session) to push the revocation through. Do **not** expect `ensureKeyCached` to handle it: it returns early whenever the cache reports the key as valid, which is precisely the stale state left behind by a revocation, so it will never submit the proof that would correct it.
 - **Monotonic revoke is enforced cache-side too.** Once the cache observes `revoked=true`, it cannot be flipped back to live by a later proof: even one against an older L1 block. This prevents replay attacks during the L1→L2 anchor window.
 - **The cache is permissionless.** Any address can submit a proof for any `(user, publicKey)` pair. There is no admin and no relayer registry.
 - **One cache per chain.** For the supported L2 cache today, use `BASE.keyStoreCache`; see the [Chains](/concepts/keystore#chains) table.

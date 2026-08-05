@@ -24,9 +24,9 @@ const session = await client.grantSession({
   permissions: {
     calls: [{ to: "0xUniswapRouter..." }],
     spend: [{
-      limit: 100_000_000n,        // 100 USDC (6 decimals)
+      limit: 50n * 10n ** 18n,    // 50 USDT. Note: 18 decimals on BNB Chain.
       period: "day",
-      token: "0xUSDC...",
+      token: "0xUSDT...",
     }],
   },
   expiry: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60, // 7 days
@@ -34,6 +34,10 @@ const session = await client.grantSession({
 
 // Hand `session` to whichever process runs the agent.
 ```
+
+:::warning[Spend limits are raw token units, and decimals differ by chain]
+`limit` is denominated in the token's smallest unit, so you need that token's decimals on that chain. USDT and USDC use **18 decimals on BNB Chain** and 6 on Ethereum. Writing `100_000_000n` for "100 USDT" on BNB sets a cap of 0.0000000001 USDT, and the agent's payments revert against a limit that looks generous.
+:::
 
 ## Registering the session key
 

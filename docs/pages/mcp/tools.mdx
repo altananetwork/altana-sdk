@@ -9,7 +9,7 @@ import { Eyebrow } from '../../components/Eyebrow'
 
 # Tools
 
-The Altana MCP server exposes 17 tools. AI hosts call them by name; users can also invoke them as slash commands via the prompt interface (e.g. `/altana-agentic-wallet:create-wallet`).
+The Altana MCP server exposes 17 tools. AI hosts call them by name. Eleven of them also have a slash command for users to invoke directly (e.g. `/altana-agentic-wallet:create-wallet`); the rest are host-callable only. See [Slash command equivalents](#slash-command-equivalents).
 
 ## Discovery
 
@@ -62,7 +62,7 @@ Certified protocol playbooks from the [Altana skills registry](https://github.co
 
 ## Slash command equivalents
 
-Every tool has a matching prompt, exposed as a slash command:
+Eleven of the 17 tools have a matching prompt, exposed as a slash command. One further command, `demos`, lists demo flows and maps to no tool:
 
 | Slash command | Calls |
 |---|---|
@@ -78,3 +78,5 @@ Every tool has a matching prompt, exposed as a slash command:
 | `/altana-agentic-wallet:revoke-session` | `revoke_session` |
 | `/altana-agentic-wallet:send-tx` | `wallet_execute` |
 | `/altana-agentic-wallet:demos` | listing of available demo flows |
+
+Six tools have no slash command: `x402_request`, `erc8183_create_job`, `erc8183_job_status`, `erc8183_settle`, `search_skills`, and `get_skill`. Ask the host to use them by name instead; typing `/altana-agentic-wallet:x402-request` will not resolve.

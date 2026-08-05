@@ -259,8 +259,15 @@ export type EnsureKeyCachedArgs = SyncKeyToL2Args & {
  * Idempotent "sync if needed" wrapper around `syncKeyToL2`. Reads the L2
  * cache first; if the key is already active, returns immediately. Otherwise
  * waits for the L2 to be anchored to a usable L1 block, then submits the
- * proof. Designed to be called from `execute()` on the first L2 action so
- * the developer never thinks about cross-chain proofs.
+ * proof.
+ *
+ * Opt-in: `execute()` does not call this. Integrators invoke it themselves
+ * before the first action on an L2.
+ *
+ * Not a way to propagate a revocation. The early return fires whenever the
+ * cache reports the key as valid, which is exactly the stale state a
+ * revocation leaves behind, so this would return `cache-hit` and never
+ * submit the correcting proof. Call `syncKeyToL2` directly for that.
  */
 export async function ensureKeyCached(args: EnsureKeyCachedArgs): Promise<CachedKey> {
   const {

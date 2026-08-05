@@ -60,7 +60,7 @@ This is what makes cross-agent and cross-app verification practical at scale. Th
     </tr>
     <tr>
       <td style={{border:'1px solid var(--vocs-color_tableBorder)',fontSize:'var(--vocs-fontSize_td)',padding:'var(--vocs-space_8) var(--vocs-space_12)',verticalAlign:'top'}}><strong>One-tx revocation</strong></td>
-      <td style={{border:'1px solid var(--vocs-color_tableBorder)',fontSize:'var(--vocs-fontSize_td)',padding:'var(--vocs-space_8) var(--vocs-space_12)',verticalAlign:'top'}}>Pulling a key from the registry is a single transaction. The effect is global and immediate; no off-chain coordination required.</td>
+      <td style={{border:'1px solid var(--vocs-color_tableBorder)',fontSize:'var(--vocs-fontSize_td)',padding:'var(--vocs-space_8) var(--vocs-space_12)',verticalAlign:'top'}}>Pulling a key from the registry is a single transaction, effective immediately on that chain, with no off-chain coordination required. L2 caches need a post-revocation proof before they agree.</td>
     </tr>
     <tr style={{backgroundColor:'var(--vocs-color_background2)'}}>
       <td style={{border:'1px solid var(--vocs-color_tableBorder)',fontSize:'var(--vocs-fontSize_td)',padding:'var(--vocs-space_8) var(--vocs-space_12)',verticalAlign:'top'}}><strong>A new class of agent services</strong></td>

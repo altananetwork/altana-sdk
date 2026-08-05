@@ -2,15 +2,15 @@
   "name": "@altananetwork/mcp",
   "version": "0.7.0",
   "description": "MCP server that lets AI hosts employ agents on Altana wallets",
-  "license": "GPL-3.0-or-later",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/altananetwork/sdk.git",
+    "url": "git+https://github.com/altananetwork/altana-sdk.git",
     "directory": "packages/mcp"
   },
   "homepage": "https://docs.altana.network",
   "bugs": {
-    "url": "https://github.com/altananetwork/sdk/issues"
+    "url": "https://github.com/altananetwork/altana-sdk/issues"
   },
   "keywords": [
     "mcp",
@@ -21,6 +21,9 @@
     "altana"
   ],
   "type": "module",
+  "engines": {
+    "bun": ">=1.1.0"
+  },
   "bin": {
     "altana-mcp": "./src/index.ts"
   },
@@ -31,7 +34,8 @@
   },
   "files": [
     "src",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "start": "bun run src/index.ts",
