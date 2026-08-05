@@ -9,6 +9,7 @@ dist/
 
 # Internal working notes, kept local and never published
 AGENTS.md
+CLAUDE.md
 
 # Local security audit reports (contain finding details)
 .gstack/
