@@ -10,6 +10,7 @@
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { VERSION } from "./version.js";
 import {
   createPublicClient,
   http,
@@ -69,7 +70,7 @@ function assertPublicKey(v: string): Hex {
 
 export function buildServer(): McpServer {
   const server = new McpServer(
-    { name: "hypersigner-keystore-mcp", version: "0.1.0" },
+    { name: "hypersigner-keystore-mcp", version: VERSION },
     {
       instructions:
         "Neutral, non-custodial KeyStore authorization registry on " +

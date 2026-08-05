@@ -90,10 +90,12 @@ type ExecuteResult = {
 };
 ```
 
+A failed execute **returns** `status: "FAILED"`; it does not throw. Check the status rather than relying on `try/catch`. See [Errors](/sdk/errors) for what each status means and how to tell the failure classes apart.
+
 ## Notes
 
 - **First execute on a fresh wallet auto-registers the admin key** in [Keystore](/concepts/keystore). `initialRegisterKey` is prepended transparently in the same userOp.
 - **Empty calls is rejected.** `client.execute({ wallet, signer, calls: [] })` errors. Pass at least one call.
-- **Session execute is byte-exact.** The onchain validator matches the session's `permissions + expiry + role + publicKey` to the hash committed at grant. Persist the `Session` object verbatim.
+- **Session execute is byte-exact.** The session's `permissions + expiry + publicKey` must match what was committed at grant. Persist the `Session` object verbatim; sloppy JSON round-trips (bigints to numbers, key reordering) break the match.
 - **`chainId` selects the chain.** Omit it to use the client's default chain; pass one of the client's configured chains to target another.
 - With `noWait: true`, you get `status: "PENDING"` and a `callsId` to poll later.

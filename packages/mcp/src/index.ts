@@ -7,17 +7,23 @@
  * resolves keys by name from the OS keychain (preferred), a local file, or
  * env vars. Private keys never appear as tool arguments or tool results.
  *
- * v0 tools:
+ * Tools:
  *   - Identity:  about_altana
  *   - Bootstrap: create_wallet
  *   - Inspect:   list_wallets, wallet_balance, wallet_verification,
  *                verify_authorization, list_sessions
  *   - Operate:   wallet_execute, grant_session, revoke_session, session_execute
+ *   - Pay:       x402_request
+ *   - Jobs:      erc8183_create_job, erc8183_job_status, erc8183_settle
+ *   - Skills:    search_skills, get_skill
+ *
+ * Not every tool has a slash command; see docs.altana.network/mcp/tools.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { VERSION } from "./version.js";
 import { createPublicClient, formatEther, formatUnits, http, parseEther, parseUnits, type Address, type Hex } from "viem";
 import { keccak256 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
@@ -168,7 +174,7 @@ const SERVER_INSTRUCTIONS = `Altana Agentic Wallet enables a global registry of 
 const server = new McpServer(
   {
     name: "altana-agentic-wallet",
-    version: "0.7.0",
+    version: VERSION,
   },
   {
     instructions: SERVER_INSTRUCTIONS,

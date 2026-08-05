@@ -10,7 +10,8 @@ Every permission lives in a neutral onchain registry: openly verifiable, revocab
 - **Cross-app authorization.** Any DEX, orderbook, or protocol can read whether an agent is authorized, without integrating a specific wallet vendor.
 - **Instant revocation.** Change your mind at any point. Revoke a key in one transaction, and it takes effect before the next action.
 
-Live on mainnet across BNB Chain, Ethereum, and Base.
+Live on mainnet across BNB Chain, Ethereum, and Base. The KeyStore contracts
+were [audited by CertiK](https://docs.altana.network/security/audits).
 
 ## Install
 
@@ -98,10 +99,19 @@ Full docs, guides, and SDK reference: **[docs.altana.network](https://docs.altan
 - Payments and jobs: [x402 (buyer)](https://docs.altana.network/sdk/x402), [x402 (seller)](https://docs.altana.network/sdk/x402-server), [ERC-8183 agent jobs](https://docs.altana.network/sdk/erc8183), [order signing](https://docs.altana.network/sdk/sign-order)
 - MCP server: [overview](https://docs.altana.network/mcp), [install](https://docs.altana.network/mcp/install), [tools](https://docs.altana.network/mcp/tools)
 
+## Security
+
+The KeyStore contracts were audited by CertiK (completed 15 July 2026). Scope,
+findings, and the verified deployments are on the
+[audit reports page](https://docs.altana.network/security/audits).
+
+Found a vulnerability? Please report it privately, not as a public issue. See
+[SECURITY.md](./SECURITY.md).
+
 ## Issues and feedback
 
 Found a bug, have a feature request, or want to discuss something? Open an issue on [GitHub Issues](https://github.com/altananetwork/altana-sdk/issues).
 
 ## License
 
-[GPL-3.0](./LICENSE)
+[Apache-2.0](./LICENSE)

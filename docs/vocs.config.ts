@@ -90,7 +90,7 @@ export default defineConfig({
   socials: [
     {
       icon: "github",
-      link: "https://github.com/altananetwork/sdk",
+      link: "https://github.com/altananetwork/altana-sdk",
     },
   ],
   topNav: [
@@ -144,6 +144,7 @@ export default defineConfig({
             { text: "grantSession", link: "/sdk/grant-session" },
             { text: "execute", link: "/sdk/execute" },
             { text: "revokeSession", link: "/sdk/revoke-session" },
+            { text: "Errors", link: "/sdk/errors" },
           ],
         },
         {
@@ -208,6 +209,7 @@ export default defineConfig({
       items: [
         { text: "Why Altana", link: "/why-altana" },
         { text: "How Altana is different", link: "/concepts/comparison" },
+        { text: "Changelog", link: "/changelog" },
         { text: "Acknowledgments", link: "/acknowledgments" },
       ],
     },

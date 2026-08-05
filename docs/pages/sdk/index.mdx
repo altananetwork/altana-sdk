@@ -17,7 +17,7 @@ New to the SDK? Start with [Setup: BNB Smart Chain](/sdk/bnb), Altana's default 
 
 | Function | What it does |
 |---|---|
-| [`createWallet`](/sdk/create-wallet) | Create a wallet from a private key signer and register it in the Keystore. |
+| [`createWallet`](/sdk/create-wallet) | Create a counterfactual smart-account wallet for a private key signer. The admin key is registered in the Keystore on the first `execute`. |
 | [`createPasskeyWallet`](/sdk/create-passkey-wallet) | Create a wallet whose admin key is a passkey (Face ID, Touch ID, Windows Hello). |
 | [`recoverFromPasskey`](/sdk/recover-from-passkey) | Reconnect to an existing passkey wallet from a new device or session. |
 
@@ -27,7 +27,7 @@ New to the SDK? Start with [Setup: BNB Smart Chain](/sdk/bnb), Altana's default 
 |---|---|
 | [`grantSession`](/sdk/grant-session) | Authorize an agent key with scoped permissions: spend caps, allowed contracts, expiry. |
 | [`execute`](/sdk/execute) | Send calls from the wallet, signed by the admin key or a session key. |
-| [`revokeSession`](/sdk/revoke-session) | Revoke a session key. One transaction; immediate and global. |
+| [`revokeSession`](/sdk/revoke-session) | Revoke a session key. One transaction; immediate on the chain where the key is registered. |
 
 ## Reads & Chains
 

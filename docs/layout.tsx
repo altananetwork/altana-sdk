@@ -5,7 +5,7 @@ export function TopNavEnd() {
     <div className="topnav-end">
       <a
         className="topnav-github"
-        href="https://github.com/altananetwork/sdk"
+        href="https://github.com/altananetwork/altana-sdk"
         target="_blank"
         rel="noreferrer"
         title="GitHub"

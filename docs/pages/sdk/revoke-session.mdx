@@ -1,6 +1,6 @@
 ---
 title: revokeSession
-description: Pull a session's authority. Effect is immediate.
+description: Pull a session's authority. Immediate on the chain where the key is registered; L2 caches need an explicit proof.
 ---
 
 import { Eyebrow } from '../../components/Eyebrow'
@@ -9,7 +9,9 @@ import { Eyebrow } from '../../components/Eyebrow'
 
 # revokeSession
 
-Revoke a session key from a wallet onchain. After confirmation, the session's next execute attempt reverts at validation. Effect is global and immediate. No off-chain coordination required.
+Revoke a session key from a wallet onchain. After confirmation, the session's next execute attempt reverts at validation. On the chain where the key is registered the effect is immediate, and no off-chain coordination is required.
+
+If you have mirrored the key to an L2 cache, revocation does **not** reach that cache on its own. See [Cross-chain revocation](#cross-chain-revocation) below.
 
 ```ts
 // `client`, `wallet`, `admin`, and `session` from earlier
@@ -52,9 +54,40 @@ In a single userOp:
 1. The session is **revoked in Keystore** (skipped if the session was never registered). From the next block onward, `isValidKey` returns `false` for that key and the key id is dropped from `getKeys`.
 2. The session's authority on the wallet's smart account is pulled.
 
-Both atomic. After the userOp confirms, the session is dead everywhere simultaneously.
+Both atomic. After the userOp confirms, the session is dead on that chain: there is no window in which one half has landed and the other has not.
+
+## Cross-chain revocation
+
+`revokeSession` acts on one chain, the one you passed via `chainId` (or the client's default). It does not touch any other chain's state.
+
+:::warning[An L2 cache keeps reporting the old answer until you prove otherwise]
+If the session was mirrored to an L2 cache with [`ensureKeyCached`](/sdk/sync-to-l2), that cache still returns `isValidKey == true` after you revoke on L1. Anyone verifying against the cache, such as a counterparty checking whether your agent is authorized, sees a live key until a post-revocation proof lands.
+
+Call `syncKeyToL2` explicitly after `revokeSession`:
+
+```ts
+import { syncKeyToL2, ETHEREUM, BASE } from "@altananetwork/sdk";
+
+await client.revokeSession({ wallet, signer: admin, session });
+
+// Push the revocation to every L2 cache holding this key. The clients are the
+// same ones ensureKeyCached takes — see /sdk/sync-to-l2 for how to build them.
+await syncKeyToL2({
+  l1Client, l2Client, l2WalletClient,
+  l1KeyStore: ETHEREUM.keyStore,
+  l2Cache: BASE.keyStoreCache,
+  user: session.walletAddress,
+  publicKey: session.publicKey,
+});
+```
+
+`ensureKeyCached` will **not** do this for you. It returns early when the cache reports the key as valid, which is exactly the state a stale cache is in after a revocation. Use `syncKeyToL2`, which always submits a fresh proof.
+:::
+
+Once the cache observes `revoked=true` it cannot be flipped back, even by a proof against an older L1 block. See [ensureKeyCached](/sdk/sync-to-l2) for the full cross-chain model.
 
 ## Notes
 
 - Revocation does not require the session signer, only the wallet's admin signer.
 - You can keep just the session's public key in your records for revocation purposes, then discard the rest of the `Session` object once granted.
+- A failed revocation **returns** `status: "FAILED"` rather than throwing. Check the returned status; do not assume success because nothing was raised. See [Errors](/sdk/errors).
