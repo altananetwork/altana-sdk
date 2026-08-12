@@ -53,6 +53,26 @@ export type Session = {
   expiry: number;
 };
 
+/**
+ * What grantSession returns: the live Session, plus provenance for the grant
+ * itself.
+ *
+ * The hash is not on Session because a Session outlives the transaction that
+ * created it. Integrators persist it, hand it to an agent process, and pass it
+ * to execute() for days afterwards. A transaction hash sitting on it that long
+ * describes something that already happened, so it belongs to the grant's
+ * result, not to the session.
+ *
+ * Assignable to Session, so every existing caller keeps working unchanged.
+ */
+export type GrantSessionResult = Session & {
+  /**
+   * The transaction that carried the grant, when the relay reported one.
+   * Optional: the relay can confirm an intent without surfacing a receipt.
+   */
+  transactionHash?: Hex;
+};
+
 /** Options for grantSession. */
 export type GrantSessionOptions = {
   permissions: SessionPermissions;
