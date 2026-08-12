@@ -37,7 +37,7 @@ The Altana MCP server exposes 17 tools. AI hosts call them by name. Eleven of th
 
 | Tool | Purpose |
 |---|---|
-| `grant_session` | Generates a session key, registers it in Keystore, authorizes it with the given permissions. Returns the session details + keyId. |
+| `grant_session` | Generates a session key, registers it in Keystore, authorizes it with the given permissions. Returns the session details, keyId, and the grant's transaction hash. |
 | `list_sessions` | Lists local session metadata (those granted from this machine). |
 | `session_execute` | Submits calls signed by a stored session key. |
 | `revoke_session` | Deactivates the session in Keystore and pulls onchain authority. |

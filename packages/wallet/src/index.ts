@@ -48,6 +48,7 @@ export type {
   CallPermission,
   SpendPermission,
   GrantSessionOptions,
+  GrantSessionResult,
 } from "./internal/sessions.js";
 
 // Lazy KeyStore registration for sessions granted with `register: false`.

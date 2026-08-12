@@ -14,7 +14,10 @@ import {
   buildAdditionalRegisterCall,
   readRegistrationFee,
 } from "./internal/keystore.js";
-import type { GrantSessionOptions, Session } from "./internal/sessions.js";
+import type {
+  GrantSessionOptions,
+  GrantSessionResult,
+} from "./internal/sessions.js";
 import type { Wallet } from "./internal/types.js";
 
 const NATIVE_TOKEN: Address = "0x0000000000000000000000000000000000000000";
@@ -33,7 +36,7 @@ export async function grantSession(
   adminSigner: Signer,
   opts: GrantSessionOptions,
   config: { network: NetworkConfig; feeToken?: Address },
-): Promise<Session> {
+): Promise<GrantSessionResult> {
   const network = config.network;
   const feeToken = config.feeToken ?? NATIVE_TOKEN;
 
@@ -132,6 +135,10 @@ export async function grantSession(
     publicKey: sessionSigner.publicKey,
     permissions: opts.permissions,
     expiry: opts.expiry,
+    // Same as execute, revokeSession and registerSessionKey. This was the only
+    // entry point that dropped it, which left integrators unable to record a
+    // receipt for the one call that charges a registration fee.
+    ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
   };
 }
 

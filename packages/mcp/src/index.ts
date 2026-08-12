@@ -733,6 +733,10 @@ tool(
               // (or sessionName) to verify_authorization to confirm the
               // session is recognized in the public registry.
               keyId,
+              // The grant pays a KeyStore registration fee, twice on a
+              // wallet's very first admin action. Surface the receipt so the
+              // host can record what the user was actually charged for.
+              transactionHash: session.transactionHash,
               permissions: {
                 calls: [{ to: recipientAddr }],
                 spend: [{ limitEth: capEth, period: "day" }],
