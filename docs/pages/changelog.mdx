@@ -5,11 +5,22 @@ description: What shipped in each release of @altananetwork/sdk and @altananetwo
 
 # Changelog
 
-These docs describe **`@altananetwork/sdk` 0.7.0** and **`@altananetwork/mcp` 0.7.0**, the current releases on npm.
+These docs describe **`@altananetwork/sdk` 0.7.1** and **`@altananetwork/mcp` 0.7.1**, the current releases on npm.
 
 Both packages are pre-1.0. Minor versions may contain breaking changes. Pin an exact version if you need stability across installs.
 
 The canonical file is [`CHANGELOG.md`](https://github.com/altananetwork/altana-sdk/blob/main/CHANGELOG.md) in the SDK repo.
+
+## 0.7.1
+
+Released 12 August 2026. `@altananetwork/mcp` 0.7.1.
+
+**Added**
+
+- **[`grantSession`](/sdk/grant-session) returns the grant's transaction hash.** The result is now `GrantSessionResult`, a `Session` plus an optional `transactionHash`. Granting is the one call that charges the user a [Keystore](/concepts/keystore) registration fee, twice on a wallet's first admin action, and it was the only entry point that discarded the hash instead of forwarding it. [`execute`](/sdk/execute), `revokeSession` and `registerSessionKey` were already returning it.
+- **[`grant_session`](/mcp/tools) reports the transaction hash in the MCP server**, alongside the session details and `keyId`, matching every other write tool.
+
+Not a breaking change: `GrantSessionResult` is assignable everywhere a `Session` is expected. One thing to watch as a consumer, an explicit `const session: Session = ...` annotation narrows the type back down and hides the new field. Let the type be inferred, or annotate with `GrantSessionResult`.
 
 ## 0.7.0
 

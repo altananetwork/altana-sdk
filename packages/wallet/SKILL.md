@@ -107,6 +107,12 @@ const session = await client.grantSession({
 // (signer.export() if your signer is a private-key signer). The agent needs
 // the exact permissions+expiry at execute time : the on-chain validator
 // matches them byte-for-byte against the authorization committed at grant.
+
+// session.transactionHash is the grant's receipt. It lives on the result, not
+// on the Session, and it is optional (the relay can confirm without one).
+// Granting is the call that charges the user a Keystore registration fee, so
+// record it if you report costs back to them. Do not persist it with the
+// session: it describes the grant, not the session's ongoing authority.
 ```
 
 The grant also registers the key in Keystore, making it verifiable on-chain by

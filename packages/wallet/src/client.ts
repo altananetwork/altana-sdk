@@ -13,7 +13,11 @@ import { type NetworkConfig } from "./config.js";
 import type { Signer } from "./internal/signer.js";
 import type { PasskeySigner } from "./internal/passkey.js";
 import type { Wallet, ExecuteResult } from "./internal/types.js";
-import type { Session, GrantSessionOptions } from "./internal/sessions.js";
+import type {
+  Session,
+  GrantSessionOptions,
+  GrantSessionResult,
+} from "./internal/sessions.js";
 import type { Call } from "./internal/relay.js";
 import {
   createWallet as createWalletImpl,
@@ -149,7 +153,7 @@ export type Client = {
     opts?: ClientRecoverFromPasskeyOptions,
   ): Promise<CreateWalletResult & { signer: PasskeySigner }>;
   execute(opts: ClientExecuteOptions): Promise<ExecuteResult>;
-  grantSession(opts: ClientGrantSessionOptions): Promise<Session>;
+  grantSession(opts: ClientGrantSessionOptions): Promise<GrantSessionResult>;
   revokeSession(opts: ClientRevokeSessionOptions): Promise<ExecuteResult>;
   /** Lazily register a session key granted with `register: false`. Idempotent. */
   registerSessionKey(

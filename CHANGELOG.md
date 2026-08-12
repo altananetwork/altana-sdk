@@ -12,6 +12,32 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 > reconstructed from commit history after the fact, so they summarize what
 > shipped rather than itemizing every change.
 
+## [0.7.1] - 2026-08-12
+
+`@altananetwork/mcp` 0.7.1
+
+### Added
+
+- **`grantSession` returns the grant's transaction hash.** The result is now
+  `GrantSessionResult`, a `Session` plus an optional `transactionHash`. Granting
+  is the one call that charges the user a Keystore registration fee (twice on a
+  wallet's first admin action), and it was the only entry point that discarded
+  the hash instead of forwarding it. `execute`, `revokeSession` and
+  `registerSessionKey` were already returning it.
+- **`grant_session` reports the transaction hash in the MCP server**, alongside
+  the session details and `keyId`, matching every other write tool.
+
+Not a breaking change: `GrantSessionResult` is assignable everywhere a `Session`
+is expected. One thing to watch as a consumer, an explicit annotation narrows
+the type back down and hides the new field:
+
+```ts
+const session: Session = await client.grantSession({ ... });
+session.transactionHash;  // does not typecheck
+```
+
+Let the type be inferred, or annotate with `GrantSessionResult`.
+
 ## [0.7.0] - 2026-08-04
 
 `@altananetwork/mcp` 0.7.0
@@ -72,6 +98,7 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 First public release: agentic wallets, session keys, the Keystore registry,
 the MCP servers, and the documentation site.
 
+[0.7.1]: https://github.com/altananetwork/altana-sdk/releases
 [0.7.0]: https://github.com/altananetwork/altana-sdk/releases
 [0.6.0]: https://github.com/altananetwork/altana-sdk/releases
 [0.5.0]: https://github.com/altananetwork/altana-sdk/releases
