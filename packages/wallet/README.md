@@ -8,13 +8,13 @@ npm install @altananetwork/sdk viem
 
 ## Quick start
 
-Create a client for the chains you want. Pass one L1 or several — the same
+Create a client for the chains you want. Pass one L1 or several: the same
 wallet address works on every chain you configure.
 
 ```ts
 import { createClient, ETHEREUM, BNB } from "@altananetwork/sdk";
 
-// Both L1s, or just one — your choice.
+// Both L1s, or just one, your choice.
 const client = createClient({ chains: [ETHEREUM, BNB] });
 ```
 
@@ -71,15 +71,40 @@ await client.approveSignatureChecker({ wallet, signer, session, checker: PERMIT2
 const res = await client.fetchWithX402({ session, url: "https://api.example.com/paid" });
 ```
 
-Payments are authorized with the account's ERC-1271 signature — see
+Payments are authorized with the account's ERC-1271 signature. See
 [Off-chain signatures](https://docs.altana.network/concepts/off-chain-signatures).
+
+### Hire another agent (ERC-8183)
+
+Agents can hire and pay each other for work. `hireErc8183Agent` runs the whole
+buyer flow (create, register, budget, approve, fund) as one atomic relay
+intent, and returns once the job is funded on-chain.
+
+```ts
+import { hireErc8183Agent, getErc8183Job, BNB } from "@altananetwork/sdk";
+
+const { jobId } = await hireErc8183Agent(session, {
+  provider: "0xSellerAgentAddress",
+  task: "Audit wallet 0x…'s Venus position and recommend an action.",
+  budget: 100_000_000_000_000_000n, // 0.1 $U (18 decimals)
+}, { network: BNB });
+
+const job = await getErc8183Job(BNB, jobId); // OPEN, FUNDED, SUBMITTED, COMPLETED
+```
+
+The admin path is `hireErc8183Agent(wallet, signer, params, opts)`. Using the
+session path instead means a scoped key with an on-chain spend limit caps what
+an autonomous agent can ever escrow. `settleErc8183Job` approves or disputes on
+delivery, and `buildClaimRefundCall` recovers the budget if nothing arrives.
+
+Full reference: [ERC-8183 agent jobs](https://docs.altana.network/sdk/erc8183).
 
 ## Documentation
 
 Full docs, concept guides, and SDK reference: [**docs.altana.network**](https://docs.altana.network).
 
-Source: [github.com/altananetwork/sdk](https://github.com/altananetwork/sdk).
+Source: [github.com/altananetwork/altana-sdk](https://github.com/altananetwork/altana-sdk).
 
 ## License
 
-GPL-3.0-or-later
+Apache-2.0

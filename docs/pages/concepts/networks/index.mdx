@@ -51,12 +51,15 @@ KeyStore contracts:
 
 Used for cross-chain session-key verification when operating on Ethereum. Not used by BNB.
 
+Base is a verification target, not an execution chain. It hosts a KeyStore cache and no relay, so `BASE` cannot be passed to `createClient` and you cannot send transactions there through the SDK. Use it with [`ensureKeyCached`](/sdk/sync-to-l2) to read Ethereum-granted authority from Base.
+
 | Contract | Address |
 | --- | --- |
 | KeyStoreCache | `0x6572427ED530BadcF7375Cf9A4709D8d2b0E7E0a` |
 
 Chain id 8453 · RPC `https://base-rpc.publicnode.com`.
 
-> Addresses are the source of truth in the Keystore repo's deployment manifests
-> (`deployments/*.json`) and the SDK's `packages/wallet/src/config.ts`. If contracts are
-> redeployed, update both in lockstep.
+> Addresses are the source of truth in the SDK's
+> [`packages/wallet/src/config.ts`](https://github.com/altananetwork/altana-sdk/blob/main/packages/wallet/src/config.ts).
+> To verify independently, check the addresses above against the explorer-verified
+> sources linked from [Audit reports](/security/audits).

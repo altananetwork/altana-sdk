@@ -7,17 +7,23 @@
  * resolves keys by name from the OS keychain (preferred), a local file, or
  * env vars. Private keys never appear as tool arguments or tool results.
  *
- * v0 tools:
+ * Tools:
  *   - Identity:  about_altana
  *   - Bootstrap: create_wallet
  *   - Inspect:   list_wallets, wallet_balance, wallet_verification,
  *                verify_authorization, list_sessions
  *   - Operate:   wallet_execute, grant_session, revoke_session, session_execute
+ *   - Pay:       x402_request
+ *   - Jobs:      erc8183_create_job, erc8183_job_status, erc8183_settle
+ *   - Skills:    search_skills, get_skill
+ *
+ * Not every tool has a slash command; see docs.altana.network/mcp/tools.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { VERSION } from "./version.js";
 import { createPublicClient, formatEther, formatUnits, http, parseEther, parseUnits, type Address, type Hex } from "viem";
 import { keccak256 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
@@ -51,6 +57,7 @@ import {
   deleteSession,
   type SessionPermissions,
 } from "./sessions.js";
+import { searchSkills, getSkill } from "./skills.js";
 
 // ---------- network ---------------------------------------------------------
 
@@ -167,7 +174,7 @@ const SERVER_INSTRUCTIONS = `Altana Smart Agentic Wallet enables a global regist
 const server = new McpServer(
   {
     name: "altana-agentic-wallet",
-    version: "0.2.0",
+    version: VERSION,
   },
   {
     instructions: SERVER_INSTRUCTIONS,
@@ -726,6 +733,10 @@ tool(
               // (or sessionName) to verify_authorization to confirm the
               // session is recognized in the public registry.
               keyId,
+              // The grant pays a KeyStore registration fee, twice on a
+              // wallet's very first admin action. Surface the receipt so the
+              // host can record what the user was actually charged for.
+              transactionHash: session.transactionHash,
               permissions: {
                 calls: [{ to: recipientAddr }],
                 spend: [{ limitEth: capEth, period: "day" }],
@@ -1170,6 +1181,74 @@ tool(
             null,
             2,
           ),
+        },
+      ],
+    };
+  },
+);
+
+// ---------- skills registry (certified protocol playbooks) -----------------
+
+// search_skills — keyword search over the Altana certified-skills registry.
+tool(
+  "search_skills",
+  {
+    title: "Find a certified skill",
+    description:
+      "Find certified protocol skills (trading, lending, payments) this " +
+      "wallet's agent can use on chain. Call when the user asks to trade or " +
+      "interact with a DeFi protocol (e.g. \"buy a token on PancakeSwap\"). " +
+      "Returns matching skills with their scope and certification scorecard; " +
+      "then call get_skill for the one you want to run.",
+    inputSchema: { query: z.string() },
+  },
+  async ({ query }: { query: string }) => {
+    const matches = await searchSkills(query);
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              query,
+              count: matches.length,
+              matches,
+              note:
+                matches.length > 0
+                  ? "Call get_skill with a match's id to fetch its verified SKILL.md playbook before acting."
+                  : "No certified skills matched. Try broader terms (e.g. a protocol or action name).",
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
+  },
+);
+
+// get_skill — fetch one skill's verified SKILL.md playbook by id.
+tool(
+  "get_skill",
+  {
+    title: "Get a certified skill",
+    description:
+      "Fetch the full SKILL.md playbook for one certified skill by id (from " +
+      "search_skills). The content is integrity-checked against the " +
+      "registry's sha256 before being returned, so you can follow it to " +
+      "operate the protocol. Also returns the skill's scope (allowed " +
+      "contracts, suggested spend cap) and certification scorecard.",
+    inputSchema: {
+      id: z.string().describe("The skill id, e.g. \"pancakeswap-trading\""),
+    },
+  },
+  async ({ id }: { id: string }) => {
+    const skill = await getSkill(id);
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(skill, null, 2),
         },
       ],
     };

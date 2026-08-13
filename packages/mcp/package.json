@@ -1,16 +1,16 @@
 {
   "name": "@altananetwork/mcp",
-  "version": "0.5.0",
+  "version": "0.7.1",
   "description": "MCP server that lets AI hosts employ agents on Altana wallets",
-  "license": "GPL-3.0-or-later",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/altananetwork/sdk.git",
+    "url": "git+https://github.com/altananetwork/altana-sdk.git",
     "directory": "packages/mcp"
   },
   "homepage": "https://docs.altana.network",
   "bugs": {
-    "url": "https://github.com/altananetwork/sdk/issues"
+    "url": "https://github.com/altananetwork/altana-sdk/issues"
   },
   "keywords": [
     "mcp",
@@ -21,6 +21,9 @@
     "altana"
   ],
   "type": "module",
+  "engines": {
+    "bun": ">=1.1.0"
+  },
   "bin": {
     "altana-mcp": "./src/index.ts"
   },
@@ -31,10 +34,12 @@
   },
   "files": [
     "src",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "start": "bun run src/index.ts",
+    "test": "bun test",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "node ../../scripts/check-publishable.mjs"
   },
@@ -42,7 +47,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@altananetwork/sdk": "^0.6.0",
+    "@altananetwork/sdk": "^0.7.1",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@napi-rs/keyring": "^1.1.0",
     "viem": "^2.21.0",

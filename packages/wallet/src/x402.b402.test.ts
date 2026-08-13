@@ -37,6 +37,15 @@ function makeSession(signer: Signer): Session {
   };
 }
 
+// The `resource` descriptor real b402 challenges put at the top of the 402
+// body, verbatim from the live CoinMarketCap response. Merchants reject an
+// envelope that omits it ("payment header resource is null").
+const REAL_RESOURCE = {
+  url: "https://pro-api.coinmarketcap.com/x402/v3/cryptocurrency/quotes/latest",
+  description: "Get the latest market quotes for one or more cryptocurrencies.",
+  mimeType: "application/json",
+};
+
 // Real permit2-exact option (USDT on BNB), verbatim from the live 402.
 const REAL_PERMIT2_REQ = {
   scheme: "exact",
@@ -185,4 +194,113 @@ test("signX402Payment handles a real B402 eip3009 requirement", async () => {
     }) as any,
   );
   expect(p.signature).toBe(expectedSig);
+});
+
+test("signX402Payment echoes the challenge `resource` (b402 rejects an envelope without it)", async () => {
+  const session = makeSession(createPrivateKeySigner());
+  const { payload } = await signX402Payment(
+    session,
+    { ...REAL_PERMIT2_REQ, x402Version: 2, resource: REAL_RESOURCE },
+    { now: 1_700_000_000, permit2Nonce: 42n },
+  );
+
+  expect(payload.resource).toEqual(REAL_RESOURCE);
+  // Transport-only, exactly like x402Version: it must not leak into `accepted`,
+  // which the facilitator compares against its own requirement.
+  expect((payload as any).accepted.resource).toBeUndefined();
+  expect((payload as any).accepted.mimeType).toBeUndefined();
+});
+
+test("signX402Payment normalizes a bare-string resource and a separate mimeType", async () => {
+  const session = makeSession(createPrivateKeySigner());
+  const { payload } = await signX402Payment(
+    session,
+    {
+      ...REAL_PERMIT2_REQ,
+      x402Version: 2,
+      resource: "https://merchant.example/premium",
+      mimeType: "application/json",
+    },
+    { now: 1_700_000_000, permit2Nonce: 42n },
+  );
+
+  expect(payload.resource).toEqual({
+    url: "https://merchant.example/premium",
+    mimeType: "application/json",
+  });
+});
+
+test("signX402Payment omits `resource` when the challenge quoted none", async () => {
+  const session = makeSession(createPrivateKeySigner());
+  const { payload } = await signX402Payment(
+    session,
+    { ...REAL_PERMIT2_REQ, x402Version: 2 },
+    { now: 1_700_000_000, permit2Nonce: 42n },
+  );
+
+  // Never invent a resource the merchant did not quote.
+  expect(payload.resource).toBeUndefined();
+  expect("resource" in payload).toBe(false);
+});
+
+test("permit2-exact carries permit2Authorization (b402 dialect) alongside permit+from", async () => {
+  const session = makeSession(createPrivateKeySigner());
+  const now = 1_700_000_000;
+  const { payload } = await signX402Payment(
+    session,
+    { ...REAL_PERMIT2_REQ, x402Version: 2 },
+    { now, permit2Nonce: 42n },
+  );
+
+  const p = payload.payload as any;
+  // b402 merchants parse this key; without it they answer "payment payload
+  // permit2 authorization or witness is null".
+  expect(p.permit2Authorization).toBeDefined();
+  // Same authorization, `from` nested inside instead of a sibling field.
+  expect(p.permit2Authorization.from.toLowerCase()).toBe(WALLET.toLowerCase());
+  expect(p.permit2Authorization.spender.toLowerCase()).toBe(SPENDER.toLowerCase());
+  expect(p.permit2Authorization.permitted).toEqual(p.permit.permitted);
+  expect(p.permit2Authorization.nonce).toBe(p.permit.nonce);
+  expect(p.permit2Authorization.deadline).toBe(p.permit.deadline);
+  expect(p.permit2Authorization.witness).toEqual(p.permit.witness);
+  // Additive: the Altana dialect still ships, so existing consumers keep working.
+  expect(p.permit).toBeDefined();
+  expect(p.from.toLowerCase()).toBe(WALLET.toLowerCase());
+});
+
+test("legacy plain permit2 also carries both dialects", async () => {
+  const session = makeSession(createPrivateKeySigner());
+  const { payload } = await signX402Payment(
+    session,
+    {
+      scheme: "permit2",
+      network: "bsc",
+      asset: USDT,
+      payTo: PAYTO,
+      maxAmountRequired: "500000000000000000",
+      extra: { spender: SPENDER },
+    },
+    { now: 1_700_000_000, permit2Nonce: 7n },
+  );
+
+  const p = payload.payload as any;
+  expect(p.permit.witness).toBeUndefined();
+  expect(p.permit2Authorization.witness).toBeUndefined();
+  expect(p.permit2Authorization.from.toLowerCase()).toBe(WALLET.toLowerCase());
+  expect(p.permit2Authorization.nonce).toBe(p.permit.nonce);
+});
+
+test("eip3009 payload gains no permit2 keys", async () => {
+  const session = makeSession(createPrivateKeySigner());
+  const { payload } = await signX402Payment(
+    session,
+    { ...REAL_EIP3009_REQ, x402Version: 2, resource: REAL_RESOURCE },
+    { now: 1_700_000_000, eip3009Nonce: NONCE },
+  );
+
+  const p = payload.payload as any;
+  expect(p.permit).toBeUndefined();
+  expect(p.permit2Authorization).toBeUndefined();
+  // The resource echo is rail-independent.
+  expect(payload.resource).toEqual(REAL_RESOURCE);
 });

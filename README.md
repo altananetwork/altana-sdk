@@ -2,15 +2,16 @@
 
 **Let your AI agents pay, invest, and operate. Safely.**
 
-Altana is noncustodial infrastructure that gives your agents real authority to transact — always inside limits you set and can revoke at any moment. Three pieces make it work: an Altana smart agentic wallet your agent acts from, the **KeyStore** permission registry that records exactly what each agent may do, and an intent relay that turns an approved intent into a real onchain transaction with gas handled for you.
+Altana is noncustodial infrastructure that gives your agents real authority to transact, always inside limits you set and can revoke at any moment. Three pieces make it work: an Altana smart agentic wallet your agent acts from, the **KeyStore** permission registry that records exactly what each agent may do, and an intent relay that turns an approved intent into a real onchain transaction with gas handled for you.
 
-Every permission lives in a neutral onchain registry — openly verifiable, revocable in one transaction, and accessible by any agent on any chain. That unlocks:
+Every permission lives in a neutral onchain registry: openly verifiable, revocable in one transaction, and accessible by any agent on any chain. That unlocks:
 
 - **Agent-to-agent verification.** Two agents acting on the same wallet can verify each other's authority onchain. No platform in between.
 - **Cross-app authorization.** Any DEX, orderbook, or protocol can read whether an agent is authorized, without integrating a specific wallet vendor.
 - **Instant revocation.** Change your mind at any point. Revoke a key in one transaction, and it takes effect before the next action.
 
-Live on mainnet across BNB Chain, Ethereum, and Base.
+Live on mainnet across BNB Chain, Ethereum, and Base. The KeyStore contracts
+were [audited by CertiK](https://docs.altana.network/security/audits).
 
 ## Install
 
@@ -68,12 +69,25 @@ await client.execute({
 });
 ```
 
-By default the session is **on-chain in KeyStore** the moment `grantSession` confirms — any tool can verify the authorization without going through Altana. (`register: false` grants an unlisted session for ephemeral keys; register it later with `registerSessionKey`.)
+By default the session is **on-chain in KeyStore** the moment `grantSession` confirms, so any tool can verify the authorization without going through Altana. (`register: false` grants an unlisted session for ephemeral keys; register it later with `registerSessionKey`.)
+
+## What else the SDK does
+
+Beyond wallets and sessions, `@altananetwork/sdk` also covers:
+
+- **[Paying for APIs with x402](https://docs.altana.network/sdk/x402).** A session key pays per request over the x402 standard, on the Permit2 or EIP-3009 rail, settled onchain from the smart wallet.
+- **[Hiring and settling agent jobs (ERC-8183)](https://docs.altana.network/sdk/erc8183).** Hire another agent, track job status, claim a refund, and settle on delivery.
+- **[Off-chain order signing](https://docs.altana.network/sdk/sign-order).** Session keys sign ERC-1271 authorizations that any contract can verify.
+- **[Reading balances](https://docs.altana.network/sdk/balances)**, including BEP-677 scaled-UI-amount tokens.
+- **[Syncing a key to an L2](https://docs.altana.network/sdk/sync-to-l2).** Prove KeyStore state to an OP Stack L2 so it can read the key without an L1 call.
+- **[BNB testnet](https://docs.altana.network/sdk/bnb-testnet)**, with a faucet helper for funding test accounts.
 
 ## Packages
 
-- [`@altananetwork/sdk`](./packages/wallet) — TypeScript SDK for creating wallets, granting sessions, and executing transactions.
-- [`@altananetwork/mcp`](./packages/mcp) — MCP server that lets AI hosts (Claude, Cursor, Continue) operate Altana wallets via tools and slash commands.
+- [`@altananetwork/sdk`](./packages/wallet): TypeScript SDK for creating wallets, granting sessions, and executing transactions.
+- [`@altananetwork/mcp`](./packages/mcp): MCP server that lets AI hosts (Claude, Cursor, Continue) operate Altana wallets via tools and slash commands.
+- [`@altananetwork/x402-server`](./packages/x402-server): the seller side of x402. Issue 402 challenges, verify `X-PAYMENT` headers (EOA and ERC-1271), and settle onchain, for agents charging per request.
+- [`@altananetwork/hypersigner-keystore-mcp`](./packages/hypersigner-keystore-mcp): non-custodial MCP server for KeyStore authorization. It verifies, registers, timeboxes and revokes keys without ever holding a key or signing anything, so any agent runtime can check authority.
 
 ## Documentation
 
@@ -81,13 +95,23 @@ Full docs, guides, and SDK reference: **[docs.altana.network](https://docs.altan
 
 - Getting started: [create a smart agentic wallet](https://docs.altana.network/getting-started/create-agentic-wallet) (passkey or private key), [connect an AI tool](https://docs.altana.network/getting-started/build-with-claude)
 - Concepts: [KeyStore](https://docs.altana.network/concepts/keystore), [sessions](https://docs.altana.network/concepts/sessions), [how Altana compares](https://docs.altana.network/concepts/comparison)
-- SDK reference: [`createWallet`](https://docs.altana.network/sdk/create-wallet), [`createPasskeyWallet`](https://docs.altana.network/sdk/create-passkey-wallet), [`grantSession`](https://docs.altana.network/sdk/grant-session), [`execute`](https://docs.altana.network/sdk/execute), [`revokeSession`](https://docs.altana.network/sdk/revoke-session), [`recoverFromPasskey`](https://docs.altana.network/sdk/recover-from-passkey)
+- SDK reference: [`createWallet`](https://docs.altana.network/sdk/create-wallet), [`createPasskeyWallet`](https://docs.altana.network/sdk/create-passkey-wallet), [`grantSession`](https://docs.altana.network/sdk/grant-session), [`execute`](https://docs.altana.network/sdk/execute), [`revokeSession`](https://docs.altana.network/sdk/revoke-session), [`recoverFromPasskey`](https://docs.altana.network/sdk/recover-from-passkey), [`balances`](https://docs.altana.network/sdk/balances)
+- Payments and jobs: [x402 (buyer)](https://docs.altana.network/sdk/x402), [x402 (seller)](https://docs.altana.network/sdk/x402-server), [ERC-8183 agent jobs](https://docs.altana.network/sdk/erc8183), [order signing](https://docs.altana.network/sdk/sign-order)
 - MCP server: [overview](https://docs.altana.network/mcp), [install](https://docs.altana.network/mcp/install), [tools](https://docs.altana.network/mcp/tools)
+
+## Security
+
+The KeyStore contracts were audited by CertiK (completed 15 July 2026). Scope,
+findings, and the verified deployments are on the
+[audit reports page](https://docs.altana.network/security/audits).
+
+Found a vulnerability? Please report it privately, not as a public issue. See
+[SECURITY.md](./SECURITY.md).
 
 ## Issues and feedback
 
-Found a bug, have a feature request, or want to discuss something? Open an issue on [GitHub Issues](https://github.com/altananetwork/sdk/issues).
+Found a bug, have a feature request, or want to discuss something? Open an issue on [GitHub Issues](https://github.com/altananetwork/altana-sdk/issues).
 
 ## License
 
-[GPL-3.0](./LICENSE)
+[Apache-2.0](./LICENSE)

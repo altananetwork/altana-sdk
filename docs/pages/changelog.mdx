@@ -1,0 +1,69 @@
+---
+title: Changelog
+description: What shipped in each release of @altananetwork/sdk and @altananetwork/mcp.
+---
+
+# Changelog
+
+These docs describe **`@altananetwork/sdk` 0.7.1** and **`@altananetwork/mcp` 0.7.1**, the current releases on npm.
+
+Both packages are pre-1.0. Minor versions may contain breaking changes. Pin an exact version if you need stability across installs.
+
+The canonical file is [`CHANGELOG.md`](https://github.com/altananetwork/altana-sdk/blob/main/CHANGELOG.md) in the SDK repo.
+
+## 0.7.1
+
+Released 12 August 2026. `@altananetwork/mcp` 0.7.1.
+
+**Added**
+
+- **[`grantSession`](/sdk/grant-session) returns the grant's transaction hash.** The result is now `GrantSessionResult`, a `Session` plus an optional `transactionHash`. Granting is the one call that charges the user a [Keystore](/concepts/keystore) registration fee, twice on a wallet's first admin action, and it was the only entry point that discarded the hash instead of forwarding it. [`execute`](/sdk/execute), `revokeSession` and `registerSessionKey` were already returning it.
+- **[`grant_session`](/mcp/tools) reports the transaction hash in the MCP server**, alongside the session details and `keyId`, matching every other write tool.
+
+Not a breaking change: `GrantSessionResult` is assignable everywhere a `Session` is expected. One thing to watch as a consumer, an explicit `const session: Session = ...` annotation narrows the type back down and hides the new field. Let the type be inferred, or annotate with `GrantSessionResult`.
+
+## 0.7.0
+
+Released 4 August 2026. `@altananetwork/mcp` 0.7.0.
+
+**Added**
+
+- **Skills registry discovery in the MCP server.** [`search_skills`](/mcp/tools) searches the registry by name, description, and tags. `get_skill` fetches a skill's full playbook, integrity checked against the registry's `sha256` before it is returned, so a tampered playbook is rejected rather than followed. See [Skills Registry](/skills).
+
+**Fixed**
+
+- **B402 envelope compatibility.** The [x402](/sdk/x402) client and server now speak the B402 envelope dialect on both sides, fixing payments against BNB-chain sellers that expect it.
+
+## 0.6.0
+
+Released 16 July 2026. `@altananetwork/mcp` 0.5.0.
+
+**Added**
+
+- **[ERC-8183 buyer support](/sdk/erc8183).** Hire BNB Agent Studio seller agents from an Altana wallet: escrow, job status, and settlement as one atomic relay intent. Available in the SDK and as the `erc8183_*` MCP tools.
+- **[`@altananetwork/x402-server`](/sdk/x402-server).** Seller-side x402/B402 package: payment challenges, verification, and on-chain settlement.
+
+## 0.5.0
+
+Released 14 July 2026. `@altananetwork/mcp` 0.4.0.
+
+**Added**
+
+- **[BNB testnet support](/concepts/networks/testnet)** (chain 97).
+- **Optional session-key Keystore registration.** [`grantSession`](/sdk/grant-session) takes a `register` flag, on by default; `registerSessionKey` registers a key later.
+- **[ERC-20 balances](/sdk/balances) with BEP-677 support.** Scaled-UI-amount tokens are detected via ERC-165 and their display value is scaled, leaving the raw on-chain amount untouched.
+
+## 0.4.0
+
+Released 14 July 2026. `@altananetwork/mcp` 0.3.0.
+
+**Added**
+
+- **[x402 payments](/sdk/x402).** Pay HTTP payment challenges with a session key over Permit2 or EIP-3009, including the B402 permit2-exact witness rail.
+- **[ERC-1271 signature verification](/concepts/off-chain-signatures)** for smart-account wallets.
+
+## 0.3.3
+
+Released 8 July 2026. First public release: agentic wallets, session keys, the [Keystore](/concepts/keystore) registry, the [MCP servers](/mcp), and this documentation site.
+
+Entries for 0.6.0 and earlier were reconstructed from commit history after the fact, so they summarize what shipped rather than itemizing every change.

@@ -48,6 +48,7 @@ export type {
   CallPermission,
   SpendPermission,
   GrantSessionOptions,
+  GrantSessionResult,
 } from "./internal/sessions.js";
 
 // Lazy KeyStore registration for sessions granted with `register: false`.
@@ -86,9 +87,11 @@ export {
   buildEip3009TypedData,
   encodeXPaymentHeader,
   networkToChainId,
+  normalizeResource,
   PERMIT2_ADDRESS,
 } from "./x402.js";
 export type {
+  X402Resource,
   X402Requirement,
   X402PaymentPayload,
   SignX402Options,

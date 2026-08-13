@@ -36,9 +36,20 @@ export type MerchantConfig = {
    * signer refuses windows over 600s.
    */
   maxTimeoutSeconds?: number;
-  /** Resource URL echoed in the challenge (Studio buyers echo it back). */
-  resource?: string;
+  /**
+   * What the resource is, echoed in the challenge so buyers can put it in the
+   * payment envelope. A bare URL string is accepted and normalized to the
+   * object form real b402 challenges use.
+   */
+  resource?: string | ChallengeResource;
   description?: string;
+};
+
+/** x402-v2 `resource` descriptor as it appears in a 402 body. */
+export type ChallengeResource = {
+  url: string;
+  description?: string;
+  mimeType?: string;
 };
 
 /** One `accepts[]` entry of the 402 challenge (x402 v2 / B402 wire shape). */
@@ -60,7 +71,7 @@ export type ChallengeAccept = {
 export type ChallengeBody = {
   x402Version: 2;
   error: string;
-  resource?: string;
+  resource?: ChallengeResource;
   description?: string;
   accepts: ChallengeAccept[];
 };

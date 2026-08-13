@@ -24,9 +24,9 @@ const session = await client.grantSession({
   permissions: {
     calls: [{ to: "0xUniswapRouter..." }],
     spend: [{
-      limit: 100_000_000n,        // 100 USDC (6 decimals)
+      limit: 50n * 10n ** 18n,    // 50 USDT. Note: 18 decimals on BNB Chain.
       period: "day",
-      token: "0xUSDC...",
+      token: "0xUSDT...",
     }],
   },
   expiry: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60, // 7 days
@@ -34,6 +34,10 @@ const session = await client.grantSession({
 
 // Hand `session` to whichever process runs the agent.
 ```
+
+:::warning[Spend limits are raw token units, and decimals differ by chain]
+`limit` is denominated in the token's smallest unit, so you need that token's decimals on that chain. USDT and USDC use **18 decimals on BNB Chain** and 6 on Ethereum. Writing `100_000_000n` for "100 USDT" on BNB sets a cap of 0.0000000001 USDT, and the agent's payments revert against a limit that looks generous.
+:::
 
 ## Registering the session key
 
@@ -53,7 +57,7 @@ await client.registerSessionKey({ wallet, signer: admin, session });
 ## Parameters
 
 ```ts
-client.grantSession(opts: ClientGrantSessionOptions): Promise<Session>;
+client.grantSession(opts: ClientGrantSessionOptions): Promise<GrantSessionResult>;
 
 type ClientGrantSessionOptions = {
   wallet: Wallet;
@@ -77,6 +81,11 @@ See [Sessions](/concepts/sessions) for the full permission shape reference.
 ## Returns
 
 ```ts
+type GrantSessionResult = Session & {
+  /** The transaction that carried the grant, when the relay reported one. */
+  transactionHash?: Hex;
+};
+
 type Session = {
   walletAddress: Address;
   signer: Signer;          // session key. Agent signs with this.
@@ -85,6 +94,21 @@ type Session = {
   expiry: number;
 };
 ```
+
+`GrantSessionResult` is a `Session`, so it goes anywhere a `Session` goes: `execute`, `revokeSession`, `registerSessionKey`, `signOrder`.
+
+`transactionHash` is the receipt for the grant. It is optional because the relay can confirm an intent without surfacing one, so check before you use it. It sits on the result rather than on `Session` deliberately: a session outlives the transaction that created it, and a hash carried around on a session you loaded from disk weeks later describes something that already happened.
+
+:::warning[Annotating the variable hides the hash]
+An explicit `Session` annotation narrows the type back down and drops the new field:
+
+```ts
+const session: Session = await client.grantSession({ ... });
+session.transactionHash;  // does not typecheck
+```
+
+Let the type be inferred, or annotate with `GrantSessionResult`.
+:::
 
 ## What lands onchain
 
@@ -100,3 +124,4 @@ Both happen atomically. There is no intermediate state where one exists without 
 - **Persist the full `Session` object**, not just `publicKey`. The agent needs `permissions + expiry` byte-exact at execute time.
 - If you generated the session signer (omitted `sessionSigner`), persist `session.signer` securely. Losing it means the session can no longer sign.
 - **`permissions.calls` omitted = unrestricted.** Always set both `calls` and `spend` unless you specifically want an open-scope session.
+- **This is the call that costs the user money.** It pays a one-time [Keystore](/concepts/keystore) registration fee, and on a wallet's very first admin action it pays that fee twice, because `initialRegisterKey` for the admin is prepended into the same userOp. Record `transactionHash` if you show users a history of what they were charged for. Pass `register: false` to skip the registration fee entirely.

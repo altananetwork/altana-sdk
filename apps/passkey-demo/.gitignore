@@ -1,2 +1,5 @@
 # real B402 test wallet keys — never commit
 .b402-state.json
+
+# timestamped raw exchanges from pay-real-b402 (regenerate by re-running it)
+results/
