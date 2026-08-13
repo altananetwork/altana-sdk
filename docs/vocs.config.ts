@@ -96,6 +96,7 @@ export default defineConfig({
   topNav: [
     { text: "Get started", link: "/getting-started/create-agentic-wallet" },
     { text: "Guides", link: "/use-cases" },
+    { text: "Explorer", link: "/explorer" },
     { text: "SDK", link: "/sdk" },
     { text: "MCP", link: "/mcp" },
     { text: "Skills", link: "/skills" },
@@ -174,6 +175,7 @@ export default defineConfig({
         { text: "Testnet", link: "/concepts/networks/testnet" },
       ],
     },
+    { text: "Keystore Explorer", link: "/explorer", items: [] },
     {
       text: "Security",
       items: [{ text: "Audit reports", link: "/security/audits" }],

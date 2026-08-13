@@ -1,0 +1,105 @@
+---
+title: Keystore Explorer
+description: A public observer for the Altana Keystore registry on mainnet and testnet. Look up any wallet or key, confirm a grant or a revocation landed, and share a verifiable link.
+---
+
+import { Eyebrow } from '../components/Eyebrow'
+
+<Eyebrow>Tools</Eyebrow>
+
+# Keystore Explorer
+
+The **Altana Keystore Explorer** is a public observer for the [Keystore](/concepts/keystore),
+the onchain registry that records which keys are authorized to act on each Altana wallet. It
+decodes the registry into accounts, keys, and state changes, so you can see every key, on
+every chain, in its current state.
+
+| Network | Explorer |
+| --- | --- |
+| Mainnet | [explorer.altana.network](https://explorer.altana.network) |
+| Testnet | [testnet.altana.network](https://testnet.altana.network) |
+
+Both instances carry a link to the other in the header, so you can switch between them without
+retyping an address.
+
+No account, API key, or wallet connection is needed. Everything it shows is public onchain state
+that anyone can read independently.
+
+## It is not a chain explorer
+
+BscScan and Etherscan show you transactions. The Keystore Explorer shows you **authorization**.
+
+Looking at the Keystore contract on BscScan tells you that a transaction hit it and what the
+calldata was. It does not tell you which wallet an agent belongs to, whether that agent's key is
+still valid right now, when it expires, or whether it was revoked. The Keystore Explorer answers
+those questions directly, and links out to BscScan or Etherscan for the underlying transaction
+when you want the raw view.
+
+Use both. They answer different questions.
+
+## What you can look up
+
+**Search.** The search box takes a wallet address, a key id, or a public key hash. A public key
+hash auto-derives the key id, so you can paste what your code has without hashing it yourself.
+
+**Account page** (`/account/<address>`). Everything the registry knows about one wallet: active
+key count, total keys, chains it has touched, and a table of its keys with type, state, chain,
+nonce, and last update. Below that is the wallet's own event history.
+
+**Key page** (`/key/<keyId>`). One key, in plain language. Whether it is active, revoked, or
+expired, whether it is an admin or a session key, the account that owns it, the chain it lives
+on, its expiry, and when it was registered.
+
+**Live activity.** A running feed of Keystore events across all indexed chains, filterable to
+registrations, revocations, or L2 cache syncs, with the transaction fee and chain for each.
+
+**Networks.** The source Keystore contracts and the L2 cache, each with its indexed head block
+and the time of its last event. Mainnet indexes BNB Smart Chain and Ethereum as sources, with
+Base as the L2 cache. Testnet indexes BNB Smart Chain Testnet and Ethereum Sepolia, with Base
+Sepolia as the cache. Contract addresses are listed in
+[Networks and addresses](/concepts/networks).
+
+## How to use it well
+
+**Confirm a grant landed.** After [`grantSession`](/sdk/grant-session), open your wallet's
+account page. The new session key should appear in the keys table with an expiry. If it is not
+there, the grant did not reach the chain you are looking at.
+
+**Confirm a revocation took effect.** After [`revokeSession`](/sdk/revoke-session), the key page
+flips to revoked. Revocation is monotonic, so a revoked key never comes back. This is the fastest
+way to prove to yourself, or to someone else, that authority is actually gone.
+
+**Tell revoked apart from expired.** These fail the same way in your code and mean very different
+things. Expired means the session simply ran out and can be granted again. Revoked means it was
+pulled deliberately. The key page names which one it is.
+
+**Debug cross-chain authorization.** If a key you granted on Ethereum is not being accepted on
+Base, filter the activity feed to L2 sync events and check the cache in the networks panel. A
+missing sync means you still need [`ensureKeyCached`](/sdk/sync-to-l2).
+
+**Share a link as evidence.** Account and key pages are plain URLs, so
+`explorer.altana.network/account/<your wallet>` is a self-contained, third-party-verifiable
+record of what your agent was authorized to do and when. That link is the right thing to hand a
+counterparty, a reviewer, or a hackathon judge who asks to see your onchain activity. It reads
+from the same public registry they could read themselves, so nothing about it depends on trusting
+you or Altana.
+
+## Where the explorer is not the answer
+
+The explorer is an indexed view built for humans. It is not the authority, and it is not an API.
+
+For anything your code depends on, read the Keystore contract directly. One free `isValidKey`
+call answers whether a key is authorized right now, from any RPC, with no indexing lag. See
+[Verify an agent's authority from anywhere](/use-cases/4-verify-agent-authority).
+
+Where a live node read is unavailable, a key page will say so and fall back to indexed history.
+Treat that state as informational and confirm with a contract read.
+
+## Related
+
+- [Keystore](/concepts/keystore): what the registry stores and why it is public.
+- [Sessions](/concepts/sessions): what a session key is and how its permissions are scoped.
+- [Verify an agent's authority from anywhere](/use-cases/4-verify-agent-authority): the
+  programmatic equivalent of a key page lookup.
+- [Networks and addresses](/concepts/networks): the deployed Keystore contracts behind both
+  explorer instances.
