@@ -10,7 +10,8 @@ import { Eyebrow } from '../components/Eyebrow'
 # Keystore Explorer
 
 The **Altana Keystore Explorer** is a public observer for the [Keystore](/concepts/keystore),
-the onchain registry that records which keys are authorized to act on each Altana wallet. It
+the onchain registry that records which keys are authorized to act on each Altana Smart Agentic
+Wallet. It
 decodes the registry into accounts, keys, and state changes, so you can see every key, on
 every chain, in its current state.
 
@@ -24,18 +25,6 @@ retyping an address.
 
 No account, API key, or wallet connection is needed. Everything it shows is public onchain state
 that anyone can read independently.
-
-## It is not a chain explorer
-
-BscScan and Etherscan show you transactions. The Keystore Explorer shows you **authorization**.
-
-Looking at the Keystore contract on BscScan tells you that a transaction hit it and what the
-calldata was. It does not tell you which wallet an agent belongs to, whether that agent's key is
-still valid right now, when it expires, or whether it was revoked. The Keystore Explorer answers
-those questions directly, and links out to BscScan or Etherscan for the underlying transaction
-when you want the raw view.
-
-Use both. They answer different questions.
 
 ## What you can look up
 
