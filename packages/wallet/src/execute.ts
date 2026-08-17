@@ -7,6 +7,7 @@ import {
   waitForCalls,
   type Call,
   type KeyDescriptor,
+  type RelayReceipt,
 } from "./internal/relay.js";
 import type { ExecuteResult, Wallet } from "./internal/types.js";
 import type { Session } from "./internal/sessions.js";
@@ -48,6 +49,35 @@ export async function execute(
   callsOrOpts?: Call | readonly Call[] | ExecuteOptions,
   maybeOpts?: ExecuteOptions,
 ): Promise<ExecuteResult> {
+  const { receipts: _receipts, ...result } = await executeWithReceipts(
+    walletOrSession as Wallet,
+    signerOrCalls as Signer,
+    callsOrOpts as readonly Call[],
+    maybeOpts as ExecuteOptions,
+  );
+  return result;
+}
+
+/** An ExecuteResult plus the relay's status receipts, when it reported any. */
+export type ExecuteWithReceiptsResult = ExecuteResult & {
+  receipts?: readonly RelayReceipt[];
+};
+
+/**
+ * `execute`, but keeping the relay's status receipts on the result.
+ *
+ * Internal (not exported from the package index): the receipts are a raw
+ * relay shape, and only flows that must recover a value from an event —
+ * `registerErc8004Agent` reading its minted agentId out of `Registered` — need
+ * them. Everything else uses `execute`, whose result stays a plain
+ * ExecuteResult.
+ */
+export async function executeWithReceipts(
+  walletOrSession: Wallet | Session,
+  signerOrCalls: Signer | Call | readonly Call[],
+  callsOrOpts?: Call | readonly Call[] | ExecuteOptions,
+  maybeOpts?: ExecuteOptions,
+): Promise<ExecuteWithReceiptsResult> {
   const isSessionCall = isSession(walletOrSession);
 
   const walletAddress = isSessionCall
@@ -97,6 +127,7 @@ export async function execute(
     callsId,
     status: result.status as ExecuteResult["status"],
     ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
+    ...(result.receipts ? { receipts: result.receipts } : {}),
   };
 }
 

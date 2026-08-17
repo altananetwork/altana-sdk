@@ -15,6 +15,7 @@
  *   - Operate:   wallet_execute, grant_session, revoke_session, session_execute
  *   - Pay:       x402_request
  *   - Jobs:      erc8183_create_job, erc8183_job_status, erc8183_settle
+ *   - Agent ID:  erc8004_register, erc8004_set_agent_uri, erc8004_show
  *   - Skills:    search_skills, get_skill
  *
  * Not every tool has a slash command; see docs.altana.network/mcp/tools.
@@ -35,6 +36,11 @@ import {
   getErc8183Job,
   getErc8183DeliverableUrl,
   settleErc8183Job,
+  getErc8004Agent,
+  setErc8004AgentUri,
+  decodeErc8004AgentUri,
+  encodeErc8004AgentUri,
+  withErc8004Registration,
   ETHEREUM,
   BNB,
   BNB_TESTNET,
@@ -58,6 +64,13 @@ import {
   type SessionPermissions,
 } from "./sessions.js";
 import { searchSkills, getSkill } from "./skills.js";
+import {
+  assertErc8004Permissions,
+  buildRegistrationFile,
+  runErc8004Registration,
+  toMetadataEntries,
+  type MetadataInput,
+} from "./erc8004.js";
 
 // ---------- network ---------------------------------------------------------
 
@@ -1178,6 +1191,205 @@ tool(
               status: result.status,
               transactionHash: result.transactionHash,
             },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
+  },
+);
+
+// ---------- ERC-8004 (on-chain agent identity) ------------------------------
+
+const METADATA_SCHEMA = z
+  .array(z.object({ key: z.string(), value: z.string() }))
+  .optional()
+  .describe("Extra on-chain metadata entries; values are hex-encoded for you");
+
+// erc8004_register — mint the agent's identity and publish its record.
+tool(
+  "erc8004_register",
+  {
+    title: "Register an agent identity (ERC-8004)",
+    description:
+      "Give this wallet's agent an on-chain identity in the ERC-8004 registry, so " +
+      "buyers and other agents can discover and verify it. Runs the full two-phase " +
+      "registration: mint the identity token, then write back the registration " +
+      "record with the assigned agentId embedded. The session key must have been " +
+      "granted the ERC-8004 registry permissions; the tool checks that before " +
+      "spending gas. If the mint lands but the write-back fails, the agentId is " +
+      "still returned — repair with erc8004_set_agent_uri, never by registering again.",
+    inputSchema: {
+      sessionName: z.string(),
+      name: z.string().describe("The agent's display name"),
+      description: z.string().describe("What the agent does"),
+      endpoint: z.string().describe("The agent's service URL (for A2A, its agent-card URL)"),
+      serviceName: z.string().optional().describe("Protocol name; defaults to \"A2A\""),
+      version: z.string().optional(),
+      image: z.string().optional(),
+      metadata: METADATA_SCHEMA,
+    },
+  },
+  async ({
+    sessionName,
+    metadata,
+    ...fields
+  }: {
+    sessionName: string;
+    name: string;
+    description: string;
+    endpoint: string;
+    serviceName?: string;
+    version?: string;
+    image?: string;
+    metadata?: MetadataInput[];
+  }) => {
+    const { stored, session } = await sessionFromName(sessionName);
+    assertErc8004Permissions(sessionName, stored.permissions, NETWORK.chainId);
+
+    const outcome = await runErc8004Registration({
+      session,
+      chainId: NETWORK.chainId,
+      opts: { network: NETWORK },
+      file: buildRegistrationFile(fields),
+      metadata: toMetadataEntries(metadata),
+    });
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            { sessionName, walletAddress: stored.walletAddress, ...outcome },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
+  },
+);
+
+// erc8004_set_agent_uri — rewrite an existing agent's registration record.
+tool(
+  "erc8004_set_agent_uri",
+  {
+    title: "Update an agent's ERC-8004 record",
+    description:
+      "Rewrite the registration record of an ERC-8004 agent this wallet owns — " +
+      "use it to change the agent's endpoint or description, or to repair a " +
+      "registration whose write-back failed. Pass either a ready-made agentUri or " +
+      "the structured fields (name/description/endpoint), in which case the record " +
+      "is rebuilt with agentId embedded. Selector-scoped, not agent-scoped: a " +
+      "session that can do this can rewrite any agent the wallet owns.",
+    inputSchema: {
+      sessionName: z.string(),
+      agentId: z.string().describe("The on-chain agent id"),
+      agentUri: z.string().optional().describe("A ready-made agent URI; overrides the fields below"),
+      name: z.string().optional(),
+      description: z.string().optional(),
+      endpoint: z.string().optional(),
+      serviceName: z.string().optional(),
+      version: z.string().optional(),
+      image: z.string().optional(),
+    },
+  },
+  async ({
+    sessionName,
+    agentId,
+    agentUri,
+    name,
+    description,
+    endpoint,
+    serviceName,
+    version,
+    image,
+  }: {
+    sessionName: string;
+    agentId: string;
+    agentUri?: string;
+    name?: string;
+    description?: string;
+    endpoint?: string;
+    serviceName?: string;
+    version?: string;
+    image?: string;
+  }) => {
+    const { stored, session } = await sessionFromName(sessionName);
+    assertErc8004Permissions(sessionName, stored.permissions, NETWORK.chainId);
+
+    const id = BigInt(agentId);
+    let uri = agentUri;
+    if (!uri) {
+      if (!name || !description || !endpoint) {
+        throw new Error(
+          "erc8004_set_agent_uri needs either agentUri, or all of name, description and endpoint " +
+            "to rebuild the record.",
+        );
+      }
+      const file = buildRegistrationFile({
+        name,
+        description,
+        endpoint,
+        ...(serviceName ? { serviceName } : {}),
+        ...(version ? { version } : {}),
+        ...(image ? { image } : {}),
+      });
+      uri = encodeErc8004AgentUri(withErc8004Registration(file, id, NETWORK.chainId));
+    }
+
+    const result = await setErc8004AgentUri(session, { agentId: id, agentUri: uri }, { network: NETWORK });
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              sessionName,
+              walletAddress: stored.walletAddress,
+              agentId,
+              agentUri: uri,
+              status: result.status,
+              transactionHash: result.transactionHash,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
+  },
+);
+
+// erc8004_show — read-only: who owns an agent id, and what it claims to be.
+tool(
+  "erc8004_show",
+  {
+    title: "Read an ERC-8004 agent identity",
+    description:
+      "Read an ERC-8004 agent's on-chain owner and registration record by agent id. " +
+      "Decodes the record when it is a base64 data URI (what this SDK and BNB Agent " +
+      "Studio write); for an agent that published an https record instead, the raw " +
+      "URI is returned for you to fetch. There is no reverse lookup — you need the id.",
+    inputSchema: { agentId: z.string() },
+  },
+  async ({ agentId }: { agentId: string }) => {
+    const { owner, agentUri } = await getErc8004Agent(NETWORK, BigInt(agentId));
+    let registrationFile: unknown;
+    let decodeError: string | undefined;
+    try {
+      registrationFile = decodeErc8004AgentUri(agentUri);
+    } catch (e) {
+      decodeError = (e as Error).message;
+    }
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            { agentId, owner, agentUri, registrationFile, decodeError },
             null,
             2,
           ),

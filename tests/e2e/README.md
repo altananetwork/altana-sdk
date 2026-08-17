@@ -26,12 +26,36 @@ for reliable runs:
 
 ```bash
 # .env at repo root (gitignored)
-BSC_FORK_RPC_URL=https://.../<KEY>   # fork-x402, fork-x402-witness, fork-erc1271, fork-bep677
-BASE_FORK_RPC_URL=https://.../<KEY>  # fork-eip3009
+BSC_FORK_RPC_URL=https://.../<KEY>          # fork-x402, fork-x402-witness, fork-erc1271, fork-bep677
+BASE_FORK_RPC_URL=https://.../<KEY>         # fork-eip3009
+BSC_TESTNET_FORK_RPC_URL=https://.../<KEY>  # fork-erc8004, fork-erc8183
 ```
 
-Both are set as GitHub Actions secrets of the same names and passed to the
+All three are set as GitHub Actions secrets of the same names and passed to the
 "On-chain fork tests" job.
+
+## ERC-8004: what runs where
+
+`fork-erc8004.ts` is in `fork:all`, so it runs on every CI build. It covers the
+registry against real bytecode (register, the `setAgentURI` owner gate, the
+two-phase record), the `_safeMint` receiver check for an EIP-7702 account
+delegated to the relay's real account proxy, and the selector-scoped permission
+policy — authorizing a session key on a delegated account exactly as a grant
+does, then asking the account's own `canExecute` what that key may do.
+
+`live-erc8004-testnet.ts` adds only the **relay leg**: a session-signed intent
+for a `signature`-scoped key going through `wallet_prepareCalls` →
+`wallet_sendPreparedCalls`. It cannot run unattended, and not for want of
+wiring — the BSC-testnet relay rejects an unfunded wallet at `prepareCalls`, and
+its faucet (`fundNative`) is a no-op that returns a hash for a transfer to `0x0`
+and moves nothing. So it needs a manually funded admin EOA (~0.05 tBNB):
+
+```bash
+ALTANA_TESTNET_ADMIN_KEY=0x… bun run --filter '@altananetwork/e2e' live:erc8004-testnet
+```
+
+Wire that key in as a secret to make it a release gate; without it the script
+fails loudly rather than skipping silently.
 
 ## Run
 
