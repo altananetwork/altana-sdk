@@ -96,6 +96,7 @@ export default defineConfig({
   topNav: [
     { text: "Get started", link: "/getting-started/create-agentic-wallet" },
     { text: "Guides", link: "/use-cases" },
+    { text: "Explorer", link: "/explorer" },
     { text: "SDK", link: "/sdk" },
     { text: "MCP", link: "/mcp" },
     { text: "Skills", link: "/skills" },
@@ -105,7 +106,7 @@ export default defineConfig({
     {
       text: "Get Started",
       items: [
-        { text: "Create an agentic wallet", link: "/getting-started/create-agentic-wallet" },
+        { text: "Create a smart agentic wallet", link: "/getting-started/create-agentic-wallet" },
         { text: "Passkey wallet quickstart", link: "/getting-started/passkey" },
         { text: "Private key wallet quickstart", link: "/getting-started/private-key" },
         { text: "Connect an AI tool", link: "/getting-started/build-with-claude" },
@@ -174,6 +175,7 @@ export default defineConfig({
         { text: "Testnet", link: "/concepts/networks/testnet" },
       ],
     },
+    { text: "Keystore Explorer", link: "/explorer", items: [] },
     {
       text: "Security",
       items: [{ text: "Audit reports", link: "/security/audits" }],

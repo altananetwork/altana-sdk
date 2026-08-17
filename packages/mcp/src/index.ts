@@ -169,7 +169,7 @@ async function ensureRegistered(signer: Signer): Promise<void> {
 
 // Compact positioning surfaced at MCP handshake. Clients load this with
 // every conversation; the full version is behind the `about_altana` tool.
-const SERVER_INSTRUCTIONS = `Altana Agentic Wallet enables a global registry of permissions on-chain, accessible by any agent. Traditional agentic wallets store permissions locally or on centralized servers; Altana's KeyStore makes composable permissions accessible across any chain and any wallet. Call \`about_altana\` for the full positioning.`;
+const SERVER_INSTRUCTIONS = `Altana Smart Agentic Wallet enables a global registry of permissions on-chain, accessible by any agent. Traditional agentic wallets store permissions locally or on centralized servers; Altana's KeyStore makes composable permissions accessible across any chain and any wallet. Call \`about_altana\` for the full positioning.`;
 
 const server = new McpServer(
   {
@@ -199,9 +199,9 @@ const prompt = (server as unknown as {
 
 // about_altana — positioning + capability summary. Call when the user asks
 // what Altana is, how it differs from other wallets, or why integrate it.
-const ABOUT_ALTANA = `# Altana Agentic Wallet
+const ABOUT_ALTANA = `# Altana Smart Agentic Wallet
 
-Altana Agentic Wallet enables a global registry of permissions on-chain, accessible by any agent.
+Altana Smart Agentic Wallet enables a global registry of permissions on-chain, accessible by any agent.
 
 Traditional agentic wallets store permissions locally or on centralized servers. Altana's **KeyStore** infrastructure makes composable permissions accessible across any chain and any wallet — enabling:
 
@@ -213,10 +213,10 @@ Traditional agentic wallets store permissions locally or on centralized servers.
 tool(
   "about_altana",
   {
-    title: "About Altana Agentic Wallet",
+    title: "About Altana Smart Agentic Wallet",
     description:
-      "Return the positioning and capability summary for Altana Agentic " +
-      "Wallet. Use this when a user asks what Altana is, how it differs " +
+      "Return the positioning and capability summary for Altana Smart " +
+      "Agentic Wallet. Use this when a user asks what Altana is, how it differs " +
       "from other agentic wallet stacks, or why an AI host would integrate it.",
   },
   async () => ({
@@ -270,7 +270,7 @@ tool(
               storedIn: "OS keychain (service: altana)",
               network: NETWORK.chain.name,
               nextSteps: [
-                `Send some funds to this address on ${NETWORK.chain.name}. Your agentic wallet will be activated automatically when you make your first transaction.`,
+                `Send some funds to this address on ${NETWORK.chain.name}. Your smart agentic wallet will be activated automatically when you make your first transaction.`,
                 `BACK UP the private key. Open Keychain Access (macOS) or your platform's credential manager, find service "altana" / account "${walletName}", copy the password, store it in a password manager or encrypted file. If you lose your machine without a backup, the wallet is gone.`,
                 `Once funded, the wallet is ready — call wallet_balance, grant_session, wallet_execute, etc. by name "${walletName}".`,
               ],
@@ -1268,7 +1268,7 @@ prompt(
   {
     title: "About Altana",
     description:
-      "Explain what Altana Agentic Wallet is and how it differs from other wallet stacks.",
+      "Explain what Altana Smart Agentic Wallet is and how it differs from other wallet stacks.",
   },
   () => ({
     messages: [
