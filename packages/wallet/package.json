@@ -1,7 +1,7 @@
 {
   "name": "@altananetwork/sdk",
   "version": "0.7.1",
-  "description": "TypeScript SDK for creating non-custodial agentic wallets with on-chain session-key delegation.",
+  "description": "TypeScript SDK for creating non-custodial smart agentic wallets with on-chain session-key delegation.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",

@@ -1,7 +1,7 @@
 # @altananetwork/mcp
 
 MCP server that lets AI hosts (Claude Code, Claude Desktop, Cursor, Continue, any MCP
-client) operate [Altana](https://altana.network) agentic wallets: creating wallets, granting
+client) operate [Altana](https://altana.network) smart agentic wallets: creating wallets, granting
 scoped session keys, executing transactions, and verifying authority on-chain, **without
 ever custodying private keys**. Keys are resolved by name from the OS keychain (preferred),
 a local file, or env vars, and never appear in tool arguments or results.

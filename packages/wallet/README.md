@@ -1,6 +1,6 @@
 # @altananetwork/sdk
 
-TypeScript SDK for creating non-custodial agentic wallets with on-chain session-key delegation.
+TypeScript SDK for creating non-custodial smart agentic wallets with on-chain session-key delegation.
 
 ```bash
 npm install @altananetwork/sdk viem

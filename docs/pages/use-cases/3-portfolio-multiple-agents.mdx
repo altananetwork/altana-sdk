@@ -17,7 +17,7 @@ import { UseCaseMeta } from '../../components/UseCaseMeta'
   { label: "Goal", value: "I want a portfolio wallet run by more than one agent, each with its own job, all transparent and revocable." },
   { label: "Who it's for", value: "Developers running several agents on one wallet, each with a different job and its own limits." },
   { label: "What you'll use", value: <><code>grantSession</code> twice with complementary scopes, <code>execute</code>, the Keystore read for mutual verification, <code>revokeSession</code>.</> },
-  { label: "Prerequisites", value: <>An agentic wallet set up in <a href="/use-cases/1-agent-wallet-policy">Give an agent a wallet and a policy</a>, funded on BNB.</> },
+  { label: "Prerequisites", value: <>A smart agentic wallet set up in <a href="/use-cases/1-agent-wallet-policy">Give an agent a wallet and a policy</a>, funded on BNB.</> },
 ]} />
 
 Two agents share one wallet, each with its own scoped session. You grant them separately, they can verify each other, and you can revoke either one without touching the other.
