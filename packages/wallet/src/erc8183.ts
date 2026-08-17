@@ -301,11 +301,19 @@ export async function hireErc8183Agent(
 
   // Post-check: confirm the predicted jobId is ours and FUNDED (a concurrent
   // createJob in the same block would have reverted the batch — but verify).
-  const job = await getErc8183Job(network, jobId);
-  if (job.client.toLowerCase() !== walletAddress.toLowerCase()) {
-    throw new Error(
-      `erc8183: job ${jobId} is not ours after funding (client=${job.client}) — a concurrent job stole the predicted id; retry.`,
-    );
+  // Only meaningful once the batch has actually landed on-chain: with
+  // opts.noWait, execute() returns PENDING immediately after the relay
+  // *accepts* the intent, before it's mined, so getErc8183Job would read
+  // pre-inclusion state and this check would false-positive on every call.
+  // Skip it for PENDING; the caller is responsible for verifying once the
+  // callsId they got back has confirmed.
+  if (result.status === "CONFIRMED") {
+    const job = await getErc8183Job(network, jobId);
+    if (job.client.toLowerCase() !== walletAddress.toLowerCase()) {
+      throw new Error(
+        `erc8183: job ${jobId} is not ours after funding (client=${job.client}) — a concurrent job stole the predicted id; retry.`,
+      );
+    }
   }
   return { ...result, jobId, provider: params.provider, budget: params.budget, expiredAt };
 }

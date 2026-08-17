@@ -5,18 +5,23 @@
  *    atomic-bundle revert there would make the key unrevocable)
  *  - registerSessionKey (lazy registry upgrade; idempotent)
  *  - grantSession forwarding the grant's transaction hash to its caller
+ *  - hireErc8183Agent's post-funding check only firing once confirmed (see
+ *    the dedicated section at the bottom of this file)
  *
  * The relay/keystore boundary is mocked ONCE for this file via delegating
  * holders that DEFAULT TO THE REAL implementations: bun shares one module
  * registry across all test files (and loads files before running any tests),
  * so a static module mock would leak into other suites (it broke
- * client.balances.test.ts). Stubs are switched in only inside this file's
- * beforeEach and switched back in afterAll.
+ * client.balances.test.ts — and would again if a second file called
+ * mock.module on the same path, which is why the erc8183 noWait tests live
+ * here instead of in their own file). Stubs are switched in only inside this
+ * file's beforeEach and switched back in afterAll.
  */
 import { test, expect, mock, beforeEach, afterAll } from "bun:test";
 import { decodeFunctionData, keccak256, type Address, type Hex } from "viem";
 import { BNB } from "./config.js";
 import { keyHashForSigner } from "./internal/erc1271.js";
+import { hireErc8183Agent } from "./erc8183.js";
 import type { Signer } from "./internal/signer.js";
 import type { Session } from "./internal/sessions.js";
 
@@ -342,4 +347,93 @@ test("grant omits transactionHash entirely when the relay reports none", async (
   // Absent, not present-and-undefined. toBeUndefined() would pass for both, and
   // the key must not show up in a JSON round-trip of a persisted Session.
   expect("transactionHash" in session).toBe(false);
+});
+
+// =================== hireErc8183Agent noWait post-check ======================
+//
+// With opts.noWait, execute() returns PENDING right after the relay *accepts*
+// the intent — before it's mined. hireErc8183Agent's post-funding check reads
+// getErc8183Job right after execute() returns, so on the noWait path it used
+// to read pre-inclusion chain state and throw "job is not ours" on every
+// call, even when the funding would go on to succeed. The check must only
+// run once the batch has actually confirmed.
+
+const HIRE_WALLET = { address: "0x2222222222222222222222222222222222222222" as Address };
+let jobClientOnChain: Address;
+let getJobCalled: boolean;
+
+function mockErc8183Chain() {
+  jobClientOnChain = "0x0000000000000000000000000000000000000000";
+  getJobCalled = false;
+  buildPublicClientImpl = () => ({
+    readContract: async ({ functionName }: { functionName: string }) => {
+      if (functionName === "disputeWindow") return 3600n;
+      if (functionName === "jobCounter") return 0n;
+      if (functionName === "getJob") {
+        getJobCalled = true;
+        return {
+          id: 1n,
+          client: jobClientOnChain,
+          provider: "0x0000000000000000000000000000000000000000",
+          evaluator: "0x0000000000000000000000000000000000000000",
+          description: "",
+          budget: 0n,
+          expiredAt: 0n,
+          status: 1,
+          hook: "0x0000000000000000000000000000000000000000",
+          submittedAt: 0n,
+          deliverable: `0x${"00".repeat(32)}` as Hex,
+        };
+      }
+      throw new Error(`unexpected functionName ${functionName}`);
+    },
+  });
+}
+
+test("hireErc8183Agent noWait:true returns PENDING without reading pre-inclusion chain state", async () => {
+  mockErc8183Chain(); // jobClientOnChain stays zero — as it would be pre-inclusion
+  const admin = createPrivateKeySigner();
+
+  const result = await hireErc8183Agent(
+    HIRE_WALLET,
+    admin,
+    { provider: HIRE_WALLET.address, task: "test", budget: 1n },
+    { network: BNB, noWait: true },
+  );
+
+  expect(result.status).toBe("PENDING");
+  // The bug: this used to run unconditionally and throw here.
+  expect(getJobCalled).toBe(false);
+});
+
+test("hireErc8183Agent default (waits) still verifies the job and throws on a real mismatch", async () => {
+  mockErc8183Chain();
+  jobClientOnChain = "0x9999999999999999999999999999999999999999"; // someone else's job
+  const admin = createPrivateKeySigner();
+
+  await expect(
+    hireErc8183Agent(
+      HIRE_WALLET,
+      admin,
+      { provider: HIRE_WALLET.address, task: "test", budget: 1n },
+      { network: BNB },
+    ),
+  ).rejects.toThrow(/is not ours/);
+  expect(getJobCalled).toBe(true);
+});
+
+test("hireErc8183Agent default (waits) succeeds and verifies when the job matches", async () => {
+  mockErc8183Chain();
+  jobClientOnChain = HIRE_WALLET.address;
+  const admin = createPrivateKeySigner();
+
+  const result = await hireErc8183Agent(
+    HIRE_WALLET,
+    admin,
+    { provider: HIRE_WALLET.address, task: "test", budget: 1n },
+    { network: BNB },
+  );
+
+  expect(result.status).toBe("CONFIRMED");
+  expect(getJobCalled).toBe(true);
 });
