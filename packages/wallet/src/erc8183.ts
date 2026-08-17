@@ -246,7 +246,11 @@ export type HireAgentResult = ExecuteResult & {
 /**
  * Hire an ERC-8183 seller: fund a job against `provider` for `budget` $U in
  * ONE atomic relay intent (five calls batched). Returns once the job is
- * FUNDED on-chain.
+ * FUNDED on-chain — unless `opts.noWait` is set, in which case it resolves
+ * as soon as the relay accepts the intent (`result.status === "PENDING"`)
+ * and the FUNDED/ownership check below is skipped, since the batch isn't
+ * mined yet to check. Callers using `noWait` are responsible for verifying
+ * (e.g. via `getErc8183Job`) once their `callsId` confirms.
  *
  * Overloads mirror `execute`: admin path (wallet + signer) or session path.
  */
