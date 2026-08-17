@@ -9,7 +9,7 @@ import { Eyebrow } from '../../components/Eyebrow'
 
 # Tools
 
-The Altana MCP server exposes 17 tools. AI hosts call them by name. Eleven of them also have a slash command for users to invoke directly (e.g. `/altana-agentic-wallet:create-wallet`); the rest are host-callable only. See [Slash command equivalents](#slash-command-equivalents).
+The Altana MCP server exposes 20 tools. AI hosts call them by name. Eleven of them also have a slash command for users to invoke directly (e.g. `/altana-agentic-wallet:create-wallet`); the rest are host-callable only. See [Slash command equivalents](#slash-command-equivalents).
 
 ## Discovery
 
@@ -51,6 +51,16 @@ The Altana MCP server exposes 17 tools. AI hosts call them by name. Eleven of th
 | `erc8183_job_status` | Reads a job's on-chain state; once the seller submits, resolves and fetches the deliverable. |
 | `erc8183_settle` | Releases the escrow to the seller after the dispute window (`approve`), or contests inside it (`dispute`). |
 
+## Agent identity
+
+On-chain [ERC-8004](/sdk/erc8004) identity, so an agent on an Altana wallet is discoverable by buyers and other agents. The session must have been granted `erc8004RegisterPermissions(chainId)`; the write tools check that client-side before spending gas.
+
+| Tool | Purpose |
+|---|---|
+| `erc8004_register` | Mints the agent's identity and publishes its registration record, running both phases (mint, then write the assigned `agentId` back into the record). If the mint lands but the write-back fails, the `agentId` is still returned with repair instructions — registering again would mint a second identity. |
+| `erc8004_set_agent_uri` | Rewrites the record of an agent the wallet owns — changing its endpoint, or repairing a partial registration. Takes a ready-made `agentUri` or the structured fields. |
+| `erc8004_show` | Reads an agent's owner and registration record by id, decoding the record when it is a base64 data URI. |
+
 ## Skills
 
 Certified protocol playbooks from the [Altana skills registry](https://github.com/altananetwork/skills). The registry URL defaults to the public repo's main branch and is overridable with the `ALTANA_SKILLS_INDEX_URL` environment variable.
@@ -62,7 +72,7 @@ Certified protocol playbooks from the [Altana skills registry](https://github.co
 
 ## Slash command equivalents
 
-Eleven of the 17 tools have a matching prompt, exposed as a slash command. One further command, `demos`, lists demo flows and maps to no tool:
+Eleven of the 20 tools have a matching prompt, exposed as a slash command. One further command, `demos`, lists demo flows and maps to no tool:
 
 | Slash command | Calls |
 |---|---|
@@ -79,4 +89,4 @@ Eleven of the 17 tools have a matching prompt, exposed as a slash command. One f
 | `/altana-agentic-wallet:send-tx` | `wallet_execute` |
 | `/altana-agentic-wallet:demos` | listing of available demo flows |
 
-Six tools have no slash command: `x402_request`, `erc8183_create_job`, `erc8183_job_status`, `erc8183_settle`, `search_skills`, and `get_skill`. Ask the host to use them by name instead; typing `/altana-agentic-wallet:x402-request` will not resolve.
+Nine tools have no slash command: `x402_request`, `erc8183_create_job`, `erc8183_job_status`, `erc8183_settle`, `erc8004_register`, `erc8004_set_agent_uri`, `erc8004_show`, `search_skills`, and `get_skill`. Ask the host to use them by name instead; typing `/altana-agentic-wallet:x402-request` will not resolve.

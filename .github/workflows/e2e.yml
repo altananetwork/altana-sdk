@@ -90,8 +90,11 @@ jobs:
           bun run --filter '@altananetwork/sdk' build
           bun run --filter '@altananetwork/x402-server' build
 
-      - name: Run fork tests (ERC-1271, permit2, permit2-witness, eip3009)
+      - name: Run fork tests (ERC-1271, permit2, permit2-witness, eip3009, ERC-8004)
         env:
           BSC_FORK_RPC_URL: ${{ secrets.BSC_FORK_RPC_URL }}
           BASE_FORK_RPC_URL: ${{ secrets.BASE_FORK_RPC_URL }}
+          # fork-erc8004 forks BSC *testnet* (the ERC-8004 registry deployment
+          # it exercises). Falls back to a public node when the secret is unset.
+          BSC_TESTNET_FORK_RPC_URL: ${{ secrets.BSC_TESTNET_FORK_RPC_URL }}
         run: bun run --filter '@altananetwork/e2e' fork:all
