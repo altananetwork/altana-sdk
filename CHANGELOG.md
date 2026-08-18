@@ -12,7 +12,7 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 > reconstructed from commit history after the fact, so they summarize what
 > shipped rather than itemizing every change.
 
-## [Unreleased]
+## [0.8.0] - Unreleased
 
 ### Added
 
