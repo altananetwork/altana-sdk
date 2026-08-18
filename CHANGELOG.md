@@ -145,6 +145,7 @@ Let the type be inferred, or annotate with `GrantSessionResult`.
 First public release: agentic wallets, session keys, the Keystore registry,
 the MCP servers, and the documentation site.
 
+[0.8.0]: https://github.com/altananetwork/altana-sdk/releases
 [0.7.1]: https://github.com/altananetwork/altana-sdk/releases
 [0.7.0]: https://github.com/altananetwork/altana-sdk/releases
 [0.6.0]: https://github.com/altananetwork/altana-sdk/releases
