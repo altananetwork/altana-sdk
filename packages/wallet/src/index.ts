@@ -135,3 +135,24 @@ export type {
   HireCallsInput,
   JobStatusName,
 } from "./erc8183.js";
+
+// ERC-8004 agent identity — mint and maintain an agent's on-chain identity.
+// The registry address is the one already in ERC8183_ADDRESSES.registry.
+export {
+  buildErc8004RegisterCall,
+  buildErc8004SetAgentUriCall,
+  erc8004RegisterPermissions,
+  registerErc8004Agent,
+  setErc8004AgentUri,
+  getErc8004Agent,
+  encodeErc8004AgentUri,
+  decodeErc8004AgentUri,
+  withErc8004Registration,
+} from "./erc8004.js";
+export type {
+  Erc8004MetadataEntry,
+  Erc8004RegistrationFile,
+  RegisterAgentParams,
+  RegisterAgentResult,
+  SetAgentUriParams,
+} from "./erc8004.js";

@@ -12,6 +12,40 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 > reconstructed from commit history after the fact, so they summarize what
 > shipped rather than itemizing every change.
 
+## [Unreleased]
+
+### Added
+
+- **ERC-8004 agent identity.** An agent on an Altana wallet can now mint and
+  maintain its own on-chain identity, so buyers and other agents can discover
+  it. `registerErc8004Agent` mints and returns the assigned `agentId`,
+  `setErc8004AgentUri` publishes the registration record, and
+  `getErc8004Agent` reads both back. `buildErc8004RegisterCall` /
+  `buildErc8004SetAgentUriCall` are the underlying call builders, and
+  `encodeErc8004AgentUri` / `decodeErc8004AgentUri` /
+  `withErc8004Registration` handle the registration file — canonical JSON,
+  byte-identical to `@bnbagent`'s TypeScript and Python SDKs, so records hash
+  the same across ecosystems. Registry addresses come from the existing
+  `ERC8183_ADDRESSES[chainId].registry`; there is no second address table.
+
+  This closes the gap that forced BNB Agent Studio agents on Altana wallets to
+  deploy with `--skip-register`.
+
+- **`erc8004RegisterPermissions(chainId)`** — the bounded capability for the
+  above: two `{ to, signature }` rules that let a session key call exactly
+  `register` and `setAgentURI` on the registry. Deliberately not a
+  `{ to: registry }` grant: a session executes as the wallet, which owns the
+  identity token, so a registry-wide grant would also authorize
+  `transferFrom`, `setApprovalForAll` (an operator approval that outlives the
+  session's revocation), and `setAgentWallet`.
+
+- **`erc8004_register`, `erc8004_set_agent_uri` and `erc8004_show` in the MCP
+  server.** `erc8004_register` drives both registration phases; if the mint
+  lands but the write-back fails it returns the `agentId` with repair
+  instructions rather than stranding a minted identity that has no reverse
+  lookup. All three check the session's permissions client-side before
+  spending gas.
+
 ## [0.7.1] - 2026-08-12
 
 `@altananetwork/mcp` 0.7.1

@@ -402,13 +402,40 @@ function unsupportedSignerMessage(type: string, doing: string): string {
   );
 }
 
-/** Polls the relay for the status of a submitted calls bundle. */
+/** One event log as the relay reports it inside a status receipt. */
+export type RelayLog = {
+  address: Address;
+  topics: readonly Hex[];
+  data: Hex;
+};
+
+/** One transaction receipt from `wallet_getCallsStatus`. */
+export type RelayReceipt = {
+  transactionHash?: Hex;
+  status?: Hex | number;
+  logs?: readonly RelayLog[];
+};
+
+/**
+ * Polls the relay for the status of a submitted calls bundle.
+ *
+ * The status response carries full receipts, logs included. Callers that need
+ * to recover a value the contract only emitted (an ERC-721 token id, say) read
+ * them from here rather than re-fetching the receipt from a public RPC: BSC's
+ * public endpoints serve stale reads for ~12s after the relay reports
+ * CONFIRMED (see grantSession's post-confirm wait), so a follow-up read is
+ * both slower and less reliable than the receipt we already have in hand.
+ */
 export async function waitForCalls(
   client: ReturnType<typeof buildRelayClient>,
   callsId: Hex,
   timeoutMs = 240_000,
   pollIntervalMs = 2_000,
-): Promise<{ status: string; transactionHash?: Hex }> {
+): Promise<{
+  status: string;
+  transactionHash?: Hex;
+  receipts?: readonly RelayReceipt[];
+}> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
@@ -418,10 +445,14 @@ export async function waitForCalls(
         return {
           status: "CONFIRMED",
           transactionHash: status?.receipts?.[0]?.transactionHash,
+          ...(status?.receipts ? { receipts: status.receipts as readonly RelayReceipt[] } : {}),
         };
       }
       if (code === 500 || code === "FAILED") {
-        return { status: "FAILED" };
+        return {
+          status: "FAILED",
+          ...(status?.receipts ? { receipts: status.receipts as readonly RelayReceipt[] } : {}),
+        };
       }
     } catch {
       // Transient relay errors — keep polling.

@@ -99,6 +99,53 @@ delivery, and `buildClaimRefundCall` recovers the budget if nothing arrives.
 
 Full reference: [ERC-8183 agent jobs](https://docs.altana.network/sdk/erc8183).
 
+### Give an agent an identity (ERC-8004)
+
+Buyers find sellers through the ERC-8004 identity registry. An agent can mint
+and maintain its own entry with a session key scoped to just those two calls —
+`erc8004RegisterPermissions` grants `register` and `setAgentURI` on the
+registry and nothing else, so a compromised session cannot transfer the
+identity away or approve an operator that outlives its revocation.
+
+```ts
+import {
+  erc8004RegisterPermissions,
+  registerErc8004Agent,
+  setErc8004AgentUri,
+  encodeErc8004AgentUri,
+  withErc8004Registration,
+  BNB,
+} from "@altananetwork/sdk";
+
+// Grant: permissions: { calls: erc8004RegisterPermissions(56), spend: [...] }
+
+const record = {
+  type: "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
+  name: "Vault Sentinel",
+  description: "Watches Venus positions.",
+  services: [{ name: "A2A", endpoint: "https://sentinel.example/.well-known/agent-card.json" }],
+  registrations: [], // the id does not exist until the mint assigns it
+} as const;
+
+const { agentId } = await registerErc8004Agent(
+  session,
+  { agentUri: encodeErc8004AgentUri(record) },
+  { network: BNB },
+);
+
+await setErc8004AgentUri(
+  session,
+  { agentId, agentUri: encodeErc8004AgentUri(withErc8004Registration(record, agentId, 56)) },
+  { network: BNB },
+);
+```
+
+Registration is two-phase because the record embeds the id the mint assigns.
+`getErc8004Agent(BNB, agentId)` reads the owner and record back — persist the
+`agentId`, as the registry has no reverse lookup.
+
+Full reference: [ERC-8004 agent identity](https://docs.altana.network/sdk/erc8004).
+
 ## Documentation
 
 Full docs, concept guides, and SDK reference: [**docs.altana.network**](https://docs.altana.network).

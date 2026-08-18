@@ -15,12 +15,14 @@
     "fork:x402": "bun run fork-x402.ts",
     "fork:x402-witness": "bun run fork-x402-witness.ts",
     "fork:eip3009": "bun run fork-eip3009.ts",
-    "fork:all": "bun run fork-erc1271.ts && bun run fork-x402.ts && bun run fork-x402-witness.ts && bun run fork-eip3009.ts",
+    "fork:all": "bun run fork-erc1271.ts && bun run fork-x402.ts && bun run fork-x402-witness.ts && bun run fork-eip3009.ts && bun run fork-erc8004.ts",
     "demo:b402": "bun run demo-b402.ts",
     "typecheck": "tsc --noEmit",
     "fork:x402-server": "bun run fork-x402-server.ts",
     "fork:erc8183-buyer": "bun run fork-erc8183.ts",
-    "demo:hire-studio-agent": "bun run demo-hire-studio-agent.ts"
+    "fork:erc8004": "bun run fork-erc8004.ts",
+    "demo:hire-studio-agent": "bun run demo-hire-studio-agent.ts",
+    "live:erc8004-testnet": "bun run live-erc8004-testnet.ts"
   },
   "dependencies": {
     "@altananetwork/sdk": "workspace:*",
