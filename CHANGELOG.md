@@ -46,6 +46,19 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
   lookup. All three check the session's permissions client-side before
   spending gas.
 
+### Fixed
+
+- **`hireErc8183Agent` no longer throws a false "job is not ours" error when
+  `opts.noWait` is set.** With `noWait`, `execute()` returns
+  `{ status: "PENDING" }` as soon as the relay accepts the intent — before the
+  batch is mined — but the post-funding ownership check read chain state
+  unconditionally, so it saw pre-inclusion state and failed on every `noWait`
+  call. Worse, obeying the error's "retry" advice re-ran the hire batch and
+  escrowed $U a second time for an already-funded job. The check now runs only
+  once the result is `CONFIRMED`; `noWait` callers verify via `getErc8183Job`
+  after their `callsId` confirms (the docstring documents this). First
+  external contribution — thanks @web3xDev! (#42)
+
 ## [0.7.1] - 2026-08-12
 
 `@altananetwork/mcp` 0.7.1
