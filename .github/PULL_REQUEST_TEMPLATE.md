@@ -11,4 +11,4 @@
 <!-- API changes, behavior changes, migration notes — or "no". -->
 
 - [ ] This PR is based on `staging` (see [CONTRIBUTING.md](../CONTRIBUTING.md))
-- [ ] User-visible changes have a `CHANGELOG.md` entry under `[Unreleased]` (or this is internal-only: CI/docs/tooling)
+- [ ] User-visible changes have a `CHANGELOG.md` entry under the pending `## [x.y.z] - Unreleased` section, and the target version reflects the change (fix → patch, feature → minor; see [CONTRIBUTING.md](../CONTRIBUTING.md)) — or this is internal-only (CI/docs/tooling)
