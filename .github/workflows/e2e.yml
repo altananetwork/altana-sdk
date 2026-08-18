@@ -2,9 +2,9 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [main, staging]
   pull_request:
-    branches: [main]
+    branches: [main, staging]
   workflow_dispatch:
 
 permissions:
@@ -69,6 +69,13 @@ jobs:
     # BSC_FORK_RPC_URL / BASE_FORK_RPC_URL secrets (falling back to public nodes
     # only for local runs without them). With dedicated RPCs they run reliably,
     # so this is now a required gate rather than informational.
+    #
+    # Skipped on PRs from forks: GitHub never exposes secrets to fork PRs, so
+    # the job would fall back to public RPC nodes and fail flakily on every
+    # external contribution. build-and-check (secret-free) is the gate for
+    # fork PRs; fork-tests still run on internal PRs and on every push to
+    # main/staging.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
     continue-on-error: false
     steps:
       - name: Checkout
@@ -80,7 +87,7 @@ jobs:
           bun-version: 1.3.11
 
       - name: Setup Foundry (anvil)
-        uses: foundry-rs/foundry-toolchain@v1 # TODO: pin to a SHA for supply-chain consistency
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
 
       - name: Install
         run: bun install --frozen-lockfile
