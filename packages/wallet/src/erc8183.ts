@@ -246,7 +246,11 @@ export type HireAgentResult = ExecuteResult & {
 /**
  * Hire an ERC-8183 seller: fund a job against `provider` for `budget` $U in
  * ONE atomic relay intent (five calls batched). Returns once the job is
- * FUNDED on-chain.
+ * FUNDED on-chain — unless `opts.noWait` is set, in which case it resolves
+ * as soon as the relay accepts the intent (`result.status === "PENDING"`)
+ * and the FUNDED/ownership check below is skipped, since the batch isn't
+ * mined yet to check. Callers using `noWait` are responsible for verifying
+ * (e.g. via `getErc8183Job`) once their `callsId` confirms.
  *
  * Overloads mirror `execute`: admin path (wallet + signer) or session path.
  */
@@ -301,11 +305,19 @@ export async function hireErc8183Agent(
 
   // Post-check: confirm the predicted jobId is ours and FUNDED (a concurrent
   // createJob in the same block would have reverted the batch — but verify).
-  const job = await getErc8183Job(network, jobId);
-  if (job.client.toLowerCase() !== walletAddress.toLowerCase()) {
-    throw new Error(
-      `erc8183: job ${jobId} is not ours after funding (client=${job.client}) — a concurrent job stole the predicted id; retry.`,
-    );
+  // Only meaningful once the batch has actually landed on-chain: with
+  // opts.noWait, execute() returns PENDING immediately after the relay
+  // *accepts* the intent, before it's mined, so getErc8183Job would read
+  // pre-inclusion state and this check would false-positive on every call.
+  // Skip it for PENDING; the caller is responsible for verifying once the
+  // callsId they got back has confirmed.
+  if (result.status === "CONFIRMED") {
+    const job = await getErc8183Job(network, jobId);
+    if (job.client.toLowerCase() !== walletAddress.toLowerCase()) {
+      throw new Error(
+        `erc8183: job ${jobId} is not ours after funding (client=${job.client}) — a concurrent job stole the predicted id; retry.`,
+      );
+    }
   }
   return { ...result, jobId, provider: params.provider, budget: params.budget, expiredAt };
 }
