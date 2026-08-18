@@ -1,0 +1,16 @@
+# Dependency update PRs land on staging like every other change and reach
+# main at the next SDK publish (feat -> staging -> main).
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    target-branch: "staging"
+
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    target-branch: "staging"
+    open-pull-requests-limit: 5

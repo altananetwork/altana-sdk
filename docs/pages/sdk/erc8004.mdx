@@ -1,0 +1,158 @@
+---
+title: "ERC-8004: agent identity"
+description: Give an agent on an Altana wallet a discoverable on-chain identity, minted by a scoped session key.
+---
+
+import { Eyebrow } from '../../components/Eyebrow'
+
+<Eyebrow>SDK · Identity</Eyebrow>
+
+# ERC-8004: agent identity
+
+An ERC-8004 identity is what makes an agent **discoverable**: a token in the
+identity registry whose `tokenURI` is the agent's registration record — its
+name, what it does, and the endpoint to reach it at. Buyers browsing the BNB
+agent economy find sellers this way, and the ERC-8183 job escrow
+([Hire BNB agents](/sdk/erc8183)) is what they do next.
+
+The registry is a plain ERC-721 at the address `ERC8183_ADDRESSES[chainId].registry`
+already carries — `0x8004A169…` on BSC mainnet (56), `0x8004A818…` on testnet
+(97). `register` and `setAgentURI` are `nonpayable`: no protocol fee, only gas.
+
+Registration is two-phase, because the record embeds the very id the mint
+assigns. Mint with an empty `registrations` list, then patch the returned
+`agentId` in and write the record back.
+
+## Grant the capability
+
+An agent registering its own identity is exactly the case session keys exist
+for. Grant it the two selectors it needs and nothing else:
+
+```ts
+import { createClient, erc8004RegisterPermissions, BNB, signerFromPrivateKey } from "@altananetwork/sdk";
+
+const client = createClient({ chains: [BNB] });
+const admin = signerFromPrivateKey("0x...");
+const wallet = await client.createWallet({ signer: admin });
+
+const session = await client.grantSession({
+  wallet,
+  signer: admin,
+  permissions: {
+    calls: erc8004RegisterPermissions(56),
+    // A small native cap covers gas; nothing else can leave the wallet.
+    spend: [{ limit: 20_000_000_000_000_000n, period: "day" }], // 0.02 BNB
+  },
+  expiry: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
+});
+```
+
+`erc8004RegisterPermissions(chainId)` returns two `{ to, signature }` rules —
+AND semantics, so the session may call that selector at that address only:
+
+```ts
+[
+  { to: "0x8004A169…", signature: "register(string,(string,bytes)[])" },
+  { to: "0x8004A169…", signature: "setAgentURI(uint256,string)" },
+]
+```
+
+:::danger[Never grant the registry as a whole]
+A session executes **as the wallet**, and the wallet is the identity token's
+owner. A `{ to: registry }` grant with no `signature` would also authorize
+`transferFrom` and `safeTransferFrom` (an agent could give its identity away),
+`approve` and `setApprovalForAll` (an operator approval that **outlives the
+session's revocation**), and `setAgentWallet` / `setMetadata` (identity
+poisoning). The selector-scoped helper excludes all of these by construction.
+
+If a signature string is ever rejected downstream, the fallback is the raw hex
+selector in `signature` — never a target-only grant.
+:::
+
+Note also that the scope is per-selector, not per-agent: a session holding
+these permissions can rewrite the record of **any** agent the wallet owns.
+
+## Register an agent
+
+```ts
+import {
+  registerErc8004Agent,
+  setErc8004AgentUri,
+  encodeErc8004AgentUri,
+  withErc8004Registration,
+  BNB,
+} from "@altananetwork/sdk";
+
+// Phase 1: registrations is empty — the id does not exist yet.
+const record = {
+  type: "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
+  name: "Vault Sentinel",
+  description: "Watches Venus positions and alerts on liquidation risk.",
+  image: "",
+  services: [{ name: "A2A", endpoint: "https://sentinel.example/.well-known/agent-card.json" }],
+  registrations: [],
+} as const;
+
+const { agentId } = await registerErc8004Agent(
+  session,
+  { agentUri: encodeErc8004AgentUri(record) },
+  { network: BNB },
+);
+
+// Phase 2: bind the assigned id to this registry and publish the finished record.
+await setErc8004AgentUri(
+  session,
+  { agentId, agentUri: encodeErc8004AgentUri(withErc8004Registration(record, agentId, 56)) },
+  { network: BNB },
+);
+```
+
+`withErc8004Registration` is pure — it returns a copy whose `registrations`
+names this chain (`{ agentId, agentRegistry: "eip155:56:0x8004A169…" }`) and
+leaves entries for other chains alone.
+
+The admin path is `registerErc8004Agent(wallet, signer, params, opts)`, same as
+every other write in the SDK.
+
+:::warning[`register` cannot be fire-and-forget]
+`agentId` only exists in the `Registered` event of a confirmed receipt, so
+`registerErc8004Agent` rejects `opts.noWait`. If the relay wait times out, the
+error carries the `callsId` — recover the id from that bundle's receipt rather
+than registering again, which would mint a **second** identity for the same
+agent. (`setErc8004AgentUri` reads nothing back, so it accepts `noWait`.)
+:::
+
+## Read an identity back
+
+```ts
+import { getErc8004Agent, decodeErc8004AgentUri, BNB } from "@altananetwork/sdk";
+
+const { owner, agentUri } = await getErc8004Agent(BNB, agentId);
+const record = decodeErc8004AgentUri(agentUri); // throws on a non-data URI
+```
+
+There is no reverse lookup on the registry — you need the `agentId`, which is
+why registration returns it. Persist it.
+
+## Records are byte-exact
+
+`encodeErc8004AgentUri` produces `data:application/json;base64,<canonical JSON>`
+— keys sorted at every depth, no incidental whitespace, non-ASCII escaped as
+`\uXXXX`. This is byte-identical to what `@bnbagent`'s TypeScript and Python
+SDKs produce for the same record, so a record written here hashes the same as
+one written there. Do not re-serialize the decoded object with a plain
+`JSON.stringify` and expect the hashes to match.
+
+The same care applies to the **session itself**. Porto derives the session key's
+hash from its exact permissions and expiry, so a session that crosses a process
+boundary must survive the round trip unchanged — BNB Agent Studio serializes
+sessions between processes, and a JSON round-trip that re-cases an address
+changes the key hash and makes the next call fail with an unknown key. Persist
+and restore the granted values verbatim (see `packages/mcp/src/sessions.ts` for
+the pattern this repo uses).
+
+## Through the MCP server
+
+The same flow is three tools — `erc8004_register` (which drives both phases and
+returns the `agentId` even if the second one fails), `erc8004_set_agent_uri`,
+and `erc8004_show`. See [MCP Tools](/mcp/tools).
