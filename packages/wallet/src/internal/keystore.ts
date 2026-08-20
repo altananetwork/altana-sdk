@@ -215,6 +215,11 @@ export async function buildFirstActionPrepend(args: {
   walletAddress: Address;
   adminPublicKey: Hex;
 }): Promise<{ to: Address; value: bigint; data: Hex }[]> {
+  // First-action registration is an L1 concept. On a chain that only mirrors a
+  // registry (Base Sepolia mirrors Sepolia) there is nothing to register here,
+  // so an admin-signed intent should proceed with no prepend rather than fail.
+  if (!args.network.keyStore || !args.network.keyStoreController) return [];
+
   const active = await readActiveKeys(
     args.publicClient,
     args.network,
