@@ -15,6 +15,7 @@
  */
 
 import {
+  keyStoreOf,
   createClient,
   signerFromPasskey,
   createPrivateKeySigner,
@@ -305,7 +306,7 @@ async function surfaceKeyStoreRegistration() {
   if (!walletState) return;
   try {
     const keys = (await publicClient.readContract({
-      address: BNB.keyStore,
+      address: keyStoreOf(BNB),
       abi: KEYSTORE_ABI,
       functionName: "getKeys",
       args: [walletState.address],
@@ -319,7 +320,7 @@ async function surfaceKeyStoreRegistration() {
     }
     const keyId = keys[0]!;
     const onchainPubKey = (await publicClient.readContract({
-      address: BNB.keyStore,
+      address: keyStoreOf(BNB),
       abi: KEYSTORE_ABI,
       functionName: "getPublicKey",
       args: [walletState.address, keyId],
@@ -327,7 +328,7 @@ async function surfaceKeyStoreRegistration() {
 
     setText(
       "ks-addr",
-      `<a href="${explorerAddr(BNB.keyStore)}#readContract" target="_blank">${BNB.keyStore}</a>`,
+      `<a href="${explorerAddr(keyStoreOf(BNB))}#readContract" target="_blank">${keyStoreOf(BNB)}</a>`,
     );
     setText("ks-keyid", keyId);
     setText(

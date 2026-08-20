@@ -19,8 +19,8 @@ import {
   signerFromPasskey,
   createPrivateKeySigner,
   ensureKeyCached,
-  ETHEREUM,
-  BASE,
+  SEPOLIA,
+  BASE_SEPOLIA,
   type EnsureKeyCachedStatus,
   type PasskeyCredential,
 } from "@altananetwork/sdk";
@@ -89,27 +89,27 @@ function isAddress(x: string): x is Address {
 // ---------- state -----------------------------------------------------------
 
 const publicClient = createPublicClient({
-  chain: ETHEREUM.chain,
-  transport: http(ETHEREUM.publicRpcUrl),
+  chain: SEPOLIA.chain,
+  transport: http(SEPOLIA.publicRpcUrl),
 });
 
 const l2PublicClient = createPublicClient({
-  chain: BASE.chain,
-  transport: http(BASE.publicRpcUrl),
+  chain: BASE_SEPOLIA.chain,
+  transport: http(BASE_SEPOLIA.publicRpcUrl),
 });
 
-const l2SignerKey = import.meta.env.VITE_BASE_SIGNER_KEY as Hex | undefined;
+const l2SignerKey = import.meta.env.VITE_BASE_SEPOLIA_SIGNER_KEY as Hex | undefined;
 const l2WalletClient = l2SignerKey
   ? createWalletClient({
       account: privateKeyToAccount(l2SignerKey),
-      chain: BASE.chain,
-      transport: http(BASE.publicRpcUrl),
+      chain: BASE_SEPOLIA.chain,
+      transport: http(BASE_SEPOLIA.publicRpcUrl),
     })
   : null;
 
 // Cross-chain here means the Sepolia L1 registry plus the Base Sepolia L2
 // cache (ensureKeyCached), not a second L1 — so the client holds Sepolia.
-const client = createClient({ chains: [ETHEREUM] });
+const client = createClient({ chains: [SEPOLIA] });
 
 let walletState: Awaited<ReturnType<typeof client.createPasskeyWallet>> | null = null;
 let sessionState: Awaited<ReturnType<typeof client.grantSession>> | null = null;
@@ -386,7 +386,7 @@ async function useOnBase() {
   if (!l2WalletClient) {
     setBaseRow("pending", "Missing L2 signer in .env.local");
     log(
-      "Missing VITE_BASE_SIGNER_KEY in apps/passkey-crosschain/.env.local.",
+      "Missing VITE_BASE_SEPOLIA_SIGNER_KEY in apps/passkey-crosschain/.env.local.",
       "err",
     );
     return;
@@ -401,8 +401,10 @@ async function useOnBase() {
       l1Client: publicClient as never,
       l2Client: l2PublicClient as never,
       l2WalletClient: l2WalletClient as never,
-      l1KeyStore: ETHEREUM.keyStore,
-      l2Cache: BASE.keyStoreCache,
+      // SEPOLIA always has a KeyStore; the field is optional on NetworkConfig
+      // because an L2 like Base Sepolia can be executable without hosting one.
+      l1KeyStore: SEPOLIA.keyStore!,
+      l2Cache: BASE_SEPOLIA.keyStoreCache,
       user: walletState.address,
       publicKey: sessionState.signer.publicKey,
       onStatus: (status) => {

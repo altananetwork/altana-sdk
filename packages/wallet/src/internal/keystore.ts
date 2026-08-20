@@ -109,13 +109,39 @@ export function deriveKeyId(publicKey: Hex): Hex {
   return keccak256(publicKey);
 }
 
+/**
+ * Narrows a network to one that actually hosts a KeyStore.
+ *
+ * `keyStore` / `keyStoreController` are optional on NetworkConfig because an L2
+ * can be executable without hosting a registry (Base Sepolia executes session
+ * keys whose canonical record lives on Sepolia). Every registration and
+ * revocation path goes through here so the failure is a clear message rather
+ * than an `undefined` address reaching a contract call.
+ */
+function requireKeyStore(network: NetworkConfig): {
+  keyStore: Address;
+  keyStoreController: Address;
+} {
+  if (!network.keyStore || !network.keyStoreController) {
+    throw new Error(
+      `Chain ${network.chainId} (${network.chain.name}) has no KeyStore registry. ` +
+        `Register and revoke keys on the L1 network whose KeyStore this chain ` +
+        `mirrors, then bridge the record with syncKeyToL2/ensureKeyCached.`,
+    );
+  }
+  return {
+    keyStore: network.keyStore,
+    keyStoreController: network.keyStoreController,
+  };
+}
+
 /** Reads the current registration fee from the Controller. */
 export function readRegistrationFee(
   publicClient: PublicClient,
   network: NetworkConfig,
 ): Promise<bigint> {
   return publicClient.readContract({
-    address: network.keyStoreController,
+    address: requireKeyStore(network).keyStoreController,
     abi: CONTROLLER_ABI,
     functionName: "getRegistrationFeeInWei",
   });
@@ -128,7 +154,7 @@ export function readActiveKeys(
   user: Address,
 ): Promise<readonly Hex[]> {
   return publicClient.readContract({
-    address: network.keyStore,
+    address: requireKeyStore(network).keyStore,
     abi: KEYSTORE_ABI,
     functionName: "getKeys",
     args: [user],
@@ -147,7 +173,7 @@ export function readPublicKey(
   keyId: Hex,
 ): Promise<Hex> {
   return publicClient.readContract({
-    address: network.keyStore,
+    address: requireKeyStore(network).keyStore,
     abi: KEYSTORE_ABI,
     functionName: "getPublicKey",
     args: [user, keyId],
@@ -168,7 +194,7 @@ export function readIsValidKey(
   keyId: Hex,
 ): Promise<boolean> {
   return publicClient.readContract({
-    address: network.keyStore,
+    address: requireKeyStore(network).keyStore,
     abi: KEYSTORE_ABI,
     functionName: "isValidKey",
     args: [user, keyId],
@@ -222,7 +248,7 @@ export function buildInitialRegisterCall(args: {
   network: NetworkConfig;
 }): { to: Address; value: bigint; data: Hex } {
   return {
-    to: args.network.keyStoreController,
+    to: requireKeyStore(args.network).keyStoreController,
     value: args.fee,
     data: encodeFunctionData({
       abi: CONTROLLER_ABI,
@@ -254,7 +280,7 @@ export function buildAdditionalRegisterCall(args: {
   expiry?: number;
 }): { to: Address; value: bigint; data: Hex } {
   return {
-    to: args.network.keyStoreController,
+    to: requireKeyStore(args.network).keyStoreController,
     value: args.fee,
     data: encodeFunctionData({
       abi: CONTROLLER_ABI,
@@ -284,7 +310,7 @@ export function buildRevokeKeyCall(args: {
   network: NetworkConfig;
 }): { to: Address; value: bigint; data: Hex } {
   return {
-    to: args.network.keyStore,
+    to: requireKeyStore(args.network).keyStore,
     value: 0n,
     data: encodeFunctionData({
       abi: KEYSTORE_ABI,

@@ -61,8 +61,12 @@ export {
   BNB,
   BASE,
   BNB_TESTNET,
+  SEPOLIA,
+  BASE_SEPOLIA,
   RELAY_URL,
   TESTNET_RELAY_URL,
+  PORTO_RELAY_URL,
+  keyStoreOf,
 } from "./config.js";
 export type { NetworkConfig, L2CacheConfig } from "./config.js";
 
@@ -156,3 +160,14 @@ export type {
   RegisterAgentResult,
   SetAgentUriParams,
 } from "./erc8004.js";
+
+// KeyStoreCacheGate wiring — makes L1 revocation authoritative for session keys
+// executing on an L2. See linkSessionToGate.ts for why a gated session must not
+// carry call permissions.
+export {
+  buildSetCallCheckerCall,
+  buildGateLinkCall,
+  assertGateCompatiblePermissions,
+  assertGateIsSoleGrantPath,
+  requireGate,
+} from "./linkSessionToGate.js";

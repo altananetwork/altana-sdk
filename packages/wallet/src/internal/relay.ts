@@ -36,9 +36,10 @@ const NATIVE_TOKEN: Address = "0x0000000000000000000000000000000000000000";
 export function buildRelayClient(network: NetworkConfig) {
   if (!network.relayUrl) {
     throw new Error(
-      `No Altana relay serves chain ${network.chainId} (${network.chain.name}). ` +
-        `The testnet relay serves BSC testnet (97) only; Sepolia and other ` +
-        `keystore-only networks cannot execute through a relay.`,
+      `No relay is configured for chain ${network.chainId} (${network.chain.name}). ` +
+        `The Altana relay serves mainnets; the Altana testnet relay serves BSC ` +
+        `testnet (97); Sepolia and Base Sepolia are served by the Porto relay ` +
+        `(PORTO_RELAY_URL). Set relayUrl on the network config to execute here.`,
     );
   }
   return createClient({

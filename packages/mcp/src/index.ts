@@ -29,6 +29,7 @@ import { createPublicClient, formatEther, formatUnits, http, parseEther, parseUn
 import { keccak256 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import {
+  keyStoreOf,
   createClient,
   signerFromPrivateKey,
   fetchWithX402,
@@ -408,7 +409,7 @@ tool(
   async ({ address }: { address: string }) => {
     const addr = assertAddress(address);
     const keys = (await publicClient.readContract({
-      address: NETWORK.keyStore,
+      address: keyStoreOf(NETWORK),
       abi: KEYSTORE_ABI,
       functionName: "getKeys",
       args: [addr],
@@ -417,7 +418,7 @@ tool(
     const details = await Promise.all(
       keys.map(async (keyId) => {
         const publicKey = (await publicClient.readContract({
-          address: NETWORK.keyStore,
+          address: keyStoreOf(NETWORK),
           abi: KEYSTORE_ABI,
           functionName: "getPublicKey",
           args: [addr, keyId],
@@ -496,7 +497,7 @@ tool(
     }
 
     const valid = (await publicClient.readContract({
-      address: NETWORK.keyStore,
+      address: keyStoreOf(NETWORK),
       abi: KEYSTORE_ABI,
       functionName: "isValidKey",
       args: [addr, id],
