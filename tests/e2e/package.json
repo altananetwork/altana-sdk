@@ -23,7 +23,8 @@
     "fork:erc8004": "bun run fork-erc8004.ts",
     "demo:hire-studio-agent": "bun run demo-hire-studio-agent.ts",
     "live:erc8004-testnet": "bun run live-erc8004-testnet.ts",
-    "live:gate-testnet": "bun run live-gate-testnet.ts"
+    "live:gate-testnet": "bun run live-gate-testnet.ts",
+    "demo:gate-testnet": "bun run demo-gate-testnet.ts"
   },
   "dependencies": {
     "@altananetwork/sdk": "workspace:*",
