@@ -189,3 +189,26 @@ export function keyStoreOf(network: NetworkConfig): Address {
   }
   return network.keyStore;
 }
+
+/**
+ * A gated L2: it executes session keys under an L1-canonical registry via a
+ * KeyStoreCacheGate, so granting a session there is a three-part operation
+ * (register on the L1, wire the gate on the L2, bridge the proof) that the SDK
+ * performs internally. Contrast a full-stack chain (BNB), which hosts its own
+ * keyStore and does grant/execute in one place.
+ *
+ * True iff the network has a gate AND names its L1 AND has no keyStore of its own.
+ */
+export function isGatedL2Chain(
+  network: NetworkConfig,
+): network is L2CacheConfig & {
+  keyStoreCacheGate: Address;
+  l1ChainId: number;
+} {
+  const l2 = network as L2CacheConfig;
+  return (
+    !network.keyStore &&
+    l2.keyStoreCacheGate !== undefined &&
+    l2.l1ChainId !== undefined
+  );
+}

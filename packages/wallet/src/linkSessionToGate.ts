@@ -376,23 +376,35 @@ export async function wireSessionToGateOnL2(
   config: {
     network: NetworkConfig;
     gate: Address;
-    target: Address;
+    /** Concrete contract(s) the session may call, each routed through the gate. */
+    targets?: readonly Address[];
+    /** Back-compat alias for a single target. */
+    target?: Address;
     feeToken?: Address;
   },
 ): Promise<WireSessionToGateResult> {
-  const { network, gate, target } = config;
+  const { network, gate } = config;
   const feeToken = config.feeToken ?? NATIVE_TOKEN;
+  const targets = config.targets ?? (config.target ? [config.target] : []);
+  if (targets.length === 0) {
+    throw new Error(
+      "wireSessionToGateOnL2: at least one `target` is required (the gate is " +
+        "registered per (keyHash, target); a session with no target is inert).",
+    );
+  }
 
   // A gated session must be spend-only; call permissions become setCanExecute
   // allowlist entries that bypass the gate.
   assertGateCompatiblePermissions(session.permissions);
 
   const ANY_TARGET: Address = "0x3232323232323232323232323232323232323232";
-  if (target.toLowerCase() === ANY_TARGET.toLowerCase()) {
-    throw new Error(
-      "wireSessionToGateOnL2: `target` must be a concrete address, not the " +
-        "ANY_TARGET wildcard (it would let the session reach the gate itself).",
-    );
+  for (const target of targets) {
+    if (target.toLowerCase() === ANY_TARGET.toLowerCase()) {
+      throw new Error(
+        "wireSessionToGateOnL2: targets must be concrete addresses, not the " +
+          "ANY_TARGET wildcard (it would let the session reach the gate itself).",
+      );
+    }
   }
 
   const spend = session.permissions.spend ?? [];
@@ -447,7 +459,9 @@ export async function wireSessionToGateOnL2(
         limit: s.limit,
       }),
     ),
-    buildSetCallCheckerCall({ wallet: wallet.address, keyHash, target, gate }),
+    ...targets.map((target) =>
+      buildSetCallCheckerCall({ wallet: wallet.address, keyHash, target, gate }),
+    ),
     ...(alreadyLinked
       ? []
       : [buildGateLinkCall({ gate, keyHash, sessionPublicKey: session.publicKey })]),

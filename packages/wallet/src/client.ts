@@ -9,8 +9,17 @@
  */
 
 import type { Address, Hex } from "viem";
-import { type NetworkConfig } from "./config.js";
+import {
+  type NetworkConfig,
+  type L2CacheConfig,
+  isGatedL2Chain,
+  keyStoreOf,
+} from "./config.js";
 import type { Signer } from "./internal/signer.js";
+import { grantSessionCrossChain as grantSessionCrossChainImpl } from "./grantSessionCrossChain.js";
+import { buildPublicClient } from "./internal/relay.js";
+import { ensureKeyCached, type EnsureKeyCachedStatus } from "./syncKeyToL2.js";
+import { walletClientFromSigner } from "./internal/gasPayer.js";
 import type { PasskeySigner } from "./internal/passkey.js";
 import type { Wallet, ExecuteResult } from "./internal/types.js";
 import type {
@@ -59,6 +68,13 @@ export type CreateClientOptions = {
    * `chains`. Must be one of the configured chains.
    */
   defaultChainId?: number;
+  /**
+   * Funded gas payers per chainId, for the L2 proof bridge (`populateKey`) that
+   * a gated-L2 grant/execute performs internally. Only needed for gated L2
+   * chains (e.g. Base Sepolia). Must be raw private-key signers — the proof is
+   * submitted as a plain transaction. Removed once the relay pays for it.
+   */
+  relayers?: Record<number, Signer>;
 };
 
 /** Per-operation chain selector. Omit to use the client's default chain. */
@@ -90,12 +106,24 @@ export type ClientExecuteOptions =
       calls: Call | readonly Call[];
       feeToken?: Address;
       noWait?: boolean;
+      /**
+       * On a gated L2, bridge the L1 proof into the cache before executing
+       * (default true) so the gate can validate. Set false if you bridged
+       * already. No effect on full-stack chains.
+       */
+      autoBridge?: boolean;
     } & ChainSelector);
 
 export type ClientGrantSessionOptions = {
   wallet: Wallet;
   signer: Signer;
   feeToken?: Address;
+  /** Gated L2 only: also bridge the L1 proof into the cache (default true). */
+  bridge?: boolean;
+  /** Gated L2 only: override the client-level relayer gas payer for this call. */
+  l2GasSigner?: Signer;
+  /** Gated L2 only: progress callback for the proof bridge. */
+  onStatus?: (status: EnsureKeyCachedStatus) => void;
 } & GrantSessionOptions &
   ChainSelector;
 
@@ -234,6 +262,8 @@ export function createClient(opts: CreateClientOptions): Client {
     );
   }
 
+  const relayers = opts.relayers ?? {};
+
   function resolve(chainId?: number): NetworkConfig {
     const id = chainId ?? defaultChainId;
     const network = byId.get(id);
@@ -244,6 +274,19 @@ export function createClient(opts: CreateClientOptions): Client {
       );
     }
     return network;
+  }
+
+  /** Locate the L1 registry config for a gated L2, from this client's chains. */
+  function resolveL1(l2: L2CacheConfig & { l1ChainId: number }): NetworkConfig {
+    const l1 = byId.get(l2.l1ChainId);
+    if (!l1) {
+      throw new Error(
+        `Chain ${l2.chainId} anchors to L1 chain ${l2.l1ChainId}, which is not ` +
+          `configured on this client. Add its config (e.g. SEPOLIA) to ` +
+          `createClient({ chains: [...] }). Configured: ${[...byId.keys()].join(", ")}.`,
+      );
+    }
+    return l1;
   }
 
   return {
@@ -272,33 +315,87 @@ export function createClient(opts: CreateClientOptions): Client {
       });
     },
 
-    execute(o) {
+    async execute(o) {
+      const network = resolve(o.chainId);
       const execOpts = {
-        network: resolve(o.chainId),
+        network,
         ...(o.feeToken ? { feeToken: o.feeToken } : {}),
         ...(o.noWait ? { noWait: o.noWait } : {}),
       };
-      if ("session" in o) {
+      if (!("session" in o)) {
+        return executeImpl(o.wallet, o.signer, o.calls, execOpts);
+      }
+
+      // Full-stack chain or explicit opt-out: execute directly.
+      if (!isGatedL2Chain(network) || o.autoBridge === false) {
         return executeImpl(o.session, o.calls, execOpts);
       }
-      return executeImpl(o.wallet, o.signer, o.calls, execOpts);
+
+      // Gated L2: bridge the L1 proof (idempotent) before executing, and retry
+      // through the ~12s L1-anchor race. A warm cache returns cache-hit fast.
+      const l1 = resolveL1(network);
+      const gasSigner = relayers[network.chainId];
+      let lastErr: unknown;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          if (gasSigner) {
+            await ensureKeyCached({
+              l1Client: buildPublicClient(l1),
+              l2Client: buildPublicClient(network),
+              l2WalletClient: walletClientFromSigner(gasSigner, network),
+              l1KeyStore: keyStoreOf(l1),
+              l2Cache: network.keyStoreCache,
+              user: o.session.walletAddress,
+              publicKey: o.session.publicKey,
+            });
+          }
+          return await executeImpl(o.session, o.calls, execOpts);
+        } catch (e) {
+          lastErr = e;
+          const msg = String(e);
+          // Anchor moved / gate not yet valid: re-prove and retry.
+          if (
+            attempt < 2 &&
+            (msg.includes("anchor") ||
+              msg.includes("UnauthorizedCall") ||
+              msg.includes("populateKey"))
+          ) {
+            await new Promise((r) => setTimeout(r, 4000));
+            continue;
+          }
+          throw e;
+        }
+      }
+      throw lastErr;
     },
 
     grantSession(o) {
-      return grantSessionImpl(
-        o.wallet,
-        o.signer,
-        {
-          permissions: o.permissions,
-          expiry: o.expiry,
-          ...(o.sessionSigner ? { sessionSigner: o.sessionSigner } : {}),
-          ...(o.register !== undefined ? { register: o.register } : {}),
-        },
-        {
-          network: resolve(o.chainId),
+      const network = resolve(o.chainId);
+      const grantOpts = {
+        permissions: o.permissions,
+        expiry: o.expiry,
+        ...(o.sessionSigner ? { sessionSigner: o.sessionSigner } : {}),
+        ...(o.register !== undefined ? { register: o.register } : {}),
+      };
+
+      if (!isGatedL2Chain(network)) {
+        return grantSessionImpl(o.wallet, o.signer, grantOpts, {
+          network,
           ...(o.feeToken ? { feeToken: o.feeToken } : {}),
-        },
-      );
+        });
+      }
+
+      // Gated L2: the SDK does grant(L1) + wire(L2) + bridge under one call.
+      return grantSessionCrossChainImpl(o.wallet, o.signer, grantOpts, {
+        l2Network: network,
+        l1Network: resolveL1(network),
+        bridge: o.bridge !== false,
+        ...(o.l2GasSigner ?? relayers[network.chainId]
+          ? { l2GasSigner: o.l2GasSigner ?? relayers[network.chainId] }
+          : {}),
+        ...(o.feeToken ? { feeToken: o.feeToken } : {}),
+        ...(o.onStatus ? { onStatus: o.onStatus } : {}),
+      });
     },
 
     wireSessionToGate(o) {

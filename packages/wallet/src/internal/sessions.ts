@@ -71,6 +71,17 @@ export type GrantSessionResult = Session & {
    * Optional: the relay can confirm an intent without surfacing a receipt.
    */
   transactionHash?: Hex;
+  /**
+   * Present only for a gated-L2 grant: the extra L2 wiring the SDK performed
+   * (gate binding + optional proof bridge). Absent for full-stack chains.
+   */
+  l2?: {
+    chainId: number;
+    keyHash: Hex;
+    keyId: Hex;
+    wireTxHash?: Hex;
+    cached?: boolean;
+  };
 };
 
 /** Options for grantSession. */
