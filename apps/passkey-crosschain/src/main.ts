@@ -17,23 +17,21 @@
 import {
   createClient,
   signerFromPasskey,
+  signerFromPrivateKey,
   createPrivateKeySigner,
-  ensureKeyCached,
+  BNB_TESTNET,
   SEPOLIA,
   BASE_SEPOLIA,
-  type EnsureKeyCachedStatus,
   type PasskeyCredential,
 } from "@altananetwork/sdk";
 import {
   createPublicClient,
-  createWalletClient,
   formatEther,
   http,
   parseEther,
   type Address,
   type Hex,
 } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
 
 // ---------- helpers ---------------------------------------------------------
 
@@ -52,7 +50,7 @@ function log(msg: string, cls?: "ok" | "err") {
 }
 
 function explorerTx(hash: string) {
-  return `https://sepolia.etherscan.io/tx/${hash}`;
+  return `${selectedChain().explorer}/tx/${hash}`;
 }
 function explorerAddr(addr: string) {
   return `https://sepolia.etherscan.io/address/${addr}`;
@@ -88,28 +86,34 @@ function isAddress(x: string): x is Address {
 
 // ---------- state -----------------------------------------------------------
 
-const publicClient = createPublicClient({
-  chain: SEPOLIA.chain,
-  transport: http(SEPOLIA.publicRpcUrl),
-});
+// Two executable chains the user can switch between. BNB testnet is full-stack
+// (one chain does everything). Base Sepolia is a gated L2 — its authority lives
+// on Sepolia and the SDK hides the L1 grant + L2 gate wiring + proof bridge.
+const CHAINS: Record<number, typeof BNB_TESTNET | typeof BASE_SEPOLIA> = {
+  [BNB_TESTNET.chainId]: BNB_TESTNET,
+  [BASE_SEPOLIA.chainId]: BASE_SEPOLIA,
+};
+let selectedChainId: number = BASE_SEPOLIA.chainId;
+const selectedChain = () => CHAINS[selectedChainId] ?? BASE_SEPOLIA;
 
-const l2PublicClient = createPublicClient({
-  chain: BASE_SEPOLIA.chain,
-  transport: http(BASE_SEPOLIA.publicRpcUrl),
-});
-
+// The SDK needs SEPOLIA in `chains` (to find Base Sepolia's L1 registry) and a
+// funded relayer to pay the Base Sepolia proof-bridge gas. After this, the
+// create/grant/execute code below is identical for both chains.
 const l2SignerKey = import.meta.env.VITE_BASE_SEPOLIA_SIGNER_KEY as Hex | undefined;
-const l2WalletClient = l2SignerKey
-  ? createWalletClient({
-      account: privateKeyToAccount(l2SignerKey),
-      chain: BASE_SEPOLIA.chain,
-      transport: http(BASE_SEPOLIA.publicRpcUrl),
-    })
-  : null;
+const client = createClient({
+  chains: [BNB_TESTNET, SEPOLIA, BASE_SEPOLIA],
+  defaultChainId: BASE_SEPOLIA.chainId,
+  ...(l2SignerKey
+    ? { relayers: { [BASE_SEPOLIA.chainId]: signerFromPrivateKey(l2SignerKey) } }
+    : {}),
+});
 
-// Cross-chain here means the Sepolia L1 registry plus the Base Sepolia L2
-// cache (ensureKeyCached), not a second L1 — so the client holds Sepolia.
-const client = createClient({ chains: [SEPOLIA] });
+// Read-only client for the currently selected chain (balances + canExecute).
+const publicClient = () =>
+  createPublicClient({
+    chain: selectedChain().chain,
+    transport: http(selectedChain().publicRpcUrl),
+  });
 
 let walletState: Awaited<ReturnType<typeof client.createPasskeyWallet>> | null = null;
 let sessionState: Awaited<ReturnType<typeof client.grantSession>> | null = null;
@@ -242,13 +246,51 @@ function rehydrate() {
 
 // ---------- balance refresh -------------------------------------------------
 
+/**
+ * Shows the balance on BOTH chains. The wallet needs Sepolia ETH to register the
+ * session key in the L1 KeyStore, which is easy to miss if only one balance is
+ * displayed - funding Base Sepolia looks like nothing happened.
+ */
 async function refreshBalance() {
   if (!walletState) return;
-  const bal = await publicClient.getBalance({ address: walletState.address });
-  setText("wallet-balance", `${formatEther(bal)} ETH`);
+  const chain = selectedChain();
+  const bal = await publicClient()
+    .getBalance({ address: walletState.address })
+    .catch(() => null);
+  const fmt = (b: bigint | null) => (b === null ? "?" : formatEther(b));
+  const isBase = selectedChainId === BASE_SEPOLIA.chainId;
+  setText(
+    "wallet-balance",
+    `${fmt(bal)} ${chain.chain.nativeCurrency.symbol} on ${chain.chain.name}`,
+  );
+
+  const hint = document.getElementById("fund-hint");
+  if (hint) {
+    hint.textContent =
+      bal !== null && bal === 0n
+        ? isBase
+          ? "Base Sepolia needs gas here, and the session grant also needs a little Sepolia (L1) ETH for the registry."
+          : `Fund this address with ${chain.chain.nativeCurrency.symbol} on ${chain.chain.name}.`
+        : "";
+  }
+}
+
+const chainSelect = document.getElementById("chain-select") as HTMLSelectElement | null;
+if (chainSelect) {
+  chainSelect.value = String(selectedChainId);
+  chainSelect.addEventListener("change", () => {
+    selectedChainId = Number(chainSelect.value);
+    log(`Switched to ${selectedChain().chain.name}.`);
+    refreshBalance().catch(() => {});
+  });
 }
 
 document.getElementById("btn-refresh")!.addEventListener("click", refreshBalance);
+
+// Poll, so funding shows up without the user hunting for the refresh link.
+setInterval(() => {
+  refreshBalance().catch(() => {});
+}, 5000);
 
 // ---------- step 3: live permission preview --------------------------------
 
@@ -298,6 +340,11 @@ document.getElementById("btn-grant")!.addEventListener("click", async () => {
         `${capInput} ETH/day cap, ${lifetimeLabel(lifetimeSec)} lifetime. Passkey will prompt…`,
     );
 
+    // IDENTICAL code for both chains. On BNB testnet this is a one-chain grant.
+    // On Base Sepolia the SDK internally grants on the L1 (Sepolia), wires the
+    // gate on the L2, and bridges the proof — the `onStatus` banner shows it —
+    // but the call here is the same. permissions.calls[].to is routed to the
+    // gate on Base and to the account allowlist on BNB.
     sessionState = await client.grantSession({
       wallet: walletState,
       signer: walletState.signer,
@@ -305,142 +352,31 @@ document.getElementById("btn-grant")!.addEventListener("click", async () => {
       // agent flow, the dev's server holds this; the user never sees it.
       sessionSigner: createPrivateKeySigner(),
       permissions: {
-        // Allow-list of (contract, function) rules. With just `to`, any
-        // call to this address is allowed. The smart-account contract
-        // rejects anything outside this list at validation time.
         calls: [{ to: recipientForSession }],
-        // Rolling-window spend cap on the native token (ETH).
         spend: [{ limit: dailyCapWei, period: "day" }],
       },
       expiry: Math.floor(Date.now() / 1000) + lifetimeSec,
+      chainId: selectedChainId,
+      onStatus: (s) => log(`  activating on ${selectedChain().chain.name}: ${s}`),
     });
-    log("Session granted on-chain. Wallet contract now enforces the rules.", "ok");
+    log(
+      sessionState.l2
+        ? "Session granted, gate wired, and proof bridged — the SDK did it all."
+        : "Session granted on-chain. Wallet contract now enforces the rules.",
+      "ok",
+    );
     markCode("code-grant", "done");
     markCode("code-execute", "active");
 
-    setText("grant-tx", "submitted");
+    setText("grant-tx", sessionState.transactionHash ?? "submitted");
     show("session-info");
     show("step-4");
-    show("step-cross");
   } catch (err) {
     log(`Grant failed: ${err instanceof Error ? err.message : err}`, "err");
   } finally {
     setDisabled("btn-grant", false);
   }
 });
-
-// ---------- step 4: lazy activation on Base Sepolia -------------------------
-//
-// Option B: we don't sync at grant time. The first time the agent acts on
-// Base, the SDK transparently anchors the L1 proof into the L2 cache. After
-// that, every action is a local cache hit — instant.
-
-function setBaseRow(state: "pending" | "active", html: string) {
-  const row = document.getElementById("row-base");
-  if (row) {
-    row.classList.remove("pending", "active");
-    row.classList.add(state);
-  }
-  setText("base-status-cell", html);
-}
-
-function setUseBaseButton(label: string | null, disabled: boolean) {
-  const btn = document.getElementById("btn-use-base") as HTMLButtonElement | null;
-  if (!btn) return;
-  if (label === null) {
-    btn.setAttribute("hidden", "");
-    return;
-  }
-  btn.removeAttribute("hidden");
-  btn.textContent = label;
-  btn.disabled = disabled;
-}
-
-function showSyncBanner(stepText: string, titleText?: string) {
-  const banner = document.getElementById("sync-banner");
-  if (banner) banner.removeAttribute("hidden");
-  setText("sync-banner-step", stepText);
-  if (titleText) setText("sync-banner-title-text", titleText);
-}
-
-function hideSyncBanner() {
-  const banner = document.getElementById("sync-banner");
-  if (banner) banner.setAttribute("hidden", "");
-}
-
-function statusLabel(status: EnsureKeyCachedStatus): string {
-  switch (status) {
-    case "waiting-for-anchor":
-      return "Waiting for Base to anchor the Ethereum block…";
-    case "submitting-proof":
-      return "Submitting the cryptographic proof to Base…";
-    case "done":
-      return "Activated.";
-    case "cache-hit":
-      return "Cache hit — already active on Base.";
-  }
-}
-
-async function useOnBase() {
-  if (!walletState || !sessionState) return;
-  if (!l2WalletClient) {
-    setBaseRow("pending", "Missing L2 signer in .env.local");
-    log(
-      "Missing VITE_BASE_SEPOLIA_SIGNER_KEY in apps/passkey-crosschain/.env.local.",
-      "err",
-    );
-    return;
-  }
-
-  setUseBaseButton("Activating…", true);
-  setBaseRow("pending", `Activating<span class="dots"></span>`);
-
-  let bannerShown = false;
-  try {
-    await ensureKeyCached({
-      l1Client: publicClient as never,
-      l2Client: l2PublicClient as never,
-      l2WalletClient: l2WalletClient as never,
-      // SEPOLIA always has a KeyStore; the field is optional on NetworkConfig
-      // because an L2 like Base Sepolia can be executable without hosting one.
-      l1KeyStore: SEPOLIA.keyStore!,
-      l2Cache: BASE_SEPOLIA.keyStoreCache,
-      user: walletState.address,
-      publicKey: sessionState.signer.publicKey,
-      onStatus: (status) => {
-        log(`Base activation: ${status}`);
-        if (status === "cache-hit") {
-          // Already active — no banner needed.
-          return;
-        }
-        if (status === "waiting-for-anchor" || status === "submitting-proof") {
-          bannerShown = true;
-          showSyncBanner(statusLabel(status));
-        } else if (status === "done") {
-          hideSyncBanner();
-        }
-      },
-    });
-    setBaseRow(
-      "active",
-      `Active <em>· any contract can now call <code>isValidKey</code> and get true</em>`,
-    );
-    setUseBaseButton("Use again (instant)", false);
-    if (bannerShown) {
-      log("Session is live on Base Sepolia. Future actions are instant.", "ok");
-    } else {
-      log("Session was already active on Base — instant cache hit.", "ok");
-    }
-  } catch (err) {
-    hideSyncBanner();
-    const msg = err instanceof Error ? err.message : String(err);
-    setBaseRow("pending", "Activation failed — try again");
-    setUseBaseButton("Use on Base", false);
-    log(`Base activation failed: ${msg}`, "err");
-  }
-}
-
-document.getElementById("btn-use-base")!.addEventListener("click", useOnBase);
 
 // ---------- step 4: execute as session -------------------------------------
 
@@ -449,8 +385,11 @@ document.getElementById("btn-execute")!.addEventListener("click", async () => {
   setDisabled("btn-execute", true);
   try {
     log("Session signing & submitting 1-wei transfer (no biometric prompt — the session key signs).");
+    // Same call on both chains. On Base the SDK re-proves the L1 anchor if needed
+    // before executing (auto-bridge); on BNB it's a plain execute.
     const result = await client.execute({
       session: sessionState,
+      chainId: selectedChainId,
       calls: {
         to: recipientForSession,
         value: 1n,
@@ -485,11 +424,24 @@ document.getElementById("btn-revoke")!.addEventListener("click", async () => {
   if (!walletState || !sessionState) return;
   setDisabled("btn-revoke", true);
   try {
-    log("Revoking session. Passkey will prompt to sign the revoke…");
+    // Revocation happens on the registry chain: BNB revokes on BNB; a gated L2
+    // revokes on its L1 (Sepolia). On Base the L2 cache keeps reporting valid
+    // until the next re-sync — L1 is the source of truth (auto re-sync of a
+    // revoke on the L2 is a planned follow-up).
+    const revokeChainId =
+      selectedChainId === BASE_SEPOLIA.chainId
+        ? SEPOLIA.chainId
+        : selectedChainId;
+    log(
+      `Revoking session on ${selectedChain().chain.name}${
+        revokeChainId !== selectedChainId ? " (registry on Sepolia)" : ""
+      }. Passkey will prompt to sign the revoke…`,
+    );
     const result = await client.revokeSession({
       wallet: walletState,
       signer: walletState.signer,
       session: sessionState,
+      chainId: revokeChainId,
     });
     setText("revoke-status", result.status);
     if (result.transactionHash) {

@@ -12,10 +12,17 @@
       <header class="page-header">
         <h1>Cross-chain agentic infrastructure</h1>
         <p class="sub">
-          Create a passkey-secured wallet. Authorize an agent with a scoped
-          session key. Watch the same session work across chains — registered
-          once, cryptographically provable everywhere.
+          Create a passkey-secured wallet — one address. Authorize an agent with
+          a scoped session key. Switch the chain and do the exact same thing: the
+          SDK hides whatever plumbing each chain needs.
         </p>
+        <label class="chain-picker">
+          Chain
+          <select id="chain-select">
+            <option value="84532" selected>Base Sepolia (L2, gated)</option>
+            <option value="97">BNB testnet (full-stack)</option>
+          </select>
+        </label>
       </header>
 
       <section class="step" id="step-1">
@@ -39,6 +46,7 @@
         <div class="kv" id="wallet-info" hidden>
           <div><span>Wallet address</span><code id="wallet-addr"></code></div>
           <div><span>Balance</span><code id="wallet-balance">—</code><button id="btn-refresh" class="link">refresh</button></div>
+          <p id="fund-hint" class="hint"></p>
         </div>
       </section>
 
