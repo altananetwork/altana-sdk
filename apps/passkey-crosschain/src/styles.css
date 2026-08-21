@@ -555,6 +555,168 @@ code {
 }
 
 /* ============================================================
+   Activity panel — live step tracker + log
+   Fixed bottom-right on wide screens; full-width dock on narrow.
+   ============================================================ */
+.activity {
+  position: fixed;
+  right: var(--space-xl);
+  bottom: var(--space-xl);
+  width: 380px;
+  max-width: calc(100vw - 2 * var(--space-lg));
+  max-height: min(70vh, 640px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-active);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  z-index: 20;
+  overflow: hidden;
+}
+
+.activity-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: 1px solid var(--border);
+}
+
+.activity-title {
+  font-weight: 600;
+  font-size: var(--fs-caption);
+  color: var(--text-primary);
+  flex: 1;
+  min-width: 0;
+}
+
+.activity-clear {
+  font-size: var(--fs-label);
+  flex-shrink: 0;
+}
+
+.activity-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: sync-spin 0.9s linear infinite;
+  flex-shrink: 0;
+}
+.activity-spinner[hidden] { display: none; }
+
+.activity-steps {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-md) var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+.activity-steps:empty { display: none; }
+
+.astep {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  align-items: start;
+  gap: 10px;
+  font-size: var(--fs-caption);
+}
+
+.astep-mark {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 11px;
+  line-height: 1;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.astep-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.astep-label { color: var(--text-secondary); }
+.astep-detail {
+  font-size: var(--fs-label);
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  word-break: break-word;
+}
+.astep-detail:empty { display: none; }
+
+/* pending */
+.astep[data-state="pending"] .astep-mark {
+  border: 1.5px solid var(--border-active);
+  color: transparent;
+}
+/* active */
+.astep[data-state="active"] .astep-mark {
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  animation: sync-spin 0.9s linear infinite;
+  color: transparent;
+}
+.astep[data-state="active"] .astep-label {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+/* done */
+.astep[data-state="done"] .astep-mark {
+  background: var(--success-subtle);
+  color: var(--success);
+}
+.astep[data-state="done"] .astep-mark::before { content: '✓'; }
+/* failed */
+.astep[data-state="failed"] .astep-mark {
+  background: var(--error-subtle);
+  color: var(--error);
+}
+.astep[data-state="failed"] .astep-mark::before { content: '✕'; }
+.astep[data-state="failed"] .astep-label { color: var(--error); }
+
+.activity-logwrap {
+  border-top: 1px solid var(--border);
+  overflow: auto;
+  min-height: 0;
+}
+.activity-logwrap > summary {
+  cursor: pointer;
+  padding: var(--space-sm) var(--space-lg);
+  font-size: var(--fs-label);
+  text-transform: uppercase;
+  letter-spacing: var(--ls-label);
+  color: var(--text-tertiary);
+  font-weight: 500;
+  user-select: none;
+}
+.activity-log {
+  margin: 0;
+  padding: 0 var(--space-lg) var(--space-md);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.activity-log .ok  { color: var(--success); }
+.activity-log .err { color: var(--error); }
+
+@media (max-width: 760px) {
+  .activity {
+    right: var(--space-sm);
+    left: var(--space-sm);
+    bottom: var(--space-sm);
+    width: auto;
+    max-height: 50vh;
+  }
+}
+
+/* ============================================================
    Reduced motion
    ============================================================ */
 @media (prefers-reduced-motion: reduce) {

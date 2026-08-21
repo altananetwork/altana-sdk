@@ -113,48 +113,9 @@
         </div>
       </section>
 
-      <section class="step" id="step-cross" hidden>
-        <div class="step-head">
-          <span class="step-num">4</span>
-          <h2>Your session, live across chains</h2>
-        </div>
-        <p>
-          One grant. The session lives on Ethereum and any Base contract can
-          verify it cryptographically — no second signature, no bridge. The
-          first time the agent acts on Base, the proof is anchored. Every
-          action after that is instant.
-        </p>
-        <div class="chain-grid" id="chain-grid">
-          <ul class="cg-list">
-            <li class="cg-row active" id="row-ethereum">
-              <span class="cg-mark">⬢</span>
-              <span class="cg-name">Ethereum</span>
-              <span class="cg-status">Registered <em>· source of truth</em></span>
-            </li>
-            <li class="cg-row pending" id="row-base">
-              <span class="cg-mark">⬢</span>
-              <span class="cg-name">Base</span>
-              <span class="cg-status" id="base-status-cell">Not activated yet</span>
-              <button class="link cg-action" id="btn-use-base">Use on Base</button>
-            </li>
-          </ul>
-          <div class="sync-banner" id="sync-banner" hidden>
-            <div class="sync-banner-title">
-              <span class="sync-spinner" aria-hidden="true"></span>
-              <span id="sync-banner-title-text">Activating your session on Base Sepolia…</span>
-            </div>
-            <div class="sync-banner-body">
-              First-time activation takes <strong>~1–3 minutes</strong> while we anchor your
-              Ethereum authorization onto Base. <strong>Every action after this is instant.</strong>
-            </div>
-            <div class="sync-banner-step" id="sync-banner-step">Waiting for Base to anchor the Ethereum block…</div>
-          </div>
-        </div>
-      </section>
-
       <section class="step" id="step-4" hidden>
         <div class="step-head">
-          <span class="step-num">5</span>
+          <span class="step-num">4</span>
           <h2>Execute as session</h2>
         </div>
         <p>
@@ -170,7 +131,7 @@
 
       <section class="step" id="step-5" hidden>
         <div class="step-head">
-          <span class="step-num">6</span>
+          <span class="step-num">5</span>
           <h2>Revoke</h2>
         </div>
         <p>
@@ -185,6 +146,20 @@
       </section>
 
     </main>
+
+    <aside class="activity" id="activity" aria-live="polite">
+      <div class="activity-head">
+        <span class="activity-spinner" id="activity-spinner" hidden></span>
+        <span class="activity-title" id="activity-title">Activity</span>
+        <button class="link activity-clear" id="activity-clear" type="button">clear log</button>
+      </div>
+      <ol class="activity-steps" id="activity-steps"></ol>
+      <details class="activity-logwrap" id="activity-logwrap" open>
+        <summary>Detailed log</summary>
+        <pre class="activity-log" id="log"></pre>
+      </details>
+    </aside>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

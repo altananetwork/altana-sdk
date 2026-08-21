@@ -9,6 +9,14 @@ import type {
 } from "./internal/sessions.js";
 import type { Wallet } from "./internal/types.js";
 import type { EnsureKeyCachedStatus } from "./syncKeyToL2.js";
+
+/** Progress phases for a gated-L2 grant, plus the bridge sub-statuses. */
+export type GrantCrossChainStatus =
+  | "registering-on-l1"
+  | "wiring-gate-on-l2"
+  | "bridging-proof"
+  | EnsureKeyCachedStatus
+  | "done";
 import { buildPublicClient } from "./internal/relay.js";
 import { grantSession } from "./grantSession.js";
 import { wireSessionToGateOnL2 } from "./linkSessionToGate.js";
@@ -25,7 +33,7 @@ export type GrantSessionCrossChainConfig = {
   /** Also bridge the L1 proof into the L2 cache (default true). */
   bridge?: boolean;
   feeToken?: Address;
-  onStatus?: (status: EnsureKeyCachedStatus) => void;
+  onStatus?: (status: GrantCrossChainStatus) => void;
 };
 
 /**
@@ -43,6 +51,7 @@ export async function grantSessionCrossChain(
 ): Promise<GrantSessionResult> {
   const { l2Network, l1Network } = config;
   const bridge = config.bridge !== false;
+  const status = config.onStatus ?? (() => {});
 
   // The cache proves an L1 KeyStore entry, so the key must be registered there.
   if (opts.register === false) {
@@ -81,6 +90,7 @@ export async function grantSessionCrossChain(
   };
 
   // 1. Grant on the L1 registry (spend-only permissions).
+  status("registering-on-l1");
   const session = await grantSession(
     wallet,
     adminSigner,
@@ -92,6 +102,7 @@ export async function grantSessionCrossChain(
   );
 
   // 2. Wire the gate on the L2 (authorize + spend + setCallChecker per target + link).
+  status("wiring-gate-on-l2");
   const wired = await wireSessionToGateOnL2(wallet, adminSigner, session, {
     network: l2Network,
     gate: l2Network.keyStoreCacheGate,
@@ -109,6 +120,7 @@ export async function grantSessionCrossChain(
           `l2GasSigner, or grant with bridge: false and bridge later.`,
       );
     }
+    status("bridging-proof");
     await ensureKeyCached({
       l1Client: buildPublicClient(l1Network),
       l2Client: buildPublicClient(l2Network),
@@ -117,10 +129,11 @@ export async function grantSessionCrossChain(
       l2Cache: l2Network.keyStoreCache,
       user: wallet.address,
       publicKey: session.publicKey,
-      ...(config.onStatus ? { onStatus: config.onStatus } : {}),
+      onStatus: (s) => status(s),
     });
     cached = true;
   }
+  status("done");
 
   return {
     ...session,

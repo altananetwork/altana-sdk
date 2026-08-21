@@ -71,7 +71,10 @@ export {
 export { isGatedL2Chain } from "./config.js";
 export type { NetworkConfig, L2CacheConfig } from "./config.js";
 export { grantSessionCrossChain } from "./grantSessionCrossChain.js";
-export type { GrantSessionCrossChainConfig } from "./grantSessionCrossChain.js";
+export type {
+  GrantSessionCrossChainConfig,
+  GrantCrossChainStatus,
+} from "./grantSessionCrossChain.js";
 
 // Testnet faucet helper — funds an EOA with native tokens via the testnet
 // relay's faucet. Works only on networks whose relay exposes it (BSC testnet).

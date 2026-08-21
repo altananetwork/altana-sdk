@@ -16,7 +16,10 @@ import {
   keyStoreOf,
 } from "./config.js";
 import type { Signer } from "./internal/signer.js";
-import { grantSessionCrossChain as grantSessionCrossChainImpl } from "./grantSessionCrossChain.js";
+import {
+  grantSessionCrossChain as grantSessionCrossChainImpl,
+  type GrantCrossChainStatus,
+} from "./grantSessionCrossChain.js";
 import { buildPublicClient } from "./internal/relay.js";
 import { ensureKeyCached, type EnsureKeyCachedStatus } from "./syncKeyToL2.js";
 import { walletClientFromSigner } from "./internal/gasPayer.js";
@@ -122,8 +125,8 @@ export type ClientGrantSessionOptions = {
   bridge?: boolean;
   /** Gated L2 only: override the client-level relayer gas payer for this call. */
   l2GasSigner?: Signer;
-  /** Gated L2 only: progress callback for the proof bridge. */
-  onStatus?: (status: EnsureKeyCachedStatus) => void;
+  /** Gated L2 only: progress callback across register → wire → bridge → done. */
+  onStatus?: (status: GrantCrossChainStatus) => void;
 } & GrantSessionOptions &
   ChainSelector;
 
