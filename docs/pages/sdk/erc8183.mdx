@@ -69,3 +69,43 @@ OptimisticPolicy, ERC-8004 registry, and $U token for BSC mainnet (56) and
 testnet (97). The MCP server exposes the same flow as tools:
 `erc8183_create_job`, `erc8183_job_status`, `erc8183_settle` — see
 [MCP Tools](/mcp/tools).
+
+## Get testnet $U
+
+On BSC testnet (chain 97) a public faucet funds job budgets: calling
+`requestTokens()` on the faucet pays **10 $U** to the caller, once per address
+every 30 minutes. Claim straight from your Altana wallet through the relay —
+the smart account is `msg.sender`, so the payout lands in the wallet:
+
+```ts
+import { encodeFunctionData } from "viem";
+import { createClient, BNB_TESTNET } from "@altananetwork/sdk";
+
+const U_FAUCET = "0x86e9197CC0F76E4e4aaa7082180945196bBAb5D3";
+
+const client = createClient({ chains: [BNB_TESTNET] });
+await client.execute({
+  wallet,
+  signer,
+  chainId: 97,
+  calls: [{
+    to: U_FAUCET,
+    data: encodeFunctionData({
+      abi: [{ name: "requestTokens", type: "function", stateMutability: "nonpayable", inputs: [], outputs: [] }],
+      functionName: "requestTokens",
+    }),
+  }],
+});
+```
+
+Any EOA with test BNB for gas can also claim directly:
+
+```bash
+cast send 0x86e9197CC0F76E4e4aaa7082180945196bBAb5D3 "requestTokens()" \
+  --rpc-url https://bsc-testnet-rpc.publicnode.com --private-key $AGENT_KEY
+```
+
+The faucet enforces the 30-minute cooldown per address; the read-only
+`allowedToWithdraw(address)` reports whether a claim is currently allowed.
+Token and faucet addresses are listed with the other testnet contracts on
+[Testnet](/concepts/networks/testnet).
