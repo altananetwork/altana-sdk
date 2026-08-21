@@ -50,6 +50,15 @@ EXP fee tokens (pay relay fees in a test token instead of native tBNB):
 | EXP | `0xa8071DA5e994cB8e3eB56CaD0FBB6ca424dD8dc0` |
 | EXP2 | `0x61727778216127D0843A99A3e91e99C27e9f3BC7` |
 
+$U agent-economy token ([ERC-8183 hiring](/sdk/erc8183) escrows job budgets in
+$U; the public faucet's `requestTokens()` pays 10 $U per address every 30
+minutes — see [Get testnet $U](/sdk/erc8183#get-testnet-u) for claim code):
+
+| Contract | Address |
+| --- | --- |
+| $U token | `0xc70B8741B8B07A6d61E54fd4B20f22Fa648E5565` |
+| $U faucet | `0x86e9197CC0F76E4e4aaa7082180945196bBAb5D3` |
+
 > Addresses are the source of truth in the SDK's
 > [`packages/wallet/src/config.ts`](https://github.com/altananetwork/altana-sdk/blob/main/packages/wallet/src/config.ts).
 > To verify independently, check the addresses above against the explorer.
