@@ -167,7 +167,11 @@ export type {
 export {
   buildSetCallCheckerCall,
   buildGateLinkCall,
+  buildAuthorizeSessionKeyCall,
+  buildSetSpendLimitCall,
+  wireSessionToGateOnL2,
   assertGateCompatiblePermissions,
   assertGateIsSoleGrantPath,
   requireGate,
 } from "./linkSessionToGate.js";
+export type { WireSessionToGateResult } from "./linkSessionToGate.js";

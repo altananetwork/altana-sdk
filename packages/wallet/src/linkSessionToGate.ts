@@ -1,5 +1,24 @@
-import { encodeFunctionData, keccak256, type Address, type Hex } from "viem";
-import type { L2CacheConfig } from "./config.js";
+import {
+  encodeFunctionData,
+  keccak256,
+  padHex,
+  type Address,
+  type Hex,
+} from "viem";
+import type { L2CacheConfig, NetworkConfig } from "./config.js";
+import type { Session, SpendPermission } from "./internal/sessions.js";
+import type { Signer } from "./internal/signer.js";
+import { isPasskeySigner } from "./internal/passkey.js";
+import { sessionKeyHash } from "./internal/erc1271.js";
+import {
+  buildPublicClient,
+  buildRelayClient,
+  submitCalls,
+  waitForCalls,
+  type KeyDescriptor,
+} from "./internal/relay.js";
+
+const NATIVE_TOKEN: Address = "0x0000000000000000000000000000000000000000";
 
 /**
  * Wiring for KeyStoreCacheGate — the on-chain check that makes the L1 KeyStore
@@ -206,4 +225,257 @@ export function requireGate(l2: L2CacheConfig): Address {
     );
   }
   return l2.keyStoreCacheGate;
+}
+
+// ---------------------------------------------------------------------------
+// wireSessionToGateOnL2 — the first admin action on an L2 (the SDK-native
+// replacement for the raw-viem bootstrap in the e2e scripts).
+//
+// ONE admin `submitCalls` whose calls run in strict order (ERC-7821 executes
+// the array in order, so the ordering below is a contract guarantee):
+//   1. authorize(session key)  — registers the key on the L2 account. Required
+//      first: setSpendLimit and setCallChecker both call _isSuperAdmin(keyHash),
+//      which reverts KeyDoesNotExist on an unknown key.
+//   2. setSpendLimit           — bounds the session; touches only spend storage,
+//      never the canExecute allowlist, so it does not defeat the gate.
+//   3. setCallChecker          — routes `target` through the gate.
+//   4. link                    — binds the account keyHash to the L1 keyId.
+//
+// It deliberately does NOT use `authorizeKeys`: Porto attaches a
+// setCanExecute(keyHash, orchestrator, ANY_FN_SEL) call permission to any
+// session key routed that way, which is an allowlist entry that bypasses the
+// gate. The explicit authorize() call above installs the key with no such
+// entry, so the gate stays the sole grant path.
+//
+// The ADMIN may be a passkey (submitCalls handles admin signing for both
+// curves). The wired SESSION key must be secp256k1 (the account-side publicKey
+// for a passkey session is a coordinate pair, not an address — out of scope
+// here, and passkey sessions are separately unsupported on the execute path).
+// ---------------------------------------------------------------------------
+
+const AUTHORIZE_ABI = [
+  {
+    name: "authorize",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "key",
+        type: "tuple",
+        components: [
+          { name: "expiry", type: "uint40" },
+          { name: "keyType", type: "uint8" },
+          { name: "isSuperAdmin", type: "bool" },
+          { name: "publicKey", type: "bytes" },
+        ],
+      },
+    ],
+    outputs: [{ type: "bytes32" }],
+  },
+] as const;
+
+const SET_SPEND_LIMIT_ABI = [
+  {
+    name: "setSpendLimit",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "keyHash", type: "bytes32" },
+      { name: "token", type: "address" },
+      { name: "period", type: "uint8" },
+      { name: "limit", type: "uint256" },
+    ],
+    outputs: [],
+  },
+] as const;
+
+// GuardedExecutor.SpendPeriod enum.
+const SPEND_PERIOD: Record<SpendPermission["period"], number> = {
+  minute: 0,
+  hour: 1,
+  day: 2,
+  week: 3,
+  month: 4,
+  year: 5,
+};
+
+/**
+ * Account self-call: authorize a secp256k1 SESSION key on the L2 account. The
+ * stored publicKey is the 20-byte address left-padded to 32 bytes (keyType 2).
+ */
+export function buildAuthorizeSessionKeyCall(args: {
+  wallet: Address;
+  sessionSigner: Signer;
+  expiry: number;
+}): { to: Address; value: bigint; data: Hex } {
+  if (isPasskeySigner(args.sessionSigner)) {
+    throw new Error(
+      "wireSessionToGateOnL2 supports secp256k1 session keys only; the wired " +
+        "session signer is a passkey. (A passkey ADMIN is fine.)",
+    );
+  }
+  return {
+    to: args.wallet,
+    value: 0n,
+    data: encodeFunctionData({
+      abi: AUTHORIZE_ABI,
+      functionName: "authorize",
+      args: [
+        {
+          expiry: args.expiry,
+          keyType: 2,
+          isSuperAdmin: false,
+          publicKey: padHex(args.sessionSigner.address, { size: 32 }),
+        },
+      ],
+    }),
+  };
+}
+
+/** Account self-call: set a spend limit for `keyHash`. */
+export function buildSetSpendLimitCall(args: {
+  wallet: Address;
+  keyHash: Hex;
+  token: Address;
+  period: SpendPermission["period"];
+  limit: bigint;
+}): { to: Address; value: bigint; data: Hex } {
+  return {
+    to: args.wallet,
+    value: 0n,
+    data: encodeFunctionData({
+      abi: SET_SPEND_LIMIT_ABI,
+      functionName: "setSpendLimit",
+      args: [args.keyHash, args.token, SPEND_PERIOD[args.period], args.limit],
+    }),
+  };
+}
+
+export type WireSessionToGateResult = {
+  callsId: Hex;
+  transactionHash?: Hex;
+  keyHash: Hex;
+  keyId: Hex;
+};
+
+/**
+ * Perform the first admin action on an L2: authorize the session key on the L2
+ * account, bound it with a spend limit, route `target` through the gate, and
+ * link the account keyHash to the L1 keyId — all in one admin intent through the
+ * relay (passkey-compatible admin, no raw viem).
+ *
+ * `target` is REQUIRED and must NOT be the ANY_TARGET wildcard: with ANY_TARGET
+ * the gate is consulted for every destination including the gate itself, letting
+ * a compromised session drive account->gate.link(...) and permanently poison
+ * bindings. Pass the concrete contract(s) the session may call.
+ */
+export async function wireSessionToGateOnL2(
+  wallet: { address: Address },
+  adminSigner: Signer,
+  session: Session,
+  config: {
+    network: NetworkConfig;
+    gate: Address;
+    target: Address;
+    feeToken?: Address;
+  },
+): Promise<WireSessionToGateResult> {
+  const { network, gate, target } = config;
+  const feeToken = config.feeToken ?? NATIVE_TOKEN;
+
+  // A gated session must be spend-only; call permissions become setCanExecute
+  // allowlist entries that bypass the gate.
+  assertGateCompatiblePermissions(session.permissions);
+
+  const ANY_TARGET: Address = "0x3232323232323232323232323232323232323232";
+  if (target.toLowerCase() === ANY_TARGET.toLowerCase()) {
+    throw new Error(
+      "wireSessionToGateOnL2: `target` must be a concrete address, not the " +
+        "ANY_TARGET wildcard (it would let the session reach the gate itself).",
+    );
+  }
+
+  const spend = session.permissions.spend ?? [];
+  if (spend.length === 0) {
+    throw new Error(
+      "wireSessionToGateOnL2: the session has no spend permission. A gated " +
+        "session must be bounded by spend limits, and the relay reverts " +
+        "NoSpendPermissions if the fee token has no configured period.",
+    );
+  }
+
+  const keyHash = sessionKeyHash(session);
+  const keyId = keccak256(session.publicKey);
+
+  const publicClient = buildPublicClient(network);
+
+  // Re-run safety: the gate binding is create-once. If this keyHash is already
+  // bound to the right keyId, skip `link` (a revoke->re-authorize on the L2
+  // wipes the account's spend/checker state but the gate binding survives).
+  const existingKeyId = (await publicClient.readContract({
+    address: gate,
+    abi: GATE_ABI,
+    functionName: "keyIdOf",
+    args: [wallet.address, keyHash],
+  })) as Hex;
+  const alreadyLinked =
+    existingKeyId.toLowerCase() === keyId.toLowerCase();
+  const zero =
+    "0x0000000000000000000000000000000000000000000000000000000000000000";
+  if (
+    existingKeyId.toLowerCase() !== zero &&
+    existingKeyId.toLowerCase() !== keyId.toLowerCase()
+  ) {
+    throw new Error(
+      `Gate already binds ${keyHash} to a different keyId (${existingKeyId}). ` +
+        `Bindings are create-once; grant a fresh session key.`,
+    );
+  }
+
+  const calls: { to: Address; value: bigint; data: Hex }[] = [
+    buildAuthorizeSessionKeyCall({
+      wallet: wallet.address,
+      sessionSigner: session.signer,
+      expiry: session.expiry,
+    }),
+    ...spend.map((s) =>
+      buildSetSpendLimitCall({
+        wallet: wallet.address,
+        keyHash,
+        token: s.token ?? NATIVE_TOKEN,
+        period: s.period,
+        limit: s.limit,
+      }),
+    ),
+    buildSetCallCheckerCall({ wallet: wallet.address, keyHash, target, gate }),
+    ...(alreadyLinked
+      ? []
+      : [buildGateLinkCall({ gate, keyHash, sessionPublicKey: session.publicKey })]),
+  ];
+
+  const adminKeyDesc: KeyDescriptor = {
+    type: "secp256k1",
+    publicKey: adminSigner.publicKey,
+    role: "admin",
+  };
+
+  const relayClient = buildRelayClient(network);
+  const callsId = await submitCalls(relayClient, wallet.address, adminSigner, calls, {
+    feeToken,
+    submittingKey: adminKeyDesc,
+    network,
+  });
+  const result = await waitForCalls(relayClient, callsId);
+  if (result.status !== "CONFIRMED") {
+    throw new Error(
+      `wireSessionToGateOnL2: relay status ${result.status} (callsId ${callsId}).`,
+    );
+  }
+
+  return {
+    callsId,
+    ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
+    keyHash,
+    keyId,
+  };
 }

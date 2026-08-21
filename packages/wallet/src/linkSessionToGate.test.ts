@@ -3,10 +3,13 @@ import { decodeFunctionData, keccak256, type Address, type Hex } from "viem";
 import {
   assertGateCompatiblePermissions,
   assertGateIsSoleGrantPath,
+  buildAuthorizeSessionKeyCall,
   buildGateLinkCall,
   buildSetCallCheckerCall,
+  buildSetSpendLimitCall,
   requireGate,
 } from "./linkSessionToGate.js";
+import { signerFromPrivateKey } from "./internal/signer.js";
 import { BASE, BASE_SEPOLIA } from "./config.js";
 
 const WALLET = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as Address;
@@ -171,5 +174,80 @@ describe("requireGate", () => {
 
   it("throws for a chain with no gate deployed yet", () => {
     expect(() => requireGate(BASE)).toThrow(/No KeyStoreCacheGate/);
+  });
+});
+
+describe("buildAuthorizeSessionKeyCall", () => {
+  it("authorizes a secp256k1 session key as a self-call, keyType 2, not super-admin", () => {
+    const signer = signerFromPrivateKey(("0x" + "11".repeat(32)) as Hex);
+    const call = buildAuthorizeSessionKeyCall({
+      wallet: WALLET,
+      sessionSigner: signer,
+      expiry: 1893456000,
+    });
+    expect(call.to).toBe(WALLET); // account self-call (onlyThis)
+    const AUTH_ABI = [
+      {
+        name: "authorize",
+        type: "function",
+        stateMutability: "nonpayable",
+        inputs: [
+          {
+            name: "key",
+            type: "tuple",
+            components: [
+              { name: "expiry", type: "uint40" },
+              { name: "keyType", type: "uint8" },
+              { name: "isSuperAdmin", type: "bool" },
+              { name: "publicKey", type: "bytes" },
+            ],
+          },
+        ],
+        outputs: [{ type: "bytes32" }],
+      },
+    ] as const;
+    const decoded = decodeFunctionData({ abi: AUTH_ABI, data: call.data });
+    const key = decoded.args[0] as {
+      keyType: number;
+      isSuperAdmin: boolean;
+      publicKey: Hex;
+    };
+    expect(key.keyType).toBe(2);
+    expect(key.isSuperAdmin).toBe(false);
+    // secp256k1 account publicKey is the address left-padded to 32 bytes.
+    expect(key.publicKey.toLowerCase()).toBe(
+      ("0x" + "00".repeat(12) + signer.address.slice(2)).toLowerCase(),
+    );
+  });
+});
+
+describe("buildSetSpendLimitCall", () => {
+  it("maps period name to the SpendPeriod enum and targets the account", () => {
+    const call = buildSetSpendLimitCall({
+      wallet: WALLET,
+      keyHash: KEY_HASH,
+      token: "0x0000000000000000000000000000000000000000",
+      period: "day",
+      limit: 10n ** 15n,
+    });
+    expect(call.to).toBe(WALLET);
+    const ABI = [
+      {
+        name: "setSpendLimit",
+        type: "function",
+        stateMutability: "nonpayable",
+        inputs: [
+          { name: "keyHash", type: "bytes32" },
+          { name: "token", type: "address" },
+          { name: "period", type: "uint8" },
+          { name: "limit", type: "uint256" },
+        ],
+        outputs: [],
+      },
+    ] as const;
+    const decoded = decodeFunctionData({ abi: ABI, data: call.data });
+    expect(decoded.args[0]).toBe(KEY_HASH);
+    expect(decoded.args[2]).toBe(2); // day
+    expect(decoded.args[3]).toBe(10n ** 15n);
   });
 });

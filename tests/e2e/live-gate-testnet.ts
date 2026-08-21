@@ -21,8 +21,6 @@ import {
   signerFromPrivateKey,
   ensureKeyCached,
   syncKeyToL2,
-  buildSetCallCheckerCall,
-  buildGateLinkCall,
   assertGateCompatiblePermissions,
   assertGateIsSoleGrantPath,
   requireGate,
@@ -31,7 +29,6 @@ import {
 } from "@altananetwork/sdk";
 import {
   createPublicClient,
-  encodeFunctionData,
   createWalletClient,
   encodeAbiParameters,
   http,
@@ -127,21 +124,6 @@ async function main() {
     transport: http(BASE_SEPOLIA.publicRpcUrl),
   });
 
-
-  /** Sends one L2 transaction, retrying while the node reports an in-flight limit. */
-  async function sendSpaced(tx: never): Promise<Hex> {
-    for (let i = 0; i < 12; i++) {
-      try {
-        return (await l2Wallet.sendTransaction(tx)) as Hex;
-      } catch (e) {
-        const msg = String(e);
-        if (!msg.includes("in-flight transaction limit")) throw e;
-        await new Promise((r) => setTimeout(r, 5000));
-      }
-    }
-    throw new Error("L2 send kept hitting the in-flight transaction limit");
-  }
-
   console.log("=== 1. wallet on Sepolia ===");
   const wallet = await client.createWallet({ signer: admin });
   console.log(`  wallet ${wallet.address}`);
@@ -151,7 +133,10 @@ async function main() {
   console.log("=== 2. grant a gated session (spend-only) ===");
   // A gated session must not carry call permissions: Porto turns each one into a
   // setCanExecute allowlist entry, which GuardedExecutor consults BEFORE the gate.
-  const permissions = { spend: [{ limit: 10n ** 12n, period: "day" as const }] };
+  // 1e15 wei/day (0.001 ETH), not 1e12: IthacaAccount.pay charges the relay fee
+  // against the session's spend budget, so a 1e12 cap trips ExceededSpendLimit on
+  // the first relayed execute. The L2 setSpendLimit mirrors this exact amount.
+  const permissions = { spend: [{ limit: 10n ** 15n, period: "day" as const }] };
   assertGateCompatiblePermissions(permissions);
 
   const sessionSigner = createPrivateKeySigner();
@@ -180,163 +165,24 @@ async function main() {
     `  explorer: https://testnet.altana.network/account/${wallet.address}`,
   );
 
-  console.log("=== 4. route this key through the gate on Base Sepolia ===");
-  // The L2 leg is driven directly rather than through the relay. Under EIP-7702
-  // the EOA *is* the account, so a transaction it sends to itself satisfies
-  // `onlyThis`, and a transaction it sends to the gate arrives with the account
-  // as msg.sender - which is what the gate scopes bindings by. Going through the
-  // relay here would additionally require the account to already be materialized
-  // on this chain, which createWallet only arranges lazily per chain.
-  // Porto's accountProxy, not its implementation. The relay validates the
-  // delegation target and rejects an account delegated straight to the impl
-  // with "invalid delegation proxy". This is the authorizationAddress Porto
-  // returns in its own quotes.
-  const PORTO_ACCOUNT_PROXY: Address =
-    "0x7c27e3aecbf42879b64d76f604dc3430f4886462";
-  const l2Code = await l2.getCode({ address: wallet.address });
-  if (!l2Code || l2Code === "0x") {
-    const auth = await l2Wallet.signAuthorization({
-      contractAddress: PORTO_ACCOUNT_PROXY,
-      executor: "self",
-    });
-    const h = await sendSpaced({
-      to: wallet.address,
-      data: "0x",
-      authorizationList: [auth],
-    } as never);
-    await l2.waitForTransactionReceipt({ hash: h });
-    console.log(`  delegated the wallet on Base Sepolia (7702): ${h}`);
-  }
-
-  // Authorize the session key on the L2 account, then wire the gate. Spend-only:
-  // no setCanExecute anywhere, so the gate is the only thing that can grant.
-  const AUTHORIZE_ABI = [
-    {
-      name: "authorize",
-      type: "function",
-      stateMutability: "nonpayable",
-      inputs: [
-        {
-          name: "key",
-          type: "tuple",
-          components: [
-            { name: "expiry", type: "uint40" },
-            { name: "keyType", type: "uint8" },
-            { name: "isSuperAdmin", type: "bool" },
-            { name: "publicKey", type: "bytes" },
-          ],
-        },
-      ],
-      outputs: [{ type: "bytes32" }],
-    },
-  ] as const;
-
-  const sessionPubForAccount = encodeAbiParameters(
-    [{ type: "address" }],
-    [sessionSigner.address as Address],
+  console.log("=== 4. route this key through the gate on Base Sepolia (SDK) ===");
+  // The entire L2 first-admin action — authorize the session key on the L2
+  // account, bound it, setCallChecker, and gate link — is now ONE relay intent
+  // through the SDK. No raw 7702 tx, no raw sendTransaction. This is the fix:
+  // client.wireSessionToGate mirrors grantSession's admin path on the L2, but
+  // builds the intent from explicit calls (NOT authorizeKeys, which would plant
+  // a setCanExecute(orchestrator, ...) entry that bypasses the gate).
+  const wired = await client.wireSessionToGate({
+    wallet,
+    signer: admin,
+    session,
+    chainId: BASE_SEPOLIA.chainId,
+    gate,
+    target: TARGET,
+  });
+  console.log(
+    `  wired via relay: ${wired.transactionHash ?? wired.callsId}`,
   );
-  const GET_KEYS_ABI = [
-    {
-      name: "getKeys",
-      type: "function",
-      stateMutability: "view",
-      inputs: [],
-      outputs: [
-        {
-          type: "tuple[]",
-          components: [
-            { name: "expiry", type: "uint40" },
-            { name: "keyType", type: "uint8" },
-            { name: "isSuperAdmin", type: "bool" },
-            { name: "publicKey", type: "bytes" },
-          ],
-        },
-        { type: "bytes32[]" },
-      ],
-    },
-  ] as const;
-
-  /**
-   * setCallChecker calls _isSuperAdmin, which reverts KeyDoesNotExist when the
-   * key is not visible. Public Base Sepolia RPCs lag their own state, so the
-   * next transaction can be gas-estimated against a view where authorize has
-   * not landed yet. Wait for the account to actually report the key.
-   */
-  async function waitForKey(): Promise<void> {
-    for (let i = 0; i < 20; i++) {
-      const [, hashes] = (await l2.readContract({
-        address: wallet.address,
-        abi: GET_KEYS_ABI,
-        functionName: "getKeys",
-      })) as [unknown, readonly Hex[]];
-      if (hashes.some((h) => h.toLowerCase() === keyHash.toLowerCase())) return;
-      await new Promise((r) => setTimeout(r, 3000));
-    }
-    throw new Error(`account never reported key ${keyHash}`);
-  }
-
-  const authorizeTx = {
-      to: wallet.address,
-      data: encodeFunctionData({
-        abi: AUTHORIZE_ABI,
-        functionName: "authorize",
-        args: [
-          {
-            expiry: session.expiry,
-            keyType: 2,
-            isSuperAdmin: false,
-            publicKey: sessionPubForAccount,
-          },
-        ],
-      }),
-  };
-  const SET_SPEND_ABI = [
-    {
-      name: "setSpendLimit",
-      type: "function",
-      stateMutability: "nonpayable",
-      inputs: [
-        { name: "keyHash", type: "bytes32" },
-        { name: "token", type: "address" },
-        { name: "period", type: "uint8" },
-        { name: "limit", type: "uint256" },
-      ],
-      outputs: [],
-    },
-  ] as const;
-
-  // The account needs the spend limit too. A non-superadmin session key with no
-  // spend permission is rejected by the relay with NoSpendPermissions. This is
-  // also what keeps the session bounded WITHOUT a call permission, which would
-  // create the setCanExecute allowlist entry that bypasses the gate.
-  const spendTx = {
-    to: wallet.address,
-    data: encodeFunctionData({
-      abi: SET_SPEND_ABI,
-      functionName: "setSpendLimit",
-      args: [keyHash, "0x0000000000000000000000000000000000000000", 2, 10n ** 15n],
-    }),
-  };
-
-  for (const tx of [
-    authorizeTx,
-    spendTx,
-    buildSetCallCheckerCall({
-      wallet: wallet.address,
-      keyHash,
-      target: TARGET,
-      gate,
-    }),
-    buildGateLinkCall({ gate, keyHash, sessionPublicKey: session.publicKey }),
-  ]) {
-    // Base Sepolia allows a 7702-delegated account only one in-flight
-    // transaction, and the node keeps counting the previous one briefly after
-    // the receipt lands, so these must be spaced rather than pipelined.
-    const h = await sendSpaced(tx as never);
-    await l2.waitForTransactionReceipt({ hash: h });
-    if (tx === authorizeTx) await waitForKey();
-  }
-  console.log("  authorized + setCallChecker + gate link");
   // Public Base Sepolia RPCs lag their own state, so the binding can read as
   // zero for a few seconds after the link lands. Retry rather than treating a
   // stale read as a mismatch.

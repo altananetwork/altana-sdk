@@ -21,8 +21,6 @@ import {
   signerFromPrivateKey,
   ensureKeyCached,
   syncKeyToL2,
-  buildSetCallCheckerCall,
-  buildGateLinkCall,
   assertGateCompatiblePermissions,
   SEPOLIA,
   BASE_SEPOLIA,
@@ -31,7 +29,6 @@ import {
   createPublicClient,
   createWalletClient,
   encodeAbiParameters,
-  encodeFunctionData,
   http,
   keccak256,
   type Address,
@@ -40,8 +37,6 @@ import {
 import { privateKeyToAccount } from "viem/accounts";
 
 const TARGET: Address = "0x000000000000000000000000000000000000cafe";
-const PORTO_ACCOUNT_PROXY: Address =
-  "0x7c27e3aecbf42879b64d76f604dc3430f4886462";
 const TX_COUNT = Number(process.env.TX_COUNT ?? 5);
 
 const CAN_EXECUTE_ABI = [
@@ -55,63 +50,6 @@ const CAN_EXECUTE_ABI = [
       { name: "data", type: "bytes" },
     ],
     outputs: [{ type: "bool" }],
-  },
-] as const;
-
-const AUTHORIZE_ABI = [
-  {
-    name: "authorize",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [
-      {
-        name: "key",
-        type: "tuple",
-        components: [
-          { name: "expiry", type: "uint40" },
-          { name: "keyType", type: "uint8" },
-          { name: "isSuperAdmin", type: "bool" },
-          { name: "publicKey", type: "bytes" },
-        ],
-      },
-    ],
-    outputs: [{ type: "bytes32" }],
-  },
-] as const;
-
-const SET_SPEND_ABI = [
-  {
-    name: "setSpendLimit",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "keyHash", type: "bytes32" },
-      { name: "token", type: "address" },
-      { name: "period", type: "uint8" },
-      { name: "limit", type: "uint256" },
-    ],
-    outputs: [],
-  },
-] as const;
-
-const GET_KEYS_ABI = [
-  {
-    name: "getKeys",
-    type: "function",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [
-      {
-        type: "tuple[]",
-        components: [
-          { name: "expiry", type: "uint40" },
-          { name: "keyType", type: "uint8" },
-          { name: "isSuperAdmin", type: "bool" },
-          { name: "publicKey", type: "bytes" },
-        ],
-      },
-      { type: "bytes32[]" },
-    ],
   },
 ] as const;
 
@@ -154,18 +92,6 @@ async function main() {
     transport: http(BASE_SEPOLIA.publicRpcUrl),
   });
 
-  async function sendSpaced(tx: never): Promise<Hex> {
-    for (let i = 0; i < 15; i++) {
-      try {
-        return (await l2Wallet.sendTransaction(tx)) as Hex;
-      } catch (e) {
-        if (!String(e).includes("in-flight transaction limit")) throw e;
-        await new Promise((r) => setTimeout(r, 4000));
-      }
-    }
-    throw new Error("kept hitting the in-flight transaction limit");
-  }
-
   console.log("\n--- 1. create an agent wallet -------------------------------");
   const wallet = await client.createWallet({ signer: admin });
   console.log(`wallet   ${wallet.address}`);
@@ -191,66 +117,20 @@ async function main() {
   console.log(`key page: https://testnet.altana.network/key/${keyId}`);
 
   console.log("\n--- 3. put the agent under L1 authority on Base Sepolia -----");
-  const code = await l2.getCode({ address: wallet.address });
-  if (!code || code === "0x") {
-    const auth = await l2Wallet.signAuthorization({
-      contractAddress: PORTO_ACCOUNT_PROXY,
-      executor: "self",
-    });
-    const h = await sendSpaced({
-      to: wallet.address,
-      data: "0x",
-      authorizationList: [auth],
-    } as never);
-    await l2.waitForTransactionReceipt({ hash: h });
-  }
-  const sessionPubForAccount = encodeAbiParameters(
-    [{ type: "address" }],
-    [sessionSigner.address as Address],
+  // One relayed intent through the SDK: authorize the agent key on the L2
+  // account, bound it, route TARGET through the gate, link to the L1 keyId. No
+  // raw 7702 tx, no funded L2 signer for this step.
+  const wired = await client.wireSessionToGate({
+    wallet,
+    signer: admin,
+    session,
+    chainId: BASE_SEPOLIA.chainId,
+    gate,
+    target: TARGET,
+  });
+  console.log(
+    `  wired via relay: ${BASE_SEPOLIA.explorer}/tx/${wired.transactionHash ?? wired.callsId}`,
   );
-  const setupTxs = [
-    {
-      to: wallet.address,
-      data: encodeFunctionData({
-        abi: AUTHORIZE_ABI,
-        functionName: "authorize",
-        args: [
-          {
-            expiry: session.expiry,
-            keyType: 2,
-            isSuperAdmin: false,
-            publicKey: sessionPubForAccount,
-          },
-        ],
-      }),
-    },
-    {
-      to: wallet.address,
-      data: encodeFunctionData({
-        abi: SET_SPEND_ABI,
-        functionName: "setSpendLimit",
-        args: [keyHash, "0x0000000000000000000000000000000000000000", 2, 10n ** 15n],
-      }),
-    },
-    buildSetCallCheckerCall({ wallet: wallet.address, keyHash, target: TARGET, gate }),
-    buildGateLinkCall({ gate, keyHash, sessionPublicKey: session.publicKey }),
-  ];
-  for (const [i, tx] of setupTxs.entries()) {
-    const h = await sendSpaced(tx as never);
-    await l2.waitForTransactionReceipt({ hash: h });
-    console.log(`  setup ${i + 1}/4  ${BASE_SEPOLIA.explorer}/tx/${h}`);
-    if (i === 0) {
-      for (let k = 0; k < 20; k++) {
-        const [, hashes] = (await l2.readContract({
-          address: wallet.address,
-          abi: GET_KEYS_ABI,
-          functionName: "getKeys",
-        })) as [unknown, readonly Hex[]];
-        if (hashes.some((x) => x.toLowerCase() === keyHash.toLowerCase())) break;
-        await new Promise((r) => setTimeout(r, 3000));
-      }
-    }
-  }
 
   console.log("\n--- 4. activate on Base Sepolia (bridge the L1 proof) -------");
   await ensureKeyCached({

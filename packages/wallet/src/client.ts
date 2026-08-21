@@ -27,6 +27,10 @@ import { createPasskeyWallet as createPasskeyWalletImpl } from "./createPasskeyW
 import { recoverFromPasskey as recoverFromPasskeyImpl } from "./recoverFromPasskey.js";
 import { execute as executeImpl } from "./execute.js";
 import { grantSession as grantSessionImpl } from "./grantSession.js";
+import {
+  wireSessionToGateOnL2 as wireSessionToGateImpl,
+  type WireSessionToGateResult,
+} from "./linkSessionToGate.js";
 import { revokeSession as revokeSessionImpl } from "./revokeSession.js";
 import { registerSessionKey as registerSessionKeyImpl } from "./registerSessionKey.js";
 import type { RegisterSessionKeyResult } from "./registerSessionKey.js";
@@ -95,6 +99,15 @@ export type ClientGrantSessionOptions = {
 } & GrantSessionOptions &
   ChainSelector;
 
+export type ClientWireSessionToGateOptions = {
+  wallet: Wallet;
+  signer: Signer;
+  session: Session;
+  gate: Address;
+  target: Address;
+  feeToken?: Address;
+} & ChainSelector;
+
 export type ClientRevokeSessionOptions = {
   wallet: Wallet;
   signer: Signer;
@@ -154,6 +167,15 @@ export type Client = {
   ): Promise<CreateWalletResult & { signer: PasskeySigner }>;
   execute(opts: ClientExecuteOptions): Promise<ExecuteResult>;
   grantSession(opts: ClientGrantSessionOptions): Promise<GrantSessionResult>;
+  /**
+   * Perform the first admin action on an L2 for a gated session: authorize the
+   * key on the L2 account, bound it, route `target` through the gate, and link
+   * it to the L1 keyId — one relay intent, passkey-compatible admin. Call this
+   * on the L2 after granting the session on the L1.
+   */
+  wireSessionToGate(
+    opts: ClientWireSessionToGateOptions,
+  ): Promise<WireSessionToGateResult>;
   revokeSession(opts: ClientRevokeSessionOptions): Promise<ExecuteResult>;
   /** Lazily register a session key granted with `register: false`. Idempotent. */
   registerSessionKey(
@@ -277,6 +299,15 @@ export function createClient(opts: CreateClientOptions): Client {
           ...(o.feeToken ? { feeToken: o.feeToken } : {}),
         },
       );
+    },
+
+    wireSessionToGate(o) {
+      return wireSessionToGateImpl(o.wallet, o.signer, o.session, {
+        network: resolve(o.chainId),
+        gate: o.gate,
+        target: o.target,
+        ...(o.feeToken ? { feeToken: o.feeToken } : {}),
+      });
     },
 
     revokeSession(o) {
