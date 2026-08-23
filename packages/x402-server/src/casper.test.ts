@@ -282,20 +282,8 @@ describe("createCasperX402Merchant", () => {
 
   it("settles a valid payment and returns the deploy hash", async () => {
     const { facilitator, calls } = fakeFacilitator();
-    const m = createCasperX402Merchant({
-      ...cfg,
-      // Keep the fixture inside its validity window regardless of wall clock.
-      price: 10_000n,
-      facilitator,
-    });
-    const header = Buffer.from(
-      JSON.stringify(JSON.parse(Buffer.from(envelope(), "base64").toString("utf8"))),
-    ).toString("base64");
-    // Re-stamp the authorization window around the real clock.
-    const now = Math.floor(Date.now() / 1000);
-    const live = envelopeAt(now);
-    const r = await m.requirePayment(live);
-    expect(header.length).toBeGreaterThan(0);
+    const m = createCasperX402Merchant({ ...cfg, facilitator });
+    const r = await m.requirePayment(envelopeAt(Math.floor(Date.now() / 1000)));
     expect(r.status).toBe(200);
     expect((r as any).receipt.transaction).toBe("aa".repeat(32));
     expect((r as any).receipt.amount).toBe(10_000n);

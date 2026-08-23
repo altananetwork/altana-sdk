@@ -29,8 +29,12 @@ export type CasperNetwork = typeof CASPER_MAINNET | typeof CASPER_TESTNET | (str
 /** Public CSPR.cloud facilitator (mainnet + testnet). */
 export const CASPER_FACILITATOR_URL = "https://x402-facilitator.cspr.cloud";
 
-/** 32-byte Casper account hash, hex, optionally `account-hash-` prefixed. */
-const ACCOUNT_HASH = /^(?:account-hash-)?[0-9a-fA-F]{64}$/;
+/**
+ * A Casper account hash: 32 bytes of hex, optionally carrying the `00`
+ * key-tag prefix the facilitator uses (`00<64 hex>`) or the human-readable
+ * `account-hash-` prefix.
+ */
+const ACCOUNT_HASH = /^(?:account-hash-)?(?:00)?[0-9a-fA-F]{64}$/;
 /** CEP-18 contract package hash, 64 hex chars. */
 const PACKAGE_HASH = /^(?:hash-)?[0-9a-fA-F]{64}$/;
 const HEX = /^[0-9a-fA-F]+$/;
