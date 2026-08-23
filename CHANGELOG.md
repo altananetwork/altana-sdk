@@ -12,6 +12,30 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 > reconstructed from commit history after the fact, so they summarize what
 > shipped rather than itemizing every change.
 
+## [0.9.0] - Unreleased
+
+`@altananetwork/x402-server` 0.3.0
+
+### Added
+
+- **Casper Network support in `@altananetwork/x402-server`.** A merchant can
+  now charge for a resource in CEP-18 tokens (e.g. wCSPR) on Casper mainnet
+  (`casper:casper`) or testnet (`casper:casper-test`).
+  `createCasperX402Merchant` mirrors `createX402Merchant`'s surface
+  (`challengeBody` / `requirePayment` / `guard`), and `buildCasperChallenge`,
+  `decodeCasperPayment`, `checkCasperPayment` and `createCasperFacilitator` are
+  the pieces underneath if you want to assemble your own flow.
+
+  Casper is not EVM — accounts are ed25519/secp256k1 keys and 32-byte account
+  hashes, and payments settle as Casper transactions, not EVM calldata — so
+  verification and settlement are delegated over HTTP to an x402 facilitator
+  for Casper (CSPR.cloud runs one at `https://x402-facilitator.cspr.cloud`).
+  A merchant needs no Casper node connectivity and holds no Casper key.
+
+  The existing `eip155:*` rails (`eip3009`, `permit2-exact`) are untouched:
+  the Casper rail lives in its own module with its own types rather than
+  widening the `viem`-typed EVM paths.
+
 ## [0.8.0] - 2026-08-18
 
 ### Added

@@ -81,3 +81,50 @@ which client is paying:
 - **`resource`** in your challenge may be a bare URL string or an object
   (`{ url, description?, mimeType? }`). It is always emitted as the object form
   that b402 buyers echo back into their payment.
+
+## Casper Network (CEP-18)
+
+Casper is supported as a separate rail: `casper:casper` (mainnet) and
+`casper:casper-test` (testnet), settling a CEP-18 token such as wCSPR.
+
+```ts
+import { createCasperX402Merchant, CASPER_TESTNET } from "@altananetwork/x402-server";
+
+const merchant = createCasperX402Merchant({
+  network: CASPER_TESTNET,
+  payTo: "00...",                    // your Casper account hash
+  price: 10_000n,                    // token base units
+  token: {
+    asset: "9824...",                // CEP-18 contract package hash
+    name: "Wrapped CSPR",            // EIP-712 domain name of the token
+    version: "1",
+    symbol: "wCSPR",
+    decimals: 9,
+  },
+  resource: "https://api.example.com/data",
+  facilitator: { accessToken: process.env.CSPR_CLOUD_TOKEN },
+});
+
+const { response, receipt } = await merchant.guard(request);
+if (response) return response;       // 402 challenge
+// paid — receipt.transaction is the Casper deploy hash
+```
+
+Casper is not EVM: accounts are ed25519/secp256k1 public keys and 32-byte
+account hashes, and payments settle as Casper transactions rather than EVM
+calldata. So verification and settlement are delegated over HTTP to an x402
+facilitator for Casper — [CSPR.cloud](https://docs.cspr.cloud/x402-facilitator-api/reference)
+runs one at `https://x402-facilitator.cspr.cloud`, the default. Your server
+needs no Casper node connectivity and holds no Casper key: the facilitator
+checks the buyer's EIP-712 `TransferAuthorization` signature and submits the
+CEP-18 `transfer_with_authorization` transaction, paying the gas.
+
+`token.name` and `token.version` are required — the facilitator rebuilds the
+EIP-712 domain from them to recompute the digest the buyer signed. Keep
+`maxTimeoutSeconds` at 6 or above; the facilitator refuses to settle an
+authorization with less than 6 seconds of validity left.
+
+The pieces are exported individually if you want your own flow:
+`buildCasperChallenge`, `casperPaymentRequirements`, `decodeCasperPayment`,
+`checkCasperPayment` (local business rules, no network) and
+`createCasperFacilitator` (`fetch` is injectable for tests and proxies).

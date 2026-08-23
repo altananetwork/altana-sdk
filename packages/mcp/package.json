@@ -1,6 +1,6 @@
 {
   "name": "@altananetwork/mcp",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "MCP server that lets AI hosts employ agents on Altana wallets",
   "license": "Apache-2.0",
   "repository": {
@@ -47,7 +47,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@altananetwork/sdk": "^0.8.0",
+    "@altananetwork/sdk": "^0.9.0",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@napi-rs/keyring": "^1.1.0",
     "viem": "^2.21.0",
