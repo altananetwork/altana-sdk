@@ -73,3 +73,29 @@ nonces and the Permit2 nonce bitmap burn on-chain.
 BNB-mainnet fork (genuine $U, USDT and Permit2 bytecode): Studio-envelope
 eip3009 settlement, Altana session-key permit2-witness settlement, and replay
 refusal. Run it with `bun run fork:x402-server` from `tests/e2e`.
+
+## Casper Network (CEP-18)
+
+`createCasperX402Merchant` is the same shape as `createX402Merchant`
+(`challengeBody` / `requirePayment` / `guard`) for `casper:casper` and
+`casper:casper-test`, settling a CEP-18 token such as wCSPR.
+
+```ts
+import { createCasperX402Merchant, CASPER_TESTNET } from "@altananetwork/x402-server";
+
+const merchant = createCasperX402Merchant({
+  network: CASPER_TESTNET,
+  payTo: "00...",                 // Casper account hash
+  price: 10_000n,
+  token: { asset: "9824...", name: "Wrapped CSPR", version: "1", symbol: "wCSPR", decimals: 9 },
+  facilitator: { accessToken: process.env.CSPR_CLOUD_TOKEN },
+});
+```
+
+Casper is not EVM — accounts are ed25519/secp256k1 keys and 32-byte account
+hashes, and payments settle as Casper transactions, not calldata — so verify
+and settle are delegated over HTTP to an x402 facilitator for Casper
+(CSPR.cloud runs one at `https://x402-facilitator.cspr.cloud`, the default).
+Your server needs no Casper node connectivity and holds no Casper key. The
+EVM rails above are unaffected: the Casper rail is a separate module with its
+own types.
