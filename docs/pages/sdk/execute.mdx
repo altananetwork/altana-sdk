@@ -99,3 +99,4 @@ A failed execute **returns** `status: "FAILED"`; it does not throw. Check the st
 - **Session execute is byte-exact.** The session's `permissions + expiry + publicKey` must match what was committed at grant. Persist the `Session` object verbatim; sloppy JSON round-trips (bigints to numbers, key reordering) break the match.
 - **`chainId` selects the chain.** Omit it to use the client's default chain; pass one of the client's configured chains to target another.
 - With `noWait: true`, you get `status: "PENDING"` and a `callsId` to poll later.
+- **Native payouts via `.transfer()`/`.send()` cannot reach the wallet.** Those Solidity primitives forward a 2300-gas stipend, which is not enough to run the wallet's delegated (EIP-7702) account code — the paying contract reverts. Contracts that pay with a full-gas `call{value:}` work fine, as do all ERC-20 transfers. See the failure-class table in [Errors](/sdk/errors) for the known cases and workarounds.
