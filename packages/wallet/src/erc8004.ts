@@ -260,10 +260,24 @@ export async function registerErc8004Agent(
   const { receipts, ...executeResult } = result;
 
   if (executeResult.status === "FAILED") {
+    const code = executeResult.statusCode;
+    // A 3xx/4xx is the relay refusing the bundle before it touches the
+    // chain — a permissions hint would send the caller chasing the wrong
+    // cause (issue #57's reporter hit exactly this with a spend cap that
+    // could not cover the relay fee). Only an on-chain revert (5xx+, or an
+    // unlabelled failure) plausibly points at the registry's permission gate.
+    if (code !== undefined && code < 500) {
+      throw new Error(
+        `erc8004: the relay rejected the register bundle before inclusion (relay code ${code}, ` +
+          `callsId ${executeResult.callsId}). Common causes: the session's spend cap cannot ` +
+          `cover the relay fee, or a relay policy refused the bundle.`,
+      );
+    }
     throw new Error(
       `erc8004: register reverted (callsId ${executeResult.callsId}${
         executeResult.transactionHash ? `, tx ${executeResult.transactionHash}` : ""
-      }). A session key must hold erc8004RegisterPermissions(${chainId}) to call the registry.`,
+      }${code !== undefined ? `, relay code ${code}` : ""}). A session key must hold ` +
+        `erc8004RegisterPermissions(${chainId}) to call the registry.`,
     );
   }
   if (executeResult.status !== "CONFIRMED") {

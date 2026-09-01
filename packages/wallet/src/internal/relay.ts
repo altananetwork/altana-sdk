@@ -425,6 +425,17 @@ export type RelayReceipt = {
  * public endpoints serve stale reads for ~12s after the relay reports
  * CONFIRMED (see grantSession's post-confirm wait), so a follow-up read is
  * both slower and less reliable than the receipt we already have in hand.
+ *
+ * Status codes follow the EIP-5792 bands (neither porto nor the relay
+ * enumerates them; viem classifies identically): 1xx still in flight,
+ * 2xx success, 300–699 terminal failure — 300 is the relay rejecting the
+ * bundle before inclusion (fee unpayable under the session's spend cap,
+ * relay policy), 5xx an on-chain revert, 6xx partial failure. A code
+ * outside every band keeps polling rather than guessing: FAILED is the
+ * caller's "terminal, safe to resubmit" signal, and misreading an unknown
+ * code as terminal risks a duplicate submission. The raw code is returned
+ * as `statusCode` whenever one was observed — including on a timed-out
+ * PENDING, where its absence means the relay never answered at all.
  */
 export async function waitForCalls(
   client: ReturnType<typeof buildRelayClient>,
@@ -433,31 +444,37 @@ export async function waitForCalls(
   pollIntervalMs = 2_000,
 ): Promise<{
   status: string;
+  statusCode?: number;
   transactionHash?: Hex;
   receipts?: readonly RelayReceipt[];
 }> {
   const deadline = Date.now() + timeoutMs;
+  let lastCode: number | undefined;
   while (Date.now() < deadline) {
     try {
       const status: any = await getCallsStatus(client as any, { id: callsId });
       const code = status?.status;
-      if (code === 200 || code === "CONFIRMED") {
+      if (typeof code === "number") lastCode = code;
+      if ((typeof code === "number" && code >= 200 && code < 300) || code === "CONFIRMED") {
         return {
           status: "CONFIRMED",
+          ...(typeof code === "number" ? { statusCode: code } : {}),
           transactionHash: status?.receipts?.[0]?.transactionHash,
           ...(status?.receipts ? { receipts: status.receipts as readonly RelayReceipt[] } : {}),
         };
       }
-      if (code === 500 || code === "FAILED") {
+      if ((typeof code === "number" && code >= 300 && code < 700) || code === "FAILED") {
         return {
           status: "FAILED",
+          ...(typeof code === "number" ? { statusCode: code } : {}),
           ...(status?.receipts ? { receipts: status.receipts as readonly RelayReceipt[] } : {}),
         };
       }
+      // 1xx (and anything out-of-band): still in flight — keep polling.
     } catch {
       // Transient relay errors — keep polling.
     }
     await new Promise((r) => setTimeout(r, pollIntervalMs));
   }
-  return { status: "PENDING" };
+  return { status: "PENDING", ...(lastCode !== undefined ? { statusCode: lastCode } : {}) };
 }

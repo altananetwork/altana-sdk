@@ -93,6 +93,7 @@ async function setChecker(
   return {
     callsId,
     status: result.status as ExecuteResult["status"],
+    ...(result.statusCode !== undefined ? { statusCode: result.statusCode } : {}),
     ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
   };
 }

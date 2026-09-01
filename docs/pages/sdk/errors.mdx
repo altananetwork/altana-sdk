@@ -22,7 +22,7 @@ if (result.status !== "CONFIRMED") {
 }
 ```
 
-[`grantSession`](/sdk/grant-session) is the exception: it throws `Session grant did not confirm: status=<status>` rather than returning a failed result, because there is no useful `Session` object to hand back.
+[`grantSession`](/sdk/grant-session) is the exception: it throws `Session grant did not confirm: status=<status>` (with the relay code appended when one was observed, e.g. `status=FAILED (relay code 300)`) rather than returning a failed result, because there is no useful `Session` object to hand back.
 
 ## Reading `ExecuteResult`
 
@@ -31,26 +31,41 @@ type ExecuteResult = {
   callsId: Hex;
   status: "CONFIRMED" | "FAILED" | "PENDING";
   transactionHash?: Hex;
+  statusCode?: number;   // the relay's raw numeric status, when observed
 };
 ```
 
 | Status | Meaning |
 |---|---|
 | `CONFIRMED` | Included and succeeded. `transactionHash` is populated. |
-| `FAILED` | The relay reported the bundle as failed. No reason, no receipt, no `transactionHash`. |
-| `PENDING` | Either you passed `noWait: true`, or the SDK polled for four minutes without a verdict. |
+| `FAILED` | Terminal. Either the relay rejected the bundle before inclusion, or it reverted on-chain — `statusCode` tells them apart (see below). |
+| `PENDING` | You passed `noWait: true`, or the SDK polled for four minutes without a terminal answer. |
 
-:::warning[`PENDING` means two very different things]
+### Relay status codes
+
+The relay answers status polls with a numeric code. The codes follow the
+EIP-5792 convention (the relay does not publish its own list, so the SDK
+classifies by band, the same way viem does):
+
+| `statusCode` | Band | What it means |
+|---|---|---|
+| `100`–`199` | still in flight | The SDK keeps polling. |
+| `200`–`299` | success | Surfaced as `CONFIRMED`. |
+| `300`–`499` | rejected before inclusion | Terminal, surfaced as `FAILED` immediately. Nothing reached the chain. Most common cause of `300`: the session's spend cap cannot cover the relay fee (the cap pays fees too — see [grantSession](/sdk/grant-session)), or a relay policy refused the bundle. |
+| `500`–`699` | failed on-chain | Terminal, surfaced as `FAILED`. `500` is a revert; `600` a partial failure. |
+| anything else | unknown | The SDK keeps polling rather than guessing — `FAILED` is the "safe to resubmit" signal, and misreading an unknown code could cause a duplicate submission. A timeout then returns `PENDING` with the odd code in `statusCode`. |
+
+:::warning[`PENDING` means the outcome is genuinely unknown]
 With `noWait: true` you get `PENDING` immediately: that is expected, and you poll later using `callsId`.
 
-Without it, `PENDING` means the SDK polled the relay every 2 seconds for 240 seconds and never saw `CONFIRMED` or `FAILED`. Relay errors during that window are swallowed and retried, so a relay that is down for the whole four minutes is indistinguishable from one that is merely slow. Both surface as `PENDING`.
+Without it, `PENDING` means 240 seconds of polling (every 2 seconds) ended with no terminal answer. `statusCode` disambiguates: `PENDING` with `statusCode: 100` means the relay was reachable and the bundle really is still in flight; `PENDING` with no `statusCode` means the relay never answered during the window (down, or erroring on every poll — transient relay errors are retried silently).
 
-Treat an unexpected `PENDING` as unknown, not as failed. The bundle may still land. Poll `callsId` before retrying, or you risk submitting the same intent twice.
+Terminal rejections no longer hide here: a bundle the relay has refused returns `FAILED` (with its code) within seconds, not `PENDING` at the deadline. Treat a real `PENDING` as unknown, not as failed — the bundle may still land. Poll `callsId` before retrying, or you risk submitting the same intent twice.
 :::
 
-## `FAILED` carries no reason
+## What `FAILED` carries
 
-The SDK returns `{ status: "FAILED" }` and nothing else. There is no revert string, no error code, and no receipt to inspect. Diagnosis is by elimination, using the table below.
+`FAILED` comes with `statusCode` when the relay reported one, which splits the diagnosis in two: `3xx`/`4xx` means nothing reached the chain (fee, cap, or relay policy — fix the session or funding and resubmit), while `5xx`/`6xx` means it reverted on-chain. There is still no revert string or receipt on the result; for the on-chain reason, use the table below and the explorer.
 
 If you need the onchain reason, look up the userOp yourself. You have `callsId`; the wallet address and chain are yours. Search the wallet address on the chain's explorer ([BscScan](https://bscscan.com) for BNB, [Etherscan](https://etherscan.io) for Ethereum) and inspect the most recent transaction to the account. The revert reason is in the trace.
 
@@ -62,7 +77,7 @@ If you need the onchain reason, look up the userOp yourself. You have `callsId`;
 | **Wrong decimals in a spend cap.** A cap orders of magnitude smaller than intended. | Small payments revert against a limit that reads as generous. Extremely common on BNB Chain, where stablecoins use 18 decimals rather than 6. | See the decimals warning on [grantSession](/sdk/grant-session). |
 | **Unfunded counterfactual wallet.** The wallet has no native balance to pay for the first transaction. | Happens on the very first `execute` for a new wallet. `createWallet` does not touch the chain, so the address exists but holds nothing. | Send native tokens to `wallet.address` first. See [createWallet](/sdk/create-wallet). |
 | **Session not byte-exact.** The stored `Session` no longer matches what was granted. | Every `execute` with that session fails, including ones that previously worked. Usually follows a JSON round-trip that turned bigints into numbers. | Persist the `Session` verbatim. See [Sessions](/concepts/sessions). |
-| **Relay rejection.** The relay refused or dropped the bundle. | Often accompanies malformed input, since validation beyond client configuration happens relay-side rather than in the SDK. | Check the call shape, then retry. |
+| **Relay rejection.** The relay refused the bundle before inclusion. | `FAILED` within seconds with `statusCode` in the 300–499 band. The most common case is a session spend cap too small to cover the relay fee — the cap pays fees as well as the agent's spending. | Raise the cap (or fix the input) and resubmit; nothing reached the chain. |
 | **A contract paid the wallet native coin with `.transfer()` / `.send()`.** An Altana wallet is an EOA delegated (EIP-7702) to the account contract, and running that code costs more than the 2300-gas stipend those Solidity primitives forward — so the *paying contract* reverts, with empty revert data. Known case: Venus core-pool vBNB `redeem` (its BNB payout is a `.transfer()`). All ERC-20 payouts are unaffected. | The call works from a plain EOA but reverts from the wallet, and the trace shows an out-of-gas or empty revert inside a native-coin send to the wallet's address. | Nothing wallet-side can add gas to someone else's `.transfer()`. Use the protocol's wrapped-token path instead (WBNB on Venus), a gateway that pays with a full-gas `call` (Venus's NativeTokenGateway, where deployed), or receive to a plain EOA. |
 
 ## Errors the SDK throws

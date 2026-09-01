@@ -46,6 +46,23 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Fixed
 
+- **Relay rejections no longer hang for four minutes as `PENDING`.** The
+  status poller only understood relay codes 200 and 500; a bundle the relay
+  rejected before inclusion (code 300 — most commonly a session spend cap
+  too small to also cover the relay fee, which the cap must) fell through
+  the loop for the full 240-second deadline and then came back as
+  `PENDING`, for a bundle that was already dead on the first poll. Statuses
+  are now classified by the EIP-5792 bands (1xx in flight, 2xx confirmed,
+  300–699 failed; unknown codes keep polling rather than risking a
+  duplicate resubmission), so a rejection returns `FAILED` within seconds.
+  Results gain an optional `statusCode` with the relay's raw code — on
+  `FAILED` it separates "rejected before the chain" from "reverted
+  on-chain", and on a timed-out `PENDING` it separates "genuinely still in
+  flight" from "the relay never answered". The docs now carry the status
+  code table and a grantSession warning that the native spend cap also
+  pays relay fees. Note the behavior change: flows that used to see
+  `PENDING` after 240 s for rejected bundles now see `FAILED` fast. (#57)
+
 - **BSC testnet (chain 97) hire flow no longer reverts.** The bundled
   `ERC8183_ADDRESSES[97].policy` pointed at an address that is not
   whitelisted on the testnet EvaluatorRouter, so every

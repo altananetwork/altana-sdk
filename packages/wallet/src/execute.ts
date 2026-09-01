@@ -126,6 +126,7 @@ export async function executeWithReceipts(
   return {
     callsId,
     status: result.status as ExecuteResult["status"],
+    ...(result.statusCode !== undefined ? { statusCode: result.statusCode } : {}),
     ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
     ...(result.receipts ? { receipts: result.receipts } : {}),
   };
