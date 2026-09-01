@@ -174,3 +174,29 @@ describe("seller path", () => {
     ).rejects.toThrow(/chain_id/);
   });
 });
+
+// ===================== deliverable optParams decode ==========================
+
+import { decodeDeliverableOptParams } from "./erc8183.js";
+import { toHex as toHexViem } from "viem";
+
+describe("decodeDeliverableOptParams", () => {
+  test("decodes the conventional payload (runtime-neutral — no Buffer)", () => {
+    const url = "https://seller.example/manifests/1.json";
+    expect(decodeDeliverableOptParams(toHexViem(JSON.stringify({ deliverable_url: url })))).toBe(url);
+  });
+
+  test("strips trailing NUL padding and survives non-ASCII URLs", () => {
+    const url = "https://seller.example/ü—😀.json";
+    const padded = (toHexViem(JSON.stringify({ deliverable_url: url })) + "000000") as `0x${string}`;
+    expect(decodeDeliverableOptParams(padded)).toBe(url);
+  });
+
+  test("returns undefined for empty, malformed, or url-less payloads", () => {
+    expect(decodeDeliverableOptParams(undefined)).toBeUndefined();
+    expect(decodeDeliverableOptParams("0x")).toBeUndefined();
+    expect(decodeDeliverableOptParams(toHexViem("not json"))).toBeUndefined();
+    expect(decodeDeliverableOptParams(toHexViem(JSON.stringify({ deliverable_url: 42 })))).toBeUndefined();
+    expect(decodeDeliverableOptParams("0xfffe")).toBeUndefined();
+  });
+});

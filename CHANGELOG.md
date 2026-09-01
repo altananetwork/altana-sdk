@@ -80,6 +80,14 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Fixed
 
+- **The SDK's last Node-only API is gone.** `getErc8183DeliverableUrl`
+  decoded event bytes with `Buffer`, which does not exist in browsers or
+  React Native without a polyfill; it now uses viem's runtime-neutral
+  `hexToString` (behavior-parity verified, including NUL padding and
+  invalid UTF-8). The passkey guard messages also stopped blaming only
+  "Node or other server runtimes" — they now name React Native and point
+  at the `webAuthn` option. (#65)
+
 - **Relay rejections no longer hang for four minutes as `PENDING`.** The
   status poller only understood relay codes 200 and 500; a bundle the relay
   rejected before inclusion (code 300 — most commonly a session spend cap
@@ -105,6 +113,23 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
   deployed OptimisticPolicy (`0xd6a4217588F6B1F5657a92A3e94E6422aD771cEA`),
   verified against the operator's deployment manifest and live router
   whitelist state. Mainnet was unaffected. (#53)
+
+### Added
+
+- **Passkeys on native mobile: WebAuthn function injection.** `createPasskey`,
+  `createPasskeyWallet`, `recoverFromPasskey`, and `signerFromPasskey` accept
+  a `webAuthn: { createFn, getFn }` option for JavaScript runtimes without
+  the browser WebAuthn API — React Native, Expo, Capacitor. The app passes
+  its native passkey library's functions (which bridge to Apple's and
+  Google's platform passkey APIs) and the SDK forwards them into porto
+  everywhere WebAuthn is touched: credential creation, recovery, and every
+  signature (each execute performs a fresh assertion ceremony). Outside a
+  browser, `rpId` is required with a clear error (porto/ox would otherwise
+  crash on the missing `window` mid-flow), and the option types avoid DOM
+  globals so React Native tsconfigs typecheck. Browser behavior is
+  unchanged when the option is absent. CI proves the forwarding with the
+  same mock-function pattern porto's own tests use; real-device
+  verification is invited from the field. (#65)
 
 ## [0.8.0] - 2026-08-18
 

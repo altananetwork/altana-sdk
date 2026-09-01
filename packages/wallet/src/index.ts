@@ -40,6 +40,7 @@ export {
 export type {
   PasskeySigner,
   PasskeyCredential,
+  PasskeyWebAuthnFns,
 } from "./internal/passkey.js";
 
 export type {

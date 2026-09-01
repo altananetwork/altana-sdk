@@ -18,7 +18,7 @@
  * buyers need five self-paid transactions for the same flow.
  */
 
-import { encodeFunctionData, keccak256, toHex, type Address, type Hex } from "viem";
+import { encodeFunctionData, hexToString, keccak256, toHex, type Address, type Hex } from "viem";
 import { canonicalJson } from "./internal/canonicalJson.js";
 import { type NetworkConfig } from "./config.js";
 import { execute, type ExecuteOptions } from "./execute.js";
@@ -184,6 +184,24 @@ export async function getErc8183Job(network: NetworkConfig, jobId: bigint): Prom
  * (`{"deliverable_url": …}`). Scans logs in bounded windows (public BSC RPCs
  * cap getLogs ranges).
  */
+/**
+ * Decode a JobInitialised event's optParams into its `deliverable_url`.
+ * Runtime-neutral (viem `hexToString`, no Buffer): the payload is UTF-8
+ * JSON `{"deliverable_url": "..."}`, possibly NUL-padded. Returns
+ * undefined for empty, malformed, or url-less payloads — mirroring the
+ * scan's tolerance for third-party sellers with divergent optParams.
+ */
+export function decodeDeliverableOptParams(optParams: Hex | undefined): string | undefined {
+  if (!optParams || optParams === "0x") return undefined;
+  try {
+    const decoded = hexToString(optParams);
+    const parsed = JSON.parse(decoded.replace(/\0+$/, ""));
+    return typeof parsed.deliverable_url === "string" ? parsed.deliverable_url : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function getErc8183DeliverableUrl(
   network: NetworkConfig,
   jobId: bigint,
@@ -207,15 +225,7 @@ export async function getErc8183DeliverableUrl(
       toBlock,
     });
     if (logs.length > 0) {
-      const optParams = logs[0]!.args.optParams;
-      if (!optParams || optParams === "0x") return undefined;
-      try {
-        const decoded = Buffer.from(optParams.slice(2), "hex").toString("utf8");
-        const parsed = JSON.parse(decoded.replace(/\0+$/, ""));
-        return typeof parsed.deliverable_url === "string" ? parsed.deliverable_url : undefined;
-      } catch {
-        return undefined;
-      }
+      return decodeDeliverableOptParams(logs[0]!.args.optParams);
     }
     // The event was emitted at submit time; stop once we scan past it.
     const submitBlockReached = await publicClient.getBlock({ blockNumber: fromBlock }).then(

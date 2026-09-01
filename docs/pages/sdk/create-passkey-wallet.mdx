@@ -11,7 +11,7 @@ import { Eyebrow } from '../../components/Eyebrow'
 
 `client.createPasskeyWallet` creates a smart-account wallet whose admin authority is a passkey (Face ID, Touch ID, Windows Hello, hardware security key). The private key never leaves the device's secure hardware.
 
-**Browser only.** Uses `navigator.credentials`.
+**Browser by default** (uses `navigator.credentials`) — **or any JavaScript runtime that supplies WebAuthn functions**: in React Native, Expo, or Capacitor, pass your native passkey library's functions via the `webAuthn` option and users get the platform's real Face ID / fingerprint passkeys.
 
 ```ts
 import { createClient, BNB } from "@altananetwork/sdk";
@@ -35,6 +35,16 @@ type ClientCreatePasskeyWalletOptions = {
   name: string;
   /** Relying-Party ID. Defaults to the current origin's host. */
   rpId?: string;
+  /**
+   * WebAuthn overrides for runtimes without the browser API. Pass your
+   * native passkey library's create/get functions (React Native, Expo,
+   * Capacitor). Outside a browser, `rpId` becomes required — use the
+   * associated domain your passkey library is configured with. The same
+   * `getFn` is used for EVERY later signature, so keep it on the signer
+   * (`signerFromPasskey(credential, { webAuthn })` after rehydration).
+   * Note: porto requires assertion responses to include `userHandle`.
+   */
+  webAuthn?: { createFn?: ...; getFn?: ... };
 };
 ```
 
