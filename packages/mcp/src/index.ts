@@ -31,6 +31,7 @@ import { keccak256 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import {
   createClient,
+  deserializeSession,
   signerFromPrivateKey,
   fetchWithX402,
   hireErc8183Agent,
@@ -858,31 +859,16 @@ tool(
   }) => {
     const stored = await getSession(sessionName);
     const key = await getSessionKey(sessionName);
-    const sessionSigner = signerFromPrivateKey(key.privateKey);
     const recipient = assertAddress(to);
     const dataHex = data ? assertHexBytes(data) : ("0x" as Hex);
 
-    // Rebuild the Session shape from persisted metadata. permissions +
-    // expiry MUST match what was registered on-chain at grant time so
-    // Porto computes the same key hash. We serialize spend.limit as a
-    // decimal string in JSON — restore it to bigint here.
-    const permissionsRuntime = {
-      calls: stored.permissions.calls,
-      spend: stored.permissions.spend?.map((s) => ({
-        limit: BigInt(s.limit),
-        period: s.period,
-        ...(s.token ? { token: s.token } : {}),
-      })),
-    };
+    // Rebuild the live Session from the persisted half plus the keychain
+    // key. deserializeSession restores the bigint limits and refuses a key
+    // that doesn't match the session's registered publicKey.
+    const session = deserializeSession(stored, signerFromPrivateKey(key.privateKey));
 
     const result = await client.execute({
-      session: {
-        walletAddress: stored.walletAddress,
-        signer: sessionSigner,
-        publicKey: stored.publicKey,
-        permissions: permissionsRuntime as any,
-        expiry: stored.expiry,
-      } as any,
+      session,
       calls: {
         to: recipient,
         value: parseEther(valueEth ?? "0"),
@@ -947,25 +933,11 @@ tool(
   }) => {
     const stored = await getSession(sessionName);
     const key = await getSessionKey(sessionName);
-    const sessionSigner = signerFromPrivateKey(key.privateKey);
 
-    // Rebuild the Session shape from persisted metadata (same as
-    // session_execute): permissions + expiry must match the on-chain grant.
-    const permissionsRuntime = {
-      calls: stored.permissions.calls,
-      spend: stored.permissions.spend?.map((s) => ({
-        limit: BigInt(s.limit),
-        period: s.period,
-        ...(s.token ? { token: s.token } : {}),
-      })),
-    };
-    const session = {
-      walletAddress: stored.walletAddress,
-      signer: sessionSigner,
-      publicKey: stored.publicKey,
-      permissions: permissionsRuntime as any,
-      expiry: stored.expiry,
-    } as any;
+    // Rebuild the live Session (same as session_execute): permissions +
+    // expiry must match the on-chain grant; deserializeSession restores
+    // the bigint limits and validates the key against the session.
+    const session = deserializeSession(stored, signerFromPrivateKey(key.privateKey));
 
     const init: RequestInit = {};
     if (method) init.method = method;
@@ -1002,28 +974,13 @@ tool(
 
 // ---------- ERC-8183 (BNB agent economy job escrow) -------------------------
 
-/** Rebuild the runtime Session shape from persisted metadata. */
+/** Rebuild the runtime Session from persisted metadata + the keychain key. */
 async function sessionFromName(sessionName: string) {
   const stored = await getSession(sessionName);
   const key = await getSessionKey(sessionName);
-  const sessionSigner = signerFromPrivateKey(key.privateKey);
-  const permissionsRuntime = {
-    calls: stored.permissions.calls,
-    spend: stored.permissions.spend?.map((s) => ({
-      limit: BigInt(s.limit),
-      period: s.period,
-      ...(s.token ? { token: s.token } : {}),
-    })),
-  };
   return {
     stored,
-    session: {
-      walletAddress: stored.walletAddress,
-      signer: sessionSigner,
-      publicKey: stored.publicKey,
-      permissions: permissionsRuntime as any,
-      expiry: stored.expiry,
-    } as any,
+    session: deserializeSession(stored, signerFromPrivateKey(key.privateKey)),
   };
 }
 

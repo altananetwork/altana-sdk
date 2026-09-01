@@ -88,11 +88,15 @@ export function missingErc8004Permissions(
     .map((required) => required as { to: Address; signature: string })
     .filter(
       (required) =>
-        !granted.some(
-          (g) =>
+        !granted.some((granted_) => {
+          // The union members carry `to`, `signature`, or both — widen to
+          // the optional shape to compare without narrowing per arm.
+          const g = granted_ as { to?: Address; signature?: string };
+          return (
             (g.to === undefined || g.to.toLowerCase() === required.to.toLowerCase()) &&
-            (g.signature === undefined || signatureMatches(g.signature, required.signature)),
-        ),
+            (g.signature === undefined || signatureMatches(g.signature, required.signature))
+          );
+        }),
     )
     .map((required) => required.signature);
 }

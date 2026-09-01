@@ -143,13 +143,12 @@ SDKs produce for the same record, so a record written here hashes the same as
 one written there. Do not re-serialize the decoded object with a plain
 `JSON.stringify` and expect the hashes to match.
 
-The same care applies to the **session itself**. Porto derives the session key's
-hash from its exact permissions and expiry, so a session that crosses a process
-boundary must survive the round trip unchanged — BNB Agent Studio serializes
-sessions between processes, and a JSON round-trip that re-cases an address
-changes the key hash and makes the next call fail with an unknown key. Persist
-and restore the granted values verbatim (see `packages/mcp/src/sessions.ts` for
-the pattern this repo uses).
+The same care applies to the **session itself**: a session that crosses a
+process boundary must come back with the exact granted values, or the key hash
+no longer matches and the next call fails with an unknown key. Use
+[`serializeSession` / `deserializeSession`](/sdk/grant-session#persisting-a-session)
+for the round trip — they preserve the values losslessly and keep the session's
+private key out of storage.
 
 ## Through the MCP server
 

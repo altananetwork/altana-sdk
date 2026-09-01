@@ -67,5 +67,5 @@ Reads are free and unlimited, which is what makes cross-agent and cross-app veri
 
 ## Notes
 
-- **Sessions must be byte-exact on execute.** The session's `permissions + expiry + publicKey` must match what was committed at grant time. Persist the `Session` object verbatim. Sloppy JSON round-trips (bigints to numbers, key reordering) break the match.
+- **Sessions must match the grant on execute.** The session's `permissions + expiry + publicKey` values must equal what was committed at grant time — a lossy round-trip (bigints turned into numbers, re-cased hex) breaks the match. Never `JSON.stringify` a `Session` directly: it throws on bigint spend limits, and the object embeds the session's private key. Persist with [`serializeSession`](/sdk/grant-session#persisting-a-session) (JSON-safe, no secret) and restore with `deserializeSession(stored, signer)`, keeping the key itself in your own secret store.
 - **`permissions.calls` omitted = unrestricted.** If you don't pass `calls`, the session can call any contract within its spend cap. Set both unless that's truly what you want.

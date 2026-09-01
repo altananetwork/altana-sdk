@@ -16,6 +16,18 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Added
 
+- **`serializeSession` / `deserializeSession` — the safe way to persist a
+  session.** `serializeSession(session)` returns a JSON-safe object with NO
+  key material in it (spend limits as decimal strings);
+  `deserializeSession(stored, signer)` rebuilds a signing session from the
+  stored half plus the key the caller kept, and refuses a signer that
+  doesn't match the session's registered public key — a mixed-up key now
+  fails loudly at restore instead of opaquely at execute. The MCP server's
+  three hand-rolled session restores now go through `deserializeSession`.
+  `grantSession` also warns (once per process) when called without a
+  `sessionSigner`: the SDK-generated key exists only in process memory, and
+  losing it strands the on-chain authorization it backs. (#58)
+
 - **ERC-8183 seller support — an Altana agent can now get paid, not just
   pay.** `submitErc8183Deliverable` submits a hired job's finished work
   (wallet or session path; pre-flight reads turn the kernel's opaque
@@ -33,6 +45,16 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
   settle → seller paid) against real kernel bytecode. (#59)
 
 ### Changed
+
+- **A signer's private key can no longer be captured by JSON.** The docs
+  used to say "persist the `Session` object verbatim" — advice that threw
+  on bigint spend limits, silently wrote the raw session key into storage,
+  and dropped the signing function. The internal key field is now
+  non-enumerable, so `JSON.stringify`/`Object.keys` never see it. Anyone
+  who relied on the leak for persistence must migrate to
+  `serializeSession`/`deserializeSession` plus their own key storage; the
+  docs' session-persistence guidance is rewritten everywhere it appeared.
+  (#58)
 
 - **Documented the EIP-7702 native-payout limitation.** Contracts that pay
   the wallet native coin via `.transfer()`/`.send()` revert: the 2300-gas

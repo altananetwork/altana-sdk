@@ -64,15 +64,25 @@ export type PrivateKeySigner = Signer & {
 /** Reconstructs a signer from an existing private key. */
 export function signerFromPrivateKey(privateKey: Hex): PrivateKeySigner {
   const account = privateKeyToAccount(privateKey);
-  return {
-    type: "privateKey",
+  const signer = {
+    type: "privateKey" as const,
     address: account.address,
     publicKey: account.publicKey,
-    _privateKey: privateKey,
     async signDigest(digest: Hex): Promise<Hex> {
       return account.sign({ hash: digest });
     },
   };
+  // Non-enumerable on purpose: JSON.stringify / Object.keys / spreads must
+  // never silently capture the secret (issue #58 — the docs' old "persist
+  // the Session verbatim" advice wrote this key into integrators' storage).
+  // Internal reads (`signer._privateKey`) and the `"_privateKey" in signer`
+  // narrowing guard both still work on a non-enumerable own property.
+  Object.defineProperty(signer, "_privateKey", {
+    value: privateKey,
+    enumerable: false,
+    writable: false,
+  });
+  return signer as PrivateKeySigner;
 }
 
 /** Generates a fresh signer (random secp256k1). Caller persists the key. */
