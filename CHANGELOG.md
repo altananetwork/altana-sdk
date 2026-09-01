@@ -32,6 +32,18 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
   now drives the full two-sided lifecycle (hire → submit → verify →
   settle → seller paid) against real kernel bytecode. (#59)
 
+### Changed
+
+- **Documented the EIP-7702 native-payout limitation.** Contracts that pay
+  the wallet native coin via `.transfer()`/`.send()` revert: the 2300-gas
+  stipend cannot run the wallet's delegated account code. Known case: Venus
+  core-pool vBNB `redeem` on BNB Chain. ERC-20 payouts and full-gas
+  `call{value:}` payouts are unaffected. The errors and execute pages now
+  cover the symptom and the workarounds (wrapped-token path, gateway
+  contracts, plain-EOA receiver), and a fork test pins the behavior against
+  the real mainnet account bytecode. Root cause is in the paying contract,
+  so there is no SDK-side fix. (#55)
+
 ### Fixed
 
 - **BSC testnet (chain 97) hire flow no longer reverts.** The bundled
