@@ -92,10 +92,7 @@ From here it's the normal Altana lifecycle: [grant a session](/sdk/grant-session
 
 ## What does not work (and why)
 
-- **The extension wallet cannot BE the signer.** `SignerType` is `"privateKey" | "passkey"` — there is no injected signer. An extension wallet withholds the two signatures a 7702 account requires: the delegation authorization (it hands the whole EOA to foreign code, so wallets only ever delegate to their own contracts) and raw 32-byte relay digests (the classic drainer primitive). This is an ecosystem-wide property of browser wallets, not an Altana gap. MetaMask-owned smart accounts are an ERC-4337 pattern; Altana is 7702, where the account *is* the EOA, so the admin must be a key the SDK can sign with.
-- **Bypassing the SDK via Porto doesn't help.** Calling `prepareCalls` / `signCalls` / `sendPreparedCalls` from Porto directly hits the same wall — `signCalls` signs the raw digest, which no extension wallet will produce. Porto's internals are also not part of this SDK's public API: we pin `porto` to an exact version because those internals shift between releases, and code built on them gets no stability guarantee from us.
-
-Native injected-signer support is tracked as a feature request on the repo — it stays blocked until browser wallets expose the required signatures.
+**The extension wallet cannot BE the signer.** `SignerType` is `"privateKey" | "passkey"` — there is no injected signer. An extension wallet withholds the two signatures a 7702 account requires: the delegation authorization (it hands the whole EOA to foreign code, so wallets only ever delegate to their own contracts) and raw 32-byte relay digests (the classic drainer primitive). This is the wallets' own security policy, not something Altana can change. MetaMask-owned smart accounts are an ERC-4337 pattern; Altana is 7702, where the account *is* the EOA, so the admin must be a key the SDK can sign with.
 
 ## Related
 

@@ -56,10 +56,7 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
   guide, *Onboard users from browser wallets*, documents the flow that
   works: connect MetaMask/Trust Wallet/Rabby as usual, create the account
   with `createPasskeyWallet`, and fund it in one click through the
-  connected wallet's own provider. Calling porto internals directly is not
-  a workaround (same signing wall) and is not covered by our API stability.
-  Native injected-signer support is tracked as a separate feature issue.
-  (#56)
+  connected wallet's own provider. (#56)
 
 - **A signer's private key can no longer be captured by JSON.** The docs
   used to say "persist the `Session` object verbatim" — advice that threw
