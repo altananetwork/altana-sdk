@@ -12,6 +12,19 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 > reconstructed from commit history after the fact, so they summarize what
 > shipped rather than itemizing every change.
 
+## [Unreleased]
+
+### Fixed
+
+- **BSC testnet (chain 97) hire flow no longer reverts.** The bundled
+  `ERC8183_ADDRESSES[97].policy` pointed at an address that is not
+  whitelisted on the testnet EvaluatorRouter, so every
+  `hireErc8183Agent()` / `buildHireCalls()` run on BSC testnet reverted at
+  `registerJob` with `PolicyNotWhitelisted()`. The entry now uses the
+  deployed OptimisticPolicy (`0xd6a4217588F6B1F5657a92A3e94E6422aD771cEA`),
+  verified against the operator's deployment manifest and live router
+  whitelist state. Mainnet was unaffected. (#53)
+
 ## [0.8.0] - 2026-08-18
 
 ### Added

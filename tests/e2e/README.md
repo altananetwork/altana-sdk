@@ -43,6 +43,12 @@ delegated to the relay's real account proxy, and the selector-scoped permission
 policy — authorizing a session key on a delegated account exactly as a grant
 does, then asking the account's own `canExecute` what that key may do.
 
+`fork-erc8183.ts` is also in `fork:all`: the full ERC-8183 buyer lifecycle
+(createJob → registerJob → setBudget → approve → fund, then expiry + refund)
+against the real BSC-testnet kernel bytecode. Among other things it pins the
+bundled policy address to the router's live whitelist — a wrong entry there
+reverts every hire with `PolicyNotWhitelisted()` (issue #53).
+
 `live-erc8004-testnet.ts` adds only the **relay leg**: a session-signed intent
 for a `signature`-scoped key going through `wallet_prepareCalls` →
 `wallet_sendPreparedCalls`. It cannot run unattended, and not for want of

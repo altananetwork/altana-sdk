@@ -46,6 +46,15 @@ describe("buildHireCalls", () => {
   test("address registry covers both BNB networks and rejects others", () => {
     expect(ERC8183_ADDRESSES[56]!.paymentToken).toBe("0xcE24439F2D9C6a2289F741120FE202248B666666");
     expect(ERC8183_ADDRESSES[97]!.paymentToken).toBe("0xc70B8741B8B07A6d61E54fd4B20f22Fa648E5565");
+    // Policies must stay whitelisted on each chain's EvaluatorRouter, or every
+    // hire reverts with PolicyNotWhitelisted() at registerJob (issue #53).
+    expect(ERC8183_ADDRESSES[56]!.policy).toBe("0x9C01845705b3078Aa2e8cfF7520a6376FD766dE5");
+    expect(ERC8183_ADDRESSES[97]!.policy).toBe("0xd6a4217588F6B1F5657a92A3e94E6422aD771cEA");
     expect(() => erc8183Addresses(1)).toThrow(/chainId 1/);
+  });
+
+  test("registerJob is called with the registry's policy", () => {
+    const [, registerJob] = buildHireCalls(HIRE);
+    expect(registerJob!.data!.toLowerCase()).toContain(A.policy.slice(2).toLowerCase());
   });
 });

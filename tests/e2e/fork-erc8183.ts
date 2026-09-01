@@ -30,7 +30,10 @@ import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 import { buildHireCalls, buildClaimRefundCall, erc8183Addresses, getErc8183Job, JOB_STATUS } from "@altananetwork/sdk";
 
 const A = erc8183Addresses(97);
-const RPC = process.env.BSC_TESTNET_FORK_RPC_URL ?? "https://data-seed-prebsc-1-s1.binance.org:8545";
+// `||`, not `??`: an unset GitHub Actions secret arrives as an empty string,
+// which would be handed to `anvil --fork-url` verbatim (same guard as
+// fork-erc8004.ts — this exact line broke CI when the test joined fork:all).
+const RPC = process.env.BSC_TESTNET_FORK_RPC_URL || "https://data-seed-prebsc-1-s1.binance.org:8545";
 const ANVIL_PORT = 8551;
 const ANVIL_URL = `http://127.0.0.1:${ANVIL_PORT}`;
 const BUDGET = 2n * 10n ** 18n; // 2 $U
