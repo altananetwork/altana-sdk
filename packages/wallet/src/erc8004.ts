@@ -37,6 +37,7 @@ import { encodeFunctionData, pad, toEventSelector, type Address, type Hex } from
 import { type NetworkConfig } from "./config.js";
 import { erc8183Addresses } from "./erc8183.js";
 import { executeWithReceipts, type ExecuteOptions } from "./execute.js";
+import { canonicalJson } from "./internal/canonicalJson.js";
 import { buildPublicClient, type Call, type RelayLog } from "./internal/relay.js";
 import type { CallPermission, Session } from "./internal/sessions.js";
 import type { Signer } from "./internal/signer.js";
@@ -370,36 +371,9 @@ export type Erc8004RegistrationFile = {
   registrations: { agentId: number; agentRegistry: string }[];
 };
 
-/**
- * Canonical JSON: keys sorted at every depth, JSON.stringify's separators, and
- * every non-ASCII character escaped as `\uXXXX`.
- *
- * Byte-identical to `@bnbagent/sdk`'s `canonicalJson` (and to Python's
- * `json.dumps(x, sort_keys=True, separators=(",", ":"))`), so a record written
- * by this SDK hashes the same as one written by theirs. Do not "simplify" this
- * to a plain JSON.stringify.
- */
-function canonicalJson(value: unknown): string {
-  return JSON.stringify(sortValue(value)).replace(
-    /[\u007f-\uffff]/g,
-    (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}`,
-  );
-}
-
-function sortValue(v: unknown): unknown {
-  if (Array.isArray(v)) return v.map(sortValue);
-  if (v !== null && typeof v === "object") {
-    const out: Record<string, unknown> = {};
-    for (const k of Object.keys(v as Record<string, unknown>).sort()) {
-      out[k] = sortValue((v as Record<string, unknown>)[k]);
-    }
-    return out;
-  }
-  if (typeof v === "number" && !Number.isFinite(v)) {
-    throw new Error(`erc8004: registration files cannot contain non-finite numbers (got ${v}).`);
-  }
-  return v;
-}
+// Canonical JSON now lives in ./internal/canonicalJson.js (shared with the
+// ERC-8183 deliverable-manifest codec); behavior unchanged and still pinned
+// byte-for-byte against @bnbagent/sdk by this module's tests.
 
 /**
  * Serialize a registration file to the `data:application/json;base64,…` URI.

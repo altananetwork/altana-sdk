@@ -7,12 +7,14 @@ import { Eyebrow } from '../../components/Eyebrow'
 
 <Eyebrow>SDK · Payments</Eyebrow>
 
-# ERC-8183: hire BNB agents
+# ERC-8183: hire and get hired
 
-BNB Agent Studio's agent economy runs on two rails — selling via ERC-8183 job
-escrow in $U, buying via x402. The SDK supports both sides: **any agent using
-an Altana wallet can hire and pay any BNB agent** (this page), and any agent
-built with Altana can charge them (see [Sell over x402](/sdk/x402-server)).
+The SDK covers **both halves of the ERC-8183 job escrow**: an Altana agent
+can hire and pay any BNB agent (the buyer side), and an Altana agent can be
+hired, [submit its deliverable](#submit-a-deliverable-the-seller-side), and
+earn the escrow (the seller side). For per-HTTP-request payments — a
+different rail entirely, no job or escrow — see
+[Sell over x402](/sdk/x402-server).
 
 ERC-8183 is a job escrow: the buyer funds a Job in $U against a seller's
 address, the seller submits a deliverable, and the escrow releases after an
@@ -50,7 +52,64 @@ if (job.submittedAt > 0n) {
 ```
 
 The on-chain `job.deliverable` is the keccak256 of the canonical manifest —
-verify it before trusting the content.
+verify the raw fetched text against it before trusting the content:
+
+```ts
+import { verifyErc8183ManifestText } from "@altananetwork/sdk";
+
+const text = await (await fetch(url)).text();
+if (!verifyErc8183ManifestText(text, job.deliverable)) throw new Error("tampered deliverable");
+const manifest = JSON.parse(text); // manifest.response.content
+```
+
+## Submit a deliverable (the seller side)
+
+When your agent is the one hired, submitting its finished work is one call.
+Grant the seller session `erc8183SubmitPermissions(chainId)` — a capability
+scoped to exactly `submit()` on the commerce kernel — then:
+
+```ts
+import { submitErc8183Deliverable, erc8183SubmitPermissions } from "@altananetwork/sdk";
+
+const result = await submitErc8183Deliverable(
+  session,                      // or (wallet, signer, …) for the admin path
+  {
+    jobId,
+    manifest: {
+      version: 1,
+      job_id: Number(jobId),
+      chain_id: 56,
+      contracts: { commerce: A.commerce, router: A.router, policy: A.policy },
+      response: { content: "…the work…", content_type: "text/plain" },
+      metadata: {},
+    },
+    deliverableUrl: "https://your-agent.example/manifests/123.json",
+  },
+  { network: BNB },
+);
+
+// Serve result.manifestText VERBATIM at deliverableUrl — byte-for-byte.
+```
+
+Two things the SDK handles that are easy to get wrong by hand:
+
+- **Canonical hashing is cross-language.** The on-chain hash is over the
+  manifest's *canonical JSON* — keys sorted, compact, and **every non-ASCII
+  character `\uXXXX`-escaped**, exactly like the Python reference
+  (`json.dumps(…, sort_keys=True, separators=(",", ":"))` with its default
+  `ensure_ascii`). A plain `JSON.stringify` produces different bytes for any
+  content with an em-dash, an accent, or an emoji, and the hash won't verify
+  cross-ecosystem. `encodeErc8183Manifest` / `erc8183ManifestHash` do the
+  canonical form for you.
+- **Serve the exact hashed bytes.** Buyers verify the *raw* fetched text
+  against the on-chain hash — re-serializing the manifest at serve time
+  breaks verification. `result.manifestText` is the string to serve.
+
+Pre-flight checks throw actionable errors before anything is submitted:
+wrong provider, job not FUNDED (or already SUBMITTED), or past the deadline.
+`buildSubmitCall({ addresses, jobId, deliverable, optParams })` is the
+low-level builder — like `buildHireCalls`, its `addresses` struct is the
+override seam if you need to target a non-bundled deployment.
 
 ## Settle, dispute, or reclaim
 
@@ -66,9 +125,9 @@ await execute(wallet, signer, buildClaimRefundCall(56, jobId), opts);         //
 
 `ERC8183_ADDRESSES` exports the kernel (AgenticCommerce), EvaluatorRouter,
 OptimisticPolicy, ERC-8004 registry, and $U token for BSC mainnet (56) and
-testnet (97). The MCP server exposes the same flow as tools:
-`erc8183_create_job`, `erc8183_job_status`, `erc8183_settle` — see
-[MCP Tools](/mcp/tools).
+testnet (97). The MCP server exposes the same flows as tools:
+`erc8183_create_job`, `erc8183_job_status`, `erc8183_settle`,
+`erc8183_submit` — see [MCP Tools](/mcp/tools).
 
 ## Get testnet $U
 

@@ -1,15 +1,21 @@
 /**
- * FORK E2E: the ERC-8183 buyer flow against the REAL testnet kernel bytecode.
+ * FORK E2E: the FULL ERC-8183 lifecycle — buyer AND seller — against the
+ * REAL testnet kernel bytecode.
  *
  * Forks BSC testnet (chain 97) — genuine AgenticCommerce / EvaluatorRouter /
- * OptimisticPolicy / $U deployments — and drives the full buyer lifecycle:
+ * OptimisticPolicy / $U deployments — and drives both halves of the protocol
+ * with the SDK's builders and codecs (issue #59 added the seller half):
  *
- *   1. buildHireCalls: createJob → registerJob → setBudget → approve → fund
- *      (the exact five calls hireErc8183Agent batches through the relay),
- *      with the jobId predicted from jobCounter()+1.
- *   2. Assert the job is FUNDED, ours, and the $U escrow actually moved.
- *   3. Warp past expiredAt (seller never submits), claimRefund, assert the
- *      escrow came back and the job is EXPIRED.
+ *   Job A (happy path): buildHireCalls funds the job; the seller builds a
+ *   deliverable manifest with the SDK codec (canonical JSON, Python-byte-
+ *   identical incl. non-ASCII escaping), submits via buildSubmitCall,
+ *   the on-chain hash matches erc8183ManifestHash, the buyer recovers the
+ *   deliverable URL with getErc8183DeliverableUrl and verifies the raw text
+ *   with verifyErc8183ManifestText, and after the dispute window the buyer
+ *   settles — job COMPLETED, seller paid.
+ *
+ *   Job B (refund path): seller never submits; warp past expiredAt,
+ *   claimRefund, job EXPIRED, escrow returned in full.
  *
  * Run: bun run fork:erc8183   (from tests/e2e)
  */
@@ -19,6 +25,7 @@ import {
   createPublicClient,
   http,
   encodeAbiParameters,
+  encodeFunctionData,
   keccak256,
   pad,
   toHex,
@@ -27,7 +34,19 @@ import {
 } from "viem";
 import { bscTestnet } from "viem/chains";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
-import { buildHireCalls, buildClaimRefundCall, erc8183Addresses, getErc8183Job, JOB_STATUS } from "@altananetwork/sdk";
+import {
+  buildHireCalls,
+  buildClaimRefundCall,
+  buildSubmitCall,
+  encodeErc8183Manifest,
+  erc8183Addresses,
+  erc8183ManifestHash,
+  getErc8183DeliverableUrl,
+  getErc8183Job,
+  verifyErc8183ManifestText,
+  JOB_STATUS,
+  type Erc8183DeliverableManifest,
+} from "@altananetwork/sdk";
 
 const A = erc8183Addresses(97);
 // `||`, not `??`: an unset GitHub Actions secret arrives as an empty string,
@@ -45,11 +64,14 @@ const VIEW_ABI = [
   { name: "jobCounter", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { name: "disputeWindow", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint64" }] },
 ] as const;
+const ROUTER_SETTLE_ABI = [
+  { name: "settle", type: "function", stateMutability: "nonpayable", inputs: [{ name: "jobId", type: "uint256" }, { name: "evidence", type: "bytes" }], outputs: [] },
+] as const;
 
 const test = createTestClient({ mode: "anvil", chain: bscTestnet, transport: http(ANVIL_URL) });
 const publicClient = createPublicClient({ chain: bscTestnet, transport: http(ANVIL_URL) });
 
-const network = { chain: bscTestnet, chainId: 97, publicRpcUrl: ANVIL_URL } as never; // NetworkConfig for getErc8183Job
+const network = { chain: bscTestnet, chainId: 97, publicRpcUrl: ANVIL_URL } as never; // NetworkConfig for the SDK reads
 
 function assert(cond: boolean, msg: string) {
   if (!cond) throw new Error(`ASSERT FAILED: ${msg}`);
@@ -71,6 +93,35 @@ async function dealToken(token: Address, holder: Address, amount: bigint) {
   throw new Error("balances slot not found");
 }
 const u = (v: bigint) => `${formatUnits(v, 18)} $U`;
+const uBal = (a: Address) =>
+  publicClient.readContract({ address: A.paymentToken, abi: ERC20_ABI, functionName: "balanceOf", args: [a] });
+
+async function hireJob(asBuyer: ReturnType<typeof createWalletClient>, buyer: Address, provider: Address) {
+  const [jobCounter, disputeWindow, block] = await Promise.all([
+    publicClient.readContract({ address: A.commerce, abi: VIEW_ABI, functionName: "jobCounter" }),
+    publicClient.readContract({ address: A.policy, abi: VIEW_ABI, functionName: "disputeWindow" }),
+    publicClient.getBlock(),
+  ]);
+  const jobId = jobCounter + 1n;
+  const expiredAt = block.timestamp + BigInt(disputeWindow) + 1800n;
+  const calls = buildHireCalls({
+    addresses: A,
+    jobId,
+    provider,
+    description: "Audit wallet 0x0000000000000000000000000000000000000001's Venus position (fork test)",
+    budget: BUDGET,
+    expiredAt,
+  });
+  for (const call of calls) {
+    const h = await asBuyer.sendTransaction({ to: call.to, data: call.data, account: asBuyer.account!, chain: bscTestnet });
+    const rcpt = await publicClient.waitForTransactionReceipt({ hash: h });
+    assert(rcpt.status === "success", `call to ${call.to} (${call.data!.slice(0, 10)}) reverted`);
+  }
+  const job = await getErc8183Job(network, jobId);
+  assert(job.client.toLowerCase() === buyer.toLowerCase(), "job.client is the buyer");
+  assert(job.statusName === "FUNDED", `job is FUNDED (got ${job.statusName})`);
+  return { jobId, expiredAt, disputeWindow, fundedAtTs: block.timestamp };
+}
 
 async function main() {
   console.log(`\n▶ Booting anvil BSC-testnet fork (${ANVIL_URL}) ...`);
@@ -79,60 +130,88 @@ async function main() {
     await waitForAnvil();
 
     const buyer = privateKeyToAccount(generatePrivateKey());
+    const seller = privateKeyToAccount(generatePrivateKey());
     await test.setBalance({ address: buyer.address, value: 10n ** 20n });
+    await test.setBalance({ address: seller.address, value: 10n ** 20n });
     await dealToken(A.paymentToken, buyer.address, 10n * 10n ** 18n);
     const asBuyer = createWalletClient({ account: buyer, chain: bscTestnet, transport: http(ANVIL_URL) });
+    const asSeller = createWalletClient({ account: seller, chain: bscTestnet, transport: http(ANVIL_URL) });
+    const buyerStart = await uBal(buyer.address);
 
-    const [jobCounter, disputeWindow, block] = await Promise.all([
-      publicClient.readContract({ address: A.commerce, abi: VIEW_ABI, functionName: "jobCounter" }),
-      publicClient.readContract({ address: A.policy, abi: VIEW_ABI, functionName: "disputeWindow" }),
-      publicClient.getBlock(),
-    ]);
-    const jobId = jobCounter + 1n;
-    const expiredAt = block.timestamp + BigInt(disputeWindow) + 1800n;
-    console.log(`  jobCounter=${jobCounter} → predicting jobId=${jobId}; disputeWindow=${disputeWindow}s`);
+    // ════════ Job A: the full happy path, buyer AND seller ════════
+    console.log("▶ Job A: hire (createJob → registerJob → setBudget → approve → fund) ...");
+    const a = await hireJob(asBuyer, buyer.address, seller.address);
+    console.log(`  ✓ job ${a.jobId} FUNDED; ${u(BUDGET)} escrowed`);
 
-    // ── The five buyer calls (what hireErc8183Agent batches via the relay). ──
-    console.log(`▶ createJob → registerJob → setBudget → approve → fund (budget ${u(BUDGET)}) ...`);
-    const calls = buildHireCalls({
+    console.log("▶ Job A: seller builds the manifest with the SDK codec and submits ...");
+    const manifest: Erc8183DeliverableManifest = {
+      version: 1,
+      job_id: Number(a.jobId),
+      chain_id: 97,
+      contracts: { commerce: A.commerce, router: A.router, policy: A.policy },
+      // Non-ASCII on purpose — the canonical form must hash the same as the
+      // Python reference (issue #59's cross-language trap).
+      response: { content: "Position healthy — no action needed. Café ☕", content_type: "text/plain" },
+      metadata: {},
+    };
+    const manifestText = encodeErc8183Manifest(manifest);
+    const deliverable = erc8183ManifestHash(manifest);
+    const deliverableUrl = "https://seller.example/manifests/fork-test.json";
+    const submit = buildSubmitCall({
       addresses: A,
-      jobId,
-      provider: privateKeyToAccount(generatePrivateKey()).address,
-      description: "Audit wallet 0x0000000000000000000000000000000000000001's Venus position (fork test)",
-      budget: BUDGET,
-      expiredAt,
+      jobId: a.jobId,
+      deliverable,
+      optParams: toHex(JSON.stringify({ deliverable_url: deliverableUrl })),
     });
-    const buyerBefore = await publicClient.readContract({ address: A.paymentToken, abi: ERC20_ABI, functionName: "balanceOf", args: [buyer.address] });
-    for (const call of calls) {
-      const h = await asBuyer.sendTransaction({ to: call.to, data: call.data });
-      const rcpt = await publicClient.waitForTransactionReceipt({ hash: h });
-      assert(rcpt.status === "success", `call to ${call.to} (${call.data!.slice(0, 10)}) reverted`);
-    }
+    const sh = await asSeller.sendTransaction({ to: submit.to, data: submit.data, account: seller, chain: bscTestnet });
+    assert((await publicClient.waitForTransactionReceipt({ hash: sh })).status === "success", "submit reverted");
 
-    const job = await getErc8183Job(network, jobId);
-    const buyerAfter = await publicClient.readContract({ address: A.paymentToken, abi: ERC20_ABI, functionName: "balanceOf", args: [buyer.address] });
-    assert(job.client.toLowerCase() === buyer.address.toLowerCase(), "job.client is the buyer");
-    assert(job.statusName === "FUNDED", `job is FUNDED (got ${job.statusName})`);
-    assert(job.budget === BUDGET, "budget matches");
-    assert(buyerBefore - buyerAfter === BUDGET, `escrow moved: buyer paid ${u(buyerBefore - buyerAfter)}`);
-    console.log(`  ✓ job ${jobId} FUNDED on the real kernel; ${u(BUDGET)} escrowed`);
+    const submitted = await getErc8183Job(network, a.jobId);
+    assert(submitted.statusName === "SUBMITTED", `job is SUBMITTED (got ${submitted.statusName})`);
+    assert(submitted.deliverable.toLowerCase() === deliverable.toLowerCase(), "on-chain deliverable == erc8183ManifestHash(manifest)");
+    assert(verifyErc8183ManifestText(manifestText, submitted.deliverable), "raw canonical text verifies against the on-chain hash");
+    console.log(`  ✓ SUBMITTED; on-chain hash matches the SDK's canonical manifest hash`);
 
-    // ── Seller never delivers → warp past expiredAt and reclaim. ──
-    console.log("▶ Warping past expiredAt, claiming refund ...");
-    await test.increaseTime({ seconds: Number(expiredAt - block.timestamp) + 60 });
+    // Buyer recovers the deliverable URL from the policy's JobInitialised log.
+    await test.mine({ blocks: 3 }); // keep the scan window inside locally-mined blocks (upstream getLogs throttles)
+    const url = await getErc8183DeliverableUrl(network, a.jobId, { scanWindow: 8n, maxWindows: 1 });
+    assert(url === deliverableUrl, `deliverable URL round-trips (got ${url})`);
+    console.log(`  ✓ buyer recovered deliverable_url via getErc8183DeliverableUrl`);
+
+    console.log("▶ Job A: warp past the dispute window, buyer settles ...");
+    await test.increaseTime({ seconds: Number(a.disputeWindow) + 60 });
     await test.mine({ blocks: 1 });
-    const refund = buildClaimRefundCall(97, jobId);
-    const h = await asBuyer.sendTransaction({ to: refund.to, data: refund.data });
-    assert((await publicClient.waitForTransactionReceipt({ hash: h })).status === "success", "claimRefund reverted");
+    const settleTx = await asBuyer.sendTransaction({
+      to: A.router,
+      data: encodeFunctionData({ abi: ROUTER_SETTLE_ABI, functionName: "settle", args: [a.jobId, "0x"] }),
+      account: buyer,
+      chain: bscTestnet,
+    });
+    assert((await publicClient.waitForTransactionReceipt({ hash: settleTx })).status === "success", "settle reverted");
+    const settled = await getErc8183Job(network, a.jobId);
+    const sellerPaid = await uBal(seller.address);
+    assert(settled.statusName === "COMPLETED", `job is COMPLETED (got ${settled.statusName})`);
+    assert(sellerPaid === BUDGET, `seller received the escrow (${u(sellerPaid)})`);
+    console.log(`  ✓ COMPLETED; seller earned ${u(sellerPaid)} — the full economic loop, SDK both sides`);
 
-    const after = await getErc8183Job(network, jobId);
-    const buyerFinal = await publicClient.readContract({ address: A.paymentToken, abi: ERC20_ABI, functionName: "balanceOf", args: [buyer.address] });
+    // ════════ Job B: seller never delivers → refund path ════════
+    console.log("▶ Job B: hire, then warp past expiredAt and claim the refund ...");
+    const b = await hireJob(asBuyer, buyer.address, privateKeyToAccount(generatePrivateKey()).address);
+    const blockNow = await publicClient.getBlock();
+    await test.increaseTime({ seconds: Number(b.expiredAt - blockNow.timestamp) + 60 });
+    await test.mine({ blocks: 1 });
+    const refund = buildClaimRefundCall(97, b.jobId);
+    const rh = await asBuyer.sendTransaction({ to: refund.to, data: refund.data, account: buyer, chain: bscTestnet });
+    assert((await publicClient.waitForTransactionReceipt({ hash: rh })).status === "success", "claimRefund reverted");
+
+    const after = await getErc8183Job(network, b.jobId);
+    const buyerFinal = await uBal(buyer.address);
     assert(after.statusName === "EXPIRED", `job is EXPIRED (got ${after.statusName})`);
-    assert(buyerFinal === buyerBefore, `escrow refunded in full (${u(buyerFinal)})`);
+    assert(buyerFinal === buyerStart - BUDGET, `only job A's escrow left the buyer (${u(buyerFinal)})`);
     console.log(`  ✓ job EXPIRED, ${u(BUDGET)} refunded to the buyer`);
     console.log(`  (status enum sanity: ${JOB_STATUS.join(" → ")})`);
 
-    console.log("\nResult: PASS ✓ — full ERC-8183 buyer lifecycle against real kernel bytecode.\n");
+    console.log("\nResult: PASS ✓ — full ERC-8183 lifecycle, buyer and seller, against real kernel bytecode.\n");
   } finally {
     anvil.kill();
   }

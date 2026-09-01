@@ -14,6 +14,24 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Added
+
+- **ERC-8183 seller support — an Altana agent can now get paid, not just
+  pay.** `submitErc8183Deliverable` submits a hired job's finished work
+  (wallet or session path; pre-flight reads turn the kernel's opaque
+  reverts into clear errors), `buildSubmitCall` is the low-level builder,
+  and `erc8183SubmitPermissions(chainId)` scopes a seller session to
+  exactly `submit()` on the commerce kernel. The deliverable-manifest codec
+  ships too: `encodeErc8183Manifest` / `erc8183ManifestHash` produce the
+  canonical form byte-identical to the Python reference — including the
+  `\uXXXX` escaping of non-ASCII content that a plain `JSON.stringify`
+  gets wrong and that breaks cross-language hash verification — and
+  `verifyErc8183ManifestText` is the buyer-side raw-bytes integrity check.
+  Exposed in the MCP server as `erc8183_submit`, which returns the exact
+  canonical text the agent must serve at its deliverable URL. The fork e2e
+  now drives the full two-sided lifecycle (hire → submit → verify →
+  settle → seller paid) against real kernel bytecode. (#59)
+
 ### Fixed
 
 - **BSC testnet (chain 97) hire flow no longer reverts.** The bundled
