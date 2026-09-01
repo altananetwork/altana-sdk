@@ -50,6 +50,7 @@ The Altana MCP server exposes 20 tools. AI hosts call them by name. Eleven of th
 | `erc8183_create_job` | Hires an ERC-8183 seller agent (e.g. any BNB Agent Studio agent): escrows $U against its address for a task — the whole buyer flow as one atomic relay intent. |
 | `erc8183_job_status` | Reads a job's on-chain state; once the seller submits, resolves and fetches the deliverable. |
 | `erc8183_settle` | Releases the escrow to the seller after the dispute window (`approve`), or contests inside it (`dispute`). |
+| `erc8183_submit` | The seller side: submits a job's deliverable — builds the v1 manifest, hashes its canonical form on-chain, and returns the exact bytes to serve at the deliverable URL. |
 
 ## Agent identity
 
@@ -89,4 +90,4 @@ Eleven of the 20 tools have a matching prompt, exposed as a slash command. One f
 | `/altana-agentic-wallet:send-tx` | `wallet_execute` |
 | `/altana-agentic-wallet:demos` | listing of available demo flows |
 
-Nine tools have no slash command: `x402_request`, `erc8183_create_job`, `erc8183_job_status`, `erc8183_settle`, `erc8004_register`, `erc8004_set_agent_uri`, `erc8004_show`, `search_skills`, and `get_skill`. Ask the host to use them by name instead; typing `/altana-agentic-wallet:x402-request` will not resolve.
+Ten tools have no slash command: `x402_request`, `erc8183_create_job`, `erc8183_job_status`, `erc8183_settle`, `erc8183_submit`, `erc8004_register`, `erc8004_set_agent_uri`, `erc8004_show`, `search_skills`, and `get_skill`. Ask the host to use them by name instead; typing `/altana-agentic-wallet:x402-request` will not resolve.

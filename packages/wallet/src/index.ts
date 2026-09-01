@@ -122,18 +122,28 @@ export {
   erc8183Addresses,
   buildHireCalls,
   buildClaimRefundCall,
+  buildSubmitCall,
   getErc8183Job,
   getErc8183DeliverableUrl,
   hireErc8183Agent,
   settleErc8183Job,
+  submitErc8183Deliverable,
+  encodeErc8183Manifest,
+  erc8183ManifestHash,
+  verifyErc8183ManifestText,
+  erc8183SubmitPermissions,
 } from "./erc8183.js";
 export type {
   Erc8183Addresses,
   Erc8183Job,
+  Erc8183DeliverableManifest,
   HireAgentParams,
   HireAgentResult,
   HireCallsInput,
   JobStatusName,
+  SubmitCallInput,
+  SubmitDeliverableParams,
+  SubmitDeliverableResult,
 } from "./erc8183.js";
 
 // ERC-8004 agent identity — mint and maintain an agent's on-chain identity.

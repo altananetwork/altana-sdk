@@ -14,7 +14,8 @@
  *                verify_authorization, list_sessions
  *   - Operate:   wallet_execute, grant_session, revoke_session, session_execute
  *   - Pay:       x402_request
- *   - Jobs:      erc8183_create_job, erc8183_job_status, erc8183_settle
+ *   - Jobs:      erc8183_create_job, erc8183_job_status, erc8183_settle,
+ *                erc8183_submit
  *   - Agent ID:  erc8004_register, erc8004_set_agent_uri, erc8004_show
  *   - Skills:    search_skills, get_skill
  *
@@ -36,6 +37,8 @@ import {
   getErc8183Job,
   getErc8183DeliverableUrl,
   settleErc8183Job,
+  submitErc8183Deliverable,
+  erc8183Addresses,
   getErc8004Agent,
   setErc8004AgentUri,
   decodeErc8004AgentUri,
@@ -1190,6 +1193,84 @@ tool(
               action: action ?? "approve",
               status: result.status,
               transactionHash: result.transactionHash,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
+  },
+);
+
+// erc8183_submit — the seller side: submit a job's deliverable. Builds the
+// v1 manifest, hashes its canonical form on-chain, and returns the EXACT
+// canonical text the agent must serve at deliverableUrl (buyers verify the
+// raw served bytes against the on-chain hash).
+tool(
+  "erc8183_submit",
+  {
+    title: "Submit an ERC-8183 job deliverable (seller)",
+    description:
+      "Submit the deliverable for an ERC-8183 job this wallet was hired for " +
+      "(the session needs erc8183SubmitPermissions — submit() on the commerce " +
+      "kernel). Builds the v1 manifest from `content`, hashes its canonical " +
+      "form on-chain, and returns `manifestText` — serve EXACTLY those bytes " +
+      "at deliverableUrl, or buyer-side verification fails.",
+    inputSchema: {
+      sessionName: z.string(),
+      jobId: z.string(),
+      content: z.string(),
+      contentType: z.string().optional(),
+      deliverableUrl: z.string(),
+    },
+  },
+  async ({
+    sessionName,
+    jobId,
+    content,
+    contentType,
+    deliverableUrl,
+  }: {
+    sessionName: string;
+    jobId: string;
+    content: string;
+    contentType?: string;
+    deliverableUrl: string;
+  }) => {
+    const { stored, session } = await sessionFromName(sessionName);
+    const a = erc8183Addresses(NETWORK.chainId);
+    const manifest = {
+      version: 1 as const,
+      job_id: Number(jobId),
+      chain_id: NETWORK.chainId,
+      contracts: { commerce: a.commerce, router: a.router, policy: a.policy },
+      response: { content, content_type: contentType ?? "text/plain" },
+      metadata: {},
+    };
+    const result = await submitErc8183Deliverable(
+      session,
+      { jobId: BigInt(jobId), manifest, deliverableUrl },
+      { network: NETWORK },
+    );
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              sessionName,
+              walletAddress: stored.walletAddress,
+              jobId,
+              deliverable: result.deliverable,
+              manifestHash: result.deliverable,
+              manifestText: result.manifestText,
+              status: result.status,
+              transactionHash: result.transactionHash,
+              next:
+                `Serve manifestText VERBATIM (byte-for-byte) at ${deliverableUrl}. ` +
+                "The buyer verifies the raw served bytes against the on-chain hash, " +
+                "then settles after the dispute window via erc8183_settle.",
             },
             null,
             2,

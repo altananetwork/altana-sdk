@@ -18,7 +18,8 @@
  * buyers need five self-paid transactions for the same flow.
  */
 
-import { encodeFunctionData, type Address, type Hex } from "viem";
+import { encodeFunctionData, keccak256, toHex, type Address, type Hex } from "viem";
+import { canonicalJson } from "./internal/canonicalJson.js";
 import { type NetworkConfig } from "./config.js";
 import { execute, type ExecuteOptions } from "./execute.js";
 import { buildPublicClient, type Call } from "./internal/relay.js";
@@ -79,6 +80,7 @@ const COMMERCE_ABI = [
   { name: "setBudget", type: "function", stateMutability: "nonpayable", inputs: [{ name: "jobId", type: "uint256" }, { name: "amount", type: "uint256" }, { name: "optParams", type: "bytes" }], outputs: [] },
   { name: "fund", type: "function", stateMutability: "nonpayable", inputs: [{ name: "jobId", type: "uint256" }, { name: "expectedBudget", type: "uint256" }, { name: "optParams", type: "bytes" }], outputs: [] },
   { name: "claimRefund", type: "function", stateMutability: "nonpayable", inputs: [{ name: "jobId", type: "uint256" }], outputs: [] },
+  { name: "submit", type: "function", stateMutability: "nonpayable", inputs: [{ name: "jobId", type: "uint256" }, { name: "deliverable", type: "bytes32" }, { name: "optParams", type: "bytes" }], outputs: [] },
   { name: "getJob", type: "function", stateMutability: "view", inputs: [{ name: "jobId", type: "uint256" }], outputs: [{ type: "tuple", components: [
     { name: "id", type: "uint256" }, { name: "client", type: "address" }, { name: "provider", type: "address" },
     { name: "evaluator", type: "address" }, { name: "description", type: "string" }, { name: "budget", type: "uint256" },
@@ -88,6 +90,9 @@ const COMMERCE_ABI = [
   { name: "jobCounter", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { name: "paymentToken", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
 ] as const;
+
+/** The seller's one entry point — the signature `erc8183SubmitPermissions` scopes to. */
+const SUBMIT_SIGNATURE = "submit(uint256,bytes32,bytes)";
 
 const ROUTER_ABI = [
   { name: "registerJob", type: "function", stateMutability: "nonpayable", inputs: [{ name: "jobId", type: "uint256" }, { name: "policy", type: "address" }], outputs: [] },
@@ -366,4 +371,208 @@ export function buildClaimRefundCall(chainId: number, jobId: bigint): Call {
     to: addresses.commerce,
     data: encodeFunctionData({ abi: COMMERCE_ABI, functionName: "claimRefund", args: [jobId] }),
   };
+}
+
+// ============================== seller side =================================
+//
+// The other half of the protocol: a hired agent submits its finished work.
+// `submit(jobId, deliverable, optParams)` moves the job FUNDED → SUBMITTED;
+// the deliverable is keccak256 of the manifest's CANONICAL JSON bytes (see
+// ./internal/canonicalJson.js — byte-identical to the Python reference, so a
+// JS seller's hash verifies against Python buyers and vice versa), and
+// optParams conventionally carries UTF-8 JSON `{"deliverable_url": "..."}`,
+// which is exactly what `getErc8183DeliverableUrl` decodes on the buyer side.
+
+/**
+ * The v1 deliverable manifest, as `@bnbagent`'s schema defines it. The seller
+ * hashes the canonical form on-chain and serves THE SAME BYTES at
+ * `deliverable_url` — buyers verify the raw fetched text against the on-chain
+ * hash, so re-serializing the served copy breaks verification.
+ */
+export type Erc8183DeliverableManifest = {
+  version: 1;
+  job_id: number;
+  chain_id: number;
+  contracts: { commerce: Address; router: Address; policy: Address };
+  response: { content: string; content_type: string };
+  metadata: Record<string, unknown>;
+};
+
+/** The exact canonical text to serve at `deliverable_url`. Pure ASCII. */
+export function encodeErc8183Manifest(manifest: Erc8183DeliverableManifest): string {
+  return canonicalJson(manifest);
+}
+
+/** The on-chain deliverable hash: keccak256 of the canonical manifest bytes. */
+export function erc8183ManifestHash(manifest: Erc8183DeliverableManifest): Hex {
+  return keccak256(toHex(canonicalJson(manifest)));
+}
+
+/**
+ * Buyer-side integrity check: hashes the RAW fetched text — no
+ * re-canonicalization — because the chain committed to exact bytes. A false
+ * result for a third-party seller means they hashed a non-canonical
+ * serialization; that is their bug, not an alternate verification mode.
+ */
+export function verifyErc8183ManifestText(text: string, deliverable: Hex): boolean {
+  return keccak256(toHex(text)) === deliverable.toLowerCase();
+}
+
+/**
+ * The bounded capability for a seller agent: exactly `submit` on the
+ * commerce kernel, nothing else. Same discipline as
+ * `erc8004RegisterPermissions` — never a to-only catch-all.
+ */
+export function erc8183SubmitPermissions(chainId: number): readonly { to: Address; signature: string }[] {
+  return [{ to: erc8183Addresses(chainId).commerce, signature: SUBMIT_SIGNATURE }];
+}
+
+/** Inputs for the raw submit call. `addresses` is the override seam. */
+export type SubmitCallInput = {
+  addresses: Erc8183Addresses;
+  jobId: bigint;
+  /** keccak256 of the canonical manifest bytes (see erc8183ManifestHash). */
+  deliverable: Hex;
+  /** Conventionally UTF-8 JSON `{"deliverable_url": "..."}`; empty allowed. */
+  optParams?: Hex;
+};
+
+export function buildSubmitCall(input: SubmitCallInput): Call {
+  return {
+    to: input.addresses.commerce,
+    data: encodeFunctionData({
+      abi: COMMERCE_ABI,
+      functionName: "submit",
+      args: [input.jobId, input.deliverable, input.optParams ?? "0x"],
+    }),
+  };
+}
+
+export type SubmitDeliverableParams = { jobId: bigint } & (
+  | {
+      /** The SDK canonicalizes, hashes, and builds optParams from these. */
+      manifest: Erc8183DeliverableManifest;
+      /** Where the canonical manifest text will be served. */
+      deliverableUrl: string;
+    }
+  | {
+      /** Pre-computed deliverable hash (bring your own manifest pipeline). */
+      deliverable: Hex;
+      optParams?: Hex;
+    }
+);
+
+export type SubmitDeliverableResult = ExecuteResult & {
+  jobId: bigint;
+  deliverable: Hex;
+  /** Present on the manifest path: the exact bytes to serve at deliverableUrl. */
+  manifestText?: string;
+};
+
+/**
+ * Submit a job's deliverable as the seller (provider). Pre-reads the job and
+ * throws actionable errors — the kernel's reverts (wrong caller, wrong
+ * status, past deadline) reach the relay path as opaque failures otherwise.
+ *
+ * With the manifest path, serve the returned `manifestText` VERBATIM at
+ * `deliverableUrl`: the buyer verifies the raw served bytes against the
+ * on-chain hash.
+ *
+ * Overloads mirror `execute`: admin path (wallet + signer) or session path
+ * (grant the seller `erc8183SubmitPermissions(chainId)`).
+ */
+export function submitErc8183Deliverable(
+  wallet: Wallet,
+  signer: Signer,
+  params: SubmitDeliverableParams,
+  opts: ExecuteOptions,
+): Promise<SubmitDeliverableResult>;
+export function submitErc8183Deliverable(
+  session: Session,
+  params: SubmitDeliverableParams,
+  opts: ExecuteOptions,
+): Promise<SubmitDeliverableResult>;
+export async function submitErc8183Deliverable(
+  walletOrSession: Wallet | Session,
+  signerOrParams: Signer | SubmitDeliverableParams,
+  paramsOrOpts?: SubmitDeliverableParams | ExecuteOptions,
+  maybeOpts?: ExecuteOptions,
+): Promise<SubmitDeliverableResult> {
+  const isSessionCall = "walletAddress" in walletOrSession;
+  const params = (isSessionCall ? signerOrParams : paramsOrOpts) as SubmitDeliverableParams;
+  const opts = (isSessionCall ? paramsOrOpts : maybeOpts) as ExecuteOptions;
+  const walletAddress = isSessionCall
+    ? (walletOrSession as Session).walletAddress
+    : (walletOrSession as Wallet).address;
+
+  // Widened caller objects pass TS silently, so the either/or is enforced at
+  // runtime too: exactly one of `manifest` and `deliverable` — checked before
+  // anything network-shaped is touched.
+  const hasManifest = "manifest" in params && params.manifest !== undefined;
+  const hasRawHash = "deliverable" in params && params.deliverable !== undefined;
+  if (hasManifest === hasRawHash) {
+    throw new Error(
+      "erc8183: pass exactly one of `manifest` (SDK hashes it) or `deliverable` (pre-computed hash).",
+    );
+  }
+
+  const network = opts.network;
+  const addresses = erc8183Addresses(network.chainId);
+
+  let deliverable: Hex;
+  let optParams: Hex;
+  let manifestText: string | undefined;
+  if (hasManifest) {
+    const { manifest, deliverableUrl } = params as { manifest: Erc8183DeliverableManifest; deliverableUrl: string };
+    if (BigInt(manifest.job_id) !== params.jobId) {
+      throw new Error(`erc8183: manifest.job_id (${manifest.job_id}) does not match jobId (${params.jobId}).`);
+    }
+    if (manifest.chain_id !== network.chainId) {
+      throw new Error(`erc8183: manifest.chain_id (${manifest.chain_id}) does not match the network (${network.chainId}).`);
+    }
+    manifestText = encodeErc8183Manifest(manifest);
+    deliverable = keccak256(toHex(manifestText));
+    optParams = toHex(JSON.stringify({ deliverable_url: deliverableUrl }));
+  } else {
+    const raw = params as { deliverable: Hex; optParams?: Hex };
+    deliverable = raw.deliverable;
+    optParams = raw.optParams ?? "0x";
+  }
+
+  // Pre-flight: the kernel reverts on all of these, but through the relay
+  // those reverts surface as opaque FAILED results — read first, fail clearly.
+  const job = await getErc8183Job(network, params.jobId);
+  if (job.provider.toLowerCase() !== walletAddress.toLowerCase()) {
+    throw new Error(
+      `erc8183: job ${params.jobId}'s provider is ${job.provider}, not this wallet (${walletAddress}) — only the hired seller can submit.`,
+    );
+  }
+  if (job.statusName !== "FUNDED") {
+    throw new Error(
+      job.statusName === "SUBMITTED"
+        ? `erc8183: job ${params.jobId} already has a submitted deliverable.`
+        : `erc8183: job ${params.jobId} is ${job.statusName}, not FUNDED — nothing to submit against.`,
+    );
+  }
+  if (BigInt(Math.floor(Date.now() / 1000)) >= job.expiredAt) {
+    throw new Error(`erc8183: job ${params.jobId} expired at ${job.expiredAt} — the submission deadline has passed.`);
+  }
+
+  const call = buildSubmitCall({ addresses, jobId: params.jobId, deliverable, optParams });
+  const result = isSessionCall
+    ? await execute(walletOrSession as Session, call, opts)
+    : await execute(walletOrSession as Wallet, signerOrParams as Signer, call, opts);
+
+  // Post-check mirrors hireErc8183Agent: only meaningful once mined; with
+  // opts.noWait the result is PENDING pre-inclusion and the caller verifies
+  // via getErc8183Job after their callsId confirms.
+  if (result.status === "CONFIRMED") {
+    const after = await getErc8183Job(network, params.jobId);
+    if (after.statusName !== "SUBMITTED" || after.deliverable.toLowerCase() !== deliverable.toLowerCase()) {
+      throw new Error(
+        `erc8183: job ${params.jobId} did not reach SUBMITTED with our deliverable after the submit confirmed (status=${after.statusName}).`,
+      );
+    }
+  }
+  return { ...result, jobId: params.jobId, deliverable, ...(manifestText !== undefined ? { manifestText } : {}) };
 }
