@@ -46,6 +46,21 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Changed
 
+- **`SignerType` no longer advertises `"injected"`.** The union member
+  promised browser-wallet (MetaMask) signing that was never implemented and
+  is blocked by the wallets themselves: extension wallets withhold the
+  EIP-7702 delegation authorization and refuse to sign the raw relay
+  digests, so the runtime has rejected `"injected"` since day one. The type
+  now matches reality (`"privateKey" | "passkey"`; compile-time-only change
+  — no working code used it), the helpful runtime message stays, and a new
+  guide, *Onboard users from browser wallets*, documents the flow that
+  works: connect MetaMask/Trust Wallet/Rabby as usual, create the account
+  with `createPasskeyWallet`, and fund it in one click through the
+  connected wallet's own provider. Calling porto internals directly is not
+  a workaround (same signing wall) and is not covered by our API stability.
+  Native injected-signer support is tracked as a separate feature issue.
+  (#56)
+
 - **A signer's private key can no longer be captured by JSON.** The docs
   used to say "persist the `Session` object verbatim" — advice that threw
   on bigint spend limits, silently wrote the raw session key into storage,

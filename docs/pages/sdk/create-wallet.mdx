@@ -46,6 +46,7 @@ type CreateWalletResult = {
 ## Notes
 
 - Fund `result.address` with native tokens before calling `execute` — the wallet is counterfactual and has no balance until you send some.
+- **Browser wallets (MetaMask, Trust Wallet, Rabby) cannot be the signer** — they withhold the signatures a 7702 account needs. They make excellent *funding sources* instead: see [Onboard users from browser wallets](/use-cases/7-onboard-from-browser-wallets) for the connect → passkey → one-click-funding flow.
 - If you omit `signer`, the SDK generates a fresh private-key signer and returns it on the result. Persist `result.signer` however your app stores keys.
 - The address is identical on every chain the client was configured with, so one wallet handle works across all of them: pass `chainId` per operation to pick which one.
 

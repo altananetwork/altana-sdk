@@ -10,7 +10,7 @@ import type { Wallet } from "./internal/types.js";
 export type CreateWalletOptions = {
   /**
    * Signer for the wallet's admin authority. Bring your own via
-   * signerFromPrivateKey / signerFromInjected / signerFromPasskey, or omit
+   * signerFromPrivateKey / signerFromPasskey, or omit
    * to let the SDK generate a fresh private-key signer (returned via
    * the optional `signer` field on the result).
    */
