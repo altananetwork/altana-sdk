@@ -95,7 +95,7 @@ export default defineConfig({
   ],
   topNav: [
     { text: "Get started", link: "/getting-started/create-agentic-wallet" },
-    { text: "Guides", link: "/use-cases" },
+    { text: "Guides", link: "/use-cases/1-agent-wallet-policy" },
     { text: "Explorer", link: "/explorer" },
     { text: "SDK", link: "/sdk" },
     { text: "MCP", link: "/mcp" },
@@ -115,16 +115,15 @@ export default defineConfig({
     {
       text: "Guides",
       items: [
-        { text: "Overview", link: "/use-cases" },
         { text: "Private key: agent wallet and policy", link: "/use-cases/1-agent-wallet-policy" },
         { text: "Passkey: agent wallet and policy", link: "/use-cases/1b-passkey-delegates-to-agent" },
+        { text: "Onboard users from browser wallets", link: "/use-cases/7-onboard-from-browser-wallets" },
+        { text: "Pay for an API with x402", link: "/use-cases/6-agent-pays-api-x402" },
+        { text: "Use the SDK in a mobile app", link: "/use-cases/8-mobile-app" },
         { text: "Let an agent trade on a DEX", link: "/use-cases/2-agent-trades-dex" },
         { text: "Run a portfolio with multiple agents", link: "/use-cases/3-portfolio-multiple-agents" },
         { text: "Verify agent authority", link: "/use-cases/4-verify-agent-authority" },
         { text: "Authorize across chains", link: "/use-cases/5-cross-chain-authorization" },
-        { text: "Pay for an API with x402", link: "/use-cases/6-agent-pays-api-x402" },
-        { text: "Onboard users from browser wallets", link: "/use-cases/7-onboard-from-browser-wallets" },
-        { text: "Use the SDK in a mobile app", link: "/use-cases/8-mobile-app" },
       ],
     },
     {
