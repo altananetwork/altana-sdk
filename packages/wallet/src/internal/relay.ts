@@ -337,7 +337,10 @@ export async function submitCalls(
     prepareParams.revokeKeys = opts.revokeKeys.map(toPortoKey);
   }
 
-  const prepared: any = await prepareCalls(client, prepareParams);
+  const prepared: any = await withRelayReason(
+    () => prepareCalls(client, prepareParams),
+    "prepare the call",
+  );
 
   // Porto's signCalls dispatches by `key`: for secp256k1 / webauthn-p256
   // keys with embedded signing material, it calls Key.sign which produces
@@ -360,14 +363,64 @@ export async function submitCalls(
   const sendKey =
     !isAdmin || isPasskeySigner(signer) ? signingKeyForPorto : undefined;
 
-  const sent: any = await sendPreparedCalls(client as any, {
-    context: prepared.context,
-    capabilities: prepared.capabilities,
-    signature,
-    ...(sendKey ? { key: sendKey } : {}),
-  } as any);
+  const sent: any = await withRelayReason(
+    () =>
+      sendPreparedCalls(client as any, {
+        context: prepared.context,
+        capabilities: prepared.capabilities,
+        signature,
+        ...(sendKey ? { key: sendKey } : {}),
+      } as any),
+    "submit the call",
+  );
 
   return (sent?.id ?? sent) as Hex;
+}
+
+/**
+ * The relay explains rejections precisely ("fee token not supported: 0x…",
+ * "quote expired", …), but that message rides several `.cause` levels below
+ * viem's generic wrapper ("Invalid parameters were provided to the RPC
+ * method"), where nobody finds it. Run a relay call through this so the real
+ * reason leads the thrown error; the original is kept as `cause`.
+ */
+async function withRelayReason<T>(fn: () => Promise<T>, doing: string): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    const reason = deepestRelayReason(err);
+    if (!reason) throw err;
+    const hint = /fee token/i.test(reason)
+      ? " (the relay fee is paid in native currency, e.g. BNB — omit `feeToken` or set one the relay accepts; $U is for job escrow and x402, not relay fees)"
+      : "";
+    throw new Error(`The relay rejected the request to ${doing}: ${reason}${hint}`, { cause: err });
+  }
+}
+
+/** Generic wrapper strings viem/porto layer on top of the real relay message. */
+const GENERIC_ERROR_TEXT = [
+  "Invalid parameters were provided to the RPC method",
+  "RPC Request failed",
+  "An error occurred while executing calls",
+  "HTTP request failed",
+  "Double check you have provided the correct parameters",
+];
+
+/**
+ * Walk an error's `cause` chain and pull out the most specific relay message:
+ * the deepest `details`/`message` that isn't one of viem's generic wrappers.
+ */
+export function deepestRelayReason(err: unknown): string | undefined {
+  let best: string | undefined;
+  let cur: any = err;
+  for (let i = 0; i < 12 && cur && typeof cur === "object"; i++) {
+    for (const raw of [cur.details, cur.shortMessage, cur.message]) {
+      const text = typeof raw === "string" ? raw.split("\n")[0]!.trim() : "";
+      if (text && !GENERIC_ERROR_TEXT.some((g) => text.includes(g))) best = text;
+    }
+    cur = cur.cause;
+  }
+  return best;
 }
 
 /**
