@@ -123,9 +123,38 @@ In a single userOp:
 
 Both happen atomically. There is no intermediate state where one exists without the other.
 
+## Persisting a session
+
+A `Session` embeds the session's private key and bigint spend limits, so **never `JSON.stringify` it** — that throws on the bigints, and when it doesn't, it writes the secret into your storage while dropping the signing capability. The supported pattern splits the two halves:
+
+```ts
+import { generatePrivateKey } from "viem/accounts";
+import { signerFromPrivateKey, serializeSession, deserializeSession } from "@altananetwork/sdk";
+
+// Grant: bring your own key, and store it where you keep secrets.
+const sessionKey = generatePrivateKey();
+await secrets.save("agent-1.key", sessionKey);                 // keychain, KMS, env — yours
+
+const session = await client.grantSession({
+  wallet, signer: admin,
+  sessionSigner: signerFromPrivateKey(sessionKey),
+  permissions, expiry,
+});
+await db.save("agent-1.session", serializeSession(session));   // JSON-safe, contains NO secret
+
+// Restore — any process, any time:
+const restored = deserializeSession(
+  await db.load("agent-1.session"),
+  signerFromPrivateKey(await secrets.load("agent-1.key")),
+);
+```
+
+`serializeSession` keeps `walletAddress`, `publicKey`, `permissions` (spend limits as decimal strings), and `expiry` — the values that must match the grant at execute time. `deserializeSession` restores the bigints and refuses a key that doesn't match the session's registered `publicKey`, so a mixed-up key fails loudly at restore instead of opaquely at execute.
+
+If you omit `sessionSigner`, the SDK generates a key that exists **only in the current process's memory** and warns on the console: lose it (a crash, the script ending) and the on-chain authorization it backs is permanently unusable — revoke-and-regrant is the only exit.
+
 ## Notes
 
-- **Persist the full `Session` object**, not just `publicKey`. The agent needs `permissions + expiry` byte-exact at execute time.
-- If you generated the session signer (omitted `sessionSigner`), persist `session.signer` securely. Losing it means the session can no longer sign.
+- **Persist both halves**: the serialized session (above) *and* the key, separately. An agent needs `permissions + expiry` to execute, not just the key.
 - **`permissions.calls` omitted = unrestricted.** Always set both `calls` and `spend` unless you specifically want an open-scope session.
 - **This is the call that costs the user money.** It pays a one-time [Keystore](/concepts/keystore) registration fee, and on a wallet's very first admin action it pays that fee twice, because `initialRegisterKey` for the admin is prepended into the same userOp. Record `transactionHash` if you show users a history of what they were charged for. Pass `register: false` to skip the registration fee entirely.

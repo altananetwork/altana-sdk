@@ -49,7 +49,13 @@ export type {
   SpendPermission,
   GrantSessionOptions,
   GrantSessionResult,
+  SerializedSession,
+  SerializedCallPermission,
 } from "./internal/sessions.js";
+// The safe persistence path for sessions: serializeSession stores everything
+// but the secret; deserializeSession rebuilds a signing Session from the
+// stored half plus the key the caller kept.
+export { serializeSession, deserializeSession } from "./internal/sessions.js";
 
 // Lazy KeyStore registration for sessions granted with `register: false`.
 export { registerSessionKey } from "./registerSessionKey.js";

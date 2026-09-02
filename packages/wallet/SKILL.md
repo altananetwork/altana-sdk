@@ -102,11 +102,14 @@ const session = await client.grantSession({
   expiry: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60, // 7 days
 });
 
-// Hand `session` to whichever process runs the agent. Persist these fields:
-//   walletAddress, publicKey, permissions, expiry, and the signer's private key
-// (signer.export() if your signer is a private-key signer). The agent needs
-// the exact permissions+expiry at execute time : the on-chain validator
-// matches them byte-for-byte against the authorization committed at grant.
+// Hand `session` to whichever process runs the agent. To persist it, do NOT
+// JSON.stringify the Session (it throws on bigint limits and embeds the
+// session's private key). Use the split: keep your own session key in a
+// secret store (pass it via sessionSigner: signerFromPrivateKey(key)), and
+// save serializeSession(session) — JSON-safe, no secret. Restore with
+// deserializeSession(stored, signerFromPrivateKey(key)). The agent needs
+// the exact granted permissions+expiry at execute time: the on-chain
+// validator matches them against the authorization committed at grant.
 
 // session.transactionHash is the grant's receipt. It lives on the result, not
 // on the Session, and it is optional (the relay can confirm without one).
@@ -219,7 +222,7 @@ The MCP server is a thin wrapper around this SDK. Anything the MCP does, you can
 
 - **Funding.** Fund `wallet.address` with native tokens before the first `execute`. On Ethereum, send ETH from your own wallet or an exchange. On BNB, send BNB from your own wallet or an exchange.
 - **First execute registers the admin.** The Keystore `initialRegisterKey` is auto-prepended on the wallet's first admin-signed action. Don't pre-call it. The wallet is "live" but not on-chain until that first tx.
-- **Sessions must be byte-exact on execute.** The session's `permissions + expiry + publicKey` must match what was committed at grant time. Re-serializing through a sloppy JSON path (bigints → number, period reordering) breaks the match. Persist the `Session` object verbatim or reconstruct it identically.
+- **Sessions must match the grant on execute.** The session's `permissions + expiry + publicKey` values must equal what was committed at grant time; a lossy round trip (bigints → number, re-cased hex) breaks the match. Persist with `serializeSession` and restore with `deserializeSession(stored, signer)` — never raw `JSON.stringify` on a `Session`.
 - **Empty calls means no calls.** `client.execute({ wallet, signer, calls: [] })` is rejected. Pass at least one call.
 - **`permissions.calls` omitted = unrestricted.** If you don't pass `calls`, the session can call any contract within its spend cap. Set both unless that's truly what you want.
 - **Pick chains at the client.** `createClient({ chains })` takes one or more chains; the same wallet address works on all of them. Select per operation with `chainId`.

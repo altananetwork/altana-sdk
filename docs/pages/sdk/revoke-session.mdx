@@ -89,5 +89,5 @@ Once the cache observes `revoked=true` it cannot be flipped back, even by a proo
 ## Notes
 
 - Revocation does not require the session signer, only the wallet's admin signer.
-- You can keep just the session's public key in your records for revocation purposes, then discard the rest of the `Session` object once granted.
+- Revocation needs only the session's public key (`revokeSession` accepts `Session | Hex`). But keep the full serialized session ([`serializeSession`](/sdk/grant-session#persisting-a-session)) while the session is meant to keep working — an agent needs `permissions + expiry` to execute, not just the key.
 - A failed revocation **returns** `status: "FAILED"` rather than throwing. Check the returned status; do not assume success because nothing was raised. See [Errors](/sdk/errors).

@@ -22,6 +22,26 @@ import type { Wallet } from "./internal/types.js";
 
 const NATIVE_TOKEN: Address = "0x0000000000000000000000000000000000000000";
 
+// Warn once per process: an SDK-generated session key lives only in memory,
+// and the grant it backs is a live on-chain authorization. Losing the key
+// (a crash, a script ending) strands that authorization until an admin
+// revokes it — the exact failure reported in issue #58.
+let warnedEphemeralSigner = false;
+function ephemeralSessionSigner(): Signer {
+  if (!warnedEphemeralSigner) {
+    warnedEphemeralSigner = true;
+    console.warn(
+      "[altana-sdk] grantSession was called without a sessionSigner, so the SDK generated " +
+        "an ephemeral key that exists only in this process's memory. If it is lost before " +
+        "you persist it, the on-chain authorization it backs becomes permanently unusable " +
+        "(revoke-and-regrant is the only exit). Prefer generating your own key, storing it " +
+        "in a secret store, and passing sessionSigner: signerFromPrivateKey(key); persist " +
+        "the rest with serializeSession(session).",
+    );
+  }
+  return createPrivateKeySigner();
+}
+
 /**
  * Grant a scoped session key for a wallet. The admin signer authorizes the
  * session on-chain; from that point forward the session can act on the
@@ -40,7 +60,7 @@ export async function grantSession(
   const network = config.network;
   const feeToken = config.feeToken ?? NATIVE_TOKEN;
 
-  const sessionSigner = opts.sessionSigner ?? createPrivateKeySigner();
+  const sessionSigner = opts.sessionSigner ?? ephemeralSessionSigner();
 
   // Session key descriptor — secp256k1 or passkey (WebAuthnP256), by signer.
   const sessionKeyDesc: KeyDescriptor = keyDescriptorFromSigner(sessionSigner, {
