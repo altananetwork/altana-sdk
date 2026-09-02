@@ -39,6 +39,10 @@ const session = await client.grantSession({
 `limit` is denominated in the token's smallest unit, so you need that token's decimals on that chain. USDT and USDC use **18 decimals on BNB Chain** and 6 on Ethereum. Writing `100_000_000n` for "100 USDT" on BNB sets a cap of 0.0000000001 USDT, and the agent's payments revert against a limit that looks generous.
 :::
 
+:::warning[The native spend cap also pays relay fees]
+Every transaction's relay fee is paid out of the session's native spend cap — the cap covers fees, not just what the agent sends. A near-zero native cap (say, 1 wei "so the agent can't spend anything") creates a session that can never execute a single transaction: the relay rejects each bundle before inclusion (`FAILED`, `statusCode` 300 — see [Errors](/sdk/errors)). Leave fee headroom in the native cap on top of the agent's intended spending.
+:::
+
 ## Registering the session key
 
 The session's public key is written to [Keystore](/concepts/keystore) via the Controller, batched into the same userOp — controlled by the `register` flag, on by default. Registration is what makes the key's authority **provable to anyone**:

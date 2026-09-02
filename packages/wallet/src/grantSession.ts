@@ -101,7 +101,10 @@ export async function grantSession(
 
   const result = await waitForCalls(relayClient, callsId);
   if (result.status !== "CONFIRMED") {
-    throw new Error(`Session grant did not confirm: status=${result.status}`);
+    throw new Error(
+      `Session grant did not confirm: status=${result.status}` +
+        (result.statusCode !== undefined ? ` (relay code ${result.statusCode})` : ""),
+    );
   }
 
   // Some public RPCs (notably BSC) return stale eth_call results for

@@ -87,10 +87,11 @@ type ExecuteResult = {
   callsId: Hex;
   status: "CONFIRMED" | "FAILED" | "PENDING";
   transactionHash?: Hex;
+  statusCode?: number;   // the relay's raw numeric status, when observed
 };
 ```
 
-A failed execute **returns** `status: "FAILED"`; it does not throw. Check the status rather than relying on `try/catch`. See [Errors](/sdk/errors) for what each status means and how to tell the failure classes apart.
+A failed execute **returns** `status: "FAILED"`; it does not throw. Check the status rather than relying on `try/catch`. `statusCode` says which kind of failure: 300–499 is the relay rejecting the bundle before inclusion (nothing reached the chain), 500+ an on-chain failure. See [Errors](/sdk/errors) for the full code table and how to tell the failure classes apart.
 
 ## Notes
 
