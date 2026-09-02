@@ -27,7 +27,7 @@ import type { CreateWalletResult } from "./createWallet.js";
 export type RecoverFromPasskeyOptions = {
   /** Relying-Party ID — must match what was used at creation time. */
   rpId?: string;
-  /** WebAuthn overrides for runtimes without the browser API (React Native etc.). */
+  /** Browser: omit. Native mobile app (React Native etc.): required — see PasskeyWebAuthnFns. */
   webAuthn?: PasskeyWebAuthnFns;
   /**
    * Chain to read KeyStore from. The wallet address is identical on every
