@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "predev": "cp ../packages/wallet/SKILL.md public/skill.md",
+    "predev": "cp ../packages/wallet/SKILL.md public/skill.md && node scripts/gen-changelog.mjs",
     "dev": "vocs dev",
-    "prebuild": "cp ../packages/wallet/SKILL.md public/skill.md",
+    "prebuild": "cp ../packages/wallet/SKILL.md public/skill.md && node scripts/gen-changelog.mjs",
     "build": "bun run --filter '@altananetwork/sdk' build && vocs build",
     "preview": "vocs preview",
     "typecheck": "tsc --noEmit"
