@@ -1,0 +1,204 @@
+---
+title: "Uniswap v4: liquidity"
+description: Let an agent open, grow, collect from and close Uniswap v4 liquidity positions in the user's own wallet, within a session's caps.
+---
+
+import { Eyebrow } from '../../components/Eyebrow'
+
+<Eyebrow>SDK · DeFi</Eyebrow>
+
+# Uniswap v4: liquidity
+
+An agent holding a scoped session can **manage concentrated-liquidity
+positions on Uniswap v4** for a wallet it does not own: mint a position, add
+to it, collect its fees, shrink it, and close it. Positions and tokens stay in
+the user's wallet the whole time. The session key can be revoked at any moment.
+
+Supported on Ethereum (1), BNB Chain (56) and Base (8453). Uniswap v4 is not
+deployed on BSC testnet.
+
+## How v4 positions work
+
+Every position change goes through one function on the PositionManager,
+`modifyLiquidities(unlockData, deadline)`. Its payload is a tiny program: a
+list of actions (mint, settle, take, sweep, ...) and one parameter blob per
+action. The SDK writes those programs for you; the builders below each
+produce one complete, self-contained call.
+
+Two consequences shape the permission model:
+
+- **One selector covers everything an LP agent needs.** A session scoped to
+  `modifyLiquidities` can do every liquidity operation.
+- **The PositionManager is also the ERC-721 that holds the LP NFTs.** A
+  contract-wide `{ to: positionManager }` grant would also let the session
+  transfer the positions away or approve an operator that outlives the
+  session's revocation. Always scope by selector.
+
+## Step 1: approve the pair (admin, once)
+
+The PositionManager pulls ERC-20s through Permit2. Each ERC-20 in the pair
+needs the wallet to approve Permit2, and Permit2 to approve the
+PositionManager. One admin intent does both for every token you list. The
+native currency (ETH, BNB) needs no approval.
+
+```ts
+import { createClient, BNB, signerFromPrivateKey } from "@altananetwork/sdk";
+
+const client = createClient({ chains: [BNB] });
+const signer = signerFromPrivateKey(process.env.PRIVATE_KEY as `0x${string}`);
+
+const USDT = "0x55d398326f99059fF775485246999027B3197955";
+await client.approveUniswapV4Pair({ wallet, signer, tokens: [USDT] });
+```
+
+## Step 2: grant the session (admin, once)
+
+`uniswapV4LiquidityPermissions(chainId)` is the one call rule. Add a spend cap
+for **every currency in the pair**, native included: the native cap also pays
+relay fees, and a token with no cap is uncapped.
+
+```ts
+import { uniswapV4LiquidityPermissions } from "@altananetwork/sdk";
+
+const session = await client.grantSession({
+  wallet,
+  signer,
+  permissions: {
+    calls: uniswapV4LiquidityPermissions(56),
+    spend: [
+      { limit: 2_000_000_000_000_000_000n, period: "day" },              // 2 BNB / day (native)
+      { limit: 1_000_000_000_000_000_000_000n, period: "day", token: USDT }, // 1000 USDT / day
+    ],
+  },
+  expiry: Math.floor(Date.now() / 1000) + 7 * 24 * 3600,
+});
+```
+
+Hand the session to the agent's process (see
+[grantSession](/sdk/grant-session) for persistence).
+
+## Step 3: the agent reads the pool and sizes a position
+
+```ts
+import {
+  NATIVE_CURRENCY,
+  getLiquidityForAmounts,
+  getSqrtPriceAtTick,
+  nearestUsableTick,
+  type PoolKey,
+} from "@altananetwork/sdk";
+
+// The BNB/USDT 0.05% pool. currency0 is the lower address; native is the zero address.
+const pool: PoolKey = { currency0: NATIVE_CURRENCY, currency1: USDT, fee: 500, tickSpacing: 10, hooks: NATIVE_CURRENCY };
+
+const state = await client.readUniswapV4Pool({ poolKey: pool }); // { sqrtPriceX96, tick, liquidity, lpFee }
+
+// A range around the current price, aligned to the pool's tick spacing.
+const tickLower = nearestUsableTick(state.tick - 500, pool.tickSpacing);
+const tickUpper = nearestUsableTick(state.tick + 500, pool.tickSpacing);
+
+// How much liquidity 0.5 BNB and 300 USDT buy in that range at the current price.
+const amount0 = 500_000_000_000_000_000n;   // 0.5 BNB
+const amount1 = 300_000_000_000_000_000_000n; // 300 USDT
+const liquidity = getLiquidityForAmounts(
+  state.sqrtPriceX96,
+  getSqrtPriceAtTick(tickLower),
+  getSqrtPriceAtTick(tickUpper),
+  amount0,
+  amount1,
+);
+```
+
+The math helpers are exact ports of Uniswap's `TickMath` and
+`LiquidityAmounts` as pure `bigint`, so no extra dependency is needed.
+
+## Step 4: the agent manages the position
+
+Every write takes the session (or an admin `wallet` + `signer`). Amounts are
+slippage bounds: the most a mint or increase may take, the least a decrease
+or burn must return.
+
+```ts
+// Open. Returns the LP tokenId, read from the receipt.
+const { tokenId } = await client.mintUniswapV4Position({
+  session,
+  poolKey: pool,
+  tickLower,
+  tickUpper,
+  liquidity,
+  amount0Max: amount0,
+  amount1Max: amount1,
+});
+
+// Grow.
+await client.increaseUniswapV4Liquidity({
+  session, poolKey: pool, tokenId, liquidity: liquidity / 2n, amount0Max: amount0, amount1Max: amount1,
+});
+
+// Collect accrued fees (principal untouched).
+await client.collectUniswapV4Fees({ session, poolKey: pool, tokenId });
+
+// Shrink. Fees come along.
+await client.decreaseUniswapV4Liquidity({
+  session, poolKey: pool, tokenId, liquidity: liquidity / 2n, amount0Min: 0n, amount1Min: 0n,
+});
+
+// Close: withdraw everything and burn the NFT.
+await client.burnUniswapV4Position({ session, poolKey: pool, tokenId, amount0Min: 0n, amount1Min: 0n });
+```
+
+Withdrawn tokens and fees go to the wallet unless you pass `recipient`. A
+minted position is owned by the wallet unless you pass `owner`.
+
+```ts
+// Where is the position now?
+const position = await client.readUniswapV4Position({ tokenId });
+// { owner, poolKey, tickLower, tickUpper, liquidity }
+```
+
+Rebalancing is a decrease (or burn) followed by a mint in the new range. Each
+is one relay intent; the agent decides when.
+
+### Low-level builders
+
+Every write has a pure builder that returns a `Call` you can pass to
+`execute` or batch with others: `buildMintPositionCall`,
+`buildIncreaseLiquidityCall`, `buildDecreaseLiquidityCall`,
+`buildCollectFeesCall`, `buildBurnPositionCall`, `buildPermit2ApproveCall`.
+`encodeUnlockData(actions, params)` and `buildModifyLiquiditiesCall` are there
+if you need an action sequence the SDK does not ship.
+
+## What the session limits, and what it does not
+
+The account enforces, on-chain, on every call:
+
+- **Which contract and function.** Only `modifyLiquidities` on the
+  PositionManager. No NFT transfers, no approvals, nothing on any other
+  contract.
+- **How much value leaves the wallet.** Per-currency rolling caps, charged by
+  the batch's actual balance change, so tokens pulled through the standing
+  Permit2 allowance count.
+- **Until when.** The session's expiry, and instant revocation before it.
+
+It does not read the program's arguments. Within its caps, the agent chooses
+the pool, the range, the `owner` of a minted position and the `recipient` of
+withdrawn tokens. Treat the spend caps and expiry as the blast radius of a
+misbehaving agent, and size them accordingly. Slippage bounds are the agent's
+own accountability, as on any DEX.
+
+## Errors
+
+- **Relay code 3xx on a mint or increase.** The session's spend cap could not
+  cover the amounts plus the relay fee. Raise the cap or lower the amounts.
+- **Mint reverts.** The pool is not initialized, the ERC-20 side has no
+  Permit2 allowance (`approveUniswapV4Pair`), the ticks are not multiples of
+  the pool's `tickSpacing` (`nearestUsableTick`), or the session lacks
+  `uniswapV4LiquidityPermissions(chainId)`.
+- **`modifyLiquidities` deadline passed.** Builders default the deadline to
+  20 minutes out; pass `deadline` (unix seconds) to change it.
+
+## Addresses
+
+`uniswapV4Addresses(chainId)` returns the PositionManager, PoolManager,
+StateView and Permit2 for chains 1, 56 and 8453, from Uniswap's canonical
+deployment list.

@@ -42,6 +42,25 @@ import {
 import { approveTokenForPermit2 as approveTokenForPermit2Impl } from "./approveTokenForPermit2.js";
 import { fetchWithX402 as fetchWithX402Impl } from "./x402.js";
 import type { FetchWithX402Options } from "./x402.js";
+import {
+  mintUniswapV4Position as mintUniswapV4PositionImpl,
+  increaseUniswapV4Liquidity as increaseUniswapV4LiquidityImpl,
+  decreaseUniswapV4Liquidity as decreaseUniswapV4LiquidityImpl,
+  collectUniswapV4Fees as collectUniswapV4FeesImpl,
+  burnUniswapV4Position as burnUniswapV4PositionImpl,
+  approveUniswapV4Pair as approveUniswapV4PairImpl,
+  readUniswapV4Pool as readUniswapV4PoolImpl,
+  readUniswapV4Position as readUniswapV4PositionImpl,
+  type MintPositionParams,
+  type MintPositionResult,
+  type IncreaseLiquidityParams,
+  type DecreaseLiquidityParams,
+  type CollectFeesParams,
+  type BurnPositionParams,
+  type PoolKey,
+  type PoolState,
+  type PositionState,
+} from "./uniswapV4.js";
 
 export type CreateClientOptions = {
   /**
@@ -182,7 +201,33 @@ export type Client = {
   ): Promise<ExecuteResult>;
   /** fetch() that transparently pays x402 challenges with the session key. */
   fetchWithX402(opts: ClientFetchWithX402Options): Promise<Response>;
+
+  // Uniswap v4 liquidity. Each write takes an admin pair or a session, like
+  // execute; the reads take only a chain.
+  /** Open a position; returns the LP tokenId read from the receipt. */
+  mintUniswapV4Position(opts: ClientUniswapV4WriteOptions<MintPositionParams>): Promise<MintPositionResult>;
+  increaseUniswapV4Liquidity(opts: ClientUniswapV4WriteOptions<IncreaseLiquidityParams>): Promise<ExecuteResult>;
+  decreaseUniswapV4Liquidity(opts: ClientUniswapV4WriteOptions<DecreaseLiquidityParams>): Promise<ExecuteResult>;
+  collectUniswapV4Fees(opts: ClientUniswapV4WriteOptions<CollectFeesParams>): Promise<ExecuteResult>;
+  burnUniswapV4Position(opts: ClientUniswapV4WriteOptions<BurnPositionParams>): Promise<ExecuteResult>;
+  /** One-time admin setup: approve a pair's ERC-20s through Permit2 to the PositionManager. */
+  approveUniswapV4Pair(opts: ClientApproveUniswapV4PairOptions): Promise<ExecuteResult>;
+  readUniswapV4Pool(opts: { poolKey: PoolKey } & ChainSelector): Promise<PoolState>;
+  readUniswapV4Position(opts: { tokenId: bigint } & ChainSelector): Promise<PositionState>;
 };
+
+export type ClientUniswapV4WriteOptions<P> =
+  | ({ wallet: Wallet; signer: Signer; feeToken?: Address } & P & ChainSelector)
+  | ({ session: Session; feeToken?: Address } & P & ChainSelector);
+
+export type ClientApproveUniswapV4PairOptions = {
+  wallet: Wallet;
+  signer: Signer;
+  tokens: readonly Address[];
+  amount?: bigint;
+  expiration?: number;
+  feeToken?: Address;
+} & ChainSelector;
 
 /**
  * Create a wallet client for one or more chains.
@@ -354,5 +399,70 @@ export function createClient(opts: CreateClientOptions): Client {
         ...(o.preferRail ? { preferRail: o.preferRail } : {}),
       });
     },
+
+    mintUniswapV4Position(o) {
+      const { params, opts } = splitUniswapV4(o);
+      return "session" in o
+        ? mintUniswapV4PositionImpl(o.session, params, opts)
+        : mintUniswapV4PositionImpl(o.wallet, o.signer, params, opts);
+    },
+    increaseUniswapV4Liquidity(o) {
+      const { params, opts } = splitUniswapV4(o);
+      return "session" in o
+        ? increaseUniswapV4LiquidityImpl(o.session, params, opts)
+        : increaseUniswapV4LiquidityImpl(o.wallet, o.signer, params, opts);
+    },
+    decreaseUniswapV4Liquidity(o) {
+      const { params, opts } = splitUniswapV4(o);
+      return "session" in o
+        ? decreaseUniswapV4LiquidityImpl(o.session, params, opts)
+        : decreaseUniswapV4LiquidityImpl(o.wallet, o.signer, params, opts);
+    },
+    collectUniswapV4Fees(o) {
+      const { params, opts } = splitUniswapV4(o);
+      return "session" in o
+        ? collectUniswapV4FeesImpl(o.session, params, opts)
+        : collectUniswapV4FeesImpl(o.wallet, o.signer, params, opts);
+    },
+    burnUniswapV4Position(o) {
+      const { params, opts } = splitUniswapV4(o);
+      return "session" in o
+        ? burnUniswapV4PositionImpl(o.session, params, opts)
+        : burnUniswapV4PositionImpl(o.wallet, o.signer, params, opts);
+    },
+    approveUniswapV4Pair(o) {
+      return approveUniswapV4PairImpl(
+        o.wallet,
+        o.signer,
+        {
+          tokens: o.tokens,
+          ...(o.amount !== undefined ? { amount: o.amount } : {}),
+          ...(o.expiration !== undefined ? { expiration: o.expiration } : {}),
+        },
+        {
+          network: resolve(o.chainId),
+          ...(o.feeToken ? { feeToken: o.feeToken } : {}),
+        },
+      );
+    },
+    readUniswapV4Pool(o) {
+      return readUniswapV4PoolImpl(resolve(o.chainId), o.poolKey);
+    },
+    readUniswapV4Position(o) {
+      return readUniswapV4PositionImpl(resolve(o.chainId), o.tokenId);
+    },
   };
+
+  /** Peel the client-level fields off a Uniswap write, leaving the builder's params. */
+  function splitUniswapV4<P>(o: ClientUniswapV4WriteOptions<P>): { params: P; opts: { network: NetworkConfig; feeToken?: Address } } {
+    const { chainId, feeToken, ...rest } = o as ClientUniswapV4WriteOptions<P> & { chainId?: number; feeToken?: Address };
+    const params = { ...rest } as Record<string, unknown>;
+    delete params.wallet;
+    delete params.signer;
+    delete params.session;
+    return {
+      params: params as P,
+      opts: { network: resolve(chainId), ...(feeToken ? { feeToken } : {}) },
+    };
+  }
 }

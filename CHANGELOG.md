@@ -12,6 +12,30 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 > reconstructed from commit history after the fact, so they summarize what
 > shipped rather than itemizing every change.
 
+## [Unreleased]
+
+### Added
+
+- **Uniswap v4 liquidity — an agent can now manage LP positions for a
+  wallet.** A session scoped with `uniswapV4LiquidityPermissions(chainId)`
+  (exactly `modifyLiquidities` on the PositionManager, never the whole
+  contract: it is also the LP NFT, so a `{ to }` grant would let the session
+  transfer positions away) can mint, increase, collect fees, decrease and
+  burn positions on Ethereum, BNB Chain and Base, bounded by its per-token
+  spend caps and expiry. `mintUniswapV4Position` returns the LP tokenId read
+  from the receipt; `increaseUniswapV4Liquidity`, `collectUniswapV4Fees`,
+  `decreaseUniswapV4Liquidity` and `burnUniswapV4Position` cover the rest,
+  each with a pure `build*Call` underneath. `approveUniswapV4Pair` is the
+  one-time admin setup (token → Permit2 → PositionManager).
+  `readUniswapV4Pool` / `readUniswapV4Position` read price, tick and range;
+  `getSqrtPriceAtTick`, `nearestUsableTick` and `getLiquidityForAmounts`
+  are exact bigint ports of Uniswap's math, so sizing a position needs no
+  extra dependency. All of it is on `createClient` too. A new fork e2e
+  drives mint → increase → collect → decrease → burn against the live
+  BNB/USDT pool and pins the selector-scoped permission gate against the
+  real account bytecode. New guide: *Let an agent manage Uniswap
+  liquidity*.
+
 ## [0.9.0] - 2026-09-02
 
 `@altananetwork/mcp` 0.9.0

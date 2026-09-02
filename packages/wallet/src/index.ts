@@ -10,6 +10,8 @@ export type {
   ClientRevokeSessionOptions,
   ClientRegisterSessionKeyOptions,
   ClientBalancesOptions,
+  ClientUniswapV4WriteOptions,
+  ClientApproveUniswapV4PairOptions,
 } from "./client.js";
 
 export type { CreateWalletOptions, CreateWalletResult } from "./createWallet.js";
@@ -173,3 +175,66 @@ export type {
   RegisterAgentResult,
   SetAgentUriParams,
 } from "./erc8004.js";
+
+// Uniswap v4 liquidity — an agent on a scoped session manages LP positions in
+// the user's own wallet: addresses, the single-selector permission, call
+// builders for mint / increase / decrease / collect / burn, reads, and the
+// concentrated-liquidity math that sizes a position.
+export {
+  UNISWAP_V4_ADDRESSES,
+  NATIVE_CURRENCY,
+  V4_ACTIONS,
+  uniswapV4Addresses,
+  uniswapV4LiquidityPermissions,
+  sortCurrencies,
+  poolId,
+  encodeUnlockData,
+  buildModifyLiquiditiesCall,
+  buildMintPositionCall,
+  buildIncreaseLiquidityCall,
+  buildDecreaseLiquidityCall,
+  buildCollectFeesCall,
+  buildBurnPositionCall,
+  buildPermit2ApproveCall,
+  readUniswapV4Pool,
+  readUniswapV4Position,
+  decodePositionInfo,
+  findMintedTokenId,
+  mintUniswapV4Position,
+  increaseUniswapV4Liquidity,
+  decreaseUniswapV4Liquidity,
+  collectUniswapV4Fees,
+  burnUniswapV4Position,
+  approveUniswapV4Pair,
+} from "./uniswapV4.js";
+export type {
+  UniswapV4Addresses,
+  PoolKey,
+  PoolState,
+  PositionState,
+  MintPositionInput,
+  MintPositionParams,
+  MintPositionResult,
+  IncreaseLiquidityInput,
+  IncreaseLiquidityParams,
+  DecreaseLiquidityInput,
+  DecreaseLiquidityParams,
+  CollectFeesParams,
+  BurnPositionInput,
+  BurnPositionParams,
+} from "./uniswapV4.js";
+export {
+  MIN_TICK,
+  MAX_TICK,
+  MIN_SQRT_PRICE,
+  MAX_SQRT_PRICE,
+  Q96,
+  getSqrtPriceAtTick,
+  nearestUsableTick,
+  getLiquidityForAmount0,
+  getLiquidityForAmount1,
+  getLiquidityForAmounts,
+  getAmount0ForLiquidity,
+  getAmount1ForLiquidity,
+  getAmountsForLiquidity,
+} from "./internal/uniswapV4Math.js";
