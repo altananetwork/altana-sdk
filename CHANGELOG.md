@@ -12,7 +12,9 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 > reconstructed from commit history after the fact, so they summarize what
 > shipped rather than itemizing every change.
 
-## [Unreleased]
+## [0.9.0] - 2026-09-02
+
+`@altananetwork/mcp` 0.9.0
 
 ### Added
 
@@ -264,6 +266,7 @@ Let the type be inferred, or annotate with `GrantSessionResult`.
 First public release: agentic wallets, session keys, the Keystore registry,
 the MCP servers, and the documentation site.
 
+[0.9.0]: https://github.com/altananetwork/altana-sdk/releases
 [0.8.0]: https://github.com/altananetwork/altana-sdk/releases
 [0.7.1]: https://github.com/altananetwork/altana-sdk/releases
 [0.7.0]: https://github.com/altananetwork/altana-sdk/releases
