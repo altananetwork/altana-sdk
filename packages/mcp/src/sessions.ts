@@ -31,28 +31,22 @@
 import { mkdir, readFile, writeFile, chmod } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { Address, Hex } from "viem";
+import type { SerializedSession } from "@altananetwork/sdk";
 
 const SESSIONS_DIR = join(homedir(), ".altana");
 const SESSIONS_FILE = join(SESSIONS_DIR, "sessions.json");
 
-export type SessionPermissions = {
-  calls?: ReadonlyArray<{ to?: Address; signature?: string }>;
-  spend?: ReadonlyArray<{
-    limit: string; // bigint serialized as decimal string for JSON
-    period: "minute" | "hour" | "day" | "week" | "month" | "year";
-    token?: Address;
-  }>;
-};
+/** Re-exported for callers that only need the permissions shape. */
+export type SessionPermissions = SerializedSession["permissions"];
 
-export type StoredSession = {
+/**
+ * A SerializedSession (the SDK's JSON-safe session half — no key material)
+ * plus this server's own metadata. The session private key lives in the OS
+ * keychain via keys.ts, never in this file.
+ */
+export type StoredSession = SerializedSession & {
   name: string;
   walletName: string;
-  walletAddress: Address;
-  /** SEC1-uncompressed pubkey of the session signer (for cross-tool verification). */
-  publicKey: Hex;
-  permissions: SessionPermissions;
-  expiry: number;
   createdAt: string;
 };
 

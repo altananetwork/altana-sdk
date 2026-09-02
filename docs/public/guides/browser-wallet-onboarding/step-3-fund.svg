@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 440" font-family="Inter Tight, Inter, -apple-system, sans-serif">
+  <rect width="760" height="440" fill="#F2F2F0"/>
+  <rect x="40" y="40" width="400" height="360" rx="14" fill="#FFFFFF"/>
+  <circle cx="66" cy="66" r="5" fill="#8A8A85"/><circle cx="84" cy="66" r="5" fill="#8A8A85"/><circle cx="102" cy="66" r="5" fill="#8A8A85"/>
+  <text x="240" y="71" font-size="13" fill="#0A0A0A" text-anchor="middle">yourdapp.xyz</text>
+  <line x1="40" y1="88" x2="440" y2="88" stroke="#F2F2F0" stroke-width="2"/>
+  <text x="70" y="150" font-size="22" font-weight="600" fill="#0A0A0A">Fund your agent</text>
+  <text x="70" y="178" font-size="14" fill="#0A0A0A" opacity="0.75">One click — we build the transfer, your</text>
+  <text x="70" y="197" font-size="14" fill="#0A0A0A" opacity="0.75">wallet confirms it. No copy-paste.</text>
+  <rect x="70" y="226" width="200" height="46" rx="10" fill="#3665E4"/>
+  <text x="170" y="255" font-size="15" font-weight="600" fill="#FFFFFF" text-anchor="middle">Fund with 0.05 BNB</text>
+  <!-- extension confirm popup -->
+  <rect x="460" y="60" width="270" height="320" rx="14" fill="#FFFFFF" stroke="#0A0A0A" stroke-opacity="0.12"/>
+  <rect x="460" y="60" width="270" height="44" rx="14" fill="#0A0A0A"/>
+  <rect x="460" y="90" width="270" height="14" fill="#0A0A0A"/>
+  <text x="595" y="88" font-size="14" font-weight="600" fill="#FFFFFF" text-anchor="middle">Your wallet · Confirm</text>
+  <g font-size="13" fill="#0A0A0A">
+    <text x="482" y="136" opacity="0.6">From</text><text x="728" y="136" text-anchor="end">0xA1…F3 (you)</text>
+    <text x="482" y="166" opacity="0.6">To</text><text x="728" y="166" text-anchor="end">0x7C…9E (agent account)</text>
+    <line x1="482" y1="184" x2="708" y2="184" stroke="#8A8A85" stroke-width="1" opacity="0.5"/>
+    <text x="482" y="214" opacity="0.6">Amount</text><text x="728" y="214" text-anchor="end" font-weight="600">0.05 BNB</text>
+    <text x="482" y="244" opacity="0.6">Network</text><text x="728" y="244" text-anchor="end">BNB Chain</text>
+  </g>
+  <rect x="482" y="290" width="108" height="42" rx="10" fill="none" stroke="#0A0A0A" stroke-opacity="0.35"/>
+  <text x="536" y="316" font-size="14" fill="#0A0A0A" text-anchor="middle">Reject</text>
+  <rect x="602" y="290" width="108" height="42" rx="10" fill="#3665E4"/>
+  <text x="656" y="316" font-size="14" font-weight="600" fill="#FFFFFF" text-anchor="middle">Confirm</text>
+  <text x="70" y="420" font-size="13" fill="#0A0A0A" opacity="0.7">Step 3 · browserWallet.sendTransaction({ to: wallet.address, value }) — their wallet, their popup</text>
+</svg>

@@ -341,10 +341,18 @@ export async function submitCalls(
 
   // Porto's signCalls dispatches by `key`: for secp256k1 / webauthn-p256
   // keys with embedded signing material, it calls Key.sign which produces
-  // the correctly-wrapped signature. We only need to hand it the key.
-  const signature = await signCalls(prepared, {
-    key: signingKeyForPorto,
-  } as any);
+  // the correctly-wrapped signature. We only need to hand it the key —
+  // except when the signer carries custom WebAuthn functions (React Native
+  // etc.), which signCalls cannot forward; signPreparedCalls handles that.
+  const customWebAuthn =
+    isPasskeySigner(signer) && signer.webAuthn?.getFn
+      ? { getFn: signer.webAuthn.getFn }
+      : undefined;
+  const signature = customWebAuthn
+    ? await signPreparedCalls(prepared, signingKeyForPorto, customWebAuthn)
+    : await signCalls(prepared, {
+        key: signingKeyForPorto,
+      } as any);
 
   // For non-EOA paths (sessions, passkey admin), the relay needs to know
   // which key authority signed so it can verify with the right scheme.
@@ -360,6 +368,33 @@ export async function submitCalls(
   } as any);
 
   return (sent?.id ?? sent) as Hex;
+}
+
+/**
+ * Sign a prepared calls bundle with explicit WebAuthn function overrides.
+ *
+ * A faithful inline of the `key` arm of porto's `RelayActions.signCalls`
+ * (porto 0.2.37, src/viem/RelayActions.ts:618-643): the digest is
+ * `prepared.digest`, `wrap` mirrors `Boolean(context.preCall)`, and the
+ * return value is the bare signature `sendPreparedCalls` expects. We inline
+ * it because signCalls does not forward `webAuthn` options to `Key.sign`,
+ * and a signer running outside a browser (React Native) must supply its
+ * own `getFn`. Re-check the inline against RelayActions.signCalls on any
+ * porto version bump. Headless webauthn keys embed their private key and
+ * sign locally — Key.sign ignores `webAuthn` for them, so routing them
+ * here is harmless.
+ */
+export async function signPreparedCalls(
+  prepared: any,
+  key: any,
+  webAuthn: { getFn: NonNullable<Key.sign.Parameters["webAuthn"]>["getFn"] },
+): Promise<Hex> {
+  return (await Key.sign(key, {
+    address: null,
+    payload: prepared.digest,
+    wrap: Boolean(prepared.context?.preCall),
+    webAuthn,
+  } as any)) as Hex;
 }
 
 export function toPortoKey(desc: KeyDescriptor): any {
@@ -425,6 +460,17 @@ export type RelayReceipt = {
  * public endpoints serve stale reads for ~12s after the relay reports
  * CONFIRMED (see grantSession's post-confirm wait), so a follow-up read is
  * both slower and less reliable than the receipt we already have in hand.
+ *
+ * Status codes follow the EIP-5792 bands (neither porto nor the relay
+ * enumerates them; viem classifies identically): 1xx still in flight,
+ * 2xx success, 300–699 terminal failure — 300 is the relay rejecting the
+ * bundle before inclusion (fee unpayable under the session's spend cap,
+ * relay policy), 5xx an on-chain revert, 6xx partial failure. A code
+ * outside every band keeps polling rather than guessing: FAILED is the
+ * caller's "terminal, safe to resubmit" signal, and misreading an unknown
+ * code as terminal risks a duplicate submission. The raw code is returned
+ * as `statusCode` whenever one was observed — including on a timed-out
+ * PENDING, where its absence means the relay never answered at all.
  */
 export async function waitForCalls(
   client: ReturnType<typeof buildRelayClient>,
@@ -433,31 +479,37 @@ export async function waitForCalls(
   pollIntervalMs = 2_000,
 ): Promise<{
   status: string;
+  statusCode?: number;
   transactionHash?: Hex;
   receipts?: readonly RelayReceipt[];
 }> {
   const deadline = Date.now() + timeoutMs;
+  let lastCode: number | undefined;
   while (Date.now() < deadline) {
     try {
       const status: any = await getCallsStatus(client as any, { id: callsId });
       const code = status?.status;
-      if (code === 200 || code === "CONFIRMED") {
+      if (typeof code === "number") lastCode = code;
+      if ((typeof code === "number" && code >= 200 && code < 300) || code === "CONFIRMED") {
         return {
           status: "CONFIRMED",
+          ...(typeof code === "number" ? { statusCode: code } : {}),
           transactionHash: status?.receipts?.[0]?.transactionHash,
           ...(status?.receipts ? { receipts: status.receipts as readonly RelayReceipt[] } : {}),
         };
       }
-      if (code === 500 || code === "FAILED") {
+      if ((typeof code === "number" && code >= 300 && code < 700) || code === "FAILED") {
         return {
           status: "FAILED",
+          ...(typeof code === "number" ? { statusCode: code } : {}),
           ...(status?.receipts ? { receipts: status.receipts as readonly RelayReceipt[] } : {}),
         };
       }
+      // 1xx (and anything out-of-band): still in flight — keep polling.
     } catch {
       // Transient relay errors — keep polling.
     }
     await new Promise((r) => setTimeout(r, pollIntervalMs));
   }
-  return { status: "PENDING" };
+  return { status: "PENDING", ...(lastCode !== undefined ? { statusCode: lastCode } : {}) };
 }

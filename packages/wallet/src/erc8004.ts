@@ -37,6 +37,7 @@ import { encodeFunctionData, pad, toEventSelector, type Address, type Hex } from
 import { type NetworkConfig } from "./config.js";
 import { erc8183Addresses } from "./erc8183.js";
 import { executeWithReceipts, type ExecuteOptions } from "./execute.js";
+import { canonicalJson } from "./internal/canonicalJson.js";
 import { buildPublicClient, type Call, type RelayLog } from "./internal/relay.js";
 import type { CallPermission, Session } from "./internal/sessions.js";
 import type { Signer } from "./internal/signer.js";
@@ -259,10 +260,24 @@ export async function registerErc8004Agent(
   const { receipts, ...executeResult } = result;
 
   if (executeResult.status === "FAILED") {
+    const code = executeResult.statusCode;
+    // A 3xx/4xx is the relay refusing the bundle before it touches the
+    // chain — a permissions hint would send the caller chasing the wrong
+    // cause (issue #57's reporter hit exactly this with a spend cap that
+    // could not cover the relay fee). Only an on-chain revert (5xx+, or an
+    // unlabelled failure) plausibly points at the registry's permission gate.
+    if (code !== undefined && code < 500) {
+      throw new Error(
+        `erc8004: the relay rejected the register bundle before inclusion (relay code ${code}, ` +
+          `callsId ${executeResult.callsId}). Common causes: the session's spend cap cannot ` +
+          `cover the relay fee, or a relay policy refused the bundle.`,
+      );
+    }
     throw new Error(
       `erc8004: register reverted (callsId ${executeResult.callsId}${
         executeResult.transactionHash ? `, tx ${executeResult.transactionHash}` : ""
-      }). A session key must hold erc8004RegisterPermissions(${chainId}) to call the registry.`,
+      }${code !== undefined ? `, relay code ${code}` : ""}). A session key must hold ` +
+        `erc8004RegisterPermissions(${chainId}) to call the registry.`,
     );
   }
   if (executeResult.status !== "CONFIRMED") {
@@ -370,36 +385,9 @@ export type Erc8004RegistrationFile = {
   registrations: { agentId: number; agentRegistry: string }[];
 };
 
-/**
- * Canonical JSON: keys sorted at every depth, JSON.stringify's separators, and
- * every non-ASCII character escaped as `\uXXXX`.
- *
- * Byte-identical to `@bnbagent/sdk`'s `canonicalJson` (and to Python's
- * `json.dumps(x, sort_keys=True, separators=(",", ":"))`), so a record written
- * by this SDK hashes the same as one written by theirs. Do not "simplify" this
- * to a plain JSON.stringify.
- */
-function canonicalJson(value: unknown): string {
-  return JSON.stringify(sortValue(value)).replace(
-    /[\u007f-\uffff]/g,
-    (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}`,
-  );
-}
-
-function sortValue(v: unknown): unknown {
-  if (Array.isArray(v)) return v.map(sortValue);
-  if (v !== null && typeof v === "object") {
-    const out: Record<string, unknown> = {};
-    for (const k of Object.keys(v as Record<string, unknown>).sort()) {
-      out[k] = sortValue((v as Record<string, unknown>)[k]);
-    }
-    return out;
-  }
-  if (typeof v === "number" && !Number.isFinite(v)) {
-    throw new Error(`erc8004: registration files cannot contain non-finite numbers (got ${v}).`);
-  }
-  return v;
-}
+// Canonical JSON now lives in ./internal/canonicalJson.js (shared with the
+// ERC-8183 deliverable-manifest codec); behavior unchanged and still pinned
+// byte-for-byte against @bnbagent/sdk by this module's tests.
 
 /**
  * Serialize a registration file to the `data:application/json;base64,…` URI.

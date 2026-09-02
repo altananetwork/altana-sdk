@@ -5,13 +5,17 @@
  * (admin) authority: an address, a public key, and the ability to produce
  * signatures over arbitrary 32-byte digests.
  *
- * In v0 we ship three implementations:
+ * Two implementations ship:
  *   - signerFromPrivateKey   — BYO ECDSA key (or use createPrivateKeySigner
  *                              to generate one). Server-side or CLI use.
- *   - signerFromInjected     — MetaMask / Rabby / any EIP-1193 provider.
- *                              Browser use, "Connect Wallet" flow.
  *   - createPasskey + signerFromPasskey — WebAuthn / P256 in the user's
  *                              device. Browser use, passwordless flow.
+ *
+ * Injected browser wallets (MetaMask, Trust Wallet, Rabby, …) are NOT a
+ * signer type: they refuse the two signatures the 7702 flow needs (the
+ * delegation authorization and raw relay digests). Browser users onboard
+ * with a passkey wallet and fund it from their extension wallet — see the
+ * "Onboard users from browser wallets" guide in the docs.
  *
  * The Signer interface is intentionally tiny: address, publicKey, signDigest.
  * Anything else (EIP-7702 specifics, passkey ceremony) lives inside the
@@ -21,12 +25,12 @@
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import type { Address, Hex } from "viem";
 
-export type SignerType = "privateKey" | "injected" | "passkey";
+export type SignerType = "privateKey" | "passkey";
 
 /**
  * The signer all SDK functions accept.
  *
- * - `address`     — for EOA-backed signers (privateKey, injected), the
+ * - `address`     — for EOA-backed signers (privateKey), the
  *                   address that holds the key. For passkey signers, there's
  *                   no on-chain identity tied to the key itself — the wallet
  *                   address comes from createWallet (the upgraded throwaway
@@ -64,15 +68,25 @@ export type PrivateKeySigner = Signer & {
 /** Reconstructs a signer from an existing private key. */
 export function signerFromPrivateKey(privateKey: Hex): PrivateKeySigner {
   const account = privateKeyToAccount(privateKey);
-  return {
-    type: "privateKey",
+  const signer = {
+    type: "privateKey" as const,
     address: account.address,
     publicKey: account.publicKey,
-    _privateKey: privateKey,
     async signDigest(digest: Hex): Promise<Hex> {
       return account.sign({ hash: digest });
     },
   };
+  // Non-enumerable on purpose: JSON.stringify / Object.keys / spreads must
+  // never silently capture the secret (issue #58 — the docs' old "persist
+  // the Session verbatim" advice wrote this key into integrators' storage).
+  // Internal reads (`signer._privateKey`) and the `"_privateKey" in signer`
+  // narrowing guard both still work on a non-enumerable own property.
+  Object.defineProperty(signer, "_privateKey", {
+    value: privateKey,
+    enumerable: false,
+    writable: false,
+  });
+  return signer as PrivateKeySigner;
 }
 
 /** Generates a fresh signer (random secp256k1). Caller persists the key. */

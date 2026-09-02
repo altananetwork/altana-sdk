@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 440" font-family="Inter Tight, Inter, -apple-system, sans-serif">
+  <rect width="760" height="440" fill="#F2F2F0"/>
+  <!-- dapp window -->
+  <rect x="40" y="40" width="400" height="360" rx="14" fill="#FFFFFF"/>
+  <circle cx="66" cy="66" r="5" fill="#8A8A85"/><circle cx="84" cy="66" r="5" fill="#8A8A85"/><circle cx="102" cy="66" r="5" fill="#8A8A85"/>
+  <text x="240" y="71" font-size="13" fill="#0A0A0A" text-anchor="middle">yourdapp.xyz</text>
+  <line x1="40" y1="88" x2="440" y2="88" stroke="#F2F2F0" stroke-width="2"/>
+  <text x="70" y="150" font-size="22" font-weight="600" fill="#0A0A0A">Your agent, your rules</text>
+  <text x="70" y="178" font-size="14" fill="#0A0A0A" opacity="0.75">Start by connecting the wallet you already use.</text>
+  <rect x="70" y="210" width="180" height="46" rx="10" fill="#3665E4"/>
+  <text x="160" y="239" font-size="15" font-weight="600" fill="#FFFFFF" text-anchor="middle">Connect Wallet</text>
+  <!-- wallet picker modal -->
+  <rect x="470" y="70" width="250" height="300" rx="14" fill="#FFFFFF" stroke="#0A0A0A" stroke-opacity="0.08"/>
+  <text x="490" y="104" font-size="15" font-weight="600" fill="#0A0A0A">Choose a wallet</text>
+  <g font-size="14" fill="#0A0A0A">
+    <rect x="486" y="122" width="218" height="48" rx="10" fill="#F2F2F0"/>
+    <circle cx="512" cy="146" r="12" fill="#E2622E"/><text x="512" y="151" font-size="12" font-weight="700" fill="#0A0A0A" text-anchor="middle">M</text>
+    <text x="534" y="151">MetaMask</text>
+    <rect x="486" y="180" width="218" height="48" rx="10" fill="#F2F2F0"/>
+    <circle cx="512" cy="204" r="12" fill="#3665E4"/><text x="512" y="209" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">T</text>
+    <text x="534" y="209">Trust Wallet</text>
+    <rect x="486" y="238" width="218" height="48" rx="10" fill="#F2F2F0"/>
+    <circle cx="512" cy="262" r="12" fill="#F2CB45"/><text x="512" y="267" font-size="12" font-weight="700" fill="#0A0A0A" text-anchor="middle">R</text>
+    <text x="534" y="267">Rabby</text>
+  </g>
+  <text x="490" y="322" font-size="12" fill="#0A0A0A" opacity="0.6">…or any EIP-1193 wallet</text>
+  <text x="70" y="420" font-size="13" fill="#0A0A0A" opacity="0.7">Step 1 · The classic connect — one code path covers every extension wallet</text>
+</svg>

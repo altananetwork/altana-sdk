@@ -346,7 +346,57 @@ describe("waitForCalls", () => {
   test("surfaces them on a failed bundle too — a revert still has logs to read", async () => {
     const result = await waitForCalls(clientReturning(statusResponse(500)), "0xcallsid");
     expect(result.status).toBe("FAILED");
+    expect(result.statusCode).toBe(500);
     expect(result.receipts).toHaveLength(1);
+  });
+
+  // The relay's codes follow the EIP-5792 bands: 1xx in flight, 2xx success,
+  // 300-699 terminal failure. Issue #57: 300 (rejected before inclusion —
+  // e.g. a spend cap that cannot cover the relay fee) used to fall through
+  // the loop and poll for the whole 240s deadline before answering PENDING.
+
+  test("a 300 pre-inclusion rejection is terminal on the first poll (#57)", async () => {
+    // No receipts on a rejected bundle — mirror the live relay's response.
+    const result = await waitForCalls(
+      clientReturning({ id: "0xcallsid", status: 300, receipts: [] }),
+      "0xcallsid",
+    );
+    expect(result.status).toBe("FAILED");
+    expect(result.statusCode).toBe(300);
+  });
+
+  test("confirmed bundles report their code too", async () => {
+    const result = await waitForCalls(clientReturning(statusResponse(200)), "0xcallsid");
+    expect(result.statusCode).toBe(200);
+  });
+
+  test("1xx keeps polling; the timeout PENDING carries the last observed code", async () => {
+    const result = await waitForCalls(
+      clientReturning({ id: "0xcallsid", status: 100, receipts: [] }),
+      "0xcallsid",
+      50,
+      5,
+    );
+    expect(result.status).toBe("PENDING");
+    expect(result.statusCode).toBe(100);
+  });
+
+  test("an out-of-band code polls rather than guessing terminal — FAILED must stay safe to resubmit", async () => {
+    const result = await waitForCalls(
+      clientReturning({ id: "0xcallsid", status: 999, receipts: [] }),
+      "0xcallsid",
+      50,
+      5,
+    );
+    expect(result.status).toBe("PENDING");
+    expect(result.statusCode).toBe(999);
+  });
+
+  test("a relay that never answers times out to PENDING with no statusCode", async () => {
+    const failing = { request: async () => { throw new Error("relay down"); } } as any;
+    const result = await waitForCalls(failing, "0xcallsid", 50, 5);
+    expect(result.status).toBe("PENDING");
+    expect(result.statusCode).toBeUndefined();
   });
 });
 

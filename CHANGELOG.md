@@ -12,6 +12,127 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 > reconstructed from commit history after the fact, so they summarize what
 > shipped rather than itemizing every change.
 
+## [0.9.0] - 2026-09-02
+
+`@altananetwork/mcp` 0.9.0
+
+### Added
+
+- **`serializeSession` / `deserializeSession` — the safe way to persist a
+  session.** `serializeSession(session)` returns a JSON-safe object with NO
+  key material in it (spend limits as decimal strings);
+  `deserializeSession(stored, signer)` rebuilds a signing session from the
+  stored half plus the key the caller kept, and refuses a signer that
+  doesn't match the session's registered public key — a mixed-up key now
+  fails loudly at restore instead of opaquely at execute. The MCP server's
+  three hand-rolled session restores now go through `deserializeSession`.
+  `grantSession` also warns (once per process) when called without a
+  `sessionSigner`: the SDK-generated key exists only in process memory, and
+  losing it strands the on-chain authorization it backs. (#58)
+
+- **ERC-8183 seller support — an Altana agent can now get paid, not just
+  pay.** `submitErc8183Deliverable` submits a hired job's finished work
+  (wallet or session path; pre-flight reads turn the kernel's opaque
+  reverts into clear errors), `buildSubmitCall` is the low-level builder,
+  and `erc8183SubmitPermissions(chainId)` scopes a seller session to
+  exactly `submit()` on the commerce kernel. The deliverable-manifest codec
+  ships too: `encodeErc8183Manifest` / `erc8183ManifestHash` produce the
+  canonical form byte-identical to the Python reference — including the
+  `\uXXXX` escaping of non-ASCII content that a plain `JSON.stringify`
+  gets wrong and that breaks cross-language hash verification — and
+  `verifyErc8183ManifestText` is the buyer-side raw-bytes integrity check.
+  Exposed in the MCP server as `erc8183_submit`, which returns the exact
+  canonical text the agent must serve at its deliverable URL. The fork e2e
+  now drives the full two-sided lifecycle (hire → submit → verify →
+  settle → seller paid) against real kernel bytecode. (#59)
+
+### Changed
+
+- **`SignerType` no longer advertises `"injected"`.** The union member
+  promised browser-wallet (MetaMask) signing that was never implemented and
+  is blocked by the wallets themselves: extension wallets withhold the
+  EIP-7702 delegation authorization and refuse to sign the raw relay
+  digests, so the runtime has rejected `"injected"` since day one. The type
+  now matches reality (`"privateKey" | "passkey"`; compile-time-only change
+  — no working code used it), the helpful runtime message stays, and a new
+  guide, *Onboard users from browser wallets*, documents the flow that
+  works: connect MetaMask/Trust Wallet/Rabby as usual, create the account
+  with `createPasskeyWallet`, and fund it in one click through the
+  connected wallet's own provider. (#56)
+
+- **A signer's private key can no longer be captured by JSON.** The docs
+  used to say "persist the `Session` object verbatim" — advice that threw
+  on bigint spend limits, silently wrote the raw session key into storage,
+  and dropped the signing function. The internal key field is now
+  non-enumerable, so `JSON.stringify`/`Object.keys` never see it. Anyone
+  who relied on the leak for persistence must migrate to
+  `serializeSession`/`deserializeSession` plus their own key storage; the
+  docs' session-persistence guidance is rewritten everywhere it appeared.
+  (#58)
+
+- **Documented the EIP-7702 native-payout limitation.** Contracts that pay
+  the wallet native coin via `.transfer()`/`.send()` revert: the 2300-gas
+  stipend cannot run the wallet's delegated account code. Known case: Venus
+  core-pool vBNB `redeem` on BNB Chain. ERC-20 payouts and full-gas
+  `call{value:}` payouts are unaffected. The errors and execute pages now
+  cover the symptom and the workarounds (wrapped-token path, gateway
+  contracts, plain-EOA receiver), and a fork test pins the behavior against
+  the real mainnet account bytecode. Root cause is in the paying contract,
+  so there is no SDK-side fix. (#55)
+
+### Fixed
+
+- **The SDK's last Node-only API is gone.** `getErc8183DeliverableUrl`
+  decoded event bytes with `Buffer`, which does not exist in browsers or
+  React Native without a polyfill; it now uses viem's runtime-neutral
+  `hexToString` (behavior-parity verified, including NUL padding and
+  invalid UTF-8). The passkey guard messages also stopped blaming only
+  "Node or other server runtimes" — they now name React Native and point
+  at the `webAuthn` option. (#65)
+
+- **Relay rejections no longer hang for four minutes as `PENDING`.** The
+  status poller only understood relay codes 200 and 500; a bundle the relay
+  rejected before inclusion (code 300 — most commonly a session spend cap
+  too small to also cover the relay fee, which the cap must) fell through
+  the loop for the full 240-second deadline and then came back as
+  `PENDING`, for a bundle that was already dead on the first poll. Statuses
+  are now classified by the EIP-5792 bands (1xx in flight, 2xx confirmed,
+  300–699 failed; unknown codes keep polling rather than risking a
+  duplicate resubmission), so a rejection returns `FAILED` within seconds.
+  Results gain an optional `statusCode` with the relay's raw code — on
+  `FAILED` it separates "rejected before the chain" from "reverted
+  on-chain", and on a timed-out `PENDING` it separates "genuinely still in
+  flight" from "the relay never answered". The docs now carry the status
+  code table and a grantSession warning that the native spend cap also
+  pays relay fees. Note the behavior change: flows that used to see
+  `PENDING` after 240 s for rejected bundles now see `FAILED` fast. (#57)
+
+- **BSC testnet (chain 97) hire flow no longer reverts.** The bundled
+  `ERC8183_ADDRESSES[97].policy` pointed at an address that is not
+  whitelisted on the testnet EvaluatorRouter, so every
+  `hireErc8183Agent()` / `buildHireCalls()` run on BSC testnet reverted at
+  `registerJob` with `PolicyNotWhitelisted()`. The entry now uses the
+  deployed OptimisticPolicy (`0xd6a4217588F6B1F5657a92A3e94E6422aD771cEA`),
+  verified against the operator's deployment manifest and live router
+  whitelist state. Mainnet was unaffected. (#53)
+
+### Added
+
+- **Passkeys on native mobile: WebAuthn function injection.** `createPasskey`,
+  `createPasskeyWallet`, `recoverFromPasskey`, and `signerFromPasskey` accept
+  a `webAuthn: { createFn, getFn }` option for JavaScript runtimes without
+  the browser WebAuthn API — React Native, Expo, Capacitor. The app passes
+  its native passkey library's functions (which bridge to Apple's and
+  Google's platform passkey APIs) and the SDK forwards them into porto
+  everywhere WebAuthn is touched: credential creation, recovery, and every
+  signature (each execute performs a fresh assertion ceremony). Outside a
+  browser, `rpId` is required with a clear error (porto/ox would otherwise
+  crash on the missing `window` mid-flow), and the option types avoid DOM
+  globals so React Native tsconfigs typecheck. Browser behavior is
+  unchanged when the option is absent. CI proves the forwarding with the
+  same mock-function pattern porto's own tests use; real-device
+  verification is invited from the field. (#65)
+
 ## [0.8.0] - 2026-08-18
 
 ### Added
@@ -145,6 +266,7 @@ Let the type be inferred, or annotate with `GrantSessionResult`.
 First public release: agentic wallets, session keys, the Keystore registry,
 the MCP servers, and the documentation site.
 
+[0.9.0]: https://github.com/altananetwork/altana-sdk/releases
 [0.8.0]: https://github.com/altananetwork/altana-sdk/releases
 [0.7.1]: https://github.com/altananetwork/altana-sdk/releases
 [0.7.0]: https://github.com/altananetwork/altana-sdk/releases

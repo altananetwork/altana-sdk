@@ -15,4 +15,10 @@ export type ExecuteResult = {
   callsId: Hex;
   transactionHash?: Hex;
   status: "PENDING" | "CONFIRMED" | "FAILED";
+  /**
+   * The relay's raw EIP-5792 numeric status, when one was observed. Present
+   * on CONFIRMED/FAILED and on a timed-out PENDING (the last code seen);
+   * absent with `noWait` or when the relay never answered during the wait.
+   */
+  statusCode?: number;
 };

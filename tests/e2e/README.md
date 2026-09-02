@@ -43,6 +43,12 @@ delegated to the relay's real account proxy, and the selector-scoped permission
 policy — authorizing a session key on a delegated account exactly as a grant
 does, then asking the account's own `canExecute` what that key may do.
 
+`fork-erc8183.ts` is also in `fork:all`: the full ERC-8183 buyer lifecycle
+(createJob → registerJob → setBudget → approve → fund, then expiry + refund)
+against the real BSC-testnet kernel bytecode. Among other things it pins the
+bundled policy address to the router's live whitelist — a wrong entry there
+reverts every hire with `PolicyNotWhitelisted()` (issue #53).
+
 `live-erc8004-testnet.ts` adds only the **relay leg**: a session-signed intent
 for a `signature`-scoped key going through `wallet_prepareCalls` →
 `wallet_sendPreparedCalls`. It cannot run unattended, and not for want of
@@ -81,4 +87,5 @@ bun run --filter '@altananetwork/e2e' smoke:all
 Self-contained anvil mainnet forks; no env vars or funded keys needed (requires `anvil` on PATH). Run directly, e.g. `bun tests/e2e/fork-bep677.ts`.
 
 - `fork-x402.ts`, `fork-x402-witness.ts`, `fork-eip3009.ts`, `fork-erc1271.ts`: x402 payment rails against real tokens
+- `fork-native-receive.ts` (in `fork:all`): pins the EIP-7702 native-receive limitation — a 2300-gas-stipend payout (`.transfer()`/`.send()`) to a delegated wallet reverts, full-gas `call{value:}` succeeds, and Venus vBNB `redeem` reproduces the real-world failure (issue #55)
 - `fork-bep677.ts`: BEP-677 scaled-UI-amount display in `client.balances` (mock BEP-677 tokens + real USDT on a BSC fork)

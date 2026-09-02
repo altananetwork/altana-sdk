@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 440" font-family="Inter Tight, Inter, -apple-system, sans-serif">
+  <rect width="760" height="440" fill="#F2F2F0"/>
+  <rect x="40" y="40" width="400" height="360" rx="14" fill="#FFFFFF"/>
+  <circle cx="66" cy="66" r="5" fill="#8A8A85"/><circle cx="84" cy="66" r="5" fill="#8A8A85"/><circle cx="102" cy="66" r="5" fill="#8A8A85"/>
+  <text x="240" y="71" font-size="13" fill="#0A0A0A" text-anchor="middle">yourdapp.xyz</text>
+  <line x1="40" y1="88" x2="440" y2="88" stroke="#F2F2F0" stroke-width="2"/>
+  <rect x="70" y="112" width="150" height="26" rx="13" fill="#F2F2F0"/>
+  <text x="145" y="129" font-size="12" fill="#0A0A0A" text-anchor="middle">Connected · 0xA1…F3</text>
+  <text x="70" y="182" font-size="22" font-weight="600" fill="#0A0A0A">Create your agent account</text>
+  <text x="70" y="210" font-size="14" fill="#0A0A0A" opacity="0.75">Secured by your device. No seed phrase.</text>
+  <rect x="70" y="240" width="220" height="46" rx="10" fill="#3665E4"/>
+  <text x="180" y="269" font-size="15" font-weight="600" fill="#FFFFFF" text-anchor="middle">Create with passkey</text>
+  <!-- OS passkey prompt -->
+  <rect x="470" y="110" width="250" height="220" rx="14" fill="#FFFFFF" stroke="#0A0A0A" stroke-opacity="0.08"/>
+  <circle cx="595" cy="180" r="34" fill="none" stroke="#3665E4" stroke-width="4"/>
+  <path d="M 583 180 q 12 -14 24 0 M 588 190 q 7 -8 14 0 M 595 166 v -6" stroke="#3665E4" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+  <text x="595" y="248" font-size="14" font-weight="600" fill="#0A0A0A" text-anchor="middle">Face ID / Touch ID</text>
+  <text x="595" y="270" font-size="12" fill="#0A0A0A" opacity="0.65" text-anchor="middle">"My Agent" · yourdapp.xyz</text>
+  <text x="70" y="420" font-size="13" fill="#0A0A0A" opacity="0.7">Step 2 · client.createPasskeyWallet({ name: "My Agent" }) — one tap on the device</text>
+</svg>

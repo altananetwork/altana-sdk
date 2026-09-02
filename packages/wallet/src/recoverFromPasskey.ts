@@ -20,12 +20,15 @@ import { readActiveKeys, readPublicKey } from "./internal/keystore.js";
 import {
   signerFromPasskey,
   type PasskeySigner,
+  type PasskeyWebAuthnFns,
 } from "./internal/passkey.js";
 import type { CreateWalletResult } from "./createWallet.js";
 
 export type RecoverFromPasskeyOptions = {
   /** Relying-Party ID — must match what was used at creation time. */
   rpId?: string;
+  /** Browser: omit. Native mobile app (React Native etc.): required — see PasskeyWebAuthnFns. */
+  webAuthn?: PasskeyWebAuthnFns;
   /**
    * Chain to read KeyStore from. The wallet address is identical on every
    * chain, so any configured chain returns the same admin key. Resolved by
@@ -37,10 +40,20 @@ export type RecoverFromPasskeyOptions = {
 export async function recoverFromPasskey(
   opts: RecoverFromPasskeyOptions,
 ): Promise<CreateWalletResult & { signer: PasskeySigner }> {
-  if (typeof navigator === "undefined" || !navigator.credentials) {
+  if (!opts.webAuthn?.getFn && (typeof navigator === "undefined" || !navigator.credentials)) {
     throw new Error(
-      "recoverFromPasskey() needs a browser — it triggers the WebAuthn " +
-        "discoverable-credential picker, which doesn't exist in Node.",
+      "recoverFromPasskey() needs the WebAuthn API — it triggers the " +
+        "discoverable-credential picker, which doesn't exist in Node or " +
+        "React Native. In runtimes without a browser, supply your native " +
+        "passkey library's function via webAuthn: { getFn }.",
+    );
+  }
+  // Outside a browser there is no window.location to default the relying
+  // party from — require the explicit rpId the credential was created with.
+  if (opts.webAuthn?.getFn && typeof window === "undefined" && !opts.rpId) {
+    throw new Error(
+      "recoverFromPasskey: rpId is required when supplying webAuthn.getFn " +
+        "outside a browser — pass the rpId the passkey was created with.",
     );
   }
 
@@ -51,14 +64,16 @@ export async function recoverFromPasskey(
   //    to show all passkeys it has for this rpId — the user picks one, then
   //    Face ID / Touch ID / etc.
   const challenge = crypto.getRandomValues(new Uint8Array(32));
-  const credential = (await navigator.credentials.get({
+  const getCredential =
+    opts.webAuthn?.getFn ?? navigator.credentials.get.bind(navigator.credentials);
+  const credential = (await getCredential({
     publicKey: {
       challenge,
       ...(opts.rpId ? { rpId: opts.rpId } : {}),
       allowCredentials: [],
       userVerification: "preferred",
     },
-  })) as PublicKeyCredential | null;
+  } as never)) as PublicKeyCredential | null;
   if (!credential) {
     throw new Error("No passkey selected.");
   }
@@ -107,12 +122,15 @@ export async function recoverFromPasskey(
   //    that produces a 0x-prefixed string that ox decodes as garbage,
   //    and the browser then can't find the credential locally and falls
   //    back to hybrid (QR-code-to-another-device) transport.
-  const signer = signerFromPasskey({
-    kind: "webauthn",
-    id: credential.id,
-    publicKey,
-    ...(opts.rpId ? { rpId: opts.rpId } : {}),
-  });
+  const signer = signerFromPasskey(
+    {
+      kind: "webauthn",
+      id: credential.id,
+      publicKey,
+      ...(opts.rpId ? { rpId: opts.rpId } : {}),
+    },
+    opts.webAuthn ? { webAuthn: opts.webAuthn } : undefined,
+  );
 
   return {
     address: walletAddress,

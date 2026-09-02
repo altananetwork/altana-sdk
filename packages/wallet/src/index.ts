@@ -40,6 +40,7 @@ export {
 export type {
   PasskeySigner,
   PasskeyCredential,
+  PasskeyWebAuthnFns,
 } from "./internal/passkey.js";
 
 export type {
@@ -49,7 +50,13 @@ export type {
   SpendPermission,
   GrantSessionOptions,
   GrantSessionResult,
+  SerializedSession,
+  SerializedCallPermission,
 } from "./internal/sessions.js";
+// The safe persistence path for sessions: serializeSession stores everything
+// but the secret; deserializeSession rebuilds a signing Session from the
+// stored half plus the key the caller kept.
+export { serializeSession, deserializeSession } from "./internal/sessions.js";
 
 // Lazy KeyStore registration for sessions granted with `register: false`.
 export { registerSessionKey } from "./registerSessionKey.js";
@@ -122,18 +129,28 @@ export {
   erc8183Addresses,
   buildHireCalls,
   buildClaimRefundCall,
+  buildSubmitCall,
   getErc8183Job,
   getErc8183DeliverableUrl,
   hireErc8183Agent,
   settleErc8183Job,
+  submitErc8183Deliverable,
+  encodeErc8183Manifest,
+  erc8183ManifestHash,
+  verifyErc8183ManifestText,
+  erc8183SubmitPermissions,
 } from "./erc8183.js";
 export type {
   Erc8183Addresses,
   Erc8183Job,
+  Erc8183DeliverableManifest,
   HireAgentParams,
   HireAgentResult,
   HireCallsInput,
   JobStatusName,
+  SubmitCallInput,
+  SubmitDeliverableParams,
+  SubmitDeliverableResult,
 } from "./erc8183.js";
 
 // ERC-8004 agent identity — mint and maintain an agent's on-chain identity.

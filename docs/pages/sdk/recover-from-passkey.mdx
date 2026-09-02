@@ -9,7 +9,7 @@ import { Eyebrow } from '../../components/Eyebrow'
 
 # recoverFromPasskey
 
-Recover a passkey-backed wallet using onchain state and the OS keychain. **Browser only.**
+Recover a passkey-backed wallet using onchain state and the OS keychain. **Browser by default** — or any JavaScript runtime that supplies a WebAuthn `get` function (React Native etc.) via the `webAuthn` option; `rpId` is then required. See [Use the SDK in a mobile app](/use-cases/8-mobile-app).
 
 ```ts
 import { createClient, BNB } from "@altananetwork/sdk";
@@ -39,6 +39,13 @@ Two `eth_call`s, one biometric prompt. No server side-channel.
 type ClientRecoverFromPasskeyOptions = {
   /** Relying-Party ID. Must match what was used at creation time. */
   rpId?: string;
+  /**
+   * WebAuthn override for runtimes without the browser API (React Native
+   * etc.): your native passkey library's `get` function. Outside a browser,
+   * `rpId` is required — pass the value the passkey was created with. The
+   * recovered signer carries the functions for all later signatures.
+   */
+  webAuthn?: { getFn?: ... };
   /** Target chain to read from. Defaults to the client's default chain. */
   chainId?: number;
 };

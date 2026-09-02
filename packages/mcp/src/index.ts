@@ -14,7 +14,8 @@
  *                verify_authorization, list_sessions
  *   - Operate:   wallet_execute, grant_session, revoke_session, session_execute
  *   - Pay:       x402_request
- *   - Jobs:      erc8183_create_job, erc8183_job_status, erc8183_settle
+ *   - Jobs:      erc8183_create_job, erc8183_job_status, erc8183_settle,
+ *                erc8183_submit
  *   - Agent ID:  erc8004_register, erc8004_set_agent_uri, erc8004_show
  *   - Skills:    search_skills, get_skill
  *
@@ -30,12 +31,15 @@ import { keccak256 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import {
   createClient,
+  deserializeSession,
   signerFromPrivateKey,
   fetchWithX402,
   hireErc8183Agent,
   getErc8183Job,
   getErc8183DeliverableUrl,
   settleErc8183Job,
+  submitErc8183Deliverable,
+  erc8183Addresses,
   getErc8004Agent,
   setErc8004AgentUri,
   decodeErc8004AgentUri,
@@ -579,6 +583,7 @@ tool(
             {
               from: key.address,
               status: result.status,
+              ...(result.statusCode !== undefined ? { statusCode: result.statusCode } : {}),
               callsId: result.callsId,
               transactionHash: result.transactionHash,
             },
@@ -810,6 +815,7 @@ tool(
             {
               sessionName,
               status: result.status,
+              ...(result.statusCode !== undefined ? { statusCode: result.statusCode } : {}),
               transactionHash: result.transactionHash,
             },
             null,
@@ -853,31 +859,16 @@ tool(
   }) => {
     const stored = await getSession(sessionName);
     const key = await getSessionKey(sessionName);
-    const sessionSigner = signerFromPrivateKey(key.privateKey);
     const recipient = assertAddress(to);
     const dataHex = data ? assertHexBytes(data) : ("0x" as Hex);
 
-    // Rebuild the Session shape from persisted metadata. permissions +
-    // expiry MUST match what was registered on-chain at grant time so
-    // Porto computes the same key hash. We serialize spend.limit as a
-    // decimal string in JSON — restore it to bigint here.
-    const permissionsRuntime = {
-      calls: stored.permissions.calls,
-      spend: stored.permissions.spend?.map((s) => ({
-        limit: BigInt(s.limit),
-        period: s.period,
-        ...(s.token ? { token: s.token } : {}),
-      })),
-    };
+    // Rebuild the live Session from the persisted half plus the keychain
+    // key. deserializeSession restores the bigint limits and refuses a key
+    // that doesn't match the session's registered publicKey.
+    const session = deserializeSession(stored, signerFromPrivateKey(key.privateKey));
 
     const result = await client.execute({
-      session: {
-        walletAddress: stored.walletAddress,
-        signer: sessionSigner,
-        publicKey: stored.publicKey,
-        permissions: permissionsRuntime as any,
-        expiry: stored.expiry,
-      } as any,
+      session,
       calls: {
         to: recipient,
         value: parseEther(valueEth ?? "0"),
@@ -894,6 +885,7 @@ tool(
               sessionName,
               walletAddress: stored.walletAddress,
               status: result.status,
+              ...(result.statusCode !== undefined ? { statusCode: result.statusCode } : {}),
               transactionHash: result.transactionHash,
               callsId: result.callsId,
             },
@@ -941,25 +933,11 @@ tool(
   }) => {
     const stored = await getSession(sessionName);
     const key = await getSessionKey(sessionName);
-    const sessionSigner = signerFromPrivateKey(key.privateKey);
 
-    // Rebuild the Session shape from persisted metadata (same as
-    // session_execute): permissions + expiry must match the on-chain grant.
-    const permissionsRuntime = {
-      calls: stored.permissions.calls,
-      spend: stored.permissions.spend?.map((s) => ({
-        limit: BigInt(s.limit),
-        period: s.period,
-        ...(s.token ? { token: s.token } : {}),
-      })),
-    };
-    const session = {
-      walletAddress: stored.walletAddress,
-      signer: sessionSigner,
-      publicKey: stored.publicKey,
-      permissions: permissionsRuntime as any,
-      expiry: stored.expiry,
-    } as any;
+    // Rebuild the live Session (same as session_execute): permissions +
+    // expiry must match the on-chain grant; deserializeSession restores
+    // the bigint limits and validates the key against the session.
+    const session = deserializeSession(stored, signerFromPrivateKey(key.privateKey));
 
     const init: RequestInit = {};
     if (method) init.method = method;
@@ -996,28 +974,13 @@ tool(
 
 // ---------- ERC-8183 (BNB agent economy job escrow) -------------------------
 
-/** Rebuild the runtime Session shape from persisted metadata. */
+/** Rebuild the runtime Session from persisted metadata + the keychain key. */
 async function sessionFromName(sessionName: string) {
   const stored = await getSession(sessionName);
   const key = await getSessionKey(sessionName);
-  const sessionSigner = signerFromPrivateKey(key.privateKey);
-  const permissionsRuntime = {
-    calls: stored.permissions.calls,
-    spend: stored.permissions.spend?.map((s) => ({
-      limit: BigInt(s.limit),
-      period: s.period,
-      ...(s.token ? { token: s.token } : {}),
-    })),
-  };
   return {
     stored,
-    session: {
-      walletAddress: stored.walletAddress,
-      signer: sessionSigner,
-      publicKey: stored.publicKey,
-      permissions: permissionsRuntime as any,
-      expiry: stored.expiry,
-    } as any,
+    session: deserializeSession(stored, signerFromPrivateKey(key.privateKey)),
   };
 }
 
@@ -1081,6 +1044,7 @@ tool(
               budgetU,
               expiredAt: result.expiredAt.toString(),
               status: result.status,
+              ...(result.statusCode !== undefined ? { statusCode: result.statusCode } : {}),
               transactionHash: result.transactionHash,
               next: "Poll erc8183_job_status until SUBMITTED, then erc8183_settle after the dispute window.",
             },
@@ -1189,7 +1153,86 @@ tool(
               jobId,
               action: action ?? "approve",
               status: result.status,
+              ...(result.statusCode !== undefined ? { statusCode: result.statusCode } : {}),
               transactionHash: result.transactionHash,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
+  },
+);
+
+// erc8183_submit — the seller side: submit a job's deliverable. Builds the
+// v1 manifest, hashes its canonical form on-chain, and returns the EXACT
+// canonical text the agent must serve at deliverableUrl (buyers verify the
+// raw served bytes against the on-chain hash).
+tool(
+  "erc8183_submit",
+  {
+    title: "Submit an ERC-8183 job deliverable (seller)",
+    description:
+      "Submit the deliverable for an ERC-8183 job this wallet was hired for " +
+      "(the session needs erc8183SubmitPermissions — submit() on the commerce " +
+      "kernel). Builds the v1 manifest from `content`, hashes its canonical " +
+      "form on-chain, and returns `manifestText` — serve EXACTLY those bytes " +
+      "at deliverableUrl, or buyer-side verification fails.",
+    inputSchema: {
+      sessionName: z.string(),
+      jobId: z.string(),
+      content: z.string(),
+      contentType: z.string().optional(),
+      deliverableUrl: z.string(),
+    },
+  },
+  async ({
+    sessionName,
+    jobId,
+    content,
+    contentType,
+    deliverableUrl,
+  }: {
+    sessionName: string;
+    jobId: string;
+    content: string;
+    contentType?: string;
+    deliverableUrl: string;
+  }) => {
+    const { stored, session } = await sessionFromName(sessionName);
+    const a = erc8183Addresses(NETWORK.chainId);
+    const manifest = {
+      version: 1 as const,
+      job_id: Number(jobId),
+      chain_id: NETWORK.chainId,
+      contracts: { commerce: a.commerce, router: a.router, policy: a.policy },
+      response: { content, content_type: contentType ?? "text/plain" },
+      metadata: {},
+    };
+    const result = await submitErc8183Deliverable(
+      session,
+      { jobId: BigInt(jobId), manifest, deliverableUrl },
+      { network: NETWORK },
+    );
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              sessionName,
+              walletAddress: stored.walletAddress,
+              jobId,
+              deliverable: result.deliverable,
+              manifestHash: result.deliverable,
+              manifestText: result.manifestText,
+              status: result.status,
+              transactionHash: result.transactionHash,
+              next:
+                `Serve manifestText VERBATIM (byte-for-byte) at ${deliverableUrl}. ` +
+                "The buyer verifies the raw served bytes against the on-chain hash, " +
+                "then settles after the dispute window via erc8183_settle.",
             },
             null,
             2,
@@ -1352,6 +1395,7 @@ tool(
               agentId,
               agentUri: uri,
               status: result.status,
+              ...(result.statusCode !== undefined ? { statusCode: result.statusCode } : {}),
               transactionHash: result.transactionHash,
             },
             null,

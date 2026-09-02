@@ -62,9 +62,34 @@ export type PasskeyCredential =
       readonly publicKey: Hex;
     };
 
+/**
+ * WHEN YOU NEED THIS — the whole rule in two lines:
+ *  - In a browser (mobile browsers included): never. Omit it; the SDK
+ *    uses the built-in WebAuthn API automatically.
+ *  - In a native mobile app (React Native, Expo, Capacitor): always.
+ *    There is no built-in WebAuthn there — pass your passkey library's
+ *    create/get functions and the SDK uses them everywhere it would have
+ *    used the browser's: creation, recovery, and every signature.
+ *
+ * Details for implementers: types derive from porto's own parameters (not
+ * DOM globals) so React Native tsconfigs typecheck; porto requires the
+ * assertion response to include `userHandle` — a library that omits it
+ * fails with "No user handle in response".
+ */
+export type PasskeyWebAuthnFns = {
+  createFn?: Key.createWebAuthnP256.Parameters["createFn"];
+  getFn?: NonNullable<Key.sign.Parameters["webAuthn"]>["getFn"];
+};
+
 export type PasskeySigner = Signer & {
   readonly type: "passkey";
   readonly credential: PasskeyCredential;
+  /**
+   * WebAuthn function overrides carried at runtime. Function-valued, so a
+   * JSON round-trip silently drops it — re-attach after rehydration via
+   * `signerFromPasskey(credential, { webAuthn })`.
+   */
+  readonly webAuthn?: PasskeyWebAuthnFns;
 };
 
 /**
@@ -83,15 +108,31 @@ export async function createPasskey(params: {
   name: string;
   rpId?: string;
   userId?: Hex;
+  /** Browser: omit. Native mobile app (React Native etc.): required — see PasskeyWebAuthnFns. */
+  webAuthn?: PasskeyWebAuthnFns;
 }): Promise<PasskeySigner> {
-  if (typeof navigator === "undefined" || !navigator.credentials) {
+  if (!params.webAuthn?.createFn && (typeof navigator === "undefined" || !navigator.credentials)) {
     throw new Error(
-      "createPasskey({ name }) needs a browser — it prompts the user for a " +
-        "biometric (Face ID / Touch ID / Windows Hello) via WebAuthn, which " +
-        "isn't available in Node or other server runtimes.\n" +
-        "If you're writing a test or running server-side, use " +
-        "createHeadlessPasskey() — same wallet shape, but the P256 key is " +
-        "held in memory with no biometric prompt.",
+      "createPasskey({ name }) needs the WebAuthn API — it prompts the user " +
+        "for a biometric (Face ID / Touch ID / Windows Hello), which isn't " +
+        "available in Node, React Native, or other runtimes without a browser.\n" +
+        "Options: in React Native and similar, supply the native passkey " +
+        "library's functions via webAuthn: { createFn, getFn }. For tests or " +
+        "server-side code, use createHeadlessPasskey() — same wallet shape, " +
+        "but the P256 key is held in memory with no biometric prompt.",
+    );
+  }
+  // Outside a browser, ox falls back to window.location.hostname /
+  // window.document.title for the relying party — a hard crash mid-flow.
+  // Require an explicit rpId so the failure is immediate and clear. The
+  // rpId is also persisted on the credential and needed at every later
+  // signature, so it must be stable.
+  if (params.webAuthn?.createFn && typeof window === "undefined" && !params.rpId) {
+    throw new Error(
+      "createPasskey: rpId is required when supplying webAuthn.createFn " +
+        "outside a browser — there is no window.location to default it from. " +
+        "Use your app's associated domain (the same value your native passkey " +
+        "library is configured with).",
     );
   }
   // Build the Porto WebAuthn key (this triggers the biometric prompt).
@@ -104,6 +145,7 @@ export async function createPasskey(params: {
     role: "admin",
     rpId: params.rpId,
     ...(params.userId ? { userId: hexToBytes(params.userId) } : {}),
+    ...(params.webAuthn?.createFn ? { createFn: params.webAuthn.createFn } : {}),
   });
 
   // Porto stores the credential under key.privateKey = { credential: { id,
@@ -120,13 +162,16 @@ export async function createPasskey(params: {
   const publicKeyHex = PublicKey.toHex(pk.credential.publicKey, {
     includePrefix: false,
   }) as Hex;
-  return signerFromPasskey({
-    kind: "webauthn",
-    // pk.credential.id from ox is already the base64url string we want.
-    id: pk.credential.id as string,
-    publicKey: publicKeyHex,
-    ...(params.rpId ? { rpId: params.rpId } : {}),
-  });
+  return signerFromPasskey(
+    {
+      kind: "webauthn",
+      // pk.credential.id from ox is already the base64url string we want.
+      id: pk.credential.id as string,
+      publicKey: publicKeyHex,
+      ...(params.rpId ? { rpId: params.rpId } : {}),
+    },
+    params.webAuthn ? { webAuthn: params.webAuthn } : undefined,
+  );
 }
 
 /**
@@ -148,10 +193,19 @@ export function createHeadlessPasskey(): PasskeySigner {
   });
 }
 
-/** Rebuild a passkey signer from a persisted credential. */
-export function signerFromPasskey(credential: PasskeyCredential): PasskeySigner {
+/**
+ * Rebuild a passkey signer from a persisted credential. In runtimes without
+ * the browser WebAuthn API, re-attach the native passkey library's functions
+ * via `opts.webAuthn` — they are function-valued and never survive
+ * persistence.
+ */
+export function signerFromPasskey(
+  credential: PasskeyCredential,
+  opts?: { webAuthn?: PasskeyWebAuthnFns },
+): PasskeySigner {
   return {
     type: "passkey",
+    ...(opts?.webAuthn ? { webAuthn: opts.webAuthn } : {}),
     // Passkeys aren't EOAs — there's no on-chain address tied to the key
     // itself. The wallet address comes from createWallet (the throwaway EOA
     // that was upgraded). Callers should always use wallet.address, not

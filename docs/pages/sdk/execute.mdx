@@ -87,15 +87,17 @@ type ExecuteResult = {
   callsId: Hex;
   status: "CONFIRMED" | "FAILED" | "PENDING";
   transactionHash?: Hex;
+  statusCode?: number;   // the relay's raw numeric status, when observed
 };
 ```
 
-A failed execute **returns** `status: "FAILED"`; it does not throw. Check the status rather than relying on `try/catch`. See [Errors](/sdk/errors) for what each status means and how to tell the failure classes apart.
+A failed execute **returns** `status: "FAILED"`; it does not throw. Check the status rather than relying on `try/catch`. `statusCode` says which kind of failure: 300–499 is the relay rejecting the bundle before inclusion (nothing reached the chain), 500+ an on-chain failure. See [Errors](/sdk/errors) for the full code table and how to tell the failure classes apart.
 
 ## Notes
 
 - **First execute on a fresh wallet auto-registers the admin key** in [Keystore](/concepts/keystore). `initialRegisterKey` is prepended transparently in the same userOp.
 - **Empty calls is rejected.** `client.execute({ wallet, signer, calls: [] })` errors. Pass at least one call.
-- **Session execute is byte-exact.** The session's `permissions + expiry + publicKey` must match what was committed at grant. Persist the `Session` object verbatim; sloppy JSON round-trips (bigints to numbers, key reordering) break the match.
+- **Session execute must match the grant.** The session's `permissions + expiry + publicKey` values must equal what was committed at grant. Don't `JSON.stringify` a `Session` (it throws on bigint limits and embeds the session key) — persist with [`serializeSession`](/sdk/grant-session#persisting-a-session) and restore with `deserializeSession`.
 - **`chainId` selects the chain.** Omit it to use the client's default chain; pass one of the client's configured chains to target another.
 - With `noWait: true`, you get `status: "PENDING"` and a `callsId` to poll later.
+- **Native payouts via `.transfer()`/`.send()` cannot reach the wallet.** Those Solidity primitives forward a 2300-gas stipend, which is not enough to run the wallet's delegated (EIP-7702) account code — the paying contract reverts. Contracts that pay with a full-gas `call{value:}` work fine, as do all ERC-20 transfers. See the failure-class table in [Errors](/sdk/errors) for the known cases and workarounds.

@@ -37,6 +37,11 @@ import {
   erc8183Addresses,
   getErc8183Job,
   getErc8183DeliverableUrl,
+  buildSubmitCall,
+  encodeErc8183Manifest,
+  erc8183ManifestHash,
+  verifyErc8183ManifestText,
+  type Erc8183DeliverableManifest,
 } from "@altananetwork/sdk";
 
 const A = erc8183Addresses(97);
@@ -52,9 +57,6 @@ const ERC20_ABI = [
 const VIEW_ABI = [
   { name: "jobCounter", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { name: "disputeWindow", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint64" }] },
-] as const;
-const SUBMIT_ABI = [
-  { name: "submit", type: "function", stateMutability: "nonpayable", inputs: [{ name: "jobId", type: "uint256" }, { name: "deliverable", type: "bytes32" }, { name: "optParams", type: "bytes" }], outputs: [] },
 ] as const;
 const SETTLE_ABI = [
   { name: "settle", type: "function", stateMutability: "nonpayable", inputs: [{ name: "jobId", type: "uint256" }, { name: "evidence", type: "bytes" }], outputs: [] },
@@ -82,17 +84,6 @@ async function dealToken(token: Address, holder: Address, amount: bigint) {
     await test.setStorageAt({ address: token, index: key, value: pad("0x0") });
   }
   throw new Error("balances slot not found");
-}
-/** Canonical JSON — sorted keys, no spaces (matches the Studio seller). */
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  if (value && typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .sort(([a], [b]) => (a < b ? -1 : 1))
-      .map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`);
-    return `{${entries.join(",")}}`;
-  }
-  return JSON.stringify(value);
 }
 const u = (v: bigint) => `${formatUnits(v, 18)} $U`;
 const balance = (a: Address) =>
@@ -141,7 +132,7 @@ async function main() {
     const report =
       "VERDICT: REPAY. Health factor 1.18 — repay 120 USDT to restore HF 1.62. " +
       "Best new position: supply BNB (net APY 4.1%), borrow headroom 30%.";
-    const manifest = {
+    const manifest: Erc8183DeliverableManifest = {
       version: 1,
       job_id: Number(jobId),
       chain_id: 97,
@@ -150,17 +141,22 @@ async function main() {
       metadata: {},
     };
     const manifestUrl = `http://127.0.0.1:${MANIFEST_PORT}/manifest.json`;
+    // Serve EXACTLY the canonical bytes that were hashed: buyers verify the
+    // raw served text against the on-chain hash (SDK codec — Python-identical).
+    const manifestText = encodeErc8183Manifest(manifest);
     manifestServer = Bun.serve({
       port: MANIFEST_PORT,
-      fetch: () => new Response(canonicalJson(manifest), { headers: { "content-type": "application/json" } }),
+      fetch: () => new Response(manifestText, { headers: { "content-type": "application/json" } }),
     });
-    const deliverableHash = keccak256(toHex(canonicalJson(manifest))) as Hex;
-    const optParams = toHex(new TextEncoder().encode(JSON.stringify({ deliverable_url: manifestUrl })));
+    const deliverableHash = erc8183ManifestHash(manifest);
     console.log("▶ SELLER submits the deliverable (manifest hash on-chain, URL in optParams) ...");
-    const submitTx = await asSeller.sendTransaction({
-      to: A.commerce,
-      data: encodeFunctionData({ abi: SUBMIT_ABI, functionName: "submit", args: [jobId, deliverableHash, optParams] }),
+    const submitCall = buildSubmitCall({
+      addresses: A,
+      jobId,
+      deliverable: deliverableHash,
+      optParams: toHex(JSON.stringify({ deliverable_url: manifestUrl })),
     });
+    const submitTx = await asSeller.sendTransaction({ to: submitCall.to, data: submitCall.data });
     assert((await publicClient.waitForTransactionReceipt({ hash: submitTx })).status === "success", "submit reverted");
     assert((await getErc8183Job(network, jobId)).statusName === "SUBMITTED", "job SUBMITTED");
     console.log("  ✓ job SUBMITTED");
@@ -175,7 +171,7 @@ async function main() {
     const url = await getErc8183DeliverableUrl(network, jobId, { scanWindow: 8n, maxWindows: 1 });
     assert(url === manifestUrl, `deliverable URL resolved from JobInitialised (got ${url})`);
     const fetched = await (await fetch(url!)).text();
-    assert(keccak256(toHex(fetched)) === deliverableHash, "manifest integrity: keccak matches on-chain deliverable");
+    assert(verifyErc8183ManifestText(fetched, deliverableHash), "manifest integrity: raw text verifies against on-chain deliverable");
     const content = JSON.parse(fetched).response.content as string;
     assert(content.includes("VERDICT"), "report content retrieved");
     console.log(`  ✓ report: "${content.slice(0, 72)}…" (integrity verified)`);
