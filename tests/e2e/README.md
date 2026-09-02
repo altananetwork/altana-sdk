@@ -26,7 +26,7 @@ for reliable runs:
 
 ```bash
 # .env at repo root (gitignored)
-BSC_FORK_RPC_URL=https://.../<KEY>          # fork-x402, fork-x402-witness, fork-erc1271, fork-bep677
+BSC_FORK_RPC_URL=https://.../<KEY>          # fork-x402, fork-x402-witness, fork-erc1271, fork-bep677, fork-uniswap-v4
 BASE_FORK_RPC_URL=https://.../<KEY>         # fork-eip3009
 BSC_TESTNET_FORK_RPC_URL=https://.../<KEY>  # fork-erc8004, fork-erc8183
 ```
@@ -89,3 +89,4 @@ Self-contained anvil mainnet forks; no env vars or funded keys needed (requires 
 - `fork-x402.ts`, `fork-x402-witness.ts`, `fork-eip3009.ts`, `fork-erc1271.ts`: x402 payment rails against real tokens
 - `fork-native-receive.ts` (in `fork:all`): pins the EIP-7702 native-receive limitation — a 2300-gas-stipend payout (`.transfer()`/`.send()`) to a delegated wallet reverts, full-gas `call{value:}` succeeds, and Venus vBNB `redeem` reproduces the real-world failure (issue #55)
 - `fork-bep677.ts`: BEP-677 scaled-UI-amount display in `client.balances` (mock BEP-677 tokens + real USDT on a BSC fork)
+- `fork-uniswap-v4.ts` (in `fork:all`): Uniswap v4 liquidity against the real BNB Chain PositionManager — the selector-scoped permission gate on a delegated account (`modifyLiquidities` allowed, every ERC-721 selector refused), then mint → increase → collect → decrease → burn of a single-sided BNB position on the live BNB/USDT 0.05% pool

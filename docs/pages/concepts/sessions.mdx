@@ -42,6 +42,13 @@ calls: [
 ]
 ```
 
+Prefer the `{ signature, to }` shape whenever the contract does more than the
+one thing the agent needs. The SDK ships ready-made selector-scoped sets for
+its integrations: `erc8004RegisterPermissions`, `erc8183SubmitPermissions`
+and `uniswapV4LiquidityPermissions` (see
+[Uniswap v4: liquidity](/sdk/uniswap-v4) for why a contract-wide grant on the
+PositionManager would also hand over the LP NFTs).
+
 **Spend permissions** cap how much the session can move per token, per rolling period:
 
 ```ts

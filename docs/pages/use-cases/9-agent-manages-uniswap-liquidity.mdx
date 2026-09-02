@@ -1,0 +1,136 @@
+---
+title: "Let an Agent Manage Uniswap Liquidity"
+description: Scope a session to Uniswap v4's PositionManager with spend caps. The agent opens, rebalances and closes LP positions in your wallet, and nothing else.
+---
+
+import { Eyebrow } from '../../components/Eyebrow'
+
+import { UseCaseMeta } from '../../components/UseCaseMeta'
+
+<Eyebrow>Build with Altana</Eyebrow>
+
+# Let an agent manage Uniswap liquidity
+
+<UseCaseMeta
+  tools={['SDK']}
+  rows={[
+  { label: "Goal", value: "I want an agent to run a Uniswap v4 liquidity position for me: open it, keep it in range, collect fees, close it. My funds stay in my wallet and I can pull the plug any time." },
+  { label: "Who it's for", value: "Developers building LP-management agents on Ethereum, BNB Smart Chain or Base, for wallets they do not custody." },
+  { label: "What you'll use", value: <><code>approveUniswapV4Pair</code> once, <code>grantSession</code> with <code>uniswapV4LiquidityPermissions</code> and spend caps, then the <code>*UniswapV4*</code> client methods from the agent.</> },
+  { label: "Prerequisites", value: <>A smart agentic wallet set up in <a href="/use-cases/1-agent-wallet-policy">Give an agent a wallet and a policy</a>, funded on BNB with BNB and USDT.</> },
+]} />
+
+The example runs the BNB/USDT 0.05% pool on BNB Smart Chain. Any v4 pool on a
+supported chain works the same way. The full reference is
+[Uniswap v4: liquidity](/sdk/uniswap-v4).
+
+## Step 1: Connect, approve the pair, grant the session
+
+You do this once, as the wallet's admin. The agent never sees this key.
+
+```ts
+import {
+  createClient,
+  BNB,
+  signerFromPrivateKey,
+  uniswapV4LiquidityPermissions,
+} from "@altananetwork/sdk";
+
+const client = createClient({ chains: [BNB] });
+const signer = signerFromPrivateKey(process.env.PRIVATE_KEY as `0x${string}`);
+const USDT = "0x55d398326f99059fF775485246999027B3197955";
+
+// Uniswap pulls ERC-20s through Permit2: token → Permit2 → PositionManager. BNB needs nothing.
+await client.approveUniswapV4Pair({ wallet, signer, tokens: [USDT] });
+
+// One function on one contract, capped per currency, for a week.
+const session = await client.grantSession({
+  wallet,
+  signer,
+  permissions: {
+    calls: uniswapV4LiquidityPermissions(56),
+    spend: [
+      { limit: 2_000_000_000_000_000_000n, period: "day" },                 // 2 BNB / day
+      { limit: 1_000_000_000_000_000_000_000n, period: "day", token: USDT }, // 1000 USDT / day
+    ],
+  },
+  expiry: Math.floor(Date.now() / 1000) + 7 * 24 * 3600,
+});
+```
+
+Persist the session with `serializeSession` and hand it to the agent's
+process. Why the permission is one function and not the whole contract: the
+PositionManager is also the ERC-721 holding your LP positions. Scoped to
+`modifyLiquidities`, the agent cannot transfer or approve them away.
+
+## Step 2: The agent opens a position
+
+The agent reads the pool, picks a range, sizes the position with the SDK's
+math, and mints. The LP NFT lands in your wallet.
+
+```ts
+import {
+  NATIVE_CURRENCY,
+  getLiquidityForAmounts,
+  getSqrtPriceAtTick,
+  nearestUsableTick,
+  type PoolKey,
+} from "@altananetwork/sdk";
+
+const pool: PoolKey = { currency0: NATIVE_CURRENCY, currency1: USDT, fee: 500, tickSpacing: 10, hooks: NATIVE_CURRENCY };
+
+const state = await client.readUniswapV4Pool({ poolKey: pool });
+const tickLower = nearestUsableTick(state.tick - 500, pool.tickSpacing);
+const tickUpper = nearestUsableTick(state.tick + 500, pool.tickSpacing);
+
+const amount0 = 500_000_000_000_000_000n;    // 0.5 BNB
+const amount1 = 300_000_000_000_000_000_000n; // 300 USDT
+const liquidity = getLiquidityForAmounts(
+  state.sqrtPriceX96, getSqrtPriceAtTick(tickLower), getSqrtPriceAtTick(tickUpper), amount0, amount1,
+);
+
+const { tokenId } = await client.mintUniswapV4Position({
+  session, poolKey: pool, tickLower, tickUpper, liquidity, amount0Max: amount0, amount1Max: amount1,
+});
+```
+
+## Step 3: The agent keeps it working
+
+On its own schedule the agent collects fees, and when the price leaves the
+range it closes the position and opens a new one around the new price.
+
+```ts
+// Fees, whenever.
+await client.collectUniswapV4Fees({ session, poolKey: pool, tokenId });
+
+// Rebalance: out of range → close, then reopen around the current tick.
+const now = await client.readUniswapV4Pool({ poolKey: pool });
+const pos = await client.readUniswapV4Position({ tokenId });
+if (now.tick < pos.tickLower || now.tick >= pos.tickUpper) {
+  await client.burnUniswapV4Position({ session, poolKey: pool, tokenId, amount0Min: 0n, amount1Min: 0n });
+  // ...then Step 2 again with a fresh range.
+}
+```
+
+Every call is one relay intent, signed by the session key and checked by your
+wallet's account contract before it runs. Withdrawn tokens and fees return to
+your wallet.
+
+## Step 4: You stay in control
+
+```ts
+await client.revokeSession({ wallet, signer, session });
+```
+
+Revocation takes effect immediately. The positions and tokens were in your
+wallet all along; the agent held only a key that could call one function,
+within caps you set, until a date you chose.
+
+## What the caps bound
+
+The account enforces the contract, the function, the per-currency spend caps
+and the expiry. It does not read the arguments, so within its caps the agent
+chooses the pool, the range and the recipients. Size the daily caps to what
+you are willing to have an agent move, and set one for every currency in the
+pair. The reference page spells out the boundary:
+[What the session limits, and what it does not](/sdk/uniswap-v4#what-the-session-limits-and-what-it-does-not).

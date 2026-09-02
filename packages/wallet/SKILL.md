@@ -45,7 +45,13 @@ const client = createClient({ chains: [BNB] });
 // client.signOrder           : session-key ERC-1271 signature over any digest (offline)
 // client.approveSignatureChecker : authorize who may verify a session's signatures
 // client.approveTokenForPermit2  : one-time ERC20 approve(Permit2) for the permit2 x402 rail
+// client.mintUniswapV4Position   : Uniswap v4 LP — open a position (admin or session); returns tokenId
+// client.increaseUniswapV4Liquidity / collectUniswapV4Fees / decreaseUniswapV4Liquidity / burnUniswapV4Position
+// client.approveUniswapV4Pair    : one-time admin setup of a pair's ERC-20s through Permit2
+// client.readUniswapV4Pool / readUniswapV4Position : price, tick, liquidity, range
 ```
+
+For Uniswap v4 the session permission is `uniswapV4LiquidityPermissions(chainId)` — exactly `modifyLiquidities` on the PositionManager, never `{ to: positionManager }` (it is also the LP NFT contract). Size positions with `getLiquidityForAmounts` + `getSqrtPriceAtTick` + `nearestUsableTick`; set a spend cap for every currency in the pair.
 
 The private key lives wherever your code runs: your laptop, your agent's process, an OS keychain. **Altana never sees it.** Custody is local to the integrator.
 
