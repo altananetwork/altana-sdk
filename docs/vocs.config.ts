@@ -123,6 +123,7 @@ export default defineConfig({
         { text: "Verify agent authority", link: "/use-cases/4-verify-agent-authority" },
         { text: "Authorize across chains", link: "/use-cases/5-cross-chain-authorization" },
         { text: "Pay for an API with x402", link: "/use-cases/6-agent-pays-api-x402" },
+        { text: "Onboard users from browser wallets", link: "/use-cases/7-onboard-from-browser-wallets" },
       ],
     },
     {

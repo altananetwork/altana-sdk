@@ -103,7 +103,7 @@ There is no error class and no error code: every one of these is a plain `Error`
 
 ### Signers
 
-Passing a signer the SDK cannot use produces a multi-line message naming every supported constructor, e.g. *"Injected wallet signers (e.g. MetaMask) need to sign a transaction but the current build of @altananetwork/sdk doesn't accept them as a signer type."* Use `signerFromPrivateKey`, `createPrivateKeySigner`, `createPasskey`, or `createHeadlessPasskey`.
+Passing a signer the SDK cannot use produces a multi-line message naming every supported constructor. `SignerType` is `"privateKey" | "passkey"`; a hand-rolled signer object with any other `type` — including `"injected"`, which browser wallets can never satisfy — is rejected with guidance, e.g. *"Injected wallet signers (e.g. MetaMask) need to sign a transaction but the current build of @altananetwork/sdk doesn't accept them as a signer type."* Use `signerFromPrivateKey`, `createPrivateKeySigner`, `createPasskey`, or `createHeadlessPasskey`. For the browser-wallet story — why extension wallets cannot sign for a 7702 account, and the onboarding flow that works instead — see [Onboard users from browser wallets](/use-cases/7-onboard-from-browser-wallets).
 
 ### Cross-chain sync
 
