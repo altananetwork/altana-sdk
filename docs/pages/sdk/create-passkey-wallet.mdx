@@ -11,7 +11,7 @@ import { Eyebrow } from '../../components/Eyebrow'
 
 `client.createPasskeyWallet` creates a smart-account wallet whose admin authority is a passkey (Face ID, Touch ID, Windows Hello, hardware security key). The private key never leaves the device's secure hardware.
 
-**Browser by default** (uses `navigator.credentials`) — **or any JavaScript runtime that supplies WebAuthn functions**: in React Native, Expo, or Capacitor, pass your native passkey library's functions via the `webAuthn` option and users get the platform's real Face ID / fingerprint passkeys.
+**Browser by default** (uses `navigator.credentials`) — **or any JavaScript runtime that supplies WebAuthn functions**: in React Native, Expo, or Capacitor, pass your native passkey library's functions via the `webAuthn` option and users get the platform's real Face ID / fingerprint passkeys — see [Use the SDK in a mobile app](/use-cases/8-mobile-app).
 
 ```ts
 import { createClient, BNB } from "@altananetwork/sdk";

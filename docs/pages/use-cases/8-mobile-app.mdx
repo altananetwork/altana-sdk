@@ -1,0 +1,130 @@
+---
+title: "Use the SDK in a Mobile App"
+description: Run the full Altana SDK inside a React Native, Expo, or Capacitor app — including Face ID / fingerprint passkeys via the webAuthn option.
+---
+
+import { Eyebrow } from '../../components/Eyebrow'
+
+import { UseCaseMeta } from '../../components/UseCaseMeta'
+
+<Eyebrow>Build with Altana</Eyebrow>
+
+# Use the SDK in a mobile app
+
+<UseCaseMeta
+  rows={[
+  { label: "Goal", value: "Ship a native mobile app (React Native, Expo, Capacitor) where users create and operate Altana wallets — with real platform Face ID / fingerprint passkeys." },
+  { label: "Who it's for", value: "Teams whose web app already runs on Altana and are building the mobile side, or mobile-first builders." },
+  { label: "What you'll use", value: <>The same SDK as on web, plus the <code>webAuthn</code> option for passkeys, or <code>signerFromPrivateKey</code> with the device's secure storage.</> },
+]} />
+
+## The one rule
+
+Everything in the SDK works in a mobile app. The single difference from the
+browser is passkeys:
+
+- **Browser (mobile browsers included):** nothing to do — the SDK uses the
+  built-in WebAuthn API automatically.
+- **Native app:** there is no built-in WebAuthn, so pass your passkey
+  library's two functions via the `webAuthn` option. The SDK uses them
+  everywhere it would have used the browser's: wallet creation, recovery,
+  and **every signature** (each execute performs a fresh passkey ceremony —
+  that's the security model, the key never leaves the device's secure
+  hardware).
+
+## Environment requirements
+
+Three standard globals your app must provide (all routine in modern React
+Native setups):
+
+| Global | Why | Typically from |
+|---|---|---|
+| `crypto.getRandomValues` | key generation | `react-native-get-random-values` (or Expo's crypto polyfill) |
+| `fetch` | relay + RPC | built into React Native |
+| `atob` / `btoa` | only for the ERC-8004 identity helpers | built into Hermes on recent React Native; polyfill on older versions |
+
+No `Buffer`, no Node modules — as of 0.9.0 the SDK has zero Node-only APIs.
+
+## Passkeys with the `webAuthn` option
+
+Pass your native passkey library's create/get functions. They bridge to
+Apple's and Google's platform passkey APIs, so users get the OS's real
+Face ID / fingerprint sheet:
+
+```ts
+import { createClient, BNB } from "@altananetwork/sdk";
+
+const client = createClient({ chains: [BNB] });
+
+// The functions come from your passkey library (e.g. react-native-passkeys).
+// Libraries differ in their exact request/response encoding (JSON base64url
+// vs ArrayBuffers) — your adapter translates between the library's shape and
+// the WebAuthn-style options the SDK passes in. Sketch:
+const webAuthn = {
+  createFn: (options) => myPasskeyLib.create(adaptCreateRequest(options)).then(adaptCreateResponse),
+  getFn: (options) => myPasskeyLib.get(adaptGetRequest(options)).then(adaptGetResponse),
+};
+
+const wallet = await client.createPasskeyWallet({
+  name: "MyApp",
+  rpId: "myapp.example",   // REQUIRED outside a browser — your associated domain
+  webAuthn,
+});
+
+// Later sessions / cold starts: recover the wallet from any saved passkey.
+const recovered = await client.recoverFromPasskey({ rpId: "myapp.example", webAuthn });
+```
+
+Three things to get right:
+
+- **`rpId` is required** outside a browser (there is no page origin to
+  default it from). Use the associated domain your passkey library is
+  configured with, and keep it stable — it's baked into the credential and
+  needed at every later signature.
+- **The signer carries the functions at runtime only.** They're functions,
+  so persistence drops them — after rehydrating a stored credential,
+  re-attach with `signerFromPasskey(credential, { webAuthn })`.
+- **Your library must return `userHandle`** in assertion responses (the
+  mainstream ones do); the signing layer requires it.
+
+The SDK's CI proves this forwarding end-to-end using the same mock-function
+pattern the underlying libraries use for non-browser environments; it is not
+yet exercised on physical devices in our CI, so treat your first device run
+as a verification step — and we'd genuinely like to hear the result.
+
+## The alternative: private-key signer in secure storage
+
+If you don't need biometric passkeys, the classic mobile-wallet pattern
+works unchanged: generate a key, keep it in the platform keystore, sign
+with it.
+
+```ts
+import { createClient, BNB, signerFromPrivateKey } from "@altananetwork/sdk";
+import { generatePrivateKey } from "viem/accounts";
+import * as SecureStore from "expo-secure-store"; // or react-native-keychain
+
+const key = (await SecureStore.getItemAsync("wallet-key")) ??
+  (await (async () => { const k = generatePrivateKey(); await SecureStore.setItemAsync("wallet-key", k); return k; })());
+
+const client = createClient({ chains: [BNB] });
+const wallet = await client.createWallet({ signer: signerFromPrivateKey(key as `0x${string}`) });
+```
+
+## Sessions on mobile
+
+Persisting an agent session across app restarts is the same two-halves
+pattern as everywhere else — key in secure storage, the rest via
+[`serializeSession` / `deserializeSession`](/sdk/grant-session#persisting-a-session).
+
+## What's out of scope
+
+A fully native Swift or Kotlin app with no JavaScript layer cannot use a
+JavaScript SDK — that would require a native SDK, which doesn't exist today.
+Every JS-based stack (React Native, Expo, Capacitor, NativeScript) is
+covered by this page.
+
+## Related
+
+- [createPasskeyWallet](/sdk/create-passkey-wallet) · [recoverFromPasskey](/sdk/recover-from-passkey) — the `webAuthn` parameter reference
+- [Onboard users from browser wallets](/use-cases/7-onboard-from-browser-wallets) — the web-side onboarding flow
+- [grantSession](/sdk/grant-session) — sessions and safe persistence

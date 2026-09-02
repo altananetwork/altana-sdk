@@ -67,13 +67,13 @@ export type ClientCreateWalletOptions = {
 export type ClientCreatePasskeyWalletOptions = {
   name: string;
   rpId?: string;
-  /** WebAuthn overrides for runtimes without the browser API (React Native etc.). */
+  /** Browser: omit. Native mobile app (React Native etc.): required — see PasskeyWebAuthnFns. */
   webAuthn?: PasskeyWebAuthnFns;
 };
 
 export type ClientRecoverFromPasskeyOptions = {
   rpId?: string;
-  /** WebAuthn overrides for runtimes without the browser API (React Native etc.). */
+  /** Browser: omit. Native mobile app (React Native etc.): required — see PasskeyWebAuthnFns. */
   webAuthn?: PasskeyWebAuthnFns;
 } & ChainSelector;
 

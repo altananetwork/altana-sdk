@@ -69,12 +69,12 @@
     },
     "packages/mcp": {
       "name": "@altananetwork/mcp",
-      "version": "0.8.0",
+      "version": "0.9.0",
       "bin": {
         "altana-mcp": "./src/index.ts",
       },
       "dependencies": {
-        "@altananetwork/sdk": "^0.7.1",
+        "@altananetwork/sdk": "^0.9.0",
         "@modelcontextprotocol/sdk": "^1.0.0",
         "@napi-rs/keyring": "^1.1.0",
         "viem": "^2.21.0",
@@ -86,7 +86,7 @@
     },
     "packages/wallet": {
       "name": "@altananetwork/sdk",
-      "version": "0.8.0",
+      "version": "0.9.0",
       "dependencies": {
         "ox": "^0.14.0",
         "porto": "0.2.37",

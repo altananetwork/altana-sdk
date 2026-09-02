@@ -35,7 +35,7 @@ export type CreatePasskeyWalletOptions = {
   name: string;
   /** Relying-Party ID. Defaults to the current origin's host. */
   rpId?: string;
-  /** WebAuthn overrides for runtimes without the browser API (React Native etc.). */
+  /** Browser: omit. Native mobile app (React Native etc.): required — see PasskeyWebAuthnFns. */
   webAuthn?: PasskeyWebAuthnFns;
   /**
    * Chains to provision the wallet on. The same address is delegated on

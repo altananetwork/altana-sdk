@@ -63,21 +63,18 @@ export type PasskeyCredential =
     };
 
 /**
- * Caller-supplied WebAuthn functions, for JavaScript runtimes without the
- * browser's WebAuthn API — React Native, Expo, Capacitor, and friends. The
- * app passes the create/get functions from its native passkey library
- * (which bridge to Apple's and Google's platform passkey APIs), and the SDK
- * forwards them into Porto everywhere WebAuthn is touched: credential
- * creation, recovery, and EVERY signature (each execute performs a fresh
- * assertion ceremony).
+ * WHEN YOU NEED THIS — the whole rule in two lines:
+ *  - In a browser (mobile browsers included): never. Omit it; the SDK
+ *    uses the built-in WebAuthn API automatically.
+ *  - In a native mobile app (React Native, Expo, Capacitor): always.
+ *    There is no built-in WebAuthn there — pass your passkey library's
+ *    create/get functions and the SDK uses them everywhere it would have
+ *    used the browser's: creation, recovery, and every signature.
  *
- * Types are derived from porto's own parameter types rather than DOM
- * globals, so consumers without `lib: ["DOM"]` (React Native tsconfigs)
- * typecheck cleanly.
- *
- * Note for library authors: porto requires the assertion response to carry
- * `userHandle` — a native passkey library that omits it will fail with
- * "No user handle in response".
+ * Details for implementers: types derive from porto's own parameters (not
+ * DOM globals) so React Native tsconfigs typecheck; porto requires the
+ * assertion response to include `userHandle` — a library that omits it
+ * fails with "No user handle in response".
  */
 export type PasskeyWebAuthnFns = {
   createFn?: Key.createWebAuthnP256.Parameters["createFn"];
@@ -111,7 +108,7 @@ export async function createPasskey(params: {
   name: string;
   rpId?: string;
   userId?: Hex;
-  /** WebAuthn overrides for runtimes without the browser API (React Native etc.). */
+  /** Browser: omit. Native mobile app (React Native etc.): required — see PasskeyWebAuthnFns. */
   webAuthn?: PasskeyWebAuthnFns;
 }): Promise<PasskeySigner> {
   if (!params.webAuthn?.createFn && (typeof navigator === "undefined" || !navigator.credentials)) {
