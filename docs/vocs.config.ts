@@ -124,6 +124,7 @@ export default defineConfig({
         { text: "Authorize across chains", link: "/use-cases/5-cross-chain-authorization" },
         { text: "Pay for an API with x402", link: "/use-cases/6-agent-pays-api-x402" },
         { text: "Onboard users from browser wallets", link: "/use-cases/7-onboard-from-browser-wallets" },
+        { text: "Use the SDK in a mobile app", link: "/use-cases/8-mobile-app" },
       ],
     },
     {
