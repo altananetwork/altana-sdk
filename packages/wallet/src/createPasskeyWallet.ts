@@ -26,6 +26,7 @@ import {
   createPasskey,
   passkeyToPortoKey,
   type PasskeySigner,
+  type PasskeyWebAuthnFns,
 } from "./internal/passkey.js";
 import type { CreateWalletResult } from "./createWallet.js";
 
@@ -34,6 +35,8 @@ export type CreatePasskeyWalletOptions = {
   name: string;
   /** Relying-Party ID. Defaults to the current origin's host. */
   rpId?: string;
+  /** WebAuthn overrides for runtimes without the browser API (React Native etc.). */
+  webAuthn?: PasskeyWebAuthnFns;
   /**
    * Chains to provision the wallet on. The same address is delegated on
    * each. Supplied by the client from its configured chain set.
@@ -62,6 +65,7 @@ export async function createPasskeyWallet(
   //    this passkey returns walletAddress — including on devices that
   //    have never seen this app before, via discoverable-credential lookup.
   const passkey = await createPasskey({
+    ...(opts.webAuthn ? { webAuthn: opts.webAuthn } : {}),
     name: opts.name,
     ...(opts.rpId ? { rpId: opts.rpId } : {}),
     userId: walletAddress,

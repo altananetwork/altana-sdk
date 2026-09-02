@@ -341,10 +341,18 @@ export async function submitCalls(
 
   // Porto's signCalls dispatches by `key`: for secp256k1 / webauthn-p256
   // keys with embedded signing material, it calls Key.sign which produces
-  // the correctly-wrapped signature. We only need to hand it the key.
-  const signature = await signCalls(prepared, {
-    key: signingKeyForPorto,
-  } as any);
+  // the correctly-wrapped signature. We only need to hand it the key —
+  // except when the signer carries custom WebAuthn functions (React Native
+  // etc.), which signCalls cannot forward; signPreparedCalls handles that.
+  const customWebAuthn =
+    isPasskeySigner(signer) && signer.webAuthn?.getFn
+      ? { getFn: signer.webAuthn.getFn }
+      : undefined;
+  const signature = customWebAuthn
+    ? await signPreparedCalls(prepared, signingKeyForPorto, customWebAuthn)
+    : await signCalls(prepared, {
+        key: signingKeyForPorto,
+      } as any);
 
   // For non-EOA paths (sessions, passkey admin), the relay needs to know
   // which key authority signed so it can verify with the right scheme.
@@ -360,6 +368,33 @@ export async function submitCalls(
   } as any);
 
   return (sent?.id ?? sent) as Hex;
+}
+
+/**
+ * Sign a prepared calls bundle with explicit WebAuthn function overrides.
+ *
+ * A faithful inline of the `key` arm of porto's `RelayActions.signCalls`
+ * (porto 0.2.37, src/viem/RelayActions.ts:618-643): the digest is
+ * `prepared.digest`, `wrap` mirrors `Boolean(context.preCall)`, and the
+ * return value is the bare signature `sendPreparedCalls` expects. We inline
+ * it because signCalls does not forward `webAuthn` options to `Key.sign`,
+ * and a signer running outside a browser (React Native) must supply its
+ * own `getFn`. Re-check the inline against RelayActions.signCalls on any
+ * porto version bump. Headless webauthn keys embed their private key and
+ * sign locally — Key.sign ignores `webAuthn` for them, so routing them
+ * here is harmless.
+ */
+export async function signPreparedCalls(
+  prepared: any,
+  key: any,
+  webAuthn: { getFn: NonNullable<Key.sign.Parameters["webAuthn"]>["getFn"] },
+): Promise<Hex> {
+  return (await Key.sign(key, {
+    address: null,
+    payload: prepared.digest,
+    wrap: Boolean(prepared.context?.preCall),
+    webAuthn,
+  } as any)) as Hex;
 }
 
 export function toPortoKey(desc: KeyDescriptor): any {

@@ -114,5 +114,12 @@ export function signErc1271(session: Session, appDigest: Hex): Promise<Hex> {
     );
   }
 
-  return Key.sign(portoKey, { address: null, payload: final });
+  // Runtimes without the browser WebAuthn API (React Native) carry their
+  // native passkey library's getFn on the signer — forward it, or the
+  // assertion ceremony would hit ox's window-bound default.
+  const webAuthn =
+    isPasskeySigner(signer) && signer.webAuthn?.getFn
+      ? { webAuthn: { getFn: signer.webAuthn.getFn } }
+      : {};
+  return Key.sign(portoKey, { address: null, payload: final, ...webAuthn } as never);
 }

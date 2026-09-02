@@ -11,7 +11,7 @@
 import type { Address, Hex } from "viem";
 import { type NetworkConfig } from "./config.js";
 import type { Signer } from "./internal/signer.js";
-import type { PasskeySigner } from "./internal/passkey.js";
+import type { PasskeySigner, PasskeyWebAuthnFns } from "./internal/passkey.js";
 import type { Wallet, ExecuteResult } from "./internal/types.js";
 import type {
   Session,
@@ -67,10 +67,14 @@ export type ClientCreateWalletOptions = {
 export type ClientCreatePasskeyWalletOptions = {
   name: string;
   rpId?: string;
+  /** WebAuthn overrides for runtimes without the browser API (React Native etc.). */
+  webAuthn?: PasskeyWebAuthnFns;
 };
 
 export type ClientRecoverFromPasskeyOptions = {
   rpId?: string;
+  /** WebAuthn overrides for runtimes without the browser API (React Native etc.). */
+  webAuthn?: PasskeyWebAuthnFns;
 } & ChainSelector;
 
 export type ClientExecuteOptions =
@@ -240,6 +244,7 @@ export function createClient(opts: CreateClientOptions): Client {
         name: o.name,
         networks: [...chains],
         ...(o.rpId ? { rpId: o.rpId } : {}),
+        ...(o.webAuthn ? { webAuthn: o.webAuthn } : {}),
       });
     },
 
@@ -247,6 +252,7 @@ export function createClient(opts: CreateClientOptions): Client {
       return recoverFromPasskeyImpl({
         network: resolve(o.chainId),
         ...(o.rpId ? { rpId: o.rpId } : {}),
+        ...(o.webAuthn ? { webAuthn: o.webAuthn } : {}),
       });
     },
 
