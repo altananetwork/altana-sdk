@@ -100,17 +100,52 @@ export function witnessHash(to: Address, validAfter: bigint): Hex {
   );
 }
 
-export type SettleResult = { txHash: Hex };
+/** What settlement is allowed to touch. A merchant may inject its own clients. */
+export type SettleClients = {
+  wallet: Pick<WalletClient, "account" | "chain" | "sendTransaction" | "prepareTransactionRequest" | "sendRawTransaction">;
+  public: Pick<PublicClient, "getTransaction" | "getTransactionReceipt" | "waitForTransactionReceipt">;
+};
+
+export type SettleOptions = {
+  /** How long to wait for the receipt before reporting `pending` (default 60s). */
+  receiptTimeoutMs?: number;
+};
+
+export type SettleResult = {
+  txHash: Hex;
+  /**
+   * `confirmed`: the receipt was read and the transfer succeeded.
+   * `pending`: the transaction was broadcast but its outcome could not be read
+   * (RPC error, timeout). It will very likely land; reconcile against `txHash`.
+   * A pending payment is never "did not happen" — answering a fresh challenge
+   * would make the buyer pay twice (#76).
+   */
+  settlement: "confirmed" | "pending";
+  /** Why the receipt was unavailable (`pending` only). No RPC URL, safe to log. */
+  pendingReason?: string;
+};
+
+/** viem's one-line message plus the node's detail; never the URL/request dump. */
+export function describeError(e: unknown): string {
+  const err = e as { shortMessage?: string; details?: string; message?: string };
+  const short = err?.shortMessage ?? err?.message ?? String(e);
+  return err?.details && !short.includes(err.details) ? `${short} (${err.details})` : short;
+}
+
 
 /**
  * Broadcast the payment on-chain from the facilitator wallet and wait for
- * inclusion. Reverts (wrong signature, replayed nonce, insufficient balance)
- * surface as thrown errors — the caller answers 402.
+ * inclusion. Throws only when the payment definitely did not happen: nothing
+ * was broadcast (wrong signature, replayed nonce, unfunded facilitator all
+ * revert in gas estimation) or the transaction reverted / was replaced. Once a
+ * transaction is out, an unreadable outcome returns `settlement: "pending"`
+ * with the hash instead of throwing.
  */
 export async function settlePayment(
   d: DecodedPayment,
   cfg: MerchantConfig,
-  clients: { wallet: WalletClient; public: PublicClient },
+  clients: SettleClients,
+  opts: SettleOptions = {},
 ): Promise<SettleResult> {
   let to: Address;
   let data: Hex;
@@ -155,12 +190,53 @@ export async function settlePayment(
           });
   }
 
-  const account = clients.wallet.account;
-  if (!account) throw new Error("settle: facilitator wallet client has no account");
-  const txHash = await clients.wallet.sendTransaction({ account, to, data, chain: clients.wallet.chain });
-  const receipt = await clients.public.waitForTransactionReceipt({ hash: txHash });
+  const txHash = await broadcast(clients, { to, data });
+
+  let receipt;
+  try {
+    receipt = await clients.public.waitForTransactionReceipt({
+      hash: txHash,
+      timeout: opts.receiptTimeoutMs ?? 60_000,
+    });
+  } catch (e) {
+    // The transfer is in flight; the hash is the only evidence there is.
+    return { txHash, settlement: "pending", pendingReason: describeError(e) };
+  }
+  if (receipt.transactionHash !== txHash) {
+    // A same-nonce transaction from the facilitator superseded ours: this one
+    // can never land, so the authorization is still unspent.
+    throw new Error(`settle: transaction ${txHash} was replaced before inclusion`);
+  }
   if (receipt.status !== "success") {
     throw new Error(`settle: transaction ${txHash} reverted`);
   }
-  return { txHash };
+  return { txHash, settlement: "confirmed" };
+}
+
+/**
+ * Send the settlement transaction and return its hash. With a local signer the
+ * hash is known before the broadcast, so a failed send is checked against the
+ * node once: if the transaction is already there (the response was lost and
+ * viem's retry was told "already known"), it is in flight, not failed.
+ */
+async function broadcast(clients: SettleClients, tx: { to: Address; data: Hex }): Promise<Hex> {
+  const account = clients.wallet.account;
+  if (!account) throw new Error("settle: facilitator wallet client has no account");
+  const chain = clients.wallet.chain;
+
+  if (account.type !== "local" || !account.signTransaction) {
+    return clients.wallet.sendTransaction({ account, chain, ...tx });
+  }
+  const request = await clients.wallet.prepareTransactionRequest({ account, chain, ...tx });
+  const serialized = await account.signTransaction(request as never, {
+    serializer: chain?.serializers?.transaction,
+  });
+  const txHash = keccak256(serialized);
+  try {
+    await clients.wallet.sendRawTransaction({ serializedTransaction: serialized });
+  } catch (e) {
+    const known = await clients.public.getTransaction({ hash: txHash }).catch(() => null);
+    if (!known) throw e;
+  }
+  return txHash;
 }

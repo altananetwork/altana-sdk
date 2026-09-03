@@ -1,6 +1,7 @@
 # Changelog
 
-Notable changes to `@altananetwork/sdk` and `@altananetwork/mcp`.
+Notable changes to `@altananetwork/sdk`, `@altananetwork/mcp` and
+`@altananetwork/x402-server`.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions below are the `@altananetwork/sdk` version; the matching
@@ -26,6 +27,24 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
   Fee-token requests get an extra hint that relay fees are paid in the
   native currency (BNB), not `$U`. The execute and errors docs document the
   fee model. No behavior change to successful calls. (#72)
+
+- **`@altananetwork/x402-server`: a payment whose receipt could not be read is
+  no longer reported as failed.** When the settlement transaction was broadcast
+  but the RPC failed to return its receipt (error or timeout), the merchant
+  answered 402 "settlement failed" with a fresh challenge and forgot the
+  authorization. Every x402 buyer answers a fresh challenge by signing a new
+  authorization, so the buyer paid twice for one request, and the first
+  transaction hash was discarded. Settlement now returns
+  `settlement: "pending"` with the hash once a transaction is out, and the
+  merchant answers 200 with that receipt; the same authorization sent again
+  while pending is re-checked and answered with the same settlement instead of
+  a replay rejection. The same classification applies when the broadcast
+  response itself is lost and the node reports the transaction as already
+  known. Receipt waits are bounded by the new `settleTimeoutMs` option
+  (default 60s), `clients` lets a merchant inject its own viem clients, and
+  settlement error text no longer embeds the facilitator's RPC URL.
+  Reproduced and covered on a BNB-mainnet fork in `fork-x402-server`, which
+  now runs in CI. Reported in #76.
 
 ## [0.9.0] - 2026-09-02
 

@@ -111,5 +111,6 @@ so the envelope carries one.
 
 ## Notes
 
+- **Pay once per call.** `fetchWithX402` signs one authorization and retries once. If the merchant answers that retry with another 402, the settlement failed on its side and the response is returned to you unchanged. Do not loop back into `fetchWithX402` blindly: a merchant that reports "failed" for a transfer it did broadcast would collect twice. Altana's own merchant package never does this (a broadcast payment is answered 200 with a pending receipt), but before re-paying a third-party merchant, check the first authorization's on-chain state.
 - **Browser limitation.** Third-party x402 endpoints often omit `X-PAYMENT` from CORS `Access-Control-Allow-Headers`, so a browser can't POST the payment. Run `fetchWithX402` server-side.
 - The signature is a 98-byte ERC-1271 envelope, not an EOA signature — see [Off-chain signatures](/concepts/off-chain-signatures). A facilitator must verify via `isValidSignature`.
