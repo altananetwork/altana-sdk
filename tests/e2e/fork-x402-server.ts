@@ -14,6 +14,9 @@
  *      `fetchWithX402` (permit2-exact witness on USDT, ERC-1271 signature).
  *      The merchant settles via `Permit2.permitWitnessTransferFrom`.
  *   4. Replay of buyer A's header must be refused.
+ *   5. Receipt read fails after the broadcast (#76): the merchant must answer
+ *      200 with a pending receipt, never a fresh challenge, and the buyer's
+ *      re-ask must not settle again. Exactly one transfer on chain.
  *
  * Run: bun run fork:x402-server   (from tests/e2e)
  */
@@ -49,6 +52,7 @@ const BSC_RPC = process.env.BSC_FORK_RPC_URL ?? "https://bsc-rpc.publicnode.com"
 const ANVIL_PORT = 8549;
 const ANVIL_URL = `http://127.0.0.1:${ANVIL_PORT}`;
 const HTTP_PORT = 8791;
+const PROXY_PORT = 8792;
 const PRICE = 200_000_000_000_000_000n; // 0.2 tokens (18 dec)
 
 const ERC20_ABI = [
@@ -95,6 +99,7 @@ async function main() {
   log(`\n▶ Booting anvil BNB fork (${ANVIL_URL}) ...`);
   const anvil = Bun.spawn(["anvil", "--fork-url", BSC_RPC, "--port", String(ANVIL_PORT), "--silent"], { stdout: "ignore", stderr: "ignore" });
   let server: ReturnType<typeof Bun.serve> | undefined;
+  let proxy: ReturnType<typeof Bun.serve> | undefined;
 
   try {
     await waitForAnvil();
@@ -121,14 +126,45 @@ async function main() {
       chain: bsc,
     });
 
+    // A pass-through RPC in front of anvil whose only fault, when armed, is
+    // failing `eth_getTransactionReceipt` with a JSON-RPC error: the "RPC
+    // hiccup" of #76. Everything else (including eth_getTransactionByHash,
+    // which viem's replacement check needs) goes straight through.
+    let failReceipts = false;
+    proxy = Bun.serve({
+      port: PROXY_PORT,
+      async fetch(req) {
+        const body = await req.text();
+        const rpc = JSON.parse(body || "{}");
+        if (failReceipts && !Array.isArray(rpc) && rpc.method === "eth_getTransactionReceipt") {
+          return Response.json({ jsonrpc: "2.0", id: rpc.id, error: { code: -32000, message: "receipt read unavailable" } });
+        }
+        const up = await fetch(ANVIL_URL, { method: "POST", headers: { "content-type": "application/json" }, body });
+        return new Response(await up.text(), { status: up.status, headers: { "content-type": "application/json" } });
+      },
+    });
+    const flakyMerchant = createX402Merchant({
+      chainId: 56,
+      payTo: merchantAddr,
+      price: PRICE,
+      rails: [{ rail: "eip3009", token: U }],
+      maxTimeoutSeconds: 600,
+      resource: `http://localhost:${HTTP_PORT}/audit-flaky-rpc`,
+      facilitator,
+      rpcUrl: `http://127.0.0.1:${PROXY_PORT}`,
+      chain: bsc,
+      settleTimeoutMs: 15_000,
+    });
+
     log("▶ Starting merchant service on :" + HTTP_PORT + " (0.2 $U / 0.2 USDT per call) ...");
     server = Bun.serve({
       port: HTTP_PORT,
       async fetch(req) {
-        const { response, receipt } = await merchant.guard(req);
+        const m = new URL(req.url).pathname === "/audit-flaky-rpc" ? flakyMerchant : merchant;
+        const { response, receipt } = await m.guard(req);
         if (response) return response;
         return new Response(
-          JSON.stringify({ data: "🔮 paid capability output", settledTx: receipt!.txHash }),
+          JSON.stringify({ data: "🔮 paid capability output", settledTx: receipt!.txHash, settlement: receipt!.settlement }),
           { status: 200, headers: { "content-type": "application/json" } },
         );
       },
@@ -196,6 +232,40 @@ async function main() {
     assert(replayRes.status === 402, "replayed authorization is refused");
     log("  ✓ replay refused");
 
+    // ════ #76: receipt read fails after the broadcast. ════
+    log("\n▶ Receipt read fails after broadcast (#76) ...");
+    const signStudio = async (nonce: `0x${string}`) => {
+      const t = Math.floor(Date.now() / 1000);
+      const a = { from: studioBuyer.address, to: accepted.payTo, value: accepted.amount, validAfter: String(t - 30), validBefore: String(t + 600), nonce };
+      const sig = await studioBuyer.signTypedData(
+        buildEip3009TypedData({ chainId: 56, token: U.address, name: accepted.extra.name, version: accepted.extra.version, from: a.from, to: a.to, value: BigInt(a.value), validAfter: BigInt(a.validAfter), validBefore: BigInt(a.validBefore), nonce }) as never,
+      );
+      return Buffer.from(JSON.stringify({ x402Version: 2, resource: challenge.resource, accepted, payload: { signature: sig, authorization: a } })).toString("base64");
+    };
+    const flakyHeader = await signStudio(toHex(crypto.getRandomValues(new Uint8Array(32))));
+    const flakyBefore = await balanceOf(U.address, merchantAddr);
+
+    failReceipts = true;
+    const flakyRes = await fetch(`http://localhost:${HTTP_PORT}/audit-flaky-rpc`, { headers: { "X-PAYMENT": flakyHeader } });
+    const flakyBody: any = await flakyRes.json();
+    failReceipts = false;
+    assert(flakyRes.status === 200, `broadcast payment is not answered with a challenge (got ${flakyRes.status}: ${JSON.stringify(flakyBody)})`);
+    assert(flakyBody.settlement === "pending", `receipt reports pending (got ${flakyBody.settlement})`);
+    await publicClient.waitForTransactionReceipt({ hash: flakyBody.settledTx });
+    assert((await balanceOf(U.address, merchantAddr)) - flakyBefore === PRICE, "exactly one transfer landed");
+    log(`  ✓ 200 + pending receipt (tx ${String(flakyBody.settledTx).slice(0, 14)}…), one transfer on-chain`);
+
+    // The buyer never saw that 200 and asks again: same payment, now confirmed, no new transfer.
+    const reaskRes = await fetch(`http://localhost:${HTTP_PORT}/audit-flaky-rpc`, { headers: { "X-PAYMENT": flakyHeader } });
+    const reaskBody: any = await reaskRes.json();
+    assert(reaskRes.status === 200 && reaskBody.settlement === "confirmed" && reaskBody.settledTx === flakyBody.settledTx, `re-ask returns the same settlement confirmed (got ${reaskRes.status}: ${JSON.stringify(reaskBody)})`);
+    assert((await balanceOf(U.address, merchantAddr)) - flakyBefore === PRICE, "re-ask did not settle again");
+    log("  ✓ re-ask → 200 confirmed, same tx, still one transfer");
+
+    const thirdRes = await fetch(`http://localhost:${HTTP_PORT}/audit-flaky-rpc`, { headers: { "X-PAYMENT": flakyHeader } });
+    assert(thirdRes.status === 402, "further replay of a confirmed authorization is refused");
+    log("  ✓ replay after confirmation refused");
+
     // ════ Buyer B: Altana smart account paying permit2-exact USDT. ════
     log("\n▶ Buyer B (Altana smart account, permit2-exact USDT, ERC-1271) ...");
     const walletSigner = createPrivateKeySigner();
@@ -230,9 +300,10 @@ async function main() {
     assert(merchantTAfter - merchantTBefore === PRICE, `merchant received ${fmt(PRICE, "USDT")} (got ${fmt(merchantTAfter - merchantTBefore, "USDT")})`);
     log(`  ✓ 200 + ${fmt(PRICE, "USDT")} settled on-chain via permitWitnessTransferFrom (tx ${body.settledTx.slice(0, 14)}…)`);
 
-    log("\nResult: PASS ✓ — one merchant, both buyer families, real on-chain settlement.\n");
+    log("\nResult: PASS ✓ — one merchant, both buyer families, real on-chain settlement, no double charge on a flaky RPC.\n");
   } finally {
     server?.stop(true);
+    proxy?.stop(true);
     anvil.kill();
   }
 }

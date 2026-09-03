@@ -99,8 +99,8 @@ Bun.serve({
 
     const { response, receipt } = await merchant.guard(req);
     if (response) return response;
-    console.log(`✓ settled ${receipt!.amount} from ${receipt!.payer} (${receipt!.rail}) tx ${receipt!.txHash}`);
-    return Response.json({ data: "🔮 paid capability output", settledTx: receipt!.txHash });
+    console.log(`✓ ${receipt!.settlement} ${receipt!.amount} from ${receipt!.payer} (${receipt!.rail}) tx ${receipt!.txHash}`);
+    return Response.json({ data: "🔮 paid capability output", settledTx: receipt!.txHash, settlement: receipt!.settlement });
   },
 });
 
