@@ -11,7 +11,7 @@ import { Eyebrow } from '../../components/Eyebrow'
 
 Two different things can go wrong, and they surface differently.
 
-**Failures before submission throw.** Bad configuration, an unsupported signer, a chain with no relay. These are JavaScript `Error`s with a message string. Catch them with `try/catch`.
+**Failures before submission throw.** Bad configuration, an unsupported signer, a chain with no relay, or a relay rejection (e.g. an unaccepted `feeToken`). These are JavaScript `Error`s with a message string. Catch them with `try/catch`. When the relay rejects a request, the thrown error now **leads with the relay's own reason** (e.g. `The relay rejected the request to prepare the call: fee token not supported: 0x…`) instead of a generic "Invalid parameters"; the original error is preserved on `.cause`.
 
 **Failures at or after submission do not throw.** [`execute`](/sdk/execute) and [`revokeSession`](/sdk/revoke-session) return an `ExecuteResult` with `status: "FAILED"`. Nothing is raised. If you only wrap calls in `try/catch`, you will not notice these.
 

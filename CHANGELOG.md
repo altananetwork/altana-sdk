@@ -12,6 +12,21 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 > reconstructed from commit history after the fact, so they summarize what
 > shipped rather than itemizing every change.
 
+## [Unreleased]
+
+### Fixed
+
+- **Relay rejections now lead with the relay's actual reason.** A rejected
+  request (for example an unaccepted `feeToken`) used to surface only
+  viem's generic `Invalid parameters were provided to the RPC method`,
+  while the relay's real explanation sat several `.cause` levels deep where
+  nobody found it. The submit path now extracts that reason and throws with
+  it up front — e.g. `The relay rejected the request to prepare the call:
+  fee token not supported: 0x…` — keeping the original error on `.cause`.
+  Fee-token requests get an extra hint that relay fees are paid in the
+  native currency (BNB), not `$U`. The execute and errors docs document the
+  fee model. No behavior change to successful calls. (#72)
+
 ## [0.9.0] - 2026-09-02
 
 `@altananetwork/mcp` 0.9.0
