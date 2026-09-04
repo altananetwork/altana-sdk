@@ -10,6 +10,7 @@ export type {
   ClientRevokeSessionOptions,
   ClientRegisterSessionKeyOptions,
   ClientBalancesOptions,
+  ClientHoldingsOptions,
 } from "./client.js";
 
 export type { CreateWalletOptions, CreateWalletResult } from "./createWallet.js";
@@ -17,6 +18,7 @@ export type { CreatePasskeyWalletOptions } from "./createPasskeyWallet.js";
 export type { RecoverFromPasskeyOptions } from "./recoverFromPasskey.js";
 export type { ExecuteOptions, Call } from "./execute.js";
 export type { BalancesResult, TokenBalance } from "./balances.js";
+export type { HoldingsResult } from "./holdings.js";
 // BEP-677 scaled-UI-amount building blocks.
 export {
   applyUiMultiplier,

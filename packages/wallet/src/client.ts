@@ -31,6 +31,7 @@ import { revokeSession as revokeSessionImpl } from "./revokeSession.js";
 import { registerSessionKey as registerSessionKeyImpl } from "./registerSessionKey.js";
 import type { RegisterSessionKeyResult } from "./registerSessionKey.js";
 import { balances as balancesImpl, type BalancesResult } from "./balances.js";
+import { holdings as holdingsImpl, type HoldingsResult } from "./holdings.js";
 import {
   signOrder as signOrderImpl,
   signOrderTypedData as signOrderTypedDataImpl,
@@ -119,6 +120,12 @@ export type ClientBalancesOptions = {
   tokens?: readonly Address[];
 } & ChainSelector;
 
+export type ClientHoldingsOptions = {
+  wallet: Wallet | Address;
+  /** Keep tokens the relay lists but whose live balance is zero. Default false. */
+  includeZero?: boolean;
+} & ChainSelector;
+
 export type ClientApproveSignatureCheckerOptions = {
   wallet: Wallet;
   signer: Signer;
@@ -164,6 +171,11 @@ export type Client = {
     opts: ClientRegisterSessionKeyOptions,
   ): Promise<RegisterSessionKeyResult>;
   balances(opts: ClientBalancesOptions): Promise<BalancesResult>;
+  /**
+   * Discover which tokens the wallet holds on a chain. Asks the Altana relay
+   * for the wallet's assets, then reads each one live (BEP-677 aware).
+   */
+  holdings(opts: ClientHoldingsOptions): Promise<HoldingsResult>;
 
   /** Sign a protocol digest with a session key (offline, chain-independent). */
   signOrder(opts: { session: Session; appDigest: Hex }): Promise<Hex>;
@@ -303,6 +315,13 @@ export function createClient(opts: CreateClientOptions): Client {
       return balancesImpl(o.wallet, {
         network: resolve(o.chainId),
         ...(o.tokens !== undefined ? { tokens: o.tokens } : {}),
+      });
+    },
+
+    holdings(o) {
+      return holdingsImpl(o.wallet, {
+        network: resolve(o.chainId),
+        ...(o.includeZero !== undefined ? { includeZero: o.includeZero } : {}),
       });
     },
 
