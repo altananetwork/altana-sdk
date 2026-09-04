@@ -13,6 +13,7 @@
  *
  * Run:  bun run live-holdings.ts
  *       HOLDER=0x… bun run live-holdings.ts
+ *       RELAY_URL=http://127.0.0.1:9219 bun run live-holdings.ts   (a local relay)
  */
 import type { Address } from "viem";
 import { createClient, BNB } from "@altananetwork/sdk";
@@ -25,8 +26,10 @@ function fail(msg: string): never {
   process.exit(1);
 }
 
-const client = createClient({ chains: [BNB] });
-console.log(`holdings for ${HOLDER} on chain ${BNB.chainId} via ${BNB.relayUrl}`);
+// RELAY_URL points the check at a relay other than production (e.g. a local build).
+const network = process.env.RELAY_URL ? { ...BNB, relayUrl: process.env.RELAY_URL } : BNB;
+const client = createClient({ chains: [network] });
+console.log(`holdings for ${HOLDER} on chain ${network.chainId} via ${network.relayUrl}`);
 
 let res: Awaited<ReturnType<typeof client.holdings>>;
 try {
@@ -58,5 +61,6 @@ if (!spcxb.ok) fail(`SPCXB was listed but its read failed: ${spcxb.error}`);
 if (spcxb.raw === 0n) fail("SPCXB was listed but its live raw balance is 0");
 if (!spcxb.display || spcxb.display === "0") fail(`SPCXB has no display value (got ${JSON.stringify(spcxb.display)})`);
 
-console.log(`\nSPCXB: ${JSON.stringify({ ...spcxb, raw: spcxb.raw.toString() }, null, 2)}`);
+const bigintSafe = (_k: string, v: unknown) => (typeof v === "bigint" ? v.toString() : v);
+console.log(`\nSPCXB: ${JSON.stringify(spcxb, bigintSafe, 2)}`);
 console.log("\nOK: SPCXB discovered with a non-zero balance and a display value.");
