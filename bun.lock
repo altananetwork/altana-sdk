@@ -69,7 +69,7 @@
     },
     "packages/mcp": {
       "name": "@altananetwork/mcp",
-      "version": "0.9.0",
+      "version": "0.10.0",
       "bin": {
         "altana-mcp": "./src/index.ts",
       },
@@ -86,7 +86,7 @@
     },
     "packages/wallet": {
       "name": "@altananetwork/sdk",
-      "version": "0.9.0",
+      "version": "0.10.0",
       "dependencies": {
         "ox": "^0.14.0",
         "porto": "0.2.37",
@@ -98,9 +98,9 @@
     },
     "packages/x402-server": {
       "name": "@altananetwork/x402-server",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "dependencies": {
-        "@altananetwork/sdk": "^0.7.0",
+        "@altananetwork/sdk": "^0.10.0",
         "viem": "^2.21.0",
       },
       "devDependencies": {
@@ -1680,8 +1680,6 @@
     "zustand": ["zustand@5.0.13", "", { "peerDependencies": { "@types/react": ">=18.0.0", "immer": ">=9.0.6", "react": ">=18.0.0", "use-sync-external-store": ">=1.2.0" }, "optionalPeers": ["@types/react", "immer", "react", "use-sync-external-store"] }, "sha512-efI2tVaVQPqtOh114loML/Z80Y4NP3yc+Ff0fYiZJPauNeWZeIp/bRFD7I9bfmCOYBh/PHxlglQ9+wvlwnPikQ=="],
 
     "zwitch": ["zwitch@2.0.4", "", {}, "sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A=="],
-
-    "@altananetwork/x402-server/@altananetwork/sdk": ["@altananetwork/sdk@0.7.1", "", { "dependencies": { "ox": "^0.14.0", "porto": "0.2.37", "viem": "^2.21.0" } }, "sha512-C1XCliQl4NRiHs5LwNtU2BmjqfB2MZWYR+e31ZmsH8fGs7l0bFiA/w5ufmzWj6LaXUYLQnpt6lI5kIQthNHY4Q=="],
 
     "@babel/core/debug": ["debug@4.4.3", "", { "dependencies": { "ms": "^2.1.3" } }, "sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA=="],
 
