@@ -98,8 +98,10 @@ There is no error class and no error code: every one of these is a plain `Error`
 
 | Message | Cause |
 |---|---|
-| `No Altana relay serves chain <id> (<name>). ...` | The chain has no relay and cannot execute. `BASE` is read-only in this sense: it is an L2 cache target, not an execution chain. |
+| `No Altana relay serves chain <id> (<name>). ...` | The chain has no relay and cannot execute. `BASE` is read-only in this sense: it is an L2 cache target, not an execution chain. [`holdings`](/sdk/balances#discovering-holdings) throws this too, since discovery goes through the relay. |
 | `Balance for <address> did not reach <n> wei within <ms>ms` | A funding wait timed out. |
+| `The relay could not list holdings for <address> on chain <id>: <reason>` | [`holdings`](/sdk/balances#discovering-holdings): the relay's `wallet_getAssets` call failed. `<reason>` is the relay's own message (or the transport error); the original error is on `.cause`. |
+| `The relay returned a malformed wallet_getAssets response for <address> on chain <id>: <detail>` | [`holdings`](/sdk/balances#discovering-holdings): the relay answered, but not in the ERC-7811 shape the SDK expects. `<detail>` names the offending part. |
 
 ### Signers
 

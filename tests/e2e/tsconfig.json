@@ -5,7 +5,7 @@
     "allowImportingTsExtensions": false,
     "types": ["node", "bun"]
   },
-  "include": ["./fork-*.ts", "./demo-*.ts"],
+  "include": ["./fork-*.ts", "./demo-*.ts", "./live-*.ts"],
   "comment": "smoke-*.ts are parked: they target a Sepolia testnet config the SDK no longer exports (only ETHEREUM/BNB/BASE). Re-include once a testnet NetworkConfig returns.",
   "exclude": ["./spike-*.ts", "./smoke-*.ts"]
 }

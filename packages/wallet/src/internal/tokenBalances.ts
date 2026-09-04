@@ -113,6 +113,22 @@ type ReadResult = { status: "success" | "failure"; result?: unknown };
 const CALLS_PER_TOKEN = 9;
 
 /**
+ * Calldata budget per aggregate3 call, in bytes of inner calldata (viem's
+ * `batchSize` unit). One token row is 132 bytes (two 36-byte calls with an
+ * argument, seven 4-byte selector-only calls), so 6 KB fits ~46 tokens —
+ * comfortably inside what public RPCs accept for a single eth_call.
+ */
+export const MULTICALL_BATCH_SIZE = 6_144;
+/**
+ * Tokens per chunk. Sized so a chunk (header + rows) stays under
+ * MULTICALL_BATCH_SIZE and therefore maps to exactly one aggregate3 call;
+ * viem would otherwise split it and fire the pieces all at once.
+ */
+export const TOKENS_PER_CHUNK = 40;
+/** Chunks in flight at once against the public RPC. */
+export const CHUNK_CONCURRENCY = 3;
+
+/**
  * Executes the reads via multicall3 when the chain supports it, otherwise
  * degrades to individual eth_calls. Both paths yield the same result shape.
  */
@@ -124,6 +140,7 @@ async function safeReads(
     return (await publicClient.multicall({
       contracts: calls as never,
       allowFailure: true,
+      batchSize: MULTICALL_BATCH_SIZE,
     })) as ReadResult[];
   }
   return Promise.all(
@@ -167,6 +184,31 @@ export async function readTokenBalances(
 ): Promise<TokenBalance[]> {
   if (tokens.length === 0) return [];
 
+  // Chunk the token list so each multicall is one bounded aggregate3, and run
+  // at most CHUNK_CONCURRENCY chunks at a time: a wallet holding hundreds of
+  // tokens must not turn into a burst of parallel eth_calls against a public
+  // endpoint. Results are concatenated in input order.
+  const chunks: Address[][] = [];
+  for (let i = 0; i < tokens.length; i += TOKENS_PER_CHUNK) {
+    chunks.push(tokens.slice(i, i + TOKENS_PER_CHUNK));
+  }
+  const out: TokenBalance[] = [];
+  for (let i = 0; i < chunks.length; i += CHUNK_CONCURRENCY) {
+    const group = chunks.slice(i, i + CHUNK_CONCURRENCY);
+    const results = await Promise.all(
+      group.map((chunk) => readTokenChunk(publicClient, owner, chunk)),
+    );
+    for (const r of results) out.push(...r);
+  }
+  return out;
+}
+
+/** One chunk: a single speculative multicall (header + 9 calls per token). */
+async function readTokenChunk(
+  publicClient: PublicClient,
+  owner: Address,
+  tokens: readonly Address[],
+): Promise<TokenBalance[]> {
   const multicall3 = publicClient.chain?.contracts?.multicall3?.address;
   const calls: ReadCall[] = [
     // Header: block timestamp atomic with the reads, so pending-multiplier
