@@ -23,7 +23,8 @@
     "fork:erc8183-buyer": "bun run fork-erc8183.ts",
     "fork:erc8004": "bun run fork-erc8004.ts",
     "demo:hire-studio-agent": "bun run demo-hire-studio-agent.ts",
-    "live:erc8004-testnet": "bun run live-erc8004-testnet.ts"
+    "live:erc8004-testnet": "bun run live-erc8004-testnet.ts",
+    "live:holdings": "bun run live-holdings.ts"
   },
   "dependencies": {
     "@altananetwork/sdk": "workspace:*",

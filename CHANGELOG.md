@@ -15,6 +15,22 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Added
+
+- **`client.holdings()` discovers which tokens a wallet holds.** `balances`
+  needs an explicit token list; `holdings` asks the Altana relay for the
+  wallet's assets on the chain (`wallet_getAssets`) and then reads every
+  ERC-20 it names live, so the entries are the same `TokenBalance` shape as
+  `balances`, BEP-677 display scaling included. Zero balances are dropped
+  unless `includeZero: true`; tokens whose reads fail stay in the list as
+  `ok: false`. No configuration: the relay already attached to the chain is
+  used, so there is no indexer key and no token list to maintain. The MCP
+  `wallet_balance` tool gains `discover: true`, which returns the discovered
+  list flagged `discovered: true`, and the `wallet-balance` slash command
+  now shows every token the wallet holds. Token reads are also chunked
+  (40 tokens per multicall, at most 3 in flight) so a wallet with hundreds
+  of tokens does not burst-fire calls at a public RPC. (#78)
+
 ### Fixed
 
 - **Relay rejections now lead with the relay's actual reason.** A rejected
