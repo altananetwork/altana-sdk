@@ -15,6 +15,10 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-04
+
+`@altananetwork/mcp` 0.10.0 and `@altananetwork/x402-server` 0.3.0 ship with this release.
+
 ### Added
 
 - **`client.holdings()` discovers which tokens a wallet holds.** `balances`
@@ -316,6 +320,7 @@ Let the type be inferred, or annotate with `GrantSessionResult`.
 First public release: agentic wallets, session keys, the Keystore registry,
 the MCP servers, and the documentation site.
 
+[0.10.0]: https://github.com/altananetwork/altana-sdk/releases
 [0.9.0]: https://github.com/altananetwork/altana-sdk/releases
 [0.8.0]: https://github.com/altananetwork/altana-sdk/releases
 [0.7.1]: https://github.com/altananetwork/altana-sdk/releases
