@@ -26,7 +26,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { VERSION } from "./version.js";
-import { createPublicClient, formatEther, formatUnits, http, parseEther, parseUnits, type Address, type Hex } from "viem";
+import { formatBalance } from "./balanceFormat.js";
+import { createPublicClient, formatUnits, http, parseEther, parseUnits, type Address, type Hex } from "viem";
 import { keccak256 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import {
@@ -325,72 +326,58 @@ tool(
 );
 
 // wallet_balance — native (and optionally ERC-20) balances for a named wallet.
+// `tokens` reads an explicit list; `discover` asks the Altana relay which
+// tokens the wallet holds and reads those. The two are alternatives.
 tool(
   "wallet_balance",
   {
     title: "Wallet balance",
     description:
       "Native token balance for a wallet, by name. Pass `tokens` (ERC-20 " +
-      "addresses) to include token balances; BEP-677 scaled-UI-amount tokens " +
-      "are detected via ERC-165 and their `display` value is scaled by " +
-      "uiMultiplier automatically (raw amounts stay unscaled).",
-    inputSchema: { name: z.string(), tokens: z.array(z.string()).optional() },
+      "addresses) to include specific token balances, or `discover: true` to " +
+      "list every ERC-20 the wallet holds (discovered through the Altana relay, " +
+      "zero balances omitted) — the result then carries `discovered: true`. " +
+      "BEP-677 scaled-UI-amount tokens are detected via ERC-165 and their " +
+      "`display` value is scaled by uiMultiplier automatically (raw amounts " +
+      "stay unscaled). Use `tokens` or `discover`, not both.",
+    inputSchema: {
+      name: z.string(),
+      tokens: z.array(z.string()).optional(),
+      discover: z.boolean().optional(),
+    },
   },
-  async ({ name, tokens }: { name: string; tokens?: string[] }) => {
+  async ({ name, tokens, discover }: { name: string; tokens?: string[]; discover?: boolean }) => {
+    if (discover && tokens !== undefined) {
+      throw new Error(
+        "wallet_balance: pass either `tokens` (explicit ERC-20 list) or `discover: true` (list what the wallet holds), not both.",
+      );
+    }
     const key = await getWalletKey(name);
-    const res = await client.balances({
-      wallet: key.address,
-      ...(tokens !== undefined ? { tokens: tokens.map(assertAddress) } : {}),
-    });
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(
-            {
+    const payload = discover
+      ? await client.holdings({ wallet: key.address }).then((res) =>
+          formatBalance({
+            name,
+            address: key.address,
+            native: res.native,
+            tokens: res.tokens,
+            discovered: true,
+          }),
+        )
+      : await client
+          .balances({
+            wallet: key.address,
+            ...(tokens !== undefined ? { tokens: tokens.map(assertAddress) } : {}),
+          })
+          .then((res) =>
+            formatBalance({
               name,
               address: key.address,
-              balanceWei: res.native.toString(),
-              balanceEth: formatEther(res.native),
-              ...(res.tokens !== undefined
-                ? {
-                    tokens: res.tokens.map((t) =>
-                      t.ok
-                        ? {
-                            address: t.address,
-                            symbol: t.symbol,
-                            decimals: t.decimals,
-                            raw: t.raw.toString(),
-                            display: t.display,
-                            ...(t.scaled
-                              ? {
-                                  scaled: {
-                                    uiMultiplier: t.scaled.uiMultiplier.toString(),
-                                    scaledRaw: t.scaled.scaledRaw.toString(),
-                                    ...(t.scaled.pending
-                                      ? {
-                                          pending: {
-                                            newUIMultiplier:
-                                              t.scaled.pending.newUIMultiplier.toString(),
-                                            effectiveAt:
-                                              t.scaled.pending.effectiveAt.toString(),
-                                          },
-                                        }
-                                      : {}),
-                                  },
-                                }
-                              : {}),
-                          }
-                        : { address: t.address, error: t.error },
-                    ),
-                  }
-                : {}),
-            },
-            null,
-            2,
-          ),
-        },
-      ],
+              native: res.native,
+              ...(res.tokens !== undefined ? { tokens: res.tokens } : {}),
+            }),
+          );
+    return {
+      content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
     };
   },
 );
@@ -1558,7 +1545,7 @@ prompt(
             "**Start here**",
             "- `/altana-agentic-wallet:create-wallet` — Make a new wallet",
             "- `/altana-agentic-wallet:list-wallets` — See what wallets I have",
-            "- `/altana-agentic-wallet:wallet-balance` — Check a wallet's balance",
+            "- `/altana-agentic-wallet:wallet-balance` — Check a wallet's balance (native plus every token it holds)",
             "",
             "**Hire and fire AI agents**",
             "- `/altana-agentic-wallet:grant-session` — Give an agent scoped access to a wallet",
@@ -1629,7 +1616,7 @@ prompt(
   "wallet-balance",
   {
     title: "Wallet balance",
-    description: "Check the native token balance of a Altana wallet by name.",
+    description: "Check an Altana wallet's balances by name: native coin plus every token it holds.",
     argsSchema: { name: z.string().optional() },
   },
   ({ name }: { name?: string }) => ({
@@ -1638,7 +1625,11 @@ prompt(
         role: "user",
         content: {
           type: "text",
-          text: `Call wallet_balance for wallet "${name ?? "default"}". Show the address and balance in ETH.`,
+          text:
+            `Call wallet_balance for wallet "${name ?? "default"}" with discover: true. ` +
+            `Show the address, the native balance (balanceEth, in the chain's native coin), ` +
+            `and one line per token with its symbol and display amount. ` +
+            `If the tool errors because the chain has no relay, call it again without discover and show the native balance only.`,
         },
       },
     ],

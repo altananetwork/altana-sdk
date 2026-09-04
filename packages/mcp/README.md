@@ -46,6 +46,7 @@ One server process serves one chain, so restart with a different `ALTANA_CHAIN` 
 - **Identity:** `about_altana`
 - **Bootstrap:** `create_wallet`
 - **Inspect:** `list_wallets`, `wallet_balance`, `wallet_verification`, `verify_authorization`, `list_sessions`
+  - `wallet_balance` reads the native balance; pass `tokens` for specific ERC-20s, or `discover: true` to list every token the wallet holds (found through the Altana relay, zero balances omitted, result flagged `discovered: true`). No extra configuration: discovery uses the relay already selected by `ALTANA_CHAIN`.
 - **Operate:** `wallet_execute`, `grant_session`, `revoke_session`, `session_execute`
 - **Skills:** `search_skills`, `get_skill`
 
