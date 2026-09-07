@@ -991,7 +991,15 @@ tool(
       provider: z.string().describe("The seller agent's wallet address"),
       task: z.string().describe("The job description the seller will fulfil (≤4096 bytes)"),
       budgetU: z.string().describe("Budget in $U, decimal (e.g. \"0.2\")"),
-      deadlineMinutes: z.number().optional(),
+      deadlineMinutes: z
+        .number()
+        .positive()
+        .optional()
+        .describe(
+          "The seller's submission window in minutes (default 30). The bound policy's dispute " +
+            "window is added on top. Providers running bnbagent < 0.4.6 assume a 24 h window on " +
+            "testnet: give them 1440 + the intended window or they skip the job.",
+        ),
     },
   },
   async ({
@@ -1014,7 +1022,7 @@ tool(
         provider: provider as Address,
         task,
         budget: parseUnits(budgetU, 18),
-        ...(deadlineMinutes ? { deadlineSeconds: deadlineMinutes * 60 } : {}),
+        ...(deadlineMinutes ? { deadlineSeconds: Math.round(deadlineMinutes * 60) } : {}),
       },
       { network: NETWORK },
     );

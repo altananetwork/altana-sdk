@@ -129,6 +129,7 @@ export {
   ERC8183_ADDRESSES,
   JOB_STATUS,
   erc8183Addresses,
+  erc8183ExpiredAt,
   buildHireCalls,
   buildClaimRefundCall,
   buildSubmitCall,

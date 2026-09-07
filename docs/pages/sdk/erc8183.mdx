@@ -39,12 +39,39 @@ intent**. The session-key path works too (`hireErc8183Agent(session, params,
 opts)`), so a scoped key with an on-chain spend limit caps what an autonomous
 agent can ever escrow.
 
+### Deadline and expiry
+
+The job's `expiredAt` (returned on the hire result) is
+
+```
+expiredAt = now + disputeWindow(bound policy) + deadlineSeconds
+```
+
+`deadlineSeconds` is the **seller's submission window** (default 1800, or
+`deadlineMinutes` on the MCP tool). The policy rejects any submission after
+`expiredAt - disputeWindow`, the dispute window then runs until `expiredAt`,
+and you can reclaim the escrow only **after** `expiredAt`. The SDK reads the
+dispute window from the same policy it binds with `registerJob`: 900 s on
+BSC testnet, 7 days on mainnet.
+
+:::warning
+**Providers on bnbagent < 0.4.6 skip short testnet jobs.** Those builds read
+their submit deadline from a stale testnet policy with a 24 h window, so a
+job whose `expiredAt - 86400` is already past is logged as
+`submit_deadline_passed` and never submitted; the escrow sits until
+`expiredAt`. A FUNDED job that reaches `EXPIRED` with `submittedAt = 0` is
+that signature. When hiring such a provider, pass
+`deadlineSeconds: 86400 + <intended window>` (e.g. `88200` for 30 minutes),
+or ask them to upgrade — 0.4.6 ships the correct policy. The provider-side
+bug is [bnbagent-sdk #83](https://github.com/bnb-chain/bnbagent-sdk/issues/83).
+:::
+
 ## Track the job and fetch the deliverable
 
 ```ts
 import { getErc8183Job, getErc8183DeliverableUrl } from "@altananetwork/sdk";
 
-const job = await getErc8183Job(BNB, jobId);       // OPEN → FUNDED → SUBMITTED → COMPLETED
+const job = await getErc8183Job(BNB, jobId);       // OPEN → FUNDED → SUBMITTED → COMPLETED (or EXPIRED)
 if (job.submittedAt > 0n) {
   const url = await getErc8183DeliverableUrl(BNB, jobId);
   const manifest = await (await fetch(url)).json(); // manifest.response.content
@@ -118,7 +145,7 @@ import { settleErc8183Job, buildClaimRefundCall } from "@altananetwork/sdk";
 
 await settleErc8183Job(wallet, signer, { jobId }, { network: BNB });          // release escrow (after the window)
 await settleErc8183Job(wallet, signer, { jobId, action: "dispute" }, opts);   // contest (inside the window)
-await execute(wallet, signer, buildClaimRefundCall(56, jobId), opts);         // full refund after expiry
+await execute(wallet, signer, buildClaimRefundCall(56, jobId), opts);         // full refund after expiredAt
 ```
 
 ## Contract registry

@@ -31,6 +31,24 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
   (40 tokens per multicall, at most 3 in flight) so a wallet with hundreds
   of tokens does not burst-fire calls at a public RPC. (#78)
 
+### Changed
+
+- **Hire expiry is documented and pinned, and the MCP deadline option is
+  described.** `hireErc8183Agent` sets `expiredAt = now + disputeWindow +
+  deadlineSeconds`; the formula is now the exported `erc8183ExpiredAt`,
+  covered by a unit test, and the ERC-8183 docs gain a "Deadline and
+  expiry" section: what the seller window means, the per-chain dispute
+  windows (900 s testnet, 7 days mainnet), when `claimRefund` opens, and
+  an interop warning that providers on bnbagent < 0.4.6 read a 24 h
+  testnet window and silently skip shorter jobs (pass
+  `deadlineSeconds: 86400 + <window>` or have them upgrade; upstream
+  bnbagent-sdk #83). The MCP tool's `deadlineMinutes` now carries a
+  description, must be positive, and is rounded to whole seconds
+  (a fractional value used to throw a `BigInt` RangeError).
+  `deadlineSeconds` must be a positive integer. The default padding is
+  unchanged on purpose: baking another SDK's stale 24 h constant into
+  ours would make testnet jobs diverge from the policy they bind. (#82)
+
 ### Fixed
 
 - **Relay rejections now lead with the relay's actual reason.** A rejected
