@@ -120,8 +120,9 @@ export {
   provisioningNetworks,
 } from "./internal/cachedRegistry.js";
 
-// Testnet faucet helper — funds an EOA with native tokens via the testnet
-// relay's faucet. Works only on networks whose relay exposes it (BSC testnet).
+// Funding helpers. `fundNative` is deprecated and always throws: the relay's
+// faucet mints ERC-20 fee tokens and cannot send native currency. Fund the
+// address from the chain's faucet (`faucetHint`) and poll `waitForBalance`.
 export { fundNative, waitForBalance } from "./internal/relay.js";
 
 // Relay fee tokens: what the relay accepts as fee payment on a chain, read
