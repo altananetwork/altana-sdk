@@ -49,6 +49,7 @@ import {
   ETHEREUM,
   BNB,
   BNB_TESTNET,
+  BNB_TESTNET_FAUCET_URL,
 } from "@altananetwork/sdk";
 import type { Signer, Wallet } from "@altananetwork/sdk";
 import {
@@ -288,7 +289,8 @@ tool(
               storedIn: "OS keychain (service: altana)",
               network: NETWORK.chain.name,
               nextSteps: [
-                `Send some funds to this address on ${NETWORK.chain.name}. Your smart agentic wallet will be activated automatically when you make your first transaction.`,
+                `Send some ${NETWORK.chain.nativeCurrency.symbol} to this address on ${NETWORK.chain.name}. The first transaction pays the KeyStore registration fee and the relay fee from that balance and activates the smart agentic wallet.` +
+                  (NETWORK.chainId === 97 ? ` Test BNB: ${BNB_TESTNET_FAUCET_URL}` : ""),
                 `BACK UP the private key. Open Keychain Access (macOS) or your platform's credential manager, find service "altana" / account "${walletName}", copy the password, store it in a password manager or encrypted file. If you lose your machine without a backup, the wallet is gone.`,
                 `Once funded, the wallet is ready — call wallet_balance, grant_session, wallet_execute, etc. by name "${walletName}".`,
               ],

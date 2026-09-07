@@ -126,18 +126,27 @@ export async function registerAccount(
   throw new Error(unsupportedSignerMessage(signer.type, "create a wallet"));
 }
 
-/** Fund an EOA with native tokens via the upstream relay's faucet (test networks only). */
+/** Where to get test BNB for chain 97. */
+export const BNB_TESTNET_FAUCET_URL = "https://testnet.bnbchain.org/faucet-smart";
+
+/**
+ * @deprecated Always throws. The Altana testnet relay's faucet only mints
+ * ERC-20 fee tokens (`wallet_addFaucetFunds` sends `mint(recipient, value)`
+ * calldata); a native request produced a zero-value transaction to `0x0` and
+ * this helper returned its hash as if the wallet had been funded. Get test
+ * BNB from {@link BNB_TESTNET_FAUCET_URL} and use `waitForBalance`. Will be
+ * removed in a later release.
+ */
 export async function fundNative(
-  client: ReturnType<typeof buildRelayClient>,
+  _client: ReturnType<typeof buildRelayClient>,
   address: Address,
-  amount: bigint,
+  _amount: bigint,
 ): Promise<{ transactionHash: Hex }> {
-  const result = await addFaucetFunds(client as any, {
-    address,
-    tokenAddress: NATIVE_TOKEN,
-    value: amount,
-  } as any);
-  return { transactionHash: result.transactionHash as Hex };
+  throw new Error(
+    `fundNative: the Altana testnet relay cannot fund native currency (its faucet only mints ERC-20 test tokens; ` +
+      `a native request sends nothing). Get test BNB at ${BNB_TESTNET_FAUCET_URL}, send it to ${address}, ` +
+      `then wait with waitForBalance.`,
+  );
 }
 
 /** Polls the public RPC until the address's balance reaches minBalance. */
@@ -340,6 +349,12 @@ export async function submitCalls(
   const prepared: any = await withRelayReason(
     () => prepareCalls(client, prepareParams),
     "prepare the call",
+    async () => ({
+      chainId: opts.network.chainId,
+      walletAddress,
+      nativeBalance: await buildPublicClient(opts.network).getBalance({ address: walletAddress }),
+      requiredNative: effectiveCalls.reduce((sum, c) => sum + (c.value ?? 0n), 0n),
+    }),
   );
 
   // Porto's signCalls dispatches by `key`: for secp256k1 / webauthn-p256
@@ -384,17 +399,76 @@ export async function submitCalls(
  * method"), where nobody finds it. Run a relay call through this so the real
  * reason leads the thrown error; the original is kept as `cause`.
  */
-async function withRelayReason<T>(fn: () => Promise<T>, doing: string): Promise<T> {
+async function withRelayReason<T>(
+  fn: () => Promise<T>,
+  doing: string,
+  loadHintContext?: () => Promise<RelayHintContext>,
+): Promise<T> {
   try {
     return await fn();
   } catch (err) {
     const reason = deepestRelayReason(err);
     if (!reason) throw err;
-    const hint = /fee token/i.test(reason)
-      ? " (the relay fee is paid in native currency, e.g. BNB — omit `feeToken` or set one the relay accepts; $U is for job escrow and x402, not relay fees)"
-      : "";
-    throw new Error(`The relay rejected the request to ${doing}: ${reason}${hint}`, { cause: err });
+    let ctx: RelayHintContext = {};
+    if (loadHintContext && isEmptyRevert(reason)) {
+      // Best effort: a public-RPC hiccup must not turn a relay error into a
+      // different error, so the un-hinted message is the fallback.
+      ctx = await loadHintContext().catch(() => ({}));
+    }
+    throw new Error(`The relay rejected the request to ${doing}: ${reason}${relayHint(reason, ctx)}`, { cause: err });
   }
+}
+
+/** What `relayHint` needs beyond the reason string; every field is optional. */
+export type RelayHintContext = {
+  chainId?: number;
+  walletAddress?: Address;
+  /** The wallet's native balance, read after the rejection. */
+  nativeBalance?: bigint;
+  /** Native value the intent's calls send, first-action registration fee included. */
+  requiredNative?: bigint;
+};
+
+/** Raw selectors, for the fee path: Orchestrator re-reverts only 32 bytes of return data. */
+const NO_SPEND_PERMISSIONS_SELECTOR = "0x5ee7e5b1";
+const EXCEEDED_SPEND_LIMIT_SELECTOR = "0x9054c912";
+
+function isEmptyRevert(reason: string): boolean {
+  return /^(intent reverted: ?)?0x$/i.test(reason.trim());
+}
+
+/**
+ * The parenthetical the SDK appends to a relay rejection so the message says
+ * what to do, not just what the contract reverted with. Pure: the caller
+ * supplies any chain reads in `ctx`. Returns "" when there is nothing to add.
+ */
+export function relayHint(reason: string, ctx: RelayHintContext = {}): string {
+  if (/fee token/i.test(reason)) {
+    return " (the relay fee is paid in native currency, e.g. BNB — omit `feeToken` or set one the relay accepts; $U is for job escrow and x402, not relay fees)";
+  }
+  if (/NoSpendPermissions/i.test(reason) || reason.toLowerCase().includes(NO_SPEND_PERMISSIONS_SELECTOR)) {
+    return (
+      " (NoSpendPermissions: the session has no spend limit for a token this transaction spends. Relay fees are paid in " +
+      "native currency, so every session needs a native spend limit with fee headroom, even one that only sends tokens; " +
+      "sending an ERC-20 needs a limit for that token too — grant a new session, permissions cannot be widened)"
+    );
+  }
+  if (/ExceededSpendLimit/i.test(reason) || reason.toLowerCase().includes(EXCEEDED_SPEND_LIMIT_SELECTOR)) {
+    const token = /token:\s*(0x[0-9a-fA-F]{40})/.exec(reason)?.[1];
+    if (token && token.toLowerCase() !== NATIVE_TOKEN) {
+      return ` (ExceededSpendLimit: the session's spend cap for ${token} is exhausted for this period — check the cap against the token's decimals, 18 for most BNB Chain stablecoins)`;
+    }
+    return " (ExceededSpendLimit: the session's native spend cap is exhausted for this period; the cap also pays relay fees)";
+  }
+  if (isEmptyRevert(reason) && ctx.nativeBalance !== undefined && ctx.requiredNative !== undefined && ctx.nativeBalance < ctx.requiredNative) {
+    const held =
+      ctx.nativeBalance === 0n
+        ? "holds no native balance"
+        : `holds ${ctx.nativeBalance} wei but the calls send ${ctx.requiredNative} wei`;
+    const faucet = ctx.chainId === 97 ? `; get test BNB at ${BNB_TESTNET_FAUCET_URL}` : "";
+    return ` (empty revert: wallet ${ctx.walletAddress ?? ""} ${held}; the first transaction pays the KeyStore registration fee and the relay fee in native currency — fund the wallet first${faucet})`;
+  }
+  return "";
 }
 
 /** Generic wrapper strings viem/porto layer on top of the real relay message. */
