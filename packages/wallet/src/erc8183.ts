@@ -245,11 +245,29 @@ export type HireAgentParams = {
   /** Budget in raw $U units (18 decimals). */
   budget: bigint;
   /**
-   * Extra submission time beyond the policy's dispute window, seconds
-   * (default 1800 — mirrors `bag erc8183 buy --deadline-min 30`).
+   * The seller's submission window, seconds (default 1800). The bound
+   * policy's dispute window is added on top: `expiredAt = now +
+   * disputeWindow + deadlineSeconds` (see `erc8183ExpiredAt`). Providers
+   * running bnbagent < 0.4.6 read a 24 h window on testnet and skip jobs
+   * whose `expiredAt - 86400` is already past — give them
+   * `86400 + <intended window>`.
    */
   deadlineSeconds?: number;
 };
+
+/**
+ * A hired job's `expiredAt`: the seller must submit before
+ * `expiredAt - disputeWindow` (the policy reverts later submissions with
+ * `SubmissionTooLate`), the dispute window then runs to `expiredAt`, and the
+ * buyer can `claimRefund` only after `expiredAt`. Pure so the documented
+ * formula is pinned by a unit test.
+ */
+export function erc8183ExpiredAt(nowSeconds: bigint, disputeWindow: bigint, deadlineSeconds = 1800): bigint {
+  if (!Number.isInteger(deadlineSeconds) || deadlineSeconds <= 0) {
+    throw new Error(`erc8183: deadlineSeconds must be a positive integer (got ${deadlineSeconds}).`);
+  }
+  return nowSeconds + disputeWindow + BigInt(deadlineSeconds);
+}
 
 export type HireAgentResult = ExecuteResult & {
   jobId: bigint;
@@ -303,7 +321,7 @@ export async function hireErc8183Agent(
   ]);
 
   const jobId = jobCounter + 1n;
-  const expiredAt = BigInt(Math.floor(Date.now() / 1000)) + BigInt(disputeWindow) + BigInt(params.deadlineSeconds ?? 1800);
+  const expiredAt = erc8183ExpiredAt(BigInt(Math.floor(Date.now() / 1000)), BigInt(disputeWindow), params.deadlineSeconds);
 
   const calls = buildHireCalls({
     addresses,

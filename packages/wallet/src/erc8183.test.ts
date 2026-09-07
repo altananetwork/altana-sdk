@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { toFunctionSelector } from "viem";
-import { buildHireCalls, buildClaimRefundCall, erc8183Addresses, ERC8183_ADDRESSES } from "./erc8183.js";
+import { buildHireCalls, buildClaimRefundCall, erc8183Addresses, erc8183ExpiredAt, ERC8183_ADDRESSES } from "./erc8183.js";
 
 const A = erc8183Addresses(97);
 
@@ -35,6 +35,20 @@ describe("buildHireCalls", () => {
 
   test("refuses descriptions over the kernel's 4096-byte cap", () => {
     expect(() => buildHireCalls({ ...HIRE, description: "x".repeat(4097) })).toThrow(/4096/);
+  });
+
+  test("expiredAt = now + bound policy window + seller window (default 1800 s)", () => {
+    // The formula the docs promise. The seller's submit deadline is
+    // expiredAt - disputeWindow, so the default gives a 30-minute window on
+    // any policy; a testnet job (900 s window) expires 45 minutes out.
+    expect(erc8183ExpiredAt(1_000_000n, 900n)).toBe(1_002_700n);
+    expect(erc8183ExpiredAt(1_000_000n, 604_800n, 3600)).toBe(1_608_400n);
+    // The recipe for providers on bnbagent < 0.4.6 (they subtract 86400 on
+    // testnet): 86400 + intended window keeps their deadline in the future.
+    const expiredAt = erc8183ExpiredAt(1_000_000n, 900n, 86_400 + 1800);
+    expect(expiredAt - 86_400n).toBeGreaterThan(1_000_000n);
+    expect(() => erc8183ExpiredAt(1_000_000n, 900n, 0)).toThrow(/positive integer/);
+    expect(() => erc8183ExpiredAt(1_000_000n, 900n, 1.5)).toThrow(/positive integer/);
   });
 
   test("claimRefund call targets the kernel", () => {
