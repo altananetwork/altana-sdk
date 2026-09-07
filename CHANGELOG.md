@@ -51,6 +51,29 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Fixed
 
+- **Relay rejections now say what to do.** Three messages that used to be bare
+  contract output gained a parenthetical hint. An unfunded wallet's first
+  transaction (`… prepare the call: 0x`) now reads the wallet's native
+  balance after the rejection and, when it cannot cover the calls' native
+  value, says so, names the KeyStore registration fee that is actually
+  reverting, and links the BNB faucet on chain 97. `NoSpendPermissions`
+  explains that the session has no spend limit for the token being spent
+  and that relay fees need a native limit. `ExceededSpendLimit` names the
+  token and points at the decimals trap. The hint logic is a pure
+  `relayHint(reason, ctx)`; the balance read runs only on the failure path
+  and falls back to the un-hinted message if the RPC fails. The MCP
+  `create_wallet` next steps name the native currency and link the faucet
+  on testnet. Note: a bundle the relay rejects *after* submission still
+  comes back as `FAILED` with a status code and no reason, because the
+  relay carries none. (#83)
+
+- **`fundNative` is deprecated and always throws.** The testnet relay's
+  faucet only mints ERC-20 fee tokens; a native request sent a zero-value
+  transaction to `0x0` and the helper returned its hash as if the wallet had
+  been funded. It now throws with the BNB faucet URL (also exported as
+  `BNB_TESTNET_FAUCET_URL`); `waitForBalance` is unchanged. Removal in a
+  later release. (#83)
+
 - **Relay rejections now lead with the relay's actual reason.** A rejected
   request (for example an unaccepted `feeToken`) used to surface only
   viem's generic `Invalid parameters were provided to the RPC method`,

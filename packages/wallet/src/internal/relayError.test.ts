@@ -4,7 +4,7 @@
  * digs it back out so the SDK can lead the thrown error with it.
  */
 import { describe, expect, test } from "bun:test";
-import { deepestRelayReason } from "./relay.js";
+import { BNB_TESTNET_FAUCET_URL, deepestRelayReason, relayHint } from "./relay.js";
 
 // The exact shape seen live on BSC testnet when feeToken is set to $U:
 // InvalidParamsRpcError → RpcRequestError → the real relay message.
@@ -50,5 +50,53 @@ describe("deepestRelayReason", () => {
     a.cause = a;
     expect(() => deepestRelayReason(a)).not.toThrow();
     expect(deepestRelayReason(a)).toBeUndefined();
+  });
+});
+
+// Issue #83: the reason alone is often bare contract output. relayHint is the
+// pure "what to do" suffix; the caller supplies any chain reads via ctx.
+describe("relayHint", () => {
+  const W = "0x00000000000000000000000000000000000000a1" as const;
+
+  test("unfunded first transaction: empty revert + balance below the calls' native value", () => {
+    const hint = relayHint("0x", { chainId: 97, walletAddress: W, nativeBalance: 0n, requiredNative: 1_000n });
+    expect(hint).toContain("holds no native balance");
+    expect(hint).toContain("KeyStore registration fee");
+    expect(hint).toContain(W);
+    expect(hint).toContain(BNB_TESTNET_FAUCET_URL);
+  });
+
+  test("funded but short: says both numbers; no faucet link off testnet", () => {
+    const hint = relayHint("intent reverted: 0x", { chainId: 56, walletAddress: W, nativeBalance: 5n, requiredNative: 9n });
+    expect(hint).toContain("holds 5 wei but the calls send 9 wei");
+    expect(hint).not.toContain(BNB_TESTNET_FAUCET_URL);
+  });
+
+  test("empty revert with enough balance is some other revert: no hint", () => {
+    expect(relayHint("0x", { chainId: 97, walletAddress: W, nativeBalance: 10n, requiredNative: 9n })).toBe("");
+    // No context (the balance read failed): never guess.
+    expect(relayHint("0x")).toBe("");
+  });
+
+  test("NoSpendPermissions: decoded name and raw selector", () => {
+    for (const reason of ["intent reverted: NoSpendPermissions(NoSpendPermissions)", "intent reverted: 0x5ee7e5b1"]) {
+      const hint = relayHint(reason);
+      expect(hint).toContain("no spend limit for a token this transaction spends");
+      expect(hint).toContain("native spend limit");
+    }
+  });
+
+  test("ExceededSpendLimit: token-specific, native mentions fees, raw selector falls back to native", () => {
+    const erc20 = relayHint("intent reverted: ExceededSpendLimit(ExceededSpendLimit { token: 0xc70B8741B8B07A6d61E54fd4B20f22Fa648E5565 })");
+    expect(erc20).toContain("0xc70B8741B8B07A6d61E54fd4B20f22Fa648E5565");
+    expect(erc20).toContain("decimals");
+    const native = relayHint("intent reverted: ExceededSpendLimit(ExceededSpendLimit { token: 0x0000000000000000000000000000000000000000 })");
+    expect(native).toContain("native spend cap");
+    expect(relayHint("intent reverted: 0x9054c912")).toContain("native spend cap");
+  });
+
+  test("fee token keeps its existing hint; unrelated reasons get none", () => {
+    expect(relayHint("fee token not supported: 0xabc")).toContain("omit `feeToken`");
+    expect(relayHint("quote expired")).toBe("");
   });
 });

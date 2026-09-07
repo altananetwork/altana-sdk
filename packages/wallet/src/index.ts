@@ -75,9 +75,10 @@ export {
 } from "./config.js";
 export type { NetworkConfig, L2CacheConfig } from "./config.js";
 
-// Testnet faucet helper — funds an EOA with native tokens via the testnet
-// relay's faucet. Works only on networks whose relay exposes it (BSC testnet).
-export { fundNative, waitForBalance } from "./internal/relay.js";
+// Funding helpers. `fundNative` is deprecated and always throws: the testnet
+// relay's faucet cannot fund native currency. Get test BNB from
+// BNB_TESTNET_FAUCET_URL and poll with `waitForBalance`.
+export { fundNative, waitForBalance, BNB_TESTNET_FAUCET_URL } from "./internal/relay.js";
 
 // ERC-1271 order signing (session keys signing off-chain authorizations).
 export { signOrder, signOrderTypedData } from "./signOrder.js";

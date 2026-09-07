@@ -53,8 +53,8 @@ reverts every hire with `PolicyNotWhitelisted()` (issue #53).
 for a `signature`-scoped key going through `wallet_prepareCalls` →
 `wallet_sendPreparedCalls`. It cannot run unattended, and not for want of
 wiring — the BSC-testnet relay rejects an unfunded wallet at `prepareCalls`, and
-its faucet (`fundNative`) is a no-op that returns a hash for a transfer to `0x0`
-and moves nothing. So it needs a manually funded admin EOA (~0.05 tBNB):
+its faucet cannot fund native currency (`fundNative` is deprecated and throws
+with the BNB faucet URL). So it needs a manually funded admin EOA (~0.05 tBNB):
 
 ```bash
 ALTANA_TESTNET_ADMIN_KEY=0x… bun run --filter '@altananetwork/e2e' live:erc8004-testnet
