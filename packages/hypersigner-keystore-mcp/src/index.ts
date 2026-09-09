@@ -5,8 +5,10 @@
  * "is this key authorized right now"; encode tools return ready-to-sign
  * calldata ({to, value, data, chainId}) that the HOST signs with its own key.
  *
- * Chain via ALTANA_CHAIN (default bnb; also "ethereum"). RPC overridable
- * via RPC_URL (used by the fork tests).
+ * Chain via ALTANA_CHAIN (default bnb; also "ethereum", "bnb-testnet",
+ * "sepolia", and the aliases "celo" -> ethereum, "celo-sepolia" -> sepolia:
+ * Celo keeps no KeyStore of its own, its authority is rooted in the Ethereum
+ * / Sepolia registry). RPC overridable via RPC_URL (used by the fork tests).
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -76,7 +78,12 @@ export function buildServer(): McpServer {
         "Neutral, non-custodial KeyStore authorization registry on " +
         `${CHAIN.chain.name} (chainId ${CHAIN.chainId}). Reads answer "is this ` +
         'key authorized right now"; encode tools return unsigned calldata for ' +
-        "YOUR wallet/SDK to sign. This server never holds a key or signs.",
+        "YOUR wallet/SDK to sign. This server never holds a key or signs. " +
+        "Celo wallets are rooted here too: Celo (42220) has no KeyStore of its " +
+        "own and reads the Ethereum registry through a cache, Celo Sepolia " +
+        "(11142220) the Sepolia registry, so ALTANA_CHAIN=celo resolves to " +
+        "ethereum and ALTANA_CHAIN=celo-sepolia to sepolia. Sign encoded calls " +
+        "on the chainId they carry (the registry chain), not on Celo.",
     },
   );
 
