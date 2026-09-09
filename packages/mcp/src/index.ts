@@ -46,9 +46,10 @@ import {
   decodeErc8004AgentUri,
   encodeErc8004AgentUri,
   withErc8004Registration,
-  ETHEREUM,
-  BNB,
-  BNB_TESTNET,
+  isCachedRegistry,
+  isCachedKeyValid,
+  readCachedKey,
+  KEYSTORE_CACHE_NOT_DEPLOYED,
 } from "@altananetwork/sdk";
 import type { Signer, Wallet } from "@altananetwork/sdk";
 import {
@@ -69,6 +70,7 @@ import {
   type SessionPermissions,
 } from "./sessions.js";
 import { searchSkills, getSkill } from "./skills.js";
+import { SUPPORTED_CHAINS, describeNetwork, fundingSteps, resolveNetwork } from "./network.js";
 import {
   assertErc8004Permissions,
   buildRegistrationFile,
@@ -79,40 +81,86 @@ import {
 
 // ---------- network ---------------------------------------------------------
 
-// Chain is selected at startup via the ALTANA_CHAIN env var. Defaults to BNB
-// Chain. Set ALTANA_CHAIN=ethereum to operate on Ethereum, or
-// ALTANA_CHAIN=bnb-testnet for the BSC testnet stack. All chains execute
-// through the Altana relay (mainnet relay for mainnets, testnet relay for
-// bnb-testnet — see the SDK config's relayUrl). One MCP process serves one
-// chain; restart with a different ALTANA_CHAIN to switch. Sepolia/Base Sepolia
-// are keystore-only (no relay) and so are not selectable here.
-const NETWORKS = {
-  bnb: BNB,
-  "56": BNB,
-  ethereum: ETHEREUM,
-  "1": ETHEREUM,
-  "bnb-testnet": BNB_TESTNET,
-  "bsc-testnet": BNB_TESTNET,
-  "97": BNB_TESTNET,
-} as const;
-
-const requestedChain = (process.env.ALTANA_CHAIN || "bnb").toLowerCase();
-const NETWORK = NETWORKS[requestedChain as keyof typeof NETWORKS] ?? BNB;
-if (!(requestedChain in NETWORKS)) {
+// Chain is selected at startup via the ALTANA_CHAIN env var (see network.ts
+// for the map). Defaults to BNB Chain. All selectable chains execute through
+// an Altana relay (mainnet relay for mainnets, testnet relay for bnb-testnet
+// and celo-sepolia). One MCP process serves one chain; restart with a
+// different ALTANA_CHAIN to switch. Sepolia/Base Sepolia are keystore-only
+// (no relay) and so are not selectable here.
+//
+// Celo and Celo Sepolia keep their KeyStore registry on another chain
+// (Ethereum / Sepolia) behind a local cache, so KeyStore reads go to the
+// registry chain through `registryClient`, and the verification tools add a
+// `cache` block describing what the Celo-side cache currently holds.
+const resolved = resolveNetwork(process.env.ALTANA_CHAIN);
+const NETWORK = resolved.network;
+const REGISTRY = resolved.registry;
+if (!resolved.recognized) {
   console.error(
-    `[altana-mcp] Unknown ALTANA_CHAIN="${requestedChain}". ` +
-      `Supported: bnb (default), ethereum, bnb-testnet. Falling back to bnb.`,
+    `[altana-mcp] Unknown ALTANA_CHAIN="${resolved.requested}". ` +
+      `Supported: ${SUPPORTED_CHAINS}. Falling back to bnb.`,
   );
 }
-console.error(
-  `[altana-mcp] network: ${NETWORK.chain.name} (chainId ${NETWORK.chainId})`,
-);
+console.error(`[altana-mcp] network: ${describeNetwork(NETWORK)}`);
 
 const client = createClient({ chains: [NETWORK] });
 const publicClient = createPublicClient({
   chain: NETWORK.chain,
   transport: http(NETWORK.publicRpcUrl),
 });
+// Reads of the KeyStore registry. Same as publicClient on chains with a local
+// registry; the registry chain's client on cached networks.
+const registryClient =
+  REGISTRY === NETWORK
+    ? publicClient
+    : createPublicClient({ chain: REGISTRY.chain, transport: http(REGISTRY.publicRpcUrl) });
+
+/**
+ * On a cached network, what the local KeyStoreCache holds for (wallet, keyId).
+ * `fresh` is the cache's own isValidKey: true only while the cache entry was
+ * proven at the registry block the chain currently anchors, so a `false`
+ * here with `cached: true` and `revoked: false` means the entry needs a new
+ * proof (grant_session and revoke_session submit one; the SDK's
+ * syncSessionToCache retries it). Undefined on local-registry chains.
+ */
+async function cacheBlock(addr: Address, keyId: Hex) {
+  if (!isCachedRegistry(NETWORK)) return undefined;
+  const cache = NETWORK.registry.keyStoreCache;
+  const base = { chainId: NETWORK.chainId, registryChainId: REGISTRY.chainId };
+  if (cache.toLowerCase() === KEYSTORE_CACHE_NOT_DEPLOYED) {
+    return {
+      ...base,
+      deployed: false,
+      note: `The KeyStoreCache is not deployed on ${NETWORK.chain.name} yet; authority is read from the ${REGISTRY.chain.name} registry above.`,
+    };
+  }
+  try {
+    const [entry, fresh] = await Promise.all([
+      readCachedKey(publicClient, cache, addr, keyId),
+      isCachedKeyValid(publicClient, cache, addr, keyId),
+    ]);
+    const cached = entry.publicKey !== "0x" && entry.publicKey.length > 2;
+    return {
+      ...base,
+      deployed: true,
+      keyStoreCache: cache,
+      cached,
+      revoked: entry.revoked,
+      expiry: entry.expiry,
+      ...(entry.expiry ? { expiresAt: new Date(entry.expiry * 1000).toISOString() } : {}),
+      isRoot: entry.isRoot,
+      sourceBlockNumber: entry.sourceBlockNumber.toString(),
+      fresh,
+    };
+  } catch (err) {
+    return {
+      ...base,
+      deployed: true,
+      keyStoreCache: cache,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
 
 // ---------- KeyStore (read-only inspection tools) --------------------------
 
@@ -157,6 +205,10 @@ function assertBytes32(value: string): Hex {
     throw new Error(`Not a valid 0x-prefixed 32-byte hex: ${value}`);
   }
   return value as Hex;
+}
+/** bigint-safe copy for JSON.stringify (report structs carry block numbers). */
+function jsonSafe<T>(value: T): unknown {
+  return JSON.parse(JSON.stringify(value, (_k, v) => (typeof v === "bigint" ? v.toString() : v)));
 }
 function assertHexBytes(value: string): Hex {
   if (!/^0x[0-9a-fA-F]*$/.test(value)) {
@@ -288,7 +340,7 @@ tool(
               storedIn: "OS keychain (service: altana)",
               network: NETWORK.chain.name,
               nextSteps: [
-                `Send some funds to this address on ${NETWORK.chain.name}. Your smart agentic wallet will be activated automatically when you make your first transaction.`,
+                ...fundingSteps(NETWORK, address),
                 `BACK UP the private key. Open Keychain Access (macOS) or your platform's credential manager, find service "altana" / account "${walletName}", copy the password, store it in a password manager or encrypted file. If you lose your machine without a backup, the wallet is gone.`,
                 `Once funded, the wallet is ready — call wallet_balance, grant_session, wallet_execute, etc. by name "${walletName}".`,
               ],
@@ -398,8 +450,8 @@ tool(
   },
   async ({ address }: { address: string }) => {
     const addr = assertAddress(address);
-    const keys = (await publicClient.readContract({
-      address: NETWORK.keyStore,
+    const keys = (await registryClient.readContract({
+      address: REGISTRY.keyStore,
       abi: KEYSTORE_ABI,
       functionName: "getKeys",
       args: [addr],
@@ -407,13 +459,14 @@ tool(
 
     const details = await Promise.all(
       keys.map(async (keyId) => {
-        const publicKey = (await publicClient.readContract({
-          address: NETWORK.keyStore,
+        const publicKey = (await registryClient.readContract({
+          address: REGISTRY.keyStore,
           abi: KEYSTORE_ABI,
           functionName: "getPublicKey",
           args: [addr, keyId],
         })) as Hex;
-        return { keyId, publicKey };
+        const cache = await cacheBlock(addr, keyId);
+        return { keyId, publicKey, ...(cache ? { cache } : {}) };
       }),
     );
 
@@ -424,8 +477,9 @@ tool(
           text: JSON.stringify(
             {
               address,
-              keyStore: NETWORK.keyStore,
+              keyStore: REGISTRY.keyStore,
               network: NETWORK.chain.name,
+              ...(REGISTRY !== NETWORK ? { registryNetwork: REGISTRY.chain.name } : {}),
               activeKeyCount: keys.length,
               keys: details,
             },
@@ -453,7 +507,10 @@ tool(
       "to look up a session this server granted (server resolves the " +
       "wallet and keyId from local metadata). Note: this reads the public " +
       "KeyStore registry — a session granted with register: false works " +
-      "on-chain but reports false here until it is registered.",
+      "on-chain but reports false here until it is registered. On Celo and " +
+      "Celo Sepolia the registry lives on Ethereum / Sepolia; `authorized` " +
+      "is read there and a `cache` block reports what the Celo-side " +
+      "KeyStoreCache holds (`fresh` is the cache's own isValidKey).",
     inputSchema: {
       walletAddress: z.string().optional(),
       keyId: z.string().optional(),
@@ -486,12 +543,13 @@ tool(
       id = assertBytes32(keyId);
     }
 
-    const valid = (await publicClient.readContract({
-      address: NETWORK.keyStore,
+    const valid = (await registryClient.readContract({
+      address: REGISTRY.keyStore,
       abi: KEYSTORE_ABI,
       functionName: "isValidKey",
       args: [addr, id],
     })) as boolean;
+    const cache = await cacheBlock(addr, id);
 
     return {
       content: [
@@ -503,6 +561,8 @@ tool(
               keyId: id,
               ...(sessionName ? { sessionName } : {}),
               authorized: valid,
+              ...(REGISTRY !== NETWORK ? { registryNetwork: REGISTRY.chain.name } : {}),
+              ...(cache ? { cache } : {}),
             },
             null,
             2,
@@ -742,6 +802,11 @@ tool(
               // wallet's very first admin action. Surface the receipt so the
               // host can record what the user was actually charged for.
               transactionHash: session.transactionHash,
+              // Cached networks (Celo Sepolia, Celo): the registry write on
+              // the registry chain and the proof into the local cache are
+              // separate steps; a failed proof is reported here, not thrown.
+              ...(session.registry ? { registry: jsonSafe(session.registry) } : {}),
+              ...(session.cache ? { cache: jsonSafe(session.cache) } : {}),
               permissions: {
                 calls: [{ to: recipientAddr }],
                 spend: [{ limitEth: capEth, period: "day" }],
@@ -803,6 +868,8 @@ tool(
               sessionName,
               status: result.status,
               ...(result.statusCode !== undefined ? { statusCode: result.statusCode } : {}),
+              ...(result.registry ? { registry: jsonSafe(result.registry) } : {}),
+              ...(result.cache ? { cache: jsonSafe(result.cache) } : {}),
               transactionHash: result.transactionHash,
             },
             null,
