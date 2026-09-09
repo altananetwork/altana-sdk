@@ -220,7 +220,8 @@ The MCP server is a thin wrapper around this SDK. Anything the MCP does, you can
 
 ## Notes
 
-- **Funding.** Fund `wallet.address` with native tokens before the first `execute`. On Ethereum, send ETH from your own wallet or an exchange. On BNB, send BNB from your own wallet or an exchange.
+- **Funding.** Fund `wallet.address` with native tokens before the first `execute`. On Ethereum, send ETH from your own wallet or an exchange. On BNB, send BNB from your own wallet or an exchange. On Celo Sepolia, send CELO (https://faucet.celo.org/celo-sepolia) and, for registry writes, a little Sepolia ETH to the same address: Sepolia has no relay, so `grantSession` / `revokeSession` send the registry transaction directly from the wallet's admin key there.
+- **Cached-registry networks (CELO_SEPOLIA, CELO).** `grantSession` is three steps (registry write on the registry chain, account authorization through the relay, proof into the network's KeyStoreCache); the result carries `registry` and `cache` reports, and a failed proof is reported, not thrown (`client.syncSessionToCache` retries it). `revokeSession` returns the same two reports. Passkey admins on Celo Sepolia must grant with `register: false` (a P256 key cannot sign the Sepolia transaction). Never send a call to `network.keyStore` / `network.keyStoreController` on Celo: the SDK refuses it, those contracts live on the registry chain.
 - **First execute registers the admin.** The Keystore `initialRegisterKey` is auto-prepended on the wallet's first admin-signed action. Don't pre-call it. The wallet is "live" but not on-chain until that first tx.
 - **Sessions must match the grant on execute.** The session's `permissions + expiry + publicKey` values must equal what was committed at grant time; a lossy round trip (bigints → number, re-cased hex) breaks the match. Persist with `serializeSession` and restore with `deserializeSession(stored, signer)` — never raw `JSON.stringify` on a `Session`.
 - **Empty calls means no calls.** `client.execute({ wallet, signer, calls: [] })` is rejected. Pass at least one call.
@@ -230,10 +231,16 @@ The MCP server is a thin wrapper around this SDK. Anything the MCP does, you can
 ## Networks
 
 ```ts
-import { ETHEREUM, BNB, BASE } from "@altananetwork/sdk";
+import { ETHEREUM, BNB, BASE, BNB_TESTNET, CELO_SEPOLIA, SEPOLIA, CELO } from "@altananetwork/sdk";
 // ETHEREUM      : Ethereum (chain 1), L1 Keystore source of truth
 // BNB  : BNB Smart Chain (chain 56)
 // BASE : Base (chain 8453), L2 Keystore cache
+// BNB_TESTNET  : BNB testnet (chain 97), full stack
+// CELO_SEPOLIA : Celo Sepolia (chain 11142220). Executes on Celo Sepolia; its
+//                Keystore registry is on Sepolia (SEPOLIA), proven into a cache
+//                on Celo Sepolia. registryNetwork(CELO_SEPOLIA) === SEPOLIA.
+// CELO         : Celo (chain 42220), same shape rooted in ETHEREUM. Config
+//                only until the mainnet deployment (cache sentinel).
 //
 // ETHEREUM.keyStore           = 0xb70fDa90C1d576Ba8399946a0c10ECD9d9Ea923b
 // ETHEREUM.keyStoreController = 0x30a188Eecf14F4142B0d828ce838C9E1134e7FaA

@@ -1,14 +1,20 @@
 ---
 title: Testnet
-description: Altana's BNB Smart Chain testnet — RPC, faucet, relay, and deployed contract addresses.
+description: Altana's testnets, BNB Smart Chain Testnet and Celo Sepolia: RPCs, faucets, relay, and deployed contract addresses.
 ---
 
 # Testnet
 
-Altana's testnet runs on **BNB Smart Chain Testnet (chain 97)** — the full stack
-(keystore, account contracts, and the Altana testnet relay) is deployed there, so
-you can create wallets and execute end-to-end. The SDK ships a ready-made
-`BNB_TESTNET` config, importable from `@altananetwork/sdk`.
+Altana runs on two testnets, both served by the Altana testnet relay at
+`https://testnet-relay.altana.network`:
+
+- **BNB Smart Chain Testnet (chain 97)**: the full stack (keystore, account
+  contracts, relay) is deployed there. SDK config `BNB_TESTNET`.
+- **Celo Sepolia (chain 11142220)**: the account contracts and relay are
+  there, while the KeyStore registry lives on **Sepolia** and is mirrored into
+  a KeyStoreCache on Celo Sepolia. SDK configs `CELO_SEPOLIA` and `SEPOLIA`.
+  See [Celo Sepolia](#celo-sepolia) below and the
+  [SDK setup page](/sdk/celo-sepolia).
 
 To see registered keys and sessions on testnet, use the [Keystore Explorer](/explorer) at
 [testnet.altana.network](https://testnet.altana.network). For raw transactions, use
@@ -62,3 +68,76 @@ minutes — see [Get testnet $U](/sdk/erc8183#get-testnet-u) for claim code):
 > Addresses are the source of truth in the SDK's
 > [`packages/wallet/src/config.ts`](https://github.com/altananetwork/altana-sdk/blob/main/packages/wallet/src/config.ts).
 > To verify independently, check the addresses above against the explorer.
+
+## Celo Sepolia: `CELO_SEPOLIA`
+
+Celo Sepolia is a cached-registry network: wallets execute through the Altana
+testnet relay on Celo Sepolia (fees in CELO), the [Keystore](/concepts/keystore)
+that records their authority lives on Sepolia, and session keys are proven into
+the KeyStoreCache on Celo Sepolia through the OP-stack `L1Block` predeploy.
+The [Celo Sepolia](/sdk/celo-sepolia) SDK page walks through a grant, a
+revoke and the reads.
+
+- **Chain id:** 11142220
+- **Public RPC:** `https://rpc.ankr.com/celo_sepolia` (Forno, `https://forno.celo-sepolia.celo-testnet.org`, also works for reads)
+- **Explorer:** https://sepolia.celoscan.io
+- **Faucet:** https://faucet.celo.org/celo-sepolia
+- **Relay:** `https://testnet-relay.altana.network`
+- **Registry chain:** Sepolia (below)
+
+What to fund, and where:
+
+| Chain | Asset | Used for |
+| --- | --- | --- |
+| Celo Sepolia | CELO | Relay fees for every wallet action, including the proof into the cache |
+| Sepolia | ETH | Registry writes, sent directly from the wallet's admin key (Sepolia has no relay); about 0.0003 ETH each |
+
+KeyStore cache on Celo Sepolia (KeyStoreCacheOPStack 1.1.1, anchored to the
+Sepolia KeyStore):
+
+| Contract | Address |
+| --- | --- |
+| KeyStoreCache | to be published (the SDK carries the `KEYSTORE_CACHE_NOT_DEPLOYED` sentinel until then) |
+
+Account stack (used by the relay; the same testnet address set as chain 97):
+
+| Contract | Address |
+| --- | --- |
+| Orchestrator | `0xcb5CEf3C54aa90e9A7ad602A258D3d360cC862B9` |
+| Delegation proxy | `0x4F4ddE38Da9F8AbBb96C48cA520b992D4bADc3D6` |
+| Account implementation | `0x33aD2F49ab9f122f5F0FDF579f575724EfF353DE` |
+| Simulator | `0x3006de101E96e85272d5B5Ad07A9738fa7678008` |
+| Funder | `0xb248602EAadd9c3e2Db4575C4e4d58003b7a2740` |
+| Escrow | `0xCd075ceb5Cd463a9233a8085fc915767139F655c` |
+
+EXP fee tokens:
+
+| Token | Address |
+| --- | --- |
+| EXP | `0xa8071DA5e994cB8e3eB56CaD0FBB6ca424dD8dc0` |
+| EXP2 | `0x61727778216127D0843A99A3e91e99C27e9f3BC7` |
+
+Stablecoins for [x402](/sdk/x402-server#celo) (both 6 decimals):
+
+| Token | Address | Rails |
+| --- | --- | --- |
+| USDC | `0x01C5C0122039549AD1493B8220cABEdD739BC44E` | eip3009, permit2-exact (EIP-712 domain `USDC` / `2`) |
+| USDT | `0xd077A400968890Eacc75cdc901F0356c943e4fDb` | permit2-exact only |
+
+ERC-8183 hiring is not deployed on Celo Sepolia (BNB agent economy only).
+
+## Sepolia: `SEPOLIA`
+
+Registry only. Hosts the testnet KeyStore that the Celo Sepolia cache is
+anchored to. No relay serves it, so `SEPOLIA` cannot be passed to
+`createClient`; the SDK reaches it through `CELO_SEPOLIA.registry.l1`.
+
+- **Chain id:** 11155111
+- **Public RPC:** `https://ethereum-sepolia-rpc.publicnode.com` (reads and transactions). Proofs into the cache need `eth_getProof` for a block a few behind head, which publicnode does not serve; use `https://sepolia.gateway.tenderly.co`, `https://0xrpc.io/sep` or `https://eth-sepolia.api.onfinality.io/public` for that, by overriding `SEPOLIA.publicRpcUrl` or passing `l1Client` to `syncSessionToCache`.
+- **Explorer:** https://sepolia.etherscan.io
+- **Faucet:** https://cloud.google.com/application/web3/faucet/ethereum/sepolia
+
+| Contract | Address |
+| --- | --- |
+| KeyStore | `0x38Aaf396F462Ad3a4F38ADa653AF6bDEA55F772d` |
+| KeyStoreController | `0xc1525B766c134f7EB5B1d8e4a69C6Cb97Aff2379` |

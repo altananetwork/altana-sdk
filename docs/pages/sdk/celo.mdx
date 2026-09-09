@@ -1,0 +1,41 @@
+---
+title: Celo
+description: Celo mainnet (chain 42220) in the SDK. Config shipped; account stack and cache deployment pending.
+---
+
+# Celo
+
+:::note[Mainnet coming]
+The `CELO` config ships so integrations can be written against the final
+shape, but the Altana account stack and the KeyStoreCache are **not deployed
+on Celo mainnet yet**. Wallet actions on chain 42220 fail at the relay, and
+cache operations refuse the `KEYSTORE_CACHE_NOT_DEPLOYED` sentinel with a
+clear message. Build and test on [Celo Sepolia](/sdk/celo-sepolia) today; the
+mainnet release is a config change on this page.
+:::
+
+Celo mainnet (chain id **42220**) uses the same cached-registry shape as Celo
+Sepolia, rooted in **Ethereum** instead of Sepolia:
+
+| | Celo Sepolia | Celo |
+| --- | --- | --- |
+| SDK export | `CELO_SEPOLIA` | `CELO` |
+| Registry chain | Sepolia (no relay: registry writes are direct transactions from the admin key) | Ethereum (Altana relay: registry writes go through the wallet's smart account there) |
+| Relay | `https://testnet-relay.altana.network` | `https://relay.altana.network` |
+| Fees | CELO | CELO on Celo, ETH on Ethereum for registry writes |
+| Passkey wallets | Account-only sessions (`register: false`) | Register normally |
+
+Because Ethereum has a relay, a wallet created for `CELO` is provisioned on
+Ethereum as well, in the same `createWallet` / `createPasskeyWallet` call:
+passkey wallets cannot be provisioned later, and their registry writes need
+the Ethereum smart account.
+
+```ts
+import { createClient, CELO, registryNetwork } from "@altananetwork/sdk";
+
+registryNetwork(CELO); // ETHEREUM
+const client = createClient({ chains: [CELO] });
+```
+
+Everything on the [Celo Sepolia](/sdk/celo-sepolia) page applies, with
+"Sepolia" read as "Ethereum".

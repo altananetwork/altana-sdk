@@ -98,7 +98,8 @@ There is no error class and no error code: every one of these is a plain `Error`
 
 | Message | Cause |
 |---|---|
-| `No Altana relay serves chain <id> (<name>). ...` | The chain has no relay and cannot execute. `BASE` is read-only in this sense: it is an L2 cache target, not an execution chain. [`holdings`](/sdk/balances#discovering-holdings) throws this too, since discovery goes through the relay. |
+| `No Altana relay serves chain <id> (<name>). ...` | The chain has no relay and cannot execute. `BASE` and `SEPOLIA` are read-only in this sense: one is an L2 cache target, the other a registry chain. [`holdings`](/sdk/balances#discovering-holdings) throws this too, since discovery goes through the relay. |
+| `The relay rejected the request to ...: fee token not supported ...` | The relay fee is paid in the chain's native currency (BNB, ETH, CELO). Omit `feeToken` or set one the relay accepts. |
 | `Balance for <address> did not reach <n> wei within <ms>ms` | A funding wait timed out. |
 | `The relay could not list holdings for <address> on chain <id>: <reason>` | [`holdings`](/sdk/balances#discovering-holdings): the relay's `wallet_getAssets` call failed. `<reason>` is the relay's own message (or the transport error); the original error is on `.cause`. |
 | `The relay returned a malformed wallet_getAssets response for <address> on chain <id>: <detail>` | [`holdings`](/sdk/balances#discovering-holdings): the relay answered, but not in the ERC-7811 shape the SDK expects. `<detail>` names the offending part. |
@@ -113,8 +114,26 @@ Passing a signer the SDK cannot use produces a multi-line message naming every s
 |---|---|
 | `syncKeyToL2: tx reverted (L1Block anchor moved); refresh to retry` | The L1 anchor advanced between proof construction and inclusion. Call again. |
 | `ensureKeyCached: L2 did not anchor past L1 block <n> within <ms>ms` | Base did not catch up within 5 minutes. Base normally anchors 1 to 3 minutes behind L1. |
-| `L2 L1Block predeploy reports zero hash — chain not anchored yet` | The L2 has no anchored L1 block. |
+| `L2 L1Block predeploy reports zero hash: chain not anchored yet` | The L2 has no anchored L1 block. |
 | `l2WalletClient has no account configured` / `... no chain configured` | The L2 wallet client is missing an account or chain. |
+
+### Cached networks
+
+Celo Sepolia and Celo keep their Keystore on another chain behind a local cache ([Celo Sepolia](/sdk/celo-sepolia)). These come from that shape.
+
+| Message | Cause |
+|---|---|
+| `The KeyStoreCache is not deployed on <chain> yet: the config carries the KEYSTORE_CACHE_NOT_DEPLOYED sentinel. ...` | `registry.keyStoreCache` is the zero-address sentinel. Registry reads and writes still work; proofs wait for the deployment (Celo Sepolia: address to be published; Celo: mainnet pending). Override `registry.keyStoreCache` once it is. |
+| `Refusing to send a call to <address> on <chain>: that is the KeyStore/KeyStoreController address of <registry chain> ...` | A call targeted the registry chain's Keystore or Controller address on the cached network. No contract exists there, so it would confirm as a plain transfer to a codeless address and burn its value. Use `grantSession`, `revokeSession` or `registerSessionKey`, which route registry writes to the registry chain. |
+| `Registry writes on <chain> are direct transactions from the admin's private key, because no Altana relay serves that chain. A passkey (P256) admin cannot sign one. ...` | Passkey wallet on a relay-less registry chain (Sepolia). Grant with `register: false` (account-only) on this testnet; on mainnet the registry chain has a relay. |
+| `Registry writes on <chain> are sent directly from the admin key, so the KeyStore records the sender as the wallet. The signer's address (...) is not the wallet address (...)` | On the direct-transaction path the admin key must be the wallet's own key (a 7702 wallet). A different key would register entries for the wrong account. |
+| `Registry writes on <chain> are sent directly from the admin key <address>, which holds <n> but needs about <m> (registration fee plus gas). Fund ...` | The admin key is underfunded on the registry chain. The message names the asset and the faucet. |
+| `Session registry write on <chain> did not confirm: status=... The account authorization was not attempted.` | Step 1 of a cached-network `grantSession` failed; nothing else was done. |
+| `The L1 RPC refused eth_getProof at block <n> (the block the L2 anchors): ... Use an L1 RPC with historical eth_getProof ...` | The registry chain's RPC only serves proofs for its newest blocks. Pass `l1Client` to `syncSessionToCache` or override `publicRpcUrl` with an endpoint the message names. |
+| `syncSessionToCache: the L1 anchor moved on every one of <n> attempts ...` | Every proof missed its anchor window. Raise `maxAttempts` or use a faster registry-chain RPC. |
+| `syncSessionToCache: L2 did not anchor past L1 block <n> within <ms>ms` | The network never anchored the registry block that holds the write. Raise `anchorTimeoutMs`. |
+
+A failed cache proof inside `grantSession`, `revokeSession` or `registerSessionKey` is **reported** in `result.cache` (`status: "FAILED"`, `reason`), not thrown; the same for a failed registry revoke in `result.registry`.
 
 ### Recovery
 

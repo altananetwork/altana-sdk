@@ -29,9 +29,12 @@ for reliable runs:
 BSC_FORK_RPC_URL=https://.../<KEY>          # fork-x402, fork-x402-witness, fork-erc1271, fork-bep677
 BASE_FORK_RPC_URL=https://.../<KEY>         # fork-eip3009
 BSC_TESTNET_FORK_RPC_URL=https://.../<KEY>  # fork-erc8004, fork-erc8183
+CELO_SEPOLIA_FORK_RPC_URL=https://.../<KEY> # fork-celo-cache, fork-celo-x402-server (public fallback: rpc.ankr.com/celo_sepolia)
+SEPOLIA_RPC_URL=https://.../<KEY>           # fork-celo-cache: must serve eth_getProof a few blocks behind head
+                                            # (public fallback: sepolia.gateway.tenderly.co; publicnode only serves proofs at its newest block)
 ```
 
-All three are set as GitHub Actions secrets of the same names and passed to the
+All five are set as GitHub Actions secrets of the same names and passed to the
 "On-chain fork tests" job.
 
 ## ERC-8004: what runs where
@@ -89,3 +92,16 @@ Self-contained anvil mainnet forks; no env vars or funded keys needed (requires 
 - `fork-x402.ts`, `fork-x402-witness.ts`, `fork-eip3009.ts`, `fork-erc1271.ts`: x402 payment rails against real tokens
 - `fork-native-receive.ts` (in `fork:all`): pins the EIP-7702 native-receive limitation — a 2300-gas-stipend payout (`.transfer()`/`.send()`) to a delegated wallet reverts, full-gas `call{value:}` succeeds, and Venus vBNB `redeem` reproduces the real-world failure (issue #55)
 - `fork-bep677.ts`: BEP-677 scaled-UI-amount display in `client.balances` (mock BEP-677 tokens + real USDT on a BSC fork)
+- `fork-celo-cache.ts` (in `fork:all`): Celo Sepolia fork with KeyStoreCacheOPStack 1.1.1 deployed from `fixtures/KeyStoreCacheOPStack-1.1.1.json` (compiled from altana-keystore `main`, commit `64ac831`); pins the `L1Block` predeploy to a fresh Sepolia block, builds a real Sepolia proof for a wallet registered on the Sepolia KeyStore with the SDK's `buildPopulateKeyCall`, and asserts `isValidKey` true, the freshness rule (stale after the anchor moves), `computeKeyPackedSlot` against the contract, and the SDK's refusal of registry calls on Celo Sepolia
+- `fork-celo-x402-server.ts` (in `fork:all`): the x402 merchant on chain 11142220, an EOA paying eip3009 USDC and an Altana smart account paying permit2-exact USDT (ERC-1271 against the real Celo Sepolia account implementation), settlement as standard EIP-1559
+
+## Celo Sepolia live smokes
+
+`smoke-celo-sepolia.ts` (private-key admin: create, fund on both chains, execute, grant with registry write on Sepolia and proof into the cache, session execute, reads, revoke with post-revocation proof, post-revoke rejection) and `smoke-celo-passkey.ts` (headless passkey admin: create, execute through the P256 canary, account-only grant with `register: false`, session execute, revoke; also asserts a registered grant is refused with the documented message).
+
+They need `TEST_FUNDER_KEY` funded with CELO on Celo Sepolia (https://faucet.celo.org/celo-sepolia) and, for the session smoke, with ETH on Sepolia (https://cloud.google.com/application/web3/faucet/ethereum/sepolia); the session smoke also needs the cache address (`CELO_SEPOLIA_CACHE`, or the SDK config once filled) and a Sepolia RPC with historical `eth_getProof` (`SEPOLIA_RPC_URL`, default Tenderly). Both fail loudly, naming what to fund, instead of skipping.
+
+```bash
+bun run --filter '@altananetwork/e2e' smoke:celo-sepolia
+bun run --filter '@altananetwork/e2e' smoke:celo-passkey
+```

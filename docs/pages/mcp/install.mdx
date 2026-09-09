@@ -37,6 +37,10 @@ variable. It defaults to **BNB Smart Chain**.
 | `bnb` (default) | BNB Smart Chain (56) |
 | `ethereum` | Ethereum (1) |
 | `bnb-testnet` | BNB Smart Chain Testnet (97) |
+| `celo-sepolia` | Celo Sepolia (11142220); Keystore registry on Sepolia behind a cache |
+| `celo` | Celo (42220); Keystore registry on Ethereum. Config only until the mainnet deployment |
+
+Chain ids (`56`, `1`, `97`, `11142220`, `42220`) work too.
 
 ```bash
 # Operate on Ethereum instead of the BNB default
@@ -44,9 +48,15 @@ claude mcp add altana -e ALTANA_CHAIN=ethereum -- bunx @altananetwork/mcp
 
 # Operate on BNB testnet (chain 97) — see the Testnet networks page
 claude mcp add altana -e ALTANA_CHAIN=bnb-testnet -- bunx @altananetwork/mcp
+
+# Operate on Celo Sepolia (chain 11142220); fund wallets with CELO there and
+# with a little Sepolia ETH for registry writes
+claude mcp add altana -e ALTANA_CHAIN=celo-sepolia -- bunx @altananetwork/mcp
 ```
 
 One server process serves one chain. Restart with a different `ALTANA_CHAIN` to switch.
+
+On `celo-sepolia` and `celo` the Keystore registry lives on another chain (Sepolia, Ethereum). `wallet_verification` and `verify_authorization` read it there and add a `cache` block describing what the Celo-side KeyStoreCache holds; `grant_session` and `revoke_session` report the registry write and the cache proof as separate steps. See [Celo Sepolia](/sdk/celo-sepolia).
 
 ## Cursor / Continue / other hosts
 

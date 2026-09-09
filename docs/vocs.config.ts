@@ -132,6 +132,8 @@ export default defineConfig({
         { text: "Overview", link: "/sdk" },
         { text: "Setup: BNB Smart Chain", link: "/sdk/bnb" },
         { text: "Setup: BNB Testnet", link: "/sdk/bnb-testnet" },
+        { text: "Setup: Celo Sepolia", link: "/sdk/celo-sepolia" },
+        { text: "Setup: Celo", link: "/sdk/celo" },
         {
           text: "Wallets",
           items: [

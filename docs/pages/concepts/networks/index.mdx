@@ -8,10 +8,11 @@ description: Supported mainnet chains, RPC endpoints, and deployed contract addr
 Altana is multi-chain. The SDK ships a config per network, importable from
 `@altananetwork/sdk`. **BNB Smart Chain is the default**; Ethereum is
 supported for wallet execution and L1 cross-chain proofs; Base is supported as the L2
-Keystore cache for cross-chain verification.
+Keystore cache for cross-chain verification. Celo ships as a cached-registry
+network rooted in Ethereum, pending its mainnet deployment.
 
 Building against testnet? See [Testnet](/concepts/networks/testnet) for BNB
-Smart Chain Testnet.
+Smart Chain Testnet and Celo Sepolia.
 
 To browse what these contracts have recorded, open the [Keystore Explorer](/explorer):
 [explorer.altana.network](https://explorer.altana.network) for mainnet,
@@ -24,6 +25,7 @@ To browse what these contracts have recorded, open the [Keystore Explorer](/expl
 | `BNB` | BNB Smart Chain | 56 | Default wallet execution network with a standalone Keystore |
 | `ETHEREUM` | Ethereum | 1 | Wallet execution network and L1 Keystore source for cross-chain proofs |
 | `BASE` | Base | 8453 | L2 Keystore cache for cross-chain session verification |
+| `CELO` | Celo | 42220 | Wallet execution network with its Keystore registry on Ethereum behind a local cache. **Config only until the mainnet deployment**, see [Celo](/sdk/celo) |
 
 ## BNB Smart Chain: `BNB`
 
@@ -62,6 +64,31 @@ Base is a verification target, not an execution chain. It hosts a KeyStore cache
 | KeyStoreCache | `0x6572427ED530BadcF7375Cf9A4709D8d2b0E7E0a` |
 
 Chain id 8453 · RPC `https://base-rpc.publicnode.com`.
+
+## Celo: `CELO`
+
+Celo has no KeyStore of its own. `CELO` is a cached-registry network: wallets
+execute through the Altana relay on Celo, and their authority is recorded in
+the **Ethereum** KeyStore (`CELO.keyStore` / `CELO.keyStoreController` name
+the Ethereum contracts above; `registryNetwork(CELO)` is `ETHEREUM`) and
+proven into a KeyStoreCache on Celo. Ethereum has a relay, so registry writes
+go through the wallet's smart account there and a wallet created for `CELO`
+is provisioned on Ethereum in the same call.
+
+The account stack and the cache are **not deployed on Celo mainnet yet**:
+`CELO.registry.keyStoreCache` carries the `KEYSTORE_CACHE_NOT_DEPLOYED`
+sentinel and cache operations refuse it with a clear message. Build on
+[Celo Sepolia](/concepts/networks/testnet#celo-sepolia) today.
+
+- **Chain id:** 42220
+- **Public RPC:** `https://celo-rpc.publicnode.com`
+- **Explorer:** https://celoscan.io
+- **Relay:** `https://relay.altana.network`
+- **Registry:** Ethereum (chain 1), addresses above
+
+| Contract | Address |
+| --- | --- |
+| KeyStoreCache | pending mainnet deployment |
 
 > Addresses are the source of truth in the SDK's
 > [`packages/wallet/src/config.ts`](https://github.com/altananetwork/altana-sdk/blob/main/packages/wallet/src/config.ts).

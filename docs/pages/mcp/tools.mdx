@@ -21,7 +21,7 @@ The Altana MCP server exposes 20 tools. AI hosts call them by name. Eleven of th
 
 | Tool | Purpose |
 |---|---|
-| `create_wallet` | Generates a new private key, stores it in the OS keychain under the given name, returns the address. |
+| `create_wallet` | Generates a new private key, stores it in the OS keychain under the given name, returns the address, and says what to fund where (with the faucet on testnets; on Celo Sepolia also a little Sepolia ETH for registry writes). |
 | `list_wallets` | Lists wallet names available on this machine (across keychain, file, env). |
 | `wallet_balance` | Reads native + optional ERC-20 balances for a stored wallet. Pass `tokens` for specific ERC-20s, or `discover: true` to list every token the wallet holds (discovered through the Altana relay, zero balances omitted, result flagged `discovered: true`). [BEP-677](https://github.com/bnb-chain/BEPs/blob/master/BEPs/BEP-677.md) scaled-UI-amount tokens are detected via ERC-165 and their `display` value is scaled automatically; `raw` stays the on-chain amount. |
 | `wallet_execute` | Submits one or more calls signed by the wallet's admin key. |
@@ -30,17 +30,17 @@ The Altana MCP server exposes 20 tools. AI hosts call them by name. Eleven of th
 
 | Tool | Purpose |
 |---|---|
-| `wallet_verification` | Lists all active keys on a wallet from [Keystore](/concepts/keystore). |
-| `verify_authorization` | Answers: is this key/session authorized on this wallet right now? |
+| `wallet_verification` | Lists all active keys on a wallet from [Keystore](/concepts/keystore). On Celo Sepolia / Celo the registry is read on Sepolia / Ethereum and each key carries a `cache` block (`cached`, `revoked`, `expiry`, `fresh`) from the Celo-side KeyStoreCache. |
+| `verify_authorization` | Answers: is this key/session authorized on this wallet right now? Read from the registry chain; on cached networks a `cache` block reports the Celo-side view (`fresh` is the cache's own `isValidKey`, true only while the entry was proven at the registry block the chain currently anchors). |
 
 ## Session lifecycle
 
 | Tool | Purpose |
 |---|---|
-| `grant_session` | Generates a session key, registers it in Keystore, authorizes it with the given permissions. Returns the session details, keyId, and the grant's transaction hash. |
+| `grant_session` | Generates a session key, registers it in Keystore, authorizes it with the given permissions. Returns the session details, keyId, and the grant's transaction hash. On cached networks also `registry` (the write on the registry chain) and `cache` (the proof into the KeyStoreCache; a failed proof is reported, not thrown). |
 | `list_sessions` | Lists local session metadata (those granted from this machine). |
 | `session_execute` | Submits calls signed by a stored session key. |
-| `revoke_session` | Deactivates the session in Keystore and pulls onchain authority. |
+| `revoke_session` | Deactivates the session in Keystore and pulls onchain authority. On cached networks the account revoke comes first, then the registry revoke and the post-revocation proof, both reported. |
 
 ## Agent commerce
 

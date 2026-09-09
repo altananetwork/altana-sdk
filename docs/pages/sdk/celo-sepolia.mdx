@@ -1,0 +1,158 @@
+---
+title: Celo Sepolia
+description: Create and operate Altana wallets on Celo Sepolia (chain 11142220), where the KeyStore registry lives on Sepolia behind a local cache.
+---
+
+# Celo Sepolia
+
+Celo Sepolia (chain id **11142220**) is Altana's second testnet, and the first
+network with a **cached registry**: wallets execute through the Altana testnet
+relay on Celo Sepolia, while the [Keystore](/concepts/keystore) that records
+their authority lives on **Sepolia**. Session keys are registered on the
+Sepolia KeyStore and proven into a KeyStoreCache contract on Celo Sepolia, so
+anyone on Celo can read a wallet's authority with one `eth_call`.
+
+The SDK ships a ready-made `CELO_SEPOLIA` config. Addresses, faucets and the
+account stack are listed on the [Testnet](/concepts/networks/testnet#celo-sepolia) page.
+
+## Install
+
+```bash
+npm install @altananetwork/sdk viem
+```
+
+## Create a wallet on Celo Sepolia
+
+```ts
+import { createClient, CELO_SEPOLIA, signerFromPrivateKey } from "@altananetwork/sdk";
+
+const client = createClient({ chains: [CELO_SEPOLIA] });
+const signer = signerFromPrivateKey(process.env.PRIVATE_KEY as `0x${string}`);
+
+const wallet = await client.createWallet({ signer });
+
+console.log(wallet.address);
+```
+
+## What to fund where
+
+Two chains take part, and the wallet address is the same on both.
+
+| Chain | Asset | Why | Faucet |
+| --- | --- | --- | --- |
+| Celo Sepolia | CELO | Relay fees for every wallet action, including the proof into the cache | https://faucet.celo.org/celo-sepolia |
+| Sepolia | ETH | Registry writes (`grantSession` with `register: true`, `revokeSession`, `registerSessionKey`), about 0.0003 ETH each | https://cloud.google.com/application/web3/faucet/ethereum/sepolia |
+
+Sepolia has no Altana relay, so registry writes there are **direct
+transactions from the wallet's admin key**. On a private-key wallet that key
+is the wallet address itself, which is why the Sepolia ETH goes to
+`wallet.address`. Passkey wallets cannot sign a Sepolia transaction; see
+[Passkey wallets](#passkey-wallets) below.
+
+## Grant a session
+
+```ts
+const session = await client.grantSession({
+  wallet,
+  signer,
+  permissions: { calls: [{ to: "0xDex..." }], spend: [{ limit: 10n ** 18n, period: "day" }] },
+  expiry: Math.floor(Date.now() / 1000) + 3600,
+  onStatus: (step) => console.log(step), // registry-write, account-authorization, cache-sync, done
+});
+
+session.transactionHash; // account authorization on Celo Sepolia
+session.registry;        // { chainId: 11155111, via: "eoa", status: "CONFIRMED", transactionHash, blockNumber }
+session.cache;           // { chainId: 11142220, status: "CONFIRMED", keyStoreCache, transactionHash, l1BlockNumber, cachedKey }
+```
+
+On a cached network the grant is three steps, in order:
+
+1. **Registry write on Sepolia.** `registerKey(session)` on the Sepolia
+   Controller, preceded by `initialRegisterKey(admin)` on the wallet's first
+   registry write. Skipped when the key is already valid there.
+2. **Account authorization on Celo Sepolia** through the testnet relay, fee
+   in CELO. This is the step that gives the session its power.
+3. **Proof into the cache.** The SDK waits for Celo Sepolia to anchor the
+   Sepolia block that holds the registry write, builds the storage proof and
+   executes `populateKey` as a wallet call through the relay (again paid in
+   CELO, so no separately funded EOA is needed).
+
+Step 3 is reported in `session.cache`, never thrown: the session is live on
+the account and in the registry regardless. Retry it with
+[`client.syncSessionToCache`](/sdk/sync-to-l2#cached-networks-syncsessiontocache),
+or pass `populateCache: false` to skip it.
+
+Everything else is unchanged: `client.execute({ session, calls })` runs on
+Celo Sepolia exactly as on BNB testnet.
+
+## Revoke a session
+
+```ts
+const result = await client.revokeSession({ wallet, signer, session });
+
+result.status;    // account revoke on Celo Sepolia (throws on failure to submit)
+result.registry;  // registry revoke on Sepolia, reported
+result.cache;     // post-revocation proof into the cache, reported
+```
+
+The account revoke comes first, because it is what strips the session's
+power. The registry revoke and the post-revocation proof follow and are
+reported; a failure there leaves a stale registry or cache entry that a second
+`revokeSession` (or `syncSessionToCache`) corrects.
+
+## Reading authority on Celo Sepolia
+
+Decisions read the **Sepolia registry**; it is the source of truth. The cache
+on Celo Sepolia is the proof target and the read surface for third parties on
+Celo:
+
+```ts
+import { createPublicClient, http, keccak256 } from "viem";
+import { CELO_SEPOLIA, registryNetwork, readCachedKey, isCachedKeyValid, keyStoreCacheOf } from "@altananetwork/sdk";
+
+const registry = registryNetwork(CELO_SEPOLIA); // SEPOLIA
+const celo = createPublicClient({ chain: CELO_SEPOLIA.chain, transport: http(CELO_SEPOLIA.publicRpcUrl) });
+const keyId = keccak256(session.publicKey);
+
+const entry = await readCachedKey(celo, keyStoreCacheOf(CELO_SEPOLIA), wallet.address, keyId);
+// entry.revoked, entry.expiry, entry.isRoot, entry.sourceBlockNumber
+
+const fresh = await isCachedKeyValid(celo, keyStoreCacheOf(CELO_SEPOLIA), wallet.address, keyId);
+```
+
+`isValidKey` on the cache only answers while the cache entry was proven at
+the Sepolia block Celo Sepolia currently anchors (about 12 seconds), and
+reverts otherwise; the SDK maps that revert to `false`. `getCachedKey` keeps
+the proven status afterwards. Read the registry for the decision and the cache
+for what Celo can see.
+
+## Passkey wallets
+
+A passkey (P256) admin cannot sign a Sepolia transaction, and Sepolia has no
+relay to wrap one. On this testnet, grant passkey wallets **account-only
+sessions**:
+
+```ts
+const session = await client.grantSession({ wallet, signer: passkey, register: false, permissions, expiry });
+```
+
+The account still enforces permissions and expiry; the session is simply not
+visible in the Sepolia registry. A registered grant throws the documented
+error (see [Errors](/sdk/errors#cached-networks)). On mainnet the registry
+chain (Ethereum) has a relay and passkey wallets register normally.
+
+## Not on Celo Sepolia
+
+- **ERC-8183 hiring** is a BNB agent-economy rail; `hireErc8183Agent` throws
+  `no deployment registered for chainId 11142220`.
+- **Calls to the KeyStore or Controller addresses on Celo Sepolia** are refused
+  by the SDK: those contracts exist on Sepolia only, and a call to the same
+  address on Celo Sepolia would land as a plain transfer to an empty address
+  and burn the fee it carried. Use `grantSession`, `revokeSession` or
+  `registerSessionKey`, which route registry writes to Sepolia.
+
+## What's next
+
+- [Testnet networks & addresses](/concepts/networks/testnet#celo-sepolia). Chain ids, RPCs, faucets, contract addresses.
+- [syncSessionToCache](/sdk/sync-to-l2#cached-networks-syncsessiontocache). Retry or schedule a proof yourself.
+- [Sell over x402 on Celo Sepolia](/sdk/x402-server#celo). USDC and USDT token configs.
