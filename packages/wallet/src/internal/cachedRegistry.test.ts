@@ -51,13 +51,13 @@ describe("keyStoreCacheOf", () => {
   });
 
   test("refuses the not-deployed sentinel with a message naming the chain and the fix", () => {
-    expect(CELO_SEPOLIA.registry?.kind === "cached" && CELO_SEPOLIA.registry.keyStoreCache).toBe(
+    expect(CELO.registry?.kind === "cached" && CELO.registry.keyStoreCache).toBe(
       KEYSTORE_CACHE_NOT_DEPLOYED,
     );
-    expect(() => keyStoreCacheOf(CELO_SEPOLIA)).toThrow(/not deployed on Celo Sepolia/);
-    expect(() => keyStoreCacheOf(CELO_SEPOLIA)).toThrow(/KEYSTORE_CACHE_NOT_DEPLOYED/);
-    expect(() => keyStoreCacheOf(CELO_SEPOLIA)).toThrow(/registry\.keyStoreCache/);
     expect(() => keyStoreCacheOf(CELO)).toThrow(/not deployed on Celo/);
+    expect(() => keyStoreCacheOf(CELO)).toThrow(/KEYSTORE_CACHE_NOT_DEPLOYED/);
+    expect(() => keyStoreCacheOf(CELO)).toThrow(/registry\.keyStoreCache/);
+    expect(keyStoreCacheOf(CELO_SEPOLIA)).toBe("0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD");
   });
 
   test("refuses a local-registry network (there is no cache)", () => {

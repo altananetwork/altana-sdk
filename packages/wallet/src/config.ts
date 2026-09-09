@@ -154,10 +154,9 @@ export const CELO_SEPOLIA: NetworkConfig = {
   registry: {
     kind: "cached",
     l1: SEPOLIA,
-    // The Celo Sepolia cache is deployed in a parallel workstream. Replace the
-    // sentinel with the address from deployments/celo-sepolia.json (one-line
-    // edit); until then every cache operation refuses with a clear message.
-    keyStoreCache: KEYSTORE_CACHE_NOT_DEPLOYED,
+    // KeyStoreCacheOPStack 1.1.1, deployed 2026-09-09 (deploy block 35678512).
+    // Source: <altana-keystore>/deployments/celo-sepolia.json.
+    keyStoreCache: "0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD",
   },
 };
 
