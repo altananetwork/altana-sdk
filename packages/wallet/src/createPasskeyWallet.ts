@@ -22,6 +22,7 @@ import { type NetworkConfig } from "./config.js";
 import {
   buildRelayClient,
 } from "./internal/relay.js";
+import { provisioningNetworks } from "./internal/cachedRegistry.js";
 import {
   createPasskey,
   passkeyToPortoKey,
@@ -75,8 +76,11 @@ export async function createPasskeyWallet(
   // 3. EIP-7702 upgrade on every configured chain. The throwaway signs each
   //    chain's authorization tuple; the passkey is registered as the smart
   //    account's admin authority. Counterfactual: the setCode lands as a
-  //    preCall on each chain's first execute.
-  for (const network of opts.networks) {
+  //    preCall on each chain's first execute. A cached network's registry
+  //    chain is included when it has a relay (Celo on Ethereum): registry
+  //    writes go through the smart account there, and there is no second
+  //    chance to provision it once the throwaway is gone.
+  for (const network of provisioningNetworks(opts.networks)) {
     const relayClient = buildRelayClient(network);
     const prepared: any = await prepareUpgradeAccount(relayClient, {
       address: walletAddress,

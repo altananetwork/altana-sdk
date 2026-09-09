@@ -11,6 +11,7 @@
 
 import type { Address, Hex } from "viem";
 import type { Signer } from "./signer.js";
+import type { CachedKey } from "../syncKeyToL2.js";
 
 /** A single allowed call rule. AND semantics between the optional fields. */
 export type CallPermission =
@@ -71,7 +72,58 @@ export type GrantSessionResult = Session & {
    * Optional: the relay can confirm an intent without surfacing a receipt.
    */
   transactionHash?: Hex;
+  /**
+   * Cached networks only (Celo Sepolia, Celo): what happened to the registry
+   * write on the registry chain. Absent on networks with a local KeyStore,
+   * where the registration rides in the grant transaction itself.
+   */
+  registry?: RegistryWriteReport;
+  /**
+   * Cached networks only: the proof of the new registry entry into the
+   * network's KeyStoreCache. A failed proof is reported here, never thrown:
+   * the session is live on the account and in the registry regardless, and
+   * `syncSessionToCache` can be retried at any time.
+   */
+  cache?: CacheSyncReport;
 };
+
+/**
+ * Outcome of a registry write on the registry chain of a cached network.
+ * `via` says how it got there: through that chain's relay, as a direct
+ * transaction from the admin key (relay-less registry chains such as
+ * Sepolia), or `skipped` when there was nothing to write.
+ */
+export type RegistryWriteReport = {
+  chainId: number;
+  via: "relay" | "eoa" | "skipped";
+  status: "CONFIRMED" | "FAILED" | "PENDING" | "SKIPPED";
+  transactionHash?: Hex;
+  /** Block the write landed in; proofs into the cache are anchored at or past it. */
+  blockNumber?: bigint;
+  /** Why the write was skipped or failed, when it was. */
+  reason?: string;
+};
+
+/** Outcome of proving a registry entry into a cached network's KeyStoreCache. */
+export type CacheSyncReport = {
+  chainId: number;
+  status: "CONFIRMED" | "FAILED" | "SKIPPED";
+  keyStoreCache?: Address;
+  transactionHash?: Hex;
+  /** Registry-chain block the accepted proof was built against. */
+  l1BlockNumber?: bigint;
+  /** The cache entry after the proof, when one was read. */
+  cachedKey?: CachedKey;
+  /** Why the proof was skipped or failed, when it was. */
+  reason?: string;
+};
+
+/** Progress of grantSession on a cached network, in order. */
+export type GrantSessionStatus =
+  | "registry-write"
+  | "account-authorization"
+  | "cache-sync"
+  | "done";
 
 /** Options for grantSession. */
 export type GrantSessionOptions = {
@@ -99,6 +151,21 @@ export type GrantSessionOptions = {
    * registered later with `registerSessionKey`.
    */
   register?: boolean;
+  /**
+   * Cached networks only (Celo Sepolia, Celo). After the registry write and
+   * the account authorization, prove the new registry entry into the
+   * network's KeyStoreCache (default true). The proof is a wallet call
+   * through the network's relay, paid in the network's native token. Pass
+   * false to skip it and call `syncSessionToCache` yourself later. Ignored on
+   * networks with a local KeyStore.
+   */
+  populateCache?: boolean;
+  /**
+   * Cached networks only: progress callback across the three steps
+   * (registry write, account authorization, cache proof). Not called on
+   * networks with a local KeyStore, where the grant is one transaction.
+   */
+  onStatus?: (status: GrantSessionStatus) => void;
 };
 
 /**

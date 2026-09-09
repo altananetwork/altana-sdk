@@ -12,13 +12,19 @@ import {
 } from "./internal/relay.js";
 import {
   buildAdditionalRegisterCall,
+  deriveKeyId,
+  readIsValidKey,
   readRegistrationFee,
 } from "./internal/keystore.js";
+import { isCachedRegistry, submitRegistryCalls } from "./internal/cachedRegistry.js";
 import type {
+  CacheSyncReport,
   GrantSessionOptions,
   GrantSessionResult,
+  RegistryWriteReport,
 } from "./internal/sessions.js";
 import type { Wallet } from "./internal/types.js";
+import { proveIntoCache } from "./syncSessionToCache.js";
 
 const NATIVE_TOKEN: Address = "0x0000000000000000000000000000000000000000";
 
@@ -50,6 +56,14 @@ function ephemeralSessionSigner(): Signer {
  *
  * Pass the returned Session to whichever process runs the agent. The agent
  * calls execute(session, calls) — never the admin.
+ *
+ * On a network with a local KeyStore (BNB, Ethereum, BNB testnet) the
+ * registry entry and the account authorization land in one relay intent.
+ * On a cached network (Celo Sepolia, Celo) they are three steps, in order:
+ * the registry write on the registry chain (skipped when the key is already
+ * valid there), the account authorization through the network's relay, and
+ * the proof of the registry entry into the network's KeyStoreCache. A failed
+ * proof is reported in `result.cache`, not thrown.
  */
 export async function grantSession(
   wallet: Wallet,
@@ -90,8 +104,70 @@ export async function grantSession(
   // sessions; the account-level authorization below is unaffected, and the
   // key can be registered later with registerSessionKey.
   const register = opts.register !== false;
+
+  // Cached network: the registry write happens first, on the registry chain.
+  let registryReport: RegistryWriteReport | undefined;
+  if (isCachedRegistry(network)) {
+    const registry = network.registry.l1;
+    const registryClient = buildPublicClient(registry);
+    if (!register) {
+      registryReport = {
+        chainId: registry.chainId,
+        via: "skipped",
+        status: "SKIPPED",
+        reason: "register: false",
+      };
+    } else {
+      const keyId = deriveKeyId(sessionSigner.publicKey);
+      const alreadyValid = await readIsValidKey(registryClient, registry, wallet.address, keyId);
+      if (alreadyValid) {
+        registryReport = {
+          chainId: registry.chainId,
+          via: "skipped",
+          status: "SKIPPED",
+          reason: "already registered and valid on the registry chain",
+        };
+      } else {
+        opts.onStatus?.("registry-write");
+        const fee = await readRegistrationFee(registryClient, registry);
+        // The execution chain's fee token never reaches the registry chain:
+        // a relay there charges its own native token, an EOA write pays gas.
+        const written = await submitRegistryCalls({
+          network,
+          walletAddress: wallet.address,
+          adminSigner,
+          registryClient,
+          calls: [
+            buildAdditionalRegisterCall({
+              publicKey: sessionSigner.publicKey,
+              fee,
+              network: registry,
+              expiry: opts.expiry,
+            }),
+          ],
+        });
+        registryReport = {
+          chainId: written.chainId,
+          via: written.via,
+          status: written.status,
+          ...(written.transactionHash ? { transactionHash: written.transactionHash } : {}),
+          ...(written.blockNumber !== undefined ? { blockNumber: written.blockNumber } : {}),
+        };
+        if (written.status !== "CONFIRMED") {
+          throw new Error(
+            `Session registry write on ${registry.chain.name} (chainId ${registry.chainId}) ` +
+              `did not confirm: status=${written.status}` +
+              (written.transactionHash ? ` (tx ${written.transactionHash})` : "") +
+              `. The account authorization was not attempted.`,
+          );
+        }
+      }
+    }
+    opts.onStatus?.("account-authorization");
+  }
+
   let registerCalls: { to: Address; value: bigint; data: Hex }[] = [];
-  if (register) {
+  if (register && !isCachedRegistry(network)) {
     const fee = await readRegistrationFee(publicClient, network);
     registerCalls = [
       buildAdditionalRegisterCall({
@@ -106,6 +182,8 @@ export async function grantSession(
   // submitCalls auto-prepends initialRegisterKey(admin) on the wallet's
   // very first admin action, so the final intent ends up as:
   //   [ initialRegisterKey(admin)?, registerKey(session)?, authorizeKeys=[session] ]
+  // On a cached network both registry calls happened on the registry chain
+  // above, and the intent carries the account authorization alone.
   const callsId = await submitCalls(
     relayClient,
     wallet.address,
@@ -152,6 +230,32 @@ export async function grantSession(
     await new Promise((r) => setTimeout(r, relayCatchUpMs));
   }
 
+  // Cached network: prove the registry entry into the network's cache. The
+  // session is already live on the account and in the registry, so a failed
+  // proof is reported, not thrown; syncSessionToCache can be retried later.
+  let cacheReport: CacheSyncReport | undefined;
+  if (isCachedRegistry(network)) {
+    const populate = opts.populateCache !== false;
+    if (!register || !populate) {
+      cacheReport = {
+        chainId: network.chainId,
+        status: "SKIPPED",
+        reason: !register ? "register: false" : "populateCache: false",
+      };
+    } else {
+      opts.onStatus?.("cache-sync");
+      cacheReport = await proveIntoCache(
+        wallet,
+        adminSigner,
+        sessionSigner.publicKey,
+        network,
+        registryReport?.blockNumber,
+        feeToken,
+      );
+    }
+    opts.onStatus?.("done");
+  }
+
   return {
     walletAddress: wallet.address,
     signer: sessionSigner,
@@ -162,6 +266,8 @@ export async function grantSession(
     // entry point that dropped it, which left integrators unable to record a
     // receipt for the one call that charges a registration fee.
     ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
+    ...(registryReport ? { registry: registryReport } : {}),
+    ...(cacheReport ? { cache: cacheReport } : {}),
   };
 }
 

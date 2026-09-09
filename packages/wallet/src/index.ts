@@ -9,6 +9,7 @@ export type {
   ClientGrantSessionOptions,
   ClientRevokeSessionOptions,
   ClientRegisterSessionKeyOptions,
+  ClientSyncSessionToCacheOptions,
   ClientBalancesOptions,
   ClientHoldingsOptions,
 } from "./client.js";
@@ -52,9 +53,13 @@ export type {
   SpendPermission,
   GrantSessionOptions,
   GrantSessionResult,
+  GrantSessionStatus,
+  RegistryWriteReport,
+  CacheSyncReport,
   SerializedSession,
   SerializedCallPermission,
 } from "./internal/sessions.js";
+export type { RevokeSessionResult } from "./revokeSession.js";
 // The safe persistence path for sessions: serializeSession stores everything
 // but the secret; deserializeSession rebuilds a signing Session from the
 // stored half plus the key the caller kept.
@@ -70,14 +75,35 @@ export {
   BNB,
   BASE,
   BNB_TESTNET,
+  SEPOLIA,
+  CELO_SEPOLIA,
+  CELO,
+  KEYSTORE_CACHE_NOT_DEPLOYED,
+  registryNetwork,
   RELAY_URL,
   TESTNET_RELAY_URL,
 } from "./config.js";
-export type { NetworkConfig, L2CacheConfig } from "./config.js";
+export type { NetworkConfig, L2CacheConfig, KeyStoreRegistry } from "./config.js";
+
+// Cached-registry helpers (Celo Sepolia, Celo): is the network cached, where
+// is its cache, and which chains a wallet is provisioned on.
+export {
+  isCachedRegistry,
+  keyStoreCacheOf,
+  provisioningNetworks,
+} from "./internal/cachedRegistry.js";
 
 // Testnet faucet helper — funds an EOA with native tokens via the testnet
 // relay's faucet. Works only on networks whose relay exposes it (BSC testnet).
 export { fundNative, waitForBalance } from "./internal/relay.js";
+// Test-network faucets by chainId, for funding hints.
+export {
+  FAUCET_URLS,
+  faucetHint,
+  CELO_SEPOLIA_FAUCET_URL,
+  BNB_TESTNET_FAUCET_URL,
+  SEPOLIA_FAUCET_URL,
+} from "./internal/relay.js";
 
 // ERC-1271 order signing (session keys signing off-chain authorizations).
 export { signOrder, signOrderTypedData } from "./signOrder.js";
@@ -116,6 +142,10 @@ export {
   ensureKeyCached,
   readCachedKey,
   isCachedKeyValid,
+  buildPopulateKeyCall,
+  waitForL1Anchor,
+  readL1Anchor,
+  computeKeyPackedSlot,
 } from "./syncKeyToL2.js";
 export type {
   SyncKeyToL2Args,
@@ -123,7 +153,20 @@ export type {
   EnsureKeyCachedArgs,
   EnsureKeyCachedStatus,
   CachedKey,
+  L1Anchor,
+  WaitForL1AnchorArgs,
+  BuildPopulateKeyCallArgs,
+  PopulateKeyCall,
 } from "./syncKeyToL2.js";
+
+// Cached networks: prove a session's registry state into the network's
+// KeyStoreCache as a wallet call through the relay.
+export { syncSessionToCache } from "./syncSessionToCache.js";
+export type {
+  SyncSessionToCacheOptions,
+  SyncSessionToCacheResult,
+  SyncSessionToCacheStatus,
+} from "./syncSessionToCache.js";
 
 export {
   ERC8183_ADDRESSES,
