@@ -9,9 +9,10 @@
 import { describe, expect, test } from "bun:test";
 import { keccak256, type Hex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
+import { celoSepolia } from "viem/chains";
 
 import { describeError, settlePayment, type SettleClients } from "./settle.js";
-import { U_TOKEN } from "./tokens.js";
+import { U_TOKEN, USDC_CELO_SEPOLIA } from "./tokens.js";
 import type { DecodedPayment, MerchantConfig } from "./types.js";
 
 const PAY_TO = "0x3C5f3a6cE224BB89D72f5EB4232ecC27F67B3eeA" as const;
@@ -148,5 +149,42 @@ describe("describeError", () => {
   });
   test("plain errors pass through", () => {
     expect(describeError(new Error("settle: transaction 0x1 reverted"))).toBe("settle: transaction 0x1 reverted");
+  });
+});
+
+describe("Celo Sepolia settlement (chainId 11142220)", () => {
+  // viem's celo chain carries a custom transaction serializer (for the
+  // fee-currency CIP-64 type). A settlement never sets feeCurrency, so the
+  // signed transaction must come out as a standard EIP-1559 (0x02) envelope
+  // that any node accepts. settle.ts is unchanged for Celo; this pins it.
+  test("signs a standard 0x02 transaction through the celo serializer", async () => {
+    const account = privateKeyToAccount(generatePrivateKey());
+    const raws: Hex[] = [];
+    const clients = {
+      wallet: {
+        account,
+        chain: celoSepolia,
+        prepareTransactionRequest: async (req: Record<string, unknown>) => ({
+          ...req, chainId: 11142220, nonce: 0, gas: 100_000n, maxFeePerGas: 60_000_000_000n, maxPriorityFeePerGas: 1n, type: "eip1559",
+        }),
+        sendRawTransaction: async ({ serializedTransaction }: { serializedTransaction: Hex }) => {
+          raws.push(serializedTransaction);
+          return keccak256(serializedTransaction);
+        },
+        sendTransaction: async () => { throw new Error("local signer must sign locally"); },
+      },
+      public: {
+        getTransaction: async () => null,
+        getTransactionReceipt: async () => null,
+        waitForTransactionReceipt: async ({ hash }: { hash: Hex }) => ({ transactionHash: hash, status: "success" as const }),
+      },
+    } as unknown as SettleClients;
+    const cfg: MerchantConfig = { chainId: 11142220, payTo: PAY_TO, price: 5n, rails: [{ rail: "eip3009", token: USDC_CELO_SEPOLIA }] };
+    const payment: DecodedPayment = { ...PAYMENT, token: USDC_CELO_SEPOLIA.address };
+    const res = await settlePayment(payment, cfg, clients);
+    expect(res.settlement).toBe("confirmed");
+    expect(raws).toHaveLength(1);
+    expect(raws[0]!.startsWith("0x02")).toBe(true);
+    expect(res.txHash).toBe(keccak256(raws[0]!));
   });
 });
