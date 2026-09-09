@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "End-to-end smoke tests for @altananetwork/sdk and @altananetwork/mcp on Sepolia. Not published. Internal CI use.",
+  "description": "End-to-end smoke and fork tests for @altananetwork/sdk and @altananetwork/mcp (BNB testnet, Celo Sepolia, anvil forks). Not published. Internal CI use.",
   "scripts": {
     "smoke:wallet": "bun run smoke-test.ts",
     "smoke:session": "bun run smoke-session.ts",
@@ -15,7 +15,7 @@
     "fork:x402": "bun run fork-x402.ts",
     "fork:x402-witness": "bun run fork-x402-witness.ts",
     "fork:eip3009": "bun run fork-eip3009.ts",
-    "fork:all": "bun run fork-erc1271.ts && bun run fork-x402.ts && bun run fork-x402-witness.ts && bun run fork-eip3009.ts && bun run fork-erc8004.ts && bun run fork-erc8183.ts && bun run fork-native-receive.ts && bun run fork-x402-server.ts",
+    "fork:all": "bun run fork-erc1271.ts && bun run fork-x402.ts && bun run fork-x402-witness.ts && bun run fork-eip3009.ts && bun run fork-erc8004.ts && bun run fork-erc8183.ts && bun run fork-native-receive.ts && bun run fork-x402-server.ts && bun run fork-celo-cache.ts && bun run fork-celo-x402-server.ts",
     "fork:native-receive": "bun run fork-native-receive.ts",
     "demo:b402": "bun run demo-b402.ts",
     "typecheck": "tsc --noEmit",
@@ -24,7 +24,11 @@
     "fork:erc8004": "bun run fork-erc8004.ts",
     "demo:hire-studio-agent": "bun run demo-hire-studio-agent.ts",
     "live:erc8004-testnet": "bun run live-erc8004-testnet.ts",
-    "live:holdings": "bun run live-holdings.ts"
+    "live:holdings": "bun run live-holdings.ts",
+    "fork:celo-cache": "bun run fork-celo-cache.ts",
+    "fork:celo-x402-server": "bun run fork-celo-x402-server.ts",
+    "smoke:celo-sepolia": "bun run smoke-celo-sepolia.ts",
+    "smoke:celo-passkey": "bun run smoke-celo-passkey.ts"
   },
   "dependencies": {
     "@altananetwork/sdk": "workspace:*",
