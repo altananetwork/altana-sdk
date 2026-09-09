@@ -31,7 +31,7 @@ BASE_FORK_RPC_URL=https://.../<KEY>         # fork-eip3009
 BSC_TESTNET_FORK_RPC_URL=https://.../<KEY>  # fork-erc8004, fork-erc8183
 CELO_SEPOLIA_FORK_RPC_URL=https://.../<KEY> # fork-celo-cache, fork-celo-x402-server (public fallback: rpc.ankr.com/celo_sepolia)
 SEPOLIA_RPC_URL=https://.../<KEY>           # fork-celo-cache: must serve eth_getProof a few blocks behind head
-                                            # (public fallback: sepolia.gateway.tenderly.co; publicnode only serves proofs at its newest block)
+                                            # (public fallback: sepolia.gateway.tenderly.co; 1rpc.io/sepolia also works; publicnode only serves proofs at its newest block)
 ```
 
 All five are set as GitHub Actions secrets of the same names and passed to the

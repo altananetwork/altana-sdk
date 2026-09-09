@@ -21,6 +21,8 @@ import type { Address, Hex } from "viem";
 import { type NetworkConfig } from "./config.js";
 import {
   buildRelayClient,
+  isMissingRelayChainError,
+  relayDoesNotServeChainMessage,
 } from "./internal/relay.js";
 import { provisioningNetworks } from "./internal/cachedRegistry.js";
 import {
@@ -82,10 +84,16 @@ export async function createPasskeyWallet(
   //    chance to provision it once the throwaway is gone.
   for (const network of provisioningNetworks(opts.networks)) {
     const relayClient = buildRelayClient(network);
-    const prepared: any = await prepareUpgradeAccount(relayClient, {
-      address: walletAddress,
-      authorizeKeys: [passkeyAdminKey],
-    });
+    let prepared: any;
+    try {
+      prepared = await prepareUpgradeAccount(relayClient, {
+        address: walletAddress,
+        authorizeKeys: [passkeyAdminKey],
+      });
+    } catch (err) {
+      if (!isMissingRelayChainError(err)) throw err;
+      throw new Error(relayDoesNotServeChainMessage(network.chainId, network.relayUrl), { cause: err });
+    }
     const signatures: Record<string, Hex> = {};
     for (const [name, digest] of Object.entries(prepared.digests ?? {})) {
       signatures[name] = await throwawayAccount.sign({ hash: digest as Hex });

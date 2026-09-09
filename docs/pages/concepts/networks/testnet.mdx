@@ -99,6 +99,13 @@ Sepolia KeyStore):
 | --- | --- |
 | KeyStoreCache (KeyStoreCacheOPStack 1.1.1, deploy block 35678512) | `0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD` |
 
+A reference entry to read while integrating: the first key proven into this
+cache is the testnet deployer's root key, user
+`0x6A75e80B961f7d884f9D03E5Aa0808d05e47c50d`, keyId
+`0x26aaf13c72b195571d3d7587c9df471e3f0752fb297da285e961267ac898e87d`
+(`getCachedKey` returns it; `isValidKey` answers only while the anchor
+matches the proven Sepolia block).
+
 Account stack (used by the relay; the same testnet address set as chain 97):
 
 | Contract | Address |
@@ -133,7 +140,7 @@ anchored to. No relay serves it, so `SEPOLIA` cannot be passed to
 `createClient`; the SDK reaches it through `CELO_SEPOLIA.registry.l1`.
 
 - **Chain id:** 11155111
-- **Public RPC:** `https://ethereum-sepolia-rpc.publicnode.com` (reads and transactions). Proofs into the cache need `eth_getProof` for a block a few behind head, which publicnode does not serve; use `https://sepolia.gateway.tenderly.co`, `https://0xrpc.io/sep` or `https://eth-sepolia.api.onfinality.io/public` for that, by overriding `SEPOLIA.publicRpcUrl` or passing `l1Client` to `syncSessionToCache`.
+- **Public RPC:** `https://ethereum-sepolia-rpc.publicnode.com` (reads and transactions). Proofs into the cache need `eth_getProof` for a block a few behind head, which publicnode does not serve; use `https://sepolia.gateway.tenderly.co`, `https://1rpc.io/sepolia`, `https://0xrpc.io/sep` or `https://eth-sepolia.api.onfinality.io/public` for that, by overriding `SEPOLIA.publicRpcUrl` or passing `l1Client` to `syncSessionToCache`.
 - **Explorer:** https://sepolia.etherscan.io
 - **Faucet:** https://cloud.google.com/application/web3/faucet/ethereum/sepolia
 

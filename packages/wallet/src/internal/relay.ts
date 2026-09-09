@@ -108,10 +108,12 @@ export async function registerAccount(
     });
     const account = privateKeyToAccount(signer._privateKey);
 
-    const prepared: any = await prepareUpgradeAccount(client, {
-      address: account.address,
-      authorizeKeys: [adminKey],
-    });
+    const prepared: any = await withRelayChainCheck(client, () =>
+      prepareUpgradeAccount(client, {
+        address: account.address,
+        authorizeKeys: [adminKey],
+      }),
+    );
 
     const signatures: Record<string, Hex> = {};
     for (const [name, digest] of Object.entries(prepared.digests ?? {})) {
@@ -134,10 +136,12 @@ export async function registerAccount(
     const throwawayAccount = privateKeyToAccount(throwawayPk);
     const passkeyAdminKey = passkeyToPortoKey(signer, { role: "admin" });
 
-    const prepared: any = await prepareUpgradeAccount(client, {
-      address: throwawayAccount.address,
-      authorizeKeys: [passkeyAdminKey],
-    });
+    const prepared: any = await withRelayChainCheck(client, () =>
+      prepareUpgradeAccount(client, {
+        address: throwawayAccount.address,
+        authorizeKeys: [passkeyAdminKey],
+      }),
+    );
 
     const signatures: Record<string, Hex> = {};
     for (const [name, digest] of Object.entries(prepared.digests ?? {})) {
@@ -153,6 +157,42 @@ export async function registerAccount(
   }
 
   throw new Error(unsupportedSignerMessage(signer.type, "create a wallet"));
+}
+
+/**
+ * The message for a relay that answers but has no capabilities entry for the
+ * client's chain: porto surfaces that as an opaque TypeError while
+ * destructuring the missing entry. Seen when a chain is configured ahead of
+ * the relay redeploy that serves it (Celo Sepolia before the testnet relay
+ * added chain 11142220).
+ */
+export function relayDoesNotServeChainMessage(chainId: number, relayUrl?: string): string {
+  return (
+    `The Altana relay${relayUrl ? ` at ${relayUrl}` : ""} does not serve chain ${chainId} ` +
+    `(its wallet_getCapabilities has no entry for it). The chain is configured in the SDK ` +
+    `ahead of the relay: wait for the relay deployment that adds it, or point relayUrl at a ` +
+    `relay that lists chain ${chainId}.`
+  );
+}
+
+/** True when `err` is porto's failure mode for a chain the relay does not list. */
+export function isMissingRelayChainError(err: unknown): boolean {
+  const text = err instanceof Error ? err.message : String(err);
+  return /Cannot destructure property 'contracts'/.test(text);
+}
+
+async function withRelayChainCheck<T>(
+  client: ReturnType<typeof buildRelayClient>,
+  fn: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (!isMissingRelayChainError(err)) throw err;
+    const chainId = client.chain?.id ?? 0;
+    const url = (client.transport as { url?: string }).url;
+    throw new Error(relayDoesNotServeChainMessage(chainId, url), { cause: err });
+  }
 }
 
 /** Fund an EOA with native tokens via the upstream relay's faucet (test networks only). */

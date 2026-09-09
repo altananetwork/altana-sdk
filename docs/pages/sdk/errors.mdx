@@ -99,6 +99,7 @@ There is no error class and no error code: every one of these is a plain `Error`
 | Message | Cause |
 |---|---|
 | `No Altana relay serves chain <id> (<name>). ...` | The chain has no relay and cannot execute. `BASE` and `SEPOLIA` are read-only in this sense: one is an L2 cache target, the other a registry chain. [`holdings`](/sdk/balances#discovering-holdings) throws this too, since discovery goes through the relay. |
+| `The Altana relay at <url> does not serve chain <id> (its wallet_getCapabilities has no entry for it). ...` | `createWallet` / `createPasskeyWallet` reached a relay that answers but does not list the chain: the SDK config is ahead of the relay deployment (Celo Sepolia before the testnet relay added chain 11142220). Wait for that deployment or set `relayUrl` to a relay that lists the chain. |
 | `The relay rejected the request to ...: fee token not supported ...` | The relay fee is paid in the chain's native currency (BNB, ETH, CELO). Omit `feeToken` or set one the relay accepts. |
 | `Balance for <address> did not reach <n> wei within <ms>ms` | A funding wait timed out. |
 | `The relay could not list holdings for <address> on chain <id>: <reason>` | [`holdings`](/sdk/balances#discovering-holdings): the relay's `wallet_getAssets` call failed. `<reason>` is the relay's own message (or the transport error); the original error is on `.cause`. |

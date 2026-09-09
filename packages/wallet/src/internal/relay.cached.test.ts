@@ -21,7 +21,9 @@ import {
   assertNoRegistryTargets,
   buildRelayClient,
   faucetHint,
+  isMissingRelayChainError,
   needsFirstActionPrepend,
+  relayDoesNotServeChainMessage,
   submitCalls,
 } from "./relay.js";
 import { createPrivateKeySigner } from "./signer.js";
@@ -143,6 +145,18 @@ describe("relay prose", () => {
     expect(() => buildRelayClient(SEPOLIA)).toThrow(
       /testnet relay serves BSC testnet \(97\) and Celo Sepolia \(11142220\)/,
     );
+  });
+});
+
+describe("relay without the chain", () => {
+  test("porto's destructuring TypeError is recognised and explained", () => {
+    const portoError = new TypeError("Cannot destructure property 'contracts' from null or undefined value");
+    expect(isMissingRelayChainError(portoError)).toBe(true);
+    expect(isMissingRelayChainError(new Error("quote expired"))).toBe(false);
+    const msg = relayDoesNotServeChainMessage(11142220, "https://testnet-relay.altana.network");
+    expect(msg).toContain("does not serve chain 11142220");
+    expect(msg).toContain("https://testnet-relay.altana.network");
+    expect(msg).toContain("wallet_getCapabilities");
   });
 });
 

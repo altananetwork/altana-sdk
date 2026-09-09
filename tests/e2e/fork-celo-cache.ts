@@ -30,10 +30,16 @@
  * Env:
  *   CELO_SEPOLIA_FORK_RPC_URL  Celo Sepolia RPC to fork (default: public Ankr).
  *   SEPOLIA_RPC_URL            Sepolia RPC with historical eth_getProof
- *                              (default: Tenderly's public gateway; publicnode
+ *                              (default: Tenderly's public gateway;
+ *                              https://1rpc.io/sepolia also works; publicnode
  *                              only serves proofs for its newest block).
  *   CELO_FORK_PROOF_USER       A wallet registered on the Sepolia KeyStore
  *                              (default: one registered in Aug 2026).
+ *
+ * Before deploying its own cache it also reads the LIVE Celo Sepolia cache
+ * (CELO_SEPOLIA.registry.keyStoreCache) on the fork: version, anchor, and the
+ * first key ever proven into it (the deployer's root key), so a redeploy or a
+ * wrong address in the config fails here rather than in a user's grant.
  *
  * Run: bun run fork:celo-cache   (from tests/e2e; needs `anvil`)
  */
@@ -76,6 +82,9 @@ const PROOF_USER = (process.env.CELO_FORK_PROOF_USER || "0xD035abdb79eDb8F868319
 const ANVIL_PORT = 8557;
 const ANVIL_URL = `http://127.0.0.1:${ANVIL_PORT}`;
 const L1_BLOCK_PREDEPLOY: Address = "0x4200000000000000000000000000000000000015";
+/** First key proven into the live Celo Sepolia cache (2026-09-09): the testnet deployer's root key. */
+const LIVE_CACHED_USER: Address = "0x6A75e80B961f7d884f9D03E5Aa0808d05e47c50d";
+const LIVE_CACHED_KEY_ID: Hex = "0x26aaf13c72b195571d3d7587c9df471e3f0752fb297da285e961267ac898e87d";
 
 const KEYSTORE_ABI = [
   { name: "getKeys", type: "function", stateMutability: "view", inputs: [{ name: "user", type: "address" }], outputs: [{ type: "bytes32[]" }] },
@@ -124,6 +133,22 @@ async function main() {
     const liveAnchor = await readL1Anchor(l2);
     log(`  fork block ${await l2.getBlockNumber()}, L1Block anchors Sepolia #${liveAnchor.number}`);
 
+    // ── 0. The live cache the SDK config points at. ──
+    log("\n▶ Reading the live Celo Sepolia cache from the SDK config ...");
+    const liveCache = keyStoreCacheOf(CELO_SEPOLIA);
+    assert((await l2.getCode({ address: liveCache })) !== undefined, `code at CELO_SEPOLIA.registry.keyStoreCache (${liveCache})`);
+    const liveVersion = await l2.readContract({ address: liveCache, abi: CACHE_ABI, functionName: "VERSION" });
+    const liveL1 = await l2.readContract({ address: liveCache, abi: CACHE_ABI, functionName: "l1KeyStore" });
+    assert(liveVersion === "1.1.1", `live cache VERSION is 1.1.1 (got ${liveVersion})`);
+    assert(liveL1.toLowerCase() === SEPOLIA.keyStore.toLowerCase(), "live cache is anchored to CELO_SEPOLIA.registry.l1.keyStore");
+    const liveEntry = await readCachedKey(l2, liveCache, LIVE_CACHED_USER, LIVE_CACHED_KEY_ID);
+    assert(liveEntry.publicKey.length > 2 && keccak256(liveEntry.publicKey) === LIVE_CACHED_KEY_ID, "the first proven key is cached with keyId == keccak256(publicKey)");
+    assert(liveEntry.isRoot && !liveEntry.revoked && liveEntry.expiry === 0, "it is a live root key");
+    const liveKeys = await l2.readContract({ address: liveCache, abi: CACHE_ABI, functionName: "getKeys", args: [LIVE_CACHED_USER] });
+    assert(liveKeys.includes(LIVE_CACHED_KEY_ID), "live cache.getKeys lists it");
+    assert(await l1.readContract({ address: SEPOLIA.keyStore, abi: KEYSTORE_ABI, functionName: "isValidKey", args: [LIVE_CACHED_USER, LIVE_CACHED_KEY_ID] }), "and the Sepolia registry agrees (isValidKey true)");
+    log(`  ✓ ${liveCache} VERSION ${liveVersion}; ${LIVE_CACHED_USER} root key cached at Sepolia #${liveEntry.sourceBlockNumber}, registry agrees`);
+
     // ── 1. Deploy KeyStoreCacheOPStack 1.1.1 anchored to the Sepolia KeyStore. ──
     log("\n▶ Deploying KeyStoreCacheOPStack 1.1.1 (bytecode from altana-keystore main) ...");
     const deployer = privateKeyToAccount(generatePrivateKey());
@@ -151,9 +176,9 @@ async function main() {
       registry: { kind: "cached", l1: SEPOLIA, keyStoreCache: cache },
     };
     let refused = "";
-    try { keyStoreCacheOf(CELO_SEPOLIA); } catch (e) { refused = (e as Error).message; }
+    try { keyStoreCacheOf({ ...CELO_SEPOLIA, registry: { kind: "cached", l1: SEPOLIA, keyStoreCache: "0x0000000000000000000000000000000000000000" } }); } catch (e) { refused = (e as Error).message; }
     assert(/not deployed/.test(refused), "keyStoreCacheOf refuses the not-deployed sentinel");
-    assert(keyStoreCacheOf(network) === cache, "keyStoreCacheOf returns the deployed address");
+    assert(keyStoreCacheOf(network) === cache, "keyStoreCacheOf returns the fork's address");
 
     // ── 2. Pin the anchor to a fresh Sepolia block. ──
     // Proof RPCs keep only a short window of state; the fork's own anchor may
