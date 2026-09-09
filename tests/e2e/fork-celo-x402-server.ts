@@ -55,7 +55,7 @@ import { createX402Merchant, USDC_CELO_SEPOLIA, USDT_CELO_SEPOLIA } from "@altan
 /** Testnet account implementation (same address on BNB testnet and Celo Sepolia). */
 const ACCOUNT_IMPL: Address = "0x33aD2F49ab9f122f5F0FDF579f575724EfF353DE";
 const CHAIN_ID = 11142220;
-const CELO_RPC = process.env.CELO_SEPOLIA_FORK_RPC_URL || "https://rpc.ankr.com/celo_sepolia";
+const CELO_RPC = process.env.CELO_SEPOLIA_FORK_RPC_URL || "https://forno.celo-sepolia.celo-testnet.org";
 const BSC_TESTNET_RPC = process.env.BSC_TESTNET_FORK_RPC_URL || "https://bsc-testnet-rpc.publicnode.com";
 const ANVIL_PORT = 8558;
 const ANVIL_URL = `http://127.0.0.1:${ANVIL_PORT}`;

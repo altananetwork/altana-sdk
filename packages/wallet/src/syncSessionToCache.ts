@@ -177,11 +177,20 @@ export async function syncSessionToCache(
       );
       status = await waitForCalls(relayClient, callsId);
     } catch (err) {
-      // The relay simulates before accepting. A proof whose anchor moved
-      // fails that simulation ("block header mismatch"); nothing else is
-      // worth a retry.
+      // The relay simulates before accepting. A proof built against an anchor
+      // the relay's node no longer holds fails that simulation with
+      // "Cache: block header mismatch". The relay's RPC and ours can disagree
+      // for a few seconds around an anchor update (load-balanced endpoints,
+      // 1-second L2 blocks), so retry on that error even when our own read of
+      // the anchor looks unchanged; nothing else is worth a retry.
       lastError = err;
-      if (attempt < maxAttempts && (await anchorMoved(l2Client, anchor))) continue;
+      if (attempt < maxAttempts) {
+        if (isHeaderMismatch(err)) {
+          await new Promise((r) => setTimeout(r, 5_000));
+          continue;
+        }
+        if (await anchorMoved(l2Client, anchor)) continue;
+      }
       throw err;
     }
 
@@ -221,6 +230,15 @@ export async function syncSessionToCache(
       `Retry with a higher maxAttempts or a faster registry-chain RPC.`,
     lastError !== undefined ? { cause: lastError } : undefined,
   );
+}
+
+function isHeaderMismatch(err: unknown): boolean {
+  const text = err instanceof Error ? `${err.message} ${(err as any).cause?.message ?? ""}` : String(err);
+  // The relay renders the revert either as decoded text or as the raw
+  // Error(string) payload (selector 0x08c379a0) for "Cache: block header mismatch".
+  if (/block header mismatch/i.test(text)) return true;
+  const hexReason = Buffer.from("Cache: block header mismatch", "utf8").toString("hex");
+  return text.replace(/\s+/g, "").toLowerCase().includes(hexReason);
 }
 
 async function anchorMoved(l2Client: PublicClient, used: L1Anchor): Promise<boolean> {

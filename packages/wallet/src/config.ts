@@ -148,7 +148,7 @@ export const CELO_SEPOLIA: NetworkConfig = {
   chainId: 11142220,
   keyStore: SEPOLIA.keyStore,
   keyStoreController: SEPOLIA.keyStoreController,
-  publicRpcUrl: "https://rpc.ankr.com/celo_sepolia",
+  publicRpcUrl: "https://forno.celo-sepolia.celo-testnet.org",
   explorer: "https://sepolia.celoscan.io",
   relayUrl: TESTNET_RELAY_URL,
   registry: {

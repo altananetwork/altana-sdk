@@ -76,7 +76,7 @@ import { buildAdditionalRegisterCall } from "../../packages/wallet/src/internal/
 import cacheArtifact from "./fixtures/KeyStoreCacheOPStack-1.1.1.json" with { type: "json" };
 
 // `||`, not `??`: an unset GitHub Actions secret arrives as an empty string.
-const CELO_RPC = process.env.CELO_SEPOLIA_FORK_RPC_URL || "https://rpc.ankr.com/celo_sepolia";
+const CELO_RPC = process.env.CELO_SEPOLIA_FORK_RPC_URL || "https://forno.celo-sepolia.celo-testnet.org";
 const SEPOLIA_RPC = process.env.SEPOLIA_RPC_URL || "https://sepolia.gateway.tenderly.co";
 const PROOF_USER = (process.env.CELO_FORK_PROOF_USER || "0xD035abdb79eDb8F868319F8B3FB3a2fb51032cB8") as Address;
 const ANVIL_PORT = 8557;

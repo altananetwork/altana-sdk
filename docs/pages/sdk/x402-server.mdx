@@ -138,7 +138,7 @@ const merchant = createX402Merchant({
   ],
   resource: "https://api.example.com/audit",
   facilitator: privateKeyToAccount(process.env.FACILITATOR_KEY),  // needs CELO for gas
-  rpcUrl: "https://rpc.ankr.com/celo_sepolia",
+  rpcUrl: "https://forno.celo-sepolia.celo-testnet.org",
   chain: celoSepolia,
 });
 ```
