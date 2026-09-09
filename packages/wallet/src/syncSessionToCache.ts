@@ -61,6 +61,12 @@ export type SyncSessionToCacheOptions = {
   ) => void;
   /** How many anchors to try before giving up. Default 3. */
   maxAttempts?: number;
+  /**
+   * Pause after the anchor first passes `afterL1Block` before building the
+   * proof, so every backend of a load-balanced RPC (and the relay's) sees the
+   * same anchor. Default 60 seconds.
+   */
+  anchorSettleMs?: number;
   /** Relay fee token on the cached network. Default: native (CELO). */
   feeToken?: Address;
   /** Poll cadence while waiting for the anchor. Default 3s. */
@@ -115,7 +121,13 @@ export async function syncSessionToCache(
   }
   const keyStoreCache = keyStoreCacheOf(network);
   const registry = network.registry.l1;
-  const maxAttempts = Math.max(1, opts.maxAttempts ?? 3);
+  const maxAttempts = Math.max(1, opts.maxAttempts ?? 5);
+  // Public L2 RPCs are load balanced; around an L1 anchor update their
+  // backends can disagree for a minute or two, and the relay simulates on its
+  // own backend. Give the new anchor time to propagate before building a
+  // proof against it, and back off between mismatch retries.
+  const anchorSettleMs = opts.anchorSettleMs ?? 60_000;
+  const mismatchBackoffMs = 30_000;
   const feeToken = opts.feeToken ?? NATIVE_TOKEN;
 
   const publicKey =
@@ -149,6 +161,11 @@ export async function syncSessionToCache(
         ...(opts.anchorTimeoutMs !== undefined ? { timeoutMs: opts.anchorTimeoutMs } : {}),
         label: "syncSessionToCache",
       });
+      if (attempt === 1 && anchorSettleMs > 0) {
+        await new Promise((r) => setTimeout(r, anchorSettleMs));
+        // Re-read after settling: the anchor may have advanced again.
+        anchor = await readL1Anchor(l2Client);
+      }
     } else {
       anchor = await readL1Anchor(l2Client);
     }
@@ -186,7 +203,7 @@ export async function syncSessionToCache(
       lastError = err;
       if (attempt < maxAttempts) {
         if (isHeaderMismatch(err)) {
-          await new Promise((r) => setTimeout(r, 5_000));
+          await new Promise((r) => setTimeout(r, mismatchBackoffMs));
           continue;
         }
         if (await anchorMoved(l2Client, anchor)) continue;
