@@ -211,7 +211,7 @@ export type WaitForL1AnchorArgs = {
   targetL1Block: bigint;
   /** Poll cadence. Default 3s. */
   pollIntervalMs?: number;
-  /** Give-up timeout. Default 5 minutes. */
+  /** Give-up timeout. Default 30 minutes. */
   timeoutMs?: number;
   /** Prefix for the timeout error. Default "waitForL1Anchor". */
   label?: string;
@@ -342,7 +342,7 @@ export type EnsureKeyCachedArgs = SyncKeyToL2Args & {
    */
   anchorPollIntervalMs?: number;
   /**
-   * Max wait for the L1 anchor before giving up. Default 5 minutes.
+   * Max wait for the L1 anchor before giving up. Default 30 minutes.
    * Base typically anchors within 1–3 minutes.
    */
   anchorTimeoutMs?: number;

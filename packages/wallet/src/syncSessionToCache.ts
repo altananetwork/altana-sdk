@@ -65,7 +65,7 @@ export type SyncSessionToCacheOptions = {
   feeToken?: Address;
   /** Poll cadence while waiting for the anchor. Default 3s. */
   anchorPollIntervalMs?: number;
-  /** Max wait for the anchor to pass `afterL1Block`. Default 5 minutes. */
+  /** Max wait for the anchor to pass `afterL1Block`. Default 30 minutes (Celo Sepolia anchors about every 20 minutes). */
   anchorTimeoutMs?: number;
   /**
    * Public client for the registry chain, used for `eth_getProof` and the
