@@ -213,7 +213,10 @@ export async function syncSessionToCache(
 
     if (status.status === "CONFIRMED") {
       opts.onStatus?.("done", { attempt, l1BlockNumber: anchor.number });
-      const cachedKey = await readCachedKey(l2Client, keyStoreCache, wallet.address, keyId);
+      // Public RPCs can lag the relay's confirmation by a few seconds; read
+      // until the entry reflects this proof's anchor (or give up after 60s and
+      // return whatever the node reports).
+      const cachedKey = await readCachedKeyAtLeast(l2Client, keyStoreCache, wallet.address, keyId, anchor.number);
       return {
         callsId,
         status: "CONFIRMED",
@@ -247,6 +250,23 @@ export async function syncSessionToCache(
       `Retry with a higher maxAttempts or a faster registry-chain RPC.`,
     lastError !== undefined ? { cause: lastError } : undefined,
   );
+}
+
+async function readCachedKeyAtLeast(
+  l2Client: PublicClient,
+  cache: Address,
+  user: Address,
+  keyId: Hex,
+  minSourceBlock: bigint,
+  timeoutMs = 60_000,
+): Promise<CachedKey> {
+  const deadline = Date.now() + timeoutMs;
+  let last = await readCachedKey(l2Client, cache, user, keyId);
+  while (last.sourceBlockNumber < minSourceBlock && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 3_000));
+    last = await readCachedKey(l2Client, cache, user, keyId);
+  }
+  return last;
 }
 
 function isHeaderMismatch(err: unknown): boolean {

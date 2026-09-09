@@ -173,7 +173,13 @@ async function main() {
   if (revokeRes.status !== "CONFIRMED") throw new Error("account revoke failed");
   if (revokeRes.registry?.status !== "CONFIRMED") throw new Error("registry revoke did not confirm");
   if (revokeRes.cache?.status !== "CONFIRMED") throw new Error(`post-revocation proof did not confirm: ${revokeRes.cache?.reason}`);
-  const afterCache = await readCachedKey(celoPublic, CACHE, wallet.address, keyId);
+  // Public RPCs can lag the relay's confirmation; poll until the entry shows the
+  // post-revocation proof (up to 60s).
+  let afterCache = await readCachedKey(celoPublic, CACHE, wallet.address, keyId);
+  for (let i = 0; i < 20 && !afterCache.revoked; i++) {
+    await new Promise((r) => setTimeout(r, 3_000));
+    afterCache = await readCachedKey(celoPublic, CACHE, wallet.address, keyId);
+  }
   console.log("    cache.getCachedKey after revoke: revoked =", afterCache.revoked);
   if (!afterCache.revoked) throw new Error("cache still reports the key as live after the post-revocation proof");
 
