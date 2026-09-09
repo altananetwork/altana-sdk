@@ -95,7 +95,7 @@ async function main() {
     sepoliaPublic.getBalance({ address: funder.address }),
   ]);
   console.log(`funder ${funder.address}: ${formatEther(celoBal)} CELO on Celo Sepolia, ${formatEther(sepoliaBal)} ETH on Sepolia`);
-  if (celoBal < parseEther("0.2")) {
+  if (celoBal < parseEther("1")) {
     throw new Error(`Fund ${funder.address} with at least 0.2 CELO on Celo Sepolia: https://faucet.celo.org/celo-sepolia`);
   }
   if (sepoliaBal < parseEther("0.01")) {
@@ -112,8 +112,8 @@ async function main() {
   console.log(`    done [${ms(t0)}]`);
 
   // 2. Fund on both chains
-  console.log("\n[2] Fund the wallet: 0.1 CELO on Celo Sepolia, 0.003 ETH on Sepolia (registry writes)");
-  const celoFund = await celoFunder.sendTransaction({ to: wallet.address, value: parseEther("0.1") });
+  console.log("\n[2] Fund the wallet: 0.5 CELO on Celo Sepolia, 0.003 ETH on Sepolia (registry writes)");
+  const celoFund = await celoFunder.sendTransaction({ to: wallet.address, value: parseEther("0.5") });
   const sepoliaFund = await sepoliaFunder.sendTransaction({ to: wallet.address, value: parseEther("0.003") });
   await Promise.all([
     celoPublic.waitForTransactionReceipt({ hash: celoFund }),
