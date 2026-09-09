@@ -23,7 +23,7 @@ import { BNB, RELAY_URL, type NetworkConfig } from "./config.js";
 const WALLET: Address = "0x1111111111111111111111111111111111111111";
 const USDT: Address = "0x55d398326f99059fF775485246999027B3197955";
 const SPCXB: Address = "0xbe9d156892e55e7154bcd3cb0fea677f9d3103e1";
-const DEAD: Address = "0xdEaD000000000000000000000000000000000000";
+const DEAD: Address = "0xdEad000000000000000000000000000000000000";
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
