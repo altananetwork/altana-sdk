@@ -11,7 +11,7 @@ import {
   CELO,
   CELO_SEPOLIA,
   ETHEREUM,
-  KEYSTORE_CACHE_NOT_DEPLOYED,
+  KEYSTORE_CACHE_UNSET,
   RELAY_URL,
   SEPOLIA,
   TESTNET_RELAY_URL,
@@ -63,7 +63,7 @@ describe("CELO (mainnet shape, cache pending)", () => {
     expect(CELO.keyStoreController).toBe(ETHEREUM.keyStoreController);
     if (CELO.registry?.kind !== "cached") throw new Error("CELO must be a cached network");
     expect(CELO.registry.l1).toBe(ETHEREUM);
-    expect(CELO.registry.keyStoreCache).toBe(KEYSTORE_CACHE_NOT_DEPLOYED);
+    expect(CELO.registry.keyStoreCache).toBe(KEYSTORE_CACHE_UNSET);
     expect(CELO.explorer).toBe("https://celoscan.io");
   });
 });
@@ -93,8 +93,8 @@ describe("existing networks are untouched", () => {
     expect(BNB_TESTNET.registry).toBeUndefined();
   });
 
-  test("the sentinel is the zero address", () => {
-    expect(KEYSTORE_CACHE_NOT_DEPLOYED).toBe("0x0000000000000000000000000000000000000000");
+  test("the unset placeholder is the zero address", () => {
+    expect(KEYSTORE_CACHE_UNSET).toBe("0x0000000000000000000000000000000000000000");
   });
 });
 

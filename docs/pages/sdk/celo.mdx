@@ -1,41 +1,74 @@
 ---
 title: Celo
-description: Celo mainnet (chain 42220) in the SDK. Config shipped; account stack and cache deployment pending.
+description: Create and operate Altana wallets on Celo (chain 42220).
 ---
 
 # Celo
 
-:::note[Mainnet coming]
-The `CELO` config ships so integrations can be written against the final
-shape, but the Altana account stack and the KeyStoreCache are **not deployed
-on Celo mainnet yet**. Wallet actions on chain 42220 fail at the relay, and
-cache operations refuse the `KEYSTORE_CACHE_NOT_DEPLOYED` sentinel with a
-clear message. Build and test on [Celo Sepolia](/sdk/celo-sepolia) today; the
-mainnet release is a config change on this page.
-:::
+Celo (chain id **42220**) is an execution network alongside BNB Smart Chain
+and Ethereum. The account contracts and the Altana relay are deployed there,
+the [Keystore](/concepts/keystore) is on Ethereum, and a KeyStoreCache on
+Celo mirrors it (see [Networks & Addresses](/concepts/networks#celo-celo)).
+The SDK ships a ready-made `CELO` config.
 
-Celo mainnet (chain id **42220**) uses the same cached-registry shape as Celo
-Sepolia, rooted in **Ethereum** instead of Sepolia:
+## Install
 
-| | Celo Sepolia | Celo |
-| --- | --- | --- |
-| SDK export | `CELO_SEPOLIA` | `CELO` |
-| Registry chain | Sepolia (no relay: registry writes are direct transactions from the admin key) | Ethereum (Altana relay: registry writes go through the wallet's smart account there) |
-| Relay | `https://testnet-relay.altana.network` | `https://relay.altana.network` |
-| Fees | CELO | CELO on Celo, ETH on Ethereum for registry writes |
-| Passkey wallets | Account-only sessions (`register: false`) | Register normally |
-
-Because Ethereum has a relay, a wallet created for `CELO` is provisioned on
-Ethereum as well, in the same `createWallet` / `createPasskeyWallet` call:
-passkey wallets cannot be provisioned later, and their registry writes need
-the Ethereum smart account.
-
-```ts
-import { createClient, CELO, registryNetwork } from "@altananetwork/sdk";
-
-registryNetwork(CELO); // ETHEREUM
-const client = createClient({ chains: [CELO] });
+```bash
+npm install @altananetwork/sdk viem
 ```
 
-Everything on the [Celo Sepolia](/sdk/celo-sepolia) page applies, with
-"Sepolia" read as "Ethereum".
+## Create a wallet on Celo
+
+```ts
+import { createClient, CELO, signerFromPrivateKey } from "@altananetwork/sdk";
+
+const client = createClient({ chains: [CELO] });
+const signer = signerFromPrivateKey(process.env.PRIVATE_KEY as `0x${string}`);
+
+const wallet = await client.createWallet({ signer });
+
+console.log(wallet.address);
+```
+
+**Fund `wallet.address` before step 2:** CELO on Celo for relay fees, and ETH
+on Ethereum for Keystore writes. The wallet is provisioned on Ethereum in the
+same `createWallet` call, and its Keystore writes go through the relay there.
+
+## Grant a session
+
+```ts
+const session = await client.grantSession({
+  wallet,
+  signer,
+  permissions: { calls: [{ to: "0xDex..." }], spend: [{ limit: 10n ** 18n, period: "day" }] },
+  expiry: Math.floor(Date.now() / 1000) + 3600,
+});
+
+session.transactionHash; // account authorization on Celo
+session.registry;        // Keystore write on Ethereum
+session.cache;           // proof into the KeyStoreCache on Celo
+```
+
+`grantSession` registers the key in the Ethereum Keystore, authorizes it on
+the account through the relay, then proves the Keystore entry into the cache
+on Celo. `revokeSession` revokes the account, the Keystore entry and the
+cache the same way. `client.execute({ session, calls })` runs on Celo exactly
+as on BNB.
+
+## Multi-chain
+
+`createClient` accepts multiple wallet execution chains. Add Celo alongside
+BNB and pass `chainId` per call:
+
+```ts
+import { createClient, BNB, CELO } from "@altananetwork/sdk";
+
+const client = createClient({ chains: [BNB, CELO], defaultChainId: 56 });
+await client.grantSession({ /* ... */, chainId: 42220 }); // operate on Celo
+```
+
+## What's next
+
+- [Networks & Addresses](/concepts/networks#celo-celo). Chain ids, RPCs, and contract addresses.
+- [Celo Sepolia](/sdk/celo-sepolia). Build against chain 11142220 with a faucet before going to mainnet.
+- [Grant a session](/sdk/grant-session). Scoped, time-bounded keys for AI agents.

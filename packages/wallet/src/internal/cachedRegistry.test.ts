@@ -12,7 +12,7 @@ import {
   CELO,
   CELO_SEPOLIA,
   ETHEREUM,
-  KEYSTORE_CACHE_NOT_DEPLOYED,
+  KEYSTORE_CACHE_UNSET,
   SEPOLIA,
   type NetworkConfig,
 } from "../config.js";
@@ -28,7 +28,7 @@ import {
 
 const DEPLOYED_CACHE: Address = "0x37ebf8F17c3705568a03fB3A1629AcE7B3D95FFf";
 
-/** CELO_SEPOLIA with a cache address filled in, as the config will be once deployed. */
+/** CELO_SEPOLIA with a different cache address, to check the helper reads the config. */
 const CELO_SEPOLIA_LIVE: NetworkConfig = {
   ...CELO_SEPOLIA,
   registry: { kind: "cached", l1: SEPOLIA, keyStoreCache: DEPLOYED_CACHE },
@@ -50,12 +50,11 @@ describe("keyStoreCacheOf", () => {
     expect(keyStoreCacheOf(CELO_SEPOLIA_LIVE)).toBe(DEPLOYED_CACHE);
   });
 
-  test("refuses the not-deployed sentinel with a message naming the chain and the fix", () => {
+  test("refuses an unset cache address with a message naming the chain and the field", () => {
     expect(CELO.registry?.kind === "cached" && CELO.registry.keyStoreCache).toBe(
-      KEYSTORE_CACHE_NOT_DEPLOYED,
+      KEYSTORE_CACHE_UNSET,
     );
-    expect(() => keyStoreCacheOf(CELO)).toThrow(/not deployed on Celo/);
-    expect(() => keyStoreCacheOf(CELO)).toThrow(/KEYSTORE_CACHE_NOT_DEPLOYED/);
+    expect(() => keyStoreCacheOf(CELO)).toThrow(/no KeyStoreCache address configured/);
     expect(() => keyStoreCacheOf(CELO)).toThrow(/registry\.keyStoreCache/);
     expect(keyStoreCacheOf(CELO_SEPOLIA)).toBe("0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD");
   });

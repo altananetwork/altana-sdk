@@ -39,9 +39,9 @@ Sessions granted with `register: false` (see [grantSession](/sdk/grant-session))
 client.revokeSession(opts: ClientRevokeSessionOptions): Promise<RevokeSessionResult>;
 
 type RevokeSessionResult = ExecuteResult & {
-  /** Cached networks only: the registry revoke on the registry chain. Reported, never thrown. */
+  /** Celo Sepolia, Celo: the Keystore revoke on the Keystore chain. Reported, never thrown. */
   registry?: RegistryWriteReport;
-  /** Cached networks only: the post-revocation proof into the network's cache. Reported, never thrown. */
+  /** Celo Sepolia, Celo: the proof of the revocation into the network's cache. Reported, never thrown. */
   cache?: CacheSyncReport;
 };
 
@@ -63,15 +63,13 @@ In a single userOp:
 
 Both atomic. After the userOp confirms, the session is dead on that chain: there is no window in which one half has landed and the other has not.
 
-### Cached networks (Celo Sepolia, Celo)
+### Celo Sepolia and Celo
 
-On a network whose Keystore lives on another chain, revocation is three steps in order:
+On Celo Sepolia and Celo revocation is three steps, in order:
 
-1. **Account revoke** on the network, through its relay. This strips the session's power and is the only step that throws when it cannot be submitted (a rejected bundle returns `status: "FAILED"`).
-2. **Registry revoke** on the registry chain (`revokeKey`, direct from the admin key on Sepolia, through the relay on Ethereum). Skipped when the key was never registered there. Reported in `result.registry`.
-3. **Post-revocation proof** into the network's KeyStoreCache, so readers on the network stop seeing a live key. Reported in `result.cache`; the same proof `syncSessionToCache` submits.
-
-A reported failure in step 2 or 3 leaves a stale registry or cache entry: the session cannot act (step 1 landed), but third parties reading the registry or the cache still see it as valid until a second `revokeSession` or `syncSessionToCache` succeeds. Check both reports.
+1. **Account revoke** on the network, through its relay. This strips the session's power.
+2. **Keystore revoke** on the Keystore chain (`revokeKey`, from the admin key on Sepolia, through the relay on Ethereum). Reported in `result.registry`.
+3. **Proof of the revocation** into the network's KeyStoreCache, so readers on the network see the key as revoked. Reported in `result.cache`.
 
 ## Cross-chain revocation
 
@@ -101,7 +99,7 @@ await syncKeyToL2({
 `ensureKeyCached` will **not** do this for you. It returns early when the cache reports the key as valid, which is exactly the state a stale cache is in after a revocation. Use `syncKeyToL2`, which always submits a fresh proof.
 :::
 
-Once the cache observes `revoked=true` it cannot be flipped back, even by a proof against an older L1 block. See [ensureKeyCached](/sdk/sync-to-l2) for the full cross-chain model. On cached-registry networks (Celo Sepolia, Celo) `revokeSession` submits this proof itself; see above.
+Once the cache observes `revoked=true` it cannot be flipped back, even by a proof against an older L1 block. See [ensureKeyCached](/sdk/sync-to-l2) for the full cross-chain model. On Celo Sepolia and Celo `revokeSession` submits this proof itself; see above.
 
 ## Notes
 

@@ -66,12 +66,10 @@ export const RELAY_URL = "https://relay.altana.network";
 export const TESTNET_RELAY_URL = "https://testnet-relay.altana.network";
 
 /**
- * Sentinel for a KeyStoreCache that is not deployed yet on a cached network.
- * Every cache operation refuses it with a clear message (see keyStoreCacheOf)
- * so a config can ship ahead of the deployment without silently sending
- * proofs to the zero address.
+ * Placeholder for a `registry.keyStoreCache` that has not been filled in.
+ * `keyStoreCacheOf` refuses it, so no proof is ever sent to the zero address.
  */
-export const KEYSTORE_CACHE_NOT_DEPLOYED: Address =
+export const KEYSTORE_CACHE_UNSET: Address =
   "0x0000000000000000000000000000000000000000";
 
 export const ETHEREUM: NetworkConfig = {
@@ -113,12 +111,14 @@ export const BNB_TESTNET: NetworkConfig = {
 };
 
 /**
- * Sepolia: registry only. Hosts the testnet KeyStore that Celo Sepolia's
- * cache is anchored to. No Altana relay serves it, so it cannot be passed to
- * `createClient` for execution; registry writes rooted here are sent as
- * direct transactions from the wallet's admin key (see grantSession on a
- * cached network). Fund that key with Sepolia ETH:
+ * Sepolia: hosts the testnet KeyStore behind Celo Sepolia. No Altana relay
+ * serves it; KeyStore writes are sent as direct transactions from the
+ * wallet's admin key, funded with Sepolia ETH:
  * https://cloud.google.com/application/web3/faucet/ethereum/sepolia
+ *
+ * The public RPC must serve `eth_getProof` for the block Celo Sepolia
+ * anchors, which runs about 100 blocks behind head; 0xrpc.io keeps a
+ * 128-block proof window.
  *
  * Addresses sourced from the Altana KeyStore deployment manifest:
  *   <altana-keystore>/deployments/sepolia.json
@@ -128,16 +128,15 @@ export const SEPOLIA: NetworkConfig = {
   chainId: 11155111,
   keyStore: "0x38Aaf396F462Ad3a4F38ADa653AF6bDEA55F772d",
   keyStoreController: "0xc1525B766c134f7EB5B1d8e4a69C6Cb97Aff2379",
-  publicRpcUrl: "https://ethereum-sepolia-rpc.publicnode.com",
+  publicRpcUrl: "https://0xrpc.io/sep",
   explorer: "https://sepolia.etherscan.io",
 };
 
 /**
- * Celo Sepolia (chain 11142220): an executable network whose KeyStore
- * registry lives on Sepolia. Wallets run through the Altana testnet relay
- * with fees in CELO; session keys are registered on the Sepolia KeyStore and
- * proven into the KeyStoreCacheOPStack contract on Celo Sepolia through the
- * OP-stack `L1Block` predeploy. Fund wallets from
+ * Celo Sepolia (chain 11142220). Wallets run through the Altana testnet
+ * relay with fees in CELO; session keys are registered in the Sepolia
+ * KeyStore and proven into the KeyStoreCacheOPStack contract on Celo Sepolia
+ * through the OP-stack `L1Block` predeploy. Fund wallets from
  * https://faucet.celo.org/celo-sepolia.
  *
  * Addresses sourced from the Altana KeyStore deployment manifest:
@@ -161,10 +160,11 @@ export const CELO_SEPOLIA: NetworkConfig = {
 };
 
 /**
- * Celo mainnet (chain 42220), same shape as Celo Sepolia with the registry on
- * Ethereum. The account stack and cache are not deployed on Celo mainnet yet:
- * `keyStoreCache` stays the sentinel until the mainnet release, which is then
- * a one-line change here.
+ * Celo (chain 42220). Wallets run through the Altana relay with fees in
+ * CELO; session keys are registered in the Ethereum KeyStore and proven into
+ * the KeyStoreCache on Celo.
+ *
+ * `keyStoreCache`: fill in from <altana-keystore>/deployments/celo.json.
  */
 export const CELO: NetworkConfig = {
   chain: celo,
@@ -177,7 +177,7 @@ export const CELO: NetworkConfig = {
   registry: {
     kind: "cached",
     l1: ETHEREUM,
-    keyStoreCache: KEYSTORE_CACHE_NOT_DEPLOYED,
+    keyStoreCache: KEYSTORE_CACHE_UNSET,
   },
 };
 

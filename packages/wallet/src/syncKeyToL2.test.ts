@@ -190,7 +190,7 @@ describe("buildPopulateKeyCall", () => {
         user: USER,
         publicKey: PUBKEY,
       }),
-    ).rejects.toThrow(/historical eth_getProof/);
+    ).rejects.toThrow(/proof window that covers the anchor/);
   });
 });
 

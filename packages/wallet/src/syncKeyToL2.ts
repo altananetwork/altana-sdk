@@ -467,11 +467,9 @@ export async function buildPopulateKeyCall(
       throw new Error(
         `The L1 RPC refused eth_getProof at block ${l1Block.number} (the block the L2 ` +
           `anchors): ${text.split("\n")[0]}. This endpoint only serves proofs for its ` +
-          `newest blocks. Use an L1 RPC with historical eth_getProof (for Sepolia, for ` +
-          `example https://sepolia.gateway.tenderly.co, https://1rpc.io/sepolia, ` +
-          `https://0xrpc.io/sep or https://eth-sepolia.api.onfinality.io/public) by ` +
-          `overriding the registry ` +
-          `network's publicRpcUrl or passing l1Client.`,
+          `newest blocks. Use an L1 RPC with a proof window that covers the anchor (for ` +
+          `Sepolia, https://0xrpc.io/sep or https://eth-sepolia.api.onfinality.io/public) ` +
+          `by overriding the registry network's publicRpcUrl or passing l1Client.`,
         { cause: err },
       );
     }

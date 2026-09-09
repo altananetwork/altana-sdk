@@ -78,7 +78,6 @@ export {
   SEPOLIA,
   CELO_SEPOLIA,
   CELO,
-  KEYSTORE_CACHE_NOT_DEPLOYED,
   registryNetwork,
   RELAY_URL,
   TESTNET_RELAY_URL,

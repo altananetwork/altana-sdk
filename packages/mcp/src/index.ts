@@ -49,7 +49,6 @@ import {
   isCachedRegistry,
   isCachedKeyValid,
   readCachedKey,
-  KEYSTORE_CACHE_NOT_DEPLOYED,
 } from "@altananetwork/sdk";
 import type { Signer, Wallet } from "@altananetwork/sdk";
 import {
@@ -127,13 +126,6 @@ async function cacheBlock(addr: Address, keyId: Hex) {
   if (!isCachedRegistry(NETWORK)) return undefined;
   const cache = NETWORK.registry.keyStoreCache;
   const base = { chainId: NETWORK.chainId, registryChainId: REGISTRY.chainId };
-  if (cache.toLowerCase() === KEYSTORE_CACHE_NOT_DEPLOYED) {
-    return {
-      ...base,
-      deployed: false,
-      note: `The KeyStoreCache is not deployed on ${NETWORK.chain.name} yet; authority is read from the ${REGISTRY.chain.name} registry above.`,
-    };
-  }
   try {
     const [entry, fresh] = await Promise.all([
       readCachedKey(publicClient, cache, addr, keyId),

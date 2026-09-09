@@ -20,7 +20,6 @@ import {
   ETHEREUM,
   faucetHint,
   isCachedRegistry,
-  KEYSTORE_CACHE_NOT_DEPLOYED,
   registryNetwork,
   type NetworkConfig,
 } from "@altananetwork/sdk";
@@ -67,11 +66,7 @@ export function describeNetwork(network: NetworkConfig): string {
   const base = `${network.chain.name} (chainId ${network.chainId})`;
   if (!isCachedRegistry(network)) return base;
   const registry = network.registry.l1;
-  const cache =
-    network.registry.keyStoreCache.toLowerCase() === KEYSTORE_CACHE_NOT_DEPLOYED
-      ? "cache not deployed yet"
-      : `cache ${network.registry.keyStoreCache}`;
-  return `${base}; KeyStore registry on ${registry.chain.name} (chainId ${registry.chainId}); ${cache}`;
+  return `${base}; KeyStore on ${registry.chain.name} (chainId ${registry.chainId}); cache ${network.registry.keyStoreCache}`;
 }
 
 /**

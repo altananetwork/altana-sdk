@@ -55,14 +55,14 @@ describe("describeNetwork", () => {
     expect(describeNetwork(BNB)).toBe("BNB Smart Chain (chainId 56)");
   });
 
-  test("cached registries: names the registry chain and the cache state", () => {
+  test("Celo networks: names the KeyStore chain and the cache", () => {
     // viem names the chain "Celo Sepolia Testnet"; the description uses the
     // chain object's own name so it never drifts from what viem reports.
     expect(describeNetwork(CELO_SEPOLIA)).toBe(
-      `${CELO_SEPOLIA.chain.name} (chainId 11142220); KeyStore registry on Sepolia (chainId 11155111); cache 0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD`,
+      `${CELO_SEPOLIA.chain.name} (chainId 11142220); KeyStore on Sepolia (chainId 11155111); cache 0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD`,
     );
     expect(describeNetwork(CELO)).toBe(
-      `${CELO.chain.name} (chainId 42220); KeyStore registry on Ethereum (chainId 1); cache not deployed yet`,
+      `${CELO.chain.name} (chainId 42220); KeyStore on Ethereum (chainId 1); cache ${CELO.registry?.kind === "cached" ? CELO.registry.keyStoreCache : ""}`,
     );
   });
 });

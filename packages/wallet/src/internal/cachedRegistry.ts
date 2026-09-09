@@ -28,7 +28,7 @@ import {
 } from "viem";
 import { privateKeyToAccount, type PrivateKeyAccount } from "viem/accounts";
 import {
-  KEYSTORE_CACHE_NOT_DEPLOYED,
+  KEYSTORE_CACHE_UNSET,
   type KeyStoreRegistry,
   type NetworkConfig,
 } from "../config.js";
@@ -57,8 +57,8 @@ export function isCachedRegistry(
 
 /**
  * The KeyStoreCache address on a cached network. Throws on a network with a
- * local registry (there is no cache) and on the not-deployed sentinel, so no
- * proof is ever sent to the zero address.
+ * local registry (there is no cache) and on an unset address, so no proof is
+ * ever sent to the zero address.
  */
 export function keyStoreCacheOf(network: NetworkConfig): Address {
   if (!isCachedRegistry(network)) {
@@ -69,13 +69,10 @@ export function keyStoreCacheOf(network: NetworkConfig): Address {
     );
   }
   const cache = network.registry.keyStoreCache;
-  if (cache.toLowerCase() === KEYSTORE_CACHE_NOT_DEPLOYED) {
+  if (cache.toLowerCase() === KEYSTORE_CACHE_UNSET) {
     throw new Error(
-      `The KeyStoreCache is not deployed on ${network.chain.name} (chainId ${network.chainId}) ` +
-        `yet: the config carries the KEYSTORE_CACHE_NOT_DEPLOYED sentinel. Registry reads ` +
-        `and writes still work against ${network.registry.l1.chain.name}; proofs into the ` +
-        `cache wait for the deployment. Override registry.keyStoreCache once the address ` +
-        `is published.`,
+      `${network.chain.name} (chainId ${network.chainId}) has no KeyStoreCache address ` +
+        `configured: set registry.keyStoreCache on the network config.`,
     );
   }
   return cache;

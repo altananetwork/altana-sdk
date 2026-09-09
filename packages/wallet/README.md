@@ -159,20 +159,19 @@ import { BNB, ETHEREUM, BASE, BNB_TESTNET, CELO_SEPOLIA, SEPOLIA, CELO } from "@
 | `ETHEREUM` | Ethereum (1) | Wallet execution, L1 KeyStore for cross-chain proofs |
 | `BASE` | Base (8453) | L2 KeyStore cache, read-only (`ensureKeyCached`) |
 | `BNB_TESTNET` | BNB testnet (97) | Full-stack testnet |
-| `CELO_SEPOLIA` | Celo Sepolia (11142220) | Testnet. Executes on Celo Sepolia; KeyStore registry on Sepolia behind a cache on Celo Sepolia |
-| `SEPOLIA` | Sepolia (11155111) | Registry chain for Celo Sepolia; no relay |
-| `CELO` | Celo (42220) | Same shape as Celo Sepolia, rooted in Ethereum. Config only until the mainnet deployment |
+| `CELO_SEPOLIA` | Celo Sepolia (11142220) | Testnet. Wallet execution; KeyStore on Sepolia, cache on Celo Sepolia |
+| `SEPOLIA` | Sepolia (11155111) | KeyStore behind Celo Sepolia; no relay |
+| `CELO` | Celo (42220) | Wallet execution; KeyStore on Ethereum, cache on Celo |
 
-On a cached-registry network (`CELO_SEPOLIA`, `CELO`) `grantSession` writes
-the registry chain first, then authorizes the account through the network's
-relay, then proves the entry into the network's KeyStoreCache; the last two
-outcomes are reported on the result (`registry`, `cache`) rather than thrown.
-`revokeSession` runs the same three steps in reverse order.
-`client.syncSessionToCache` re-runs the proof on its own. Reads go to
-`registryNetwork(network)`. On Celo Sepolia the registry chain has no relay,
-so registry writes are direct transactions from the wallet's admin key: fund
-the wallet address with a little Sepolia ETH as well as CELO. See
-https://docs.altana.network/sdk/celo-sepolia.
+On `CELO_SEPOLIA` and `CELO`, `grantSession` writes the KeyStore on Sepolia
+or Ethereum, authorizes the account through the relay on Celo, then proves the
+entry into the KeyStoreCache on Celo; the result carries `registry` and
+`cache` reports. `revokeSession` runs the same three steps in reverse.
+`client.syncSessionToCache` runs the proof on its own. Reads go to
+`registryNetwork(network)`. On Celo Sepolia, KeyStore writes are direct
+transactions from the wallet's admin key, so fund the wallet address with
+Sepolia ETH as well as CELO. See https://docs.altana.network/sdk/celo-sepolia
+and https://docs.altana.network/sdk/celo.
 
 ## Documentation
 

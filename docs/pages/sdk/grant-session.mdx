@@ -73,11 +73,11 @@ type ClientGrantSessionOptions = {
   sessionSigner?: Signer;
   /** Register the key in Keystore (default true). */
   register?: boolean;
-  /** Cached networks only: prove the registry entry into the network's cache after the grant (default true). */
+  /** Celo Sepolia, Celo: prove the Keystore entry into the network's cache after the grant (default true). */
   populateCache?: boolean;
-  /** Cached networks only: progress across the three steps. */
+  /** Celo Sepolia, Celo: progress across the three steps. */
   onStatus?: (status: "registry-write" | "account-authorization" | "cache-sync" | "done") => void;
-  /** Fee token (default: native token). Never forwarded to a registry chain. */
+  /** Fee token (default: native token). */
   feeToken?: Address;
   /** Target chain. Defaults to the client's default chain. */
   chainId?: number;
@@ -92,9 +92,9 @@ See [Sessions](/concepts/sessions) for the full permission shape reference.
 type GrantSessionResult = Session & {
   /** The transaction that carried the grant, when the relay reported one. */
   transactionHash?: Hex;
-  /** Cached networks only: the registry write on the registry chain. */
+  /** Celo Sepolia, Celo: the Keystore write on the Keystore chain. */
   registry?: RegistryWriteReport;
-  /** Cached networks only: the proof into the network's cache. Reported, never thrown. */
+  /** Celo Sepolia, Celo: the proof into the network's cache. Reported, never thrown. */
   cache?: CacheSyncReport;
 };
 
@@ -150,15 +150,15 @@ In a single userOp:
 
 Both happen atomically. There is no intermediate state where one exists without the other.
 
-### Cached networks (Celo Sepolia, Celo)
+### Celo Sepolia and Celo
 
-On a network whose Keystore lives on another chain, the grant is three steps in order, because they cannot share a transaction:
+On Celo Sepolia and Celo the Keystore is on Sepolia and Ethereum respectively, with a KeyStoreCache on the network. The grant is three steps, in order:
 
-1. **Registry write on the registry chain** (Sepolia for `CELO_SEPOLIA`, Ethereum for `CELO`): `registerKey(session)`, preceded by `initialRegisterKey(admin)` on the wallet's first registry write. Skipped when the key is already valid there. On a registry chain without a relay (Sepolia) this is a direct transaction from the admin's private key, which must be the wallet address and must hold that chain's native token; a passkey admin cannot take this path and must use `register: false`. A failure here throws and nothing else is attempted.
-2. **Account authorization** through the network's relay, fee in the network's native token. This is the step that gives the session its power; a failure throws.
-3. **Proof into the cache**, executed as a wallet call through the same relay (see [`syncSessionToCache`](/sdk/sync-to-l2#cached-networks-syncsessiontocache)). Reported in `result.cache`, never thrown: the session is already live on the account and in the registry. Skipped with `register: false` or `populateCache: false`.
+1. **Keystore write** on the Keystore chain: `registerKey(session)`, preceded by `initialRegisterKey(admin)` on the wallet's first write. Skipped when the key is already valid there. On Sepolia this is a direct transaction from the wallet's admin key; on Ethereum it goes through the relay.
+2. **Account authorization** through the network's relay, fee in CELO. This is the step that gives the session its power.
+3. **Proof into the cache**, executed as a wallet call through the same relay (see [`syncSessionToCache`](/sdk/sync-to-l2#syncsessiontocache)). Reported in `result.cache`; the session is already live on the account and in the Keystore. Skipped with `register: false` or `populateCache: false`.
 
-`result.registry` and `result.cache` are only present on cached networks. `onStatus` fires before each step. See [Celo Sepolia](/sdk/celo-sepolia) for a complete walkthrough, including what to fund where.
+`result.registry` and `result.cache` are present on these networks. `onStatus` fires before each step. See [Celo Sepolia](/sdk/celo-sepolia) and [Celo](/sdk/celo).
 
 ## Persisting a session
 

@@ -17,52 +17,42 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Added
 
-- **Celo Sepolia, the first cached-registry network.** New `CELO_SEPOLIA`
-  config (chain 11142220): wallets execute through the Altana testnet relay
-  on Celo Sepolia with fees in CELO, while the KeyStore registry lives on
-  Sepolia (new registry-only `SEPOLIA` config) and is proven into a
-  KeyStoreCache on Celo Sepolia through the OP-stack `L1Block` predeploy.
-  `NetworkConfig` gains an optional `registry` field
-  (`{ kind: "local" } | { kind: "cached"; l1; keyStoreCache }`, absent means
-  local, so existing configs are untouched), plus `registryNetwork(network)`,
-  `KEYSTORE_CACHE_NOT_DEPLOYED`, `isCachedRegistry`, `keyStoreCacheOf` and
-  `provisioningNetworks`. On a cached network `grantSession` runs three
-  steps (registry write on the registry chain, account authorization through
-  the relay, proof into the cache) and reports the last two on the result
-  (`registry`, `cache`) instead of throwing; `revokeSession` runs them in
-  reverse and returns the same reports (`RevokeSessionResult`);
-  `registerSessionKey` and `recoverFromPasskey` read and write the registry
-  chain. New `client.syncSessionToCache` (and `syncSessionToCache`) submits
-  the proof as a wallet call through the relay, waiting for the anchor and
-  retrying when it moves, so no separately funded EOA is needed;
-  `GrantSessionOptions` gains `populateCache` and `onStatus`. Sepolia has no
-  relay, so registry writes there are direct transactions from the wallet's
-  admin key (a passkey admin must grant with `register: false` on this
-  testnet). The proof building blocks are exported: `buildPopulateKeyCall`,
-  `waitForL1Anchor`, `readL1Anchor`, `computeKeyPackedSlot`. `submitCalls`
-  skips the admin's first-action registry prepend on cached networks and
-  refuses any call aimed at the registry chain's KeyStore or Controller
-  address there, which would otherwise confirm as a plain transfer to a
-  codeless address and burn the fee. `CELO` (chain 42220) ships in the same
-  shape rooted in Ethereum with the cache address as the not-deployed
-  sentinel, so the mainnet release is a config change. Per-chain faucet map
-  (`FAUCET_URLS`, `faucetHint`, `CELO_SEPOLIA_FAUCET_URL`), x402 aliases
-  `celo` / `celo-sepolia`, the deployed Celo Sepolia cache address
-  (`0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD`, KeyStoreCacheOPStack
-  1.1.1), and docs for all of it (Celo Sepolia setup page,
-  Celo stub, testnet addresses, cached-registry sections on grant, revoke,
-  sync and errors). Covered by unit tests, two anvil fork tests
+- **Celo Sepolia and Celo.** New `CELO_SEPOLIA` (chain 11142220), `SEPOLIA`
+  (chain 11155111) and `CELO` (chain 42220) configs. Wallets execute through
+  the Altana relay on Celo with fees in CELO; their sessions are recorded in
+  the Sepolia (Ethereum) KeyStore and proven into a KeyStoreCache on Celo
+  through the OP-stack `L1Block` predeploy. `NetworkConfig` gains an optional
+  `registry` field naming the KeyStore chain and the cache (absent means the
+  KeyStore is on the network itself, so existing configs are untouched), plus
+  `registryNetwork(network)`, `isCachedRegistry`, `keyStoreCacheOf` and
+  `provisioningNetworks`. On these networks `grantSession` runs three steps
+  (KeyStore write, account authorization through the relay, proof into the
+  cache) and reports the first and last on the result (`registry`, `cache`);
+  `revokeSession` runs them in reverse and returns the same reports
+  (`RevokeSessionResult`); `registerSessionKey` and `recoverFromPasskey` read
+  and write the KeyStore chain. New `client.syncSessionToCache` (and
+  `syncSessionToCache`) submits the proof as a wallet call through the relay,
+  waiting for the anchor and retrying when it moves; `GrantSessionOptions`
+  gains `populateCache` and `onStatus`. On Celo Sepolia, KeyStore writes are
+  direct transactions from the wallet's admin key on Sepolia (passkey wallets
+  grant with `register: false`); on Celo they go through the relay on
+  Ethereum. The proof building blocks are exported: `buildPopulateKeyCall`,
+  `waitForL1Anchor`, `readL1Anchor`, `computeKeyPackedSlot`. Per-chain faucet
+  map (`FAUCET_URLS`, `faucetHint`, `CELO_SEPOLIA_FAUCET_URL`), x402 aliases
+  `celo` / `celo-sepolia`, the Celo Sepolia cache address
+  (`0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD`, KeyStoreCacheOPStack 1.1.1),
+  and docs (Celo and Celo Sepolia setup pages, testnet addresses, grant,
+  revoke, sync and errors). Covered by unit tests, two anvil fork tests
   (`fork-celo-cache`: KeyStoreCacheOPStack 1.1.1 accepts a real Sepolia proof
   built by the SDK; `fork-celo-x402-server`) and two live smoke scripts.
 
 - **`@altananetwork/mcp`: `ALTANA_CHAIN=celo-sepolia` / `celo`.** Chain
-  selection moved to `network.ts`; on cached networks the server reads the
-  KeyStore on the registry chain, `wallet_verification` and
-  `verify_authorization` add a `cache` block (`cached`, `revoked`, `expiry`,
-  `fresh`) from the Celo-side KeyStoreCache, `grant_session` and
-  `revoke_session` report the registry write and the cache proof,
-  `create_wallet` names both chains to fund with their faucets, and the
-  startup log names the registry chain.
+  selection moved to `network.ts`; on Celo the server reads the KeyStore on
+  Sepolia (Ethereum), `wallet_verification` and `verify_authorization` add a
+  `cache` block (`cached`, `revoked`, `expiry`, `fresh`) from the KeyStoreCache
+  on Celo, `grant_session` and `revoke_session` report the KeyStore write and
+  the cache proof, `create_wallet` names what to fund, and the startup log
+  names the KeyStore chain.
 
 - **`@altananetwork/x402-server`: Celo tokens.** `USDC_CELO`,
   `USDC_CELO_SEPOLIA` (Circle USDC, EIP-712 domain `USDC` / `2`, 6 decimals,
@@ -73,8 +63,7 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 - **`@altananetwork/hypersigner-keystore-mcp` 0.2.1: `sepolia` chain and
   Celo aliases.** `ALTANA_CHAIN=sepolia` (the registry behind Celo Sepolia),
   with `celo-sepolia` / `11142220` resolving to it and `celo` / `42220` to
-  `ethereum`, because Celo keeps no KeyStore of its own; the server
-  instructions say where Celo authority is rooted.
+  `ethereum`, the chains that hold the KeyStore behind Celo.
 
 - **`client.holdings()` discovers which tokens a wallet holds.** `balances`
   needs an explicit token list; `holdings` asks the Altana relay for the

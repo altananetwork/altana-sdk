@@ -27,8 +27,8 @@ The chain is selected at startup via the `ALTANA_CHAIN` environment variable:
 | `bnb` (default), `56` | BNB Smart Chain (56) | Altana hosted (`https://relay.altana.network`) |
 | `ethereum`, `1` | Ethereum (1) | Altana relay (`https://relay.altana.network`) |
 | `bnb-testnet`, `bsc-testnet`, `97` | BNB Smart Chain Testnet (97) | Altana testnet relay |
-| `celo-sepolia`, `11142220` | Celo Sepolia (11142220); KeyStore registry on Sepolia behind a cache | Altana testnet relay |
-| `celo`, `42220` | Celo (42220); KeyStore registry on Ethereum. Config only until the mainnet deployment | Altana relay |
+| `celo-sepolia`, `11142220` | Celo Sepolia (11142220); KeyStore on Sepolia, cache on Celo Sepolia | Altana testnet relay |
+| `celo`, `42220` | Celo (42220); KeyStore on Ethereum, cache on Celo | Altana relay |
 
 ```bash
 # Operate on Ethereum instead of the BNB default
@@ -37,20 +37,18 @@ ALTANA_CHAIN=ethereum bunx @altananetwork/mcp
 # Or the BSC testnet stack
 ALTANA_CHAIN=bnb-testnet bunx @altananetwork/mcp
 
-# Or Celo Sepolia (fund wallets with CELO there, plus a little Sepolia ETH
-# for registry writes; create_wallet spells this out)
+# Or Celo Sepolia
 ALTANA_CHAIN=celo-sepolia bunx @altananetwork/mcp
 ```
 
 An unrecognised value logs a warning and falls back to `bnb`. Sepolia and Base
 Sepolia are keystore-only (no relay), so they are not selectable here.
 
-On `celo-sepolia` and `celo` the KeyStore registry lives on another chain
-(Sepolia, Ethereum): `wallet_verification` and `verify_authorization` read it
-there and add a `cache` block (`cached`, `revoked`, `expiry`, `fresh`) from the
-Celo-side KeyStoreCache, and `grant_session` / `revoke_session` report the
-registry write and the cache proof as separate steps. The startup log names
-the registry chain.
+On `celo-sepolia` and `celo` the KeyStore is on Sepolia and Ethereum
+respectively: `wallet_verification` and `verify_authorization` read it there
+and add a `cache` block (`cached`, `revoked`, `expiry`, `fresh`) from the
+KeyStoreCache on Celo, and `grant_session` / `revoke_session` report the
+KeyStore write and the cache proof as separate steps.
 
 One server process serves one chain, so restart with a different `ALTANA_CHAIN` to switch.
 

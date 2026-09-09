@@ -107,9 +107,8 @@ jobs:
           BSC_TESTNET_FORK_RPC_URL: ${{ secrets.BSC_TESTNET_FORK_RPC_URL }}
           # fork-celo-cache and fork-celo-x402-server fork Celo Sepolia
           # (public fallback: https://rpc.ankr.com/celo_sepolia). fork-celo-cache
-          # also needs a Sepolia RPC that serves eth_getProof for recent
-          # blocks (public fallback: https://sepolia.gateway.tenderly.co;
-          # publicnode only serves proofs for its newest block).
+          # also reads Sepolia; SEPOLIA_RPC_URL overrides SEPOLIA.publicRpcUrl
+          # and must serve eth_getProof for the block Celo Sepolia anchors.
           CELO_SEPOLIA_FORK_RPC_URL: ${{ secrets.CELO_SEPOLIA_FORK_RPC_URL }}
           SEPOLIA_RPC_URL: ${{ secrets.SEPOLIA_RPC_URL }}
         run: bun run --filter '@altananetwork/e2e' fork:all

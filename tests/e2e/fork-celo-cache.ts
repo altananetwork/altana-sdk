@@ -23,16 +23,14 @@
  *   5. Moves the anchor one block and asserts the cache reports the entry as
  *      stale (`isValidKey` reverts, mapped to false), the freshness rule the
  *      SDK's design notes rely on.
- *   6. On the SDK side: `keyStoreCacheOf` refuses the not-deployed sentinel and
+ *   6. On the SDK side: `keyStoreCacheOf` refuses an unset cache address and
  *      accepts the fork's address; `submitCalls` refuses a registry call aimed
  *      at Celo Sepolia.
  *
  * Env:
  *   CELO_SEPOLIA_FORK_RPC_URL  Celo Sepolia RPC to fork (default: public Ankr).
- *   SEPOLIA_RPC_URL            Sepolia RPC with historical eth_getProof
- *                              (default: Tenderly's public gateway;
- *                              https://1rpc.io/sepolia also works; publicnode
- *                              only serves proofs for its newest block).
+ *   SEPOLIA_RPC_URL            optional override of SEPOLIA.publicRpcUrl; must
+ *                              serve eth_getProof at the block Celo Sepolia anchors.
  *   CELO_FORK_PROOF_USER       A wallet registered on the Sepolia KeyStore
  *                              (default: one registered in Aug 2026).
  *
@@ -77,7 +75,7 @@ import cacheArtifact from "./fixtures/KeyStoreCacheOPStack-1.1.1.json" with { ty
 
 // `||`, not `??`: an unset GitHub Actions secret arrives as an empty string.
 const CELO_RPC = process.env.CELO_SEPOLIA_FORK_RPC_URL || "https://forno.celo-sepolia.celo-testnet.org";
-const SEPOLIA_RPC = process.env.SEPOLIA_RPC_URL || "https://sepolia.gateway.tenderly.co";
+const SEPOLIA_RPC = process.env.SEPOLIA_RPC_URL || SEPOLIA.publicRpcUrl;
 const PROOF_USER = (process.env.CELO_FORK_PROOF_USER || "0xD035abdb79eDb8F868319F8B3FB3a2fb51032cB8") as Address;
 const ANVIL_PORT = 8557;
 const ANVIL_URL = `http://127.0.0.1:${ANVIL_PORT}`;
@@ -177,7 +175,7 @@ async function main() {
     };
     let refused = "";
     try { keyStoreCacheOf({ ...CELO_SEPOLIA, registry: { kind: "cached", l1: SEPOLIA, keyStoreCache: "0x0000000000000000000000000000000000000000" } }); } catch (e) { refused = (e as Error).message; }
-    assert(/not deployed/.test(refused), "keyStoreCacheOf refuses the not-deployed sentinel");
+    assert(/no KeyStoreCache address configured/.test(refused), "keyStoreCacheOf refuses an unset cache address");
     assert(keyStoreCacheOf(network) === cache, "keyStoreCacheOf returns the fork's address");
 
     // ── 2. Pin the anchor to a fresh Sepolia block. ──

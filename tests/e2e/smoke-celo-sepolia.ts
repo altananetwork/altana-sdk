@@ -22,9 +22,9 @@
  *                     Sepolia (>= 0.01 ETH, https://cloud.google.com/application/web3/faucet/ethereum/sepolia)
  *   CELO_SEPOLIA_CACHE  optional override of the KeyStoreCacheOPStack address
  *                     (the SDK config carries the deployed one)
- *   SEPOLIA_RPC_URL   optional: a Sepolia RPC with historical eth_getProof
- *                     (default https://sepolia.gateway.tenderly.co; publicnode
- *                     only serves proofs for its newest block)
+ *   SEPOLIA_RPC_URL   optional override of the Sepolia RPC (default
+ *                     SEPOLIA.publicRpcUrl; it must serve eth_getProof for
+ *                     the block Celo Sepolia anchors, about 100 behind head)
  *   CELO_SEPOLIA_RPC_URL  optional override of the Celo Sepolia read RPC
  *
  * Run: bun run smoke:celo-sepolia   (from tests/e2e)
@@ -36,7 +36,7 @@ import {
   isCachedKeyValid,
   readCachedKey,
   CELO_SEPOLIA,
-  KEYSTORE_CACHE_NOT_DEPLOYED,
+  keyStoreCacheOf,
   SEPOLIA,
   type NetworkConfig,
 } from "@altananetwork/sdk";
@@ -51,16 +51,9 @@ if (!TEST_FUNDER_KEY) {
   );
 }
 
-const configuredCache = CELO_SEPOLIA.registry?.kind === "cached" ? CELO_SEPOLIA.registry.keyStoreCache : KEYSTORE_CACHE_NOT_DEPLOYED;
-const CACHE = ((process.env.CELO_SEPOLIA_CACHE as Address | undefined) ?? configuredCache) as Address;
-if (CACHE.toLowerCase() === KEYSTORE_CACHE_NOT_DEPLOYED) {
-  throw new Error(
-    "The Celo Sepolia KeyStoreCache address is not known: set CELO_SEPOLIA_CACHE=<address> " +
-      "(or fill CELO_SEPOLIA.registry.keyStoreCache in packages/wallet/src/config.ts).",
-  );
-}
+const CACHE = ((process.env.CELO_SEPOLIA_CACHE as Address | undefined) ?? keyStoreCacheOf(CELO_SEPOLIA)) as Address;
 
-const SEPOLIA_RPC = process.env.SEPOLIA_RPC_URL || "https://sepolia.gateway.tenderly.co";
+const SEPOLIA_RPC = process.env.SEPOLIA_RPC_URL || SEPOLIA.publicRpcUrl;
 const sepolia: NetworkConfig = { ...SEPOLIA, publicRpcUrl: SEPOLIA_RPC };
 const celoSepolia: NetworkConfig = {
   ...CELO_SEPOLIA,

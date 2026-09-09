@@ -45,7 +45,7 @@ Use stdio transport:
 
 Optional env vars:
 
-- `ALTANA_CHAIN`: `bnb`, `bsc`, `56`, `ethereum`, `eth`, `1`, `bnb-testnet`, `97`, `sepolia`, `11155111`. Defaults to `bnb`. Celo aliases resolve to the chain that holds the registry: `celo` / `42220` to `ethereum`, `celo-sepolia` / `11142220` to `sepolia`. Celo keeps no KeyStore of its own; a Celo wallet's authority is rooted in the Ethereum (or Sepolia) KeyStore and mirrored into a cache on Celo, so reads answer from the registry chain and encoded calls carry that chain's `chainId`: sign them there, not on Celo.
+- `ALTANA_CHAIN`: `bnb`, `bsc`, `56`, `ethereum`, `eth`, `1`, `bnb-testnet`, `97`, `sepolia`, `11155111`. Defaults to `bnb`. Celo aliases resolve to the chain that holds the KeyStore: `celo` / `42220` to `ethereum`, `celo-sepolia` / `11142220` to `sepolia`. Encoded calls carry that chain's `chainId`; sign them there.
 - `RPC_URL`: override the default public RPC URL.
 
 ## Tools
