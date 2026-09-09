@@ -59,13 +59,11 @@ describe("describeNetwork", () => {
     // viem names the chain "Celo Sepolia Testnet"; the description uses the
     // chain object's own name so it never drifts from what viem reports.
     expect(describeNetwork(CELO_SEPOLIA)).toBe(
-      `${CELO_SEPOLIA.chain.name} (chainId 11142220); KeyStore registry on Sepolia (chainId 11155111); cache not deployed yet`,
+      `${CELO_SEPOLIA.chain.name} (chainId 11142220); KeyStore registry on Sepolia (chainId 11155111); cache 0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD`,
     );
-    const live = {
-      ...CELO_SEPOLIA,
-      registry: { kind: "cached" as const, l1: SEPOLIA, keyStoreCache: "0x37ebf8F17c3705568a03fB3A1629AcE7B3D95FFf" as const },
-    };
-    expect(describeNetwork(live)).toContain("cache 0x37ebf8F17c3705568a03fB3A1629AcE7B3D95FFf");
+    expect(describeNetwork(CELO)).toBe(
+      `${CELO.chain.name} (chainId 42220); KeyStore registry on Ethereum (chainId 1); cache not deployed yet`,
+    );
   });
 });
 

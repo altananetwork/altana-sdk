@@ -47,7 +47,9 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
   shape rooted in Ethereum with the cache address as the not-deployed
   sentinel, so the mainnet release is a config change. Per-chain faucet map
   (`FAUCET_URLS`, `faucetHint`, `CELO_SEPOLIA_FAUCET_URL`), x402 aliases
-  `celo` / `celo-sepolia`, and docs for all of it (Celo Sepolia setup page,
+  `celo` / `celo-sepolia`, the deployed Celo Sepolia cache address
+  (`0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD`, KeyStoreCacheOPStack
+  1.1.1), and docs for all of it (Celo Sepolia setup page,
   Celo stub, testnet addresses, cached-registry sections on grant, revoke,
   sync and errors). Covered by unit tests, two anvil fork tests
   (`fork-celo-cache`: KeyStoreCacheOPStack 1.1.1 accepts a real Sepolia proof

@@ -20,9 +20,8 @@
  *   TEST_FUNDER_KEY   funded with CELO on Celo Sepolia (>= 0.2 CELO,
  *                     https://faucet.celo.org/celo-sepolia) AND with ETH on
  *                     Sepolia (>= 0.01 ETH, https://cloud.google.com/application/web3/faucet/ethereum/sepolia)
- *   CELO_SEPOLIA_CACHE  the KeyStoreCacheOPStack address on Celo Sepolia,
- *                     unless CELO_SEPOLIA.registry.keyStoreCache is already
- *                     filled in the SDK config
+ *   CELO_SEPOLIA_CACHE  optional override of the KeyStoreCacheOPStack address
+ *                     (the SDK config carries the deployed one)
  *   SEPOLIA_RPC_URL   optional: a Sepolia RPC with historical eth_getProof
  *                     (default https://sepolia.gateway.tenderly.co; publicnode
  *                     only serves proofs for its newest block)
