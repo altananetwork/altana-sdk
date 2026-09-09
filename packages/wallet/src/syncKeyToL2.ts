@@ -228,7 +228,11 @@ export async function waitForL1Anchor(args: WaitForL1AnchorArgs): Promise<L1Anch
     l2Client,
     targetL1Block,
     pollIntervalMs = 3_000,
-    timeoutMs = 5 * 60_000,
+    // Base anchors 1 to 3 minutes behind L1; Celo Sepolia's L1Block predeploy
+    // advances only about every 20 minutes and lags Sepolia by 15 to 20
+    // minutes, so a proof for a fresh registry write can need close to half
+    // an hour. Callers on faster chains can pass a shorter timeout.
+    timeoutMs = 30 * 60_000,
     label = "waitForL1Anchor",
   } = args;
   const deadline = Date.now() + timeoutMs;
@@ -367,7 +371,7 @@ export async function ensureKeyCached(args: EnsureKeyCachedArgs): Promise<Cached
     publicKey,
     onStatus,
     anchorPollIntervalMs = 3_000,
-    anchorTimeoutMs = 5 * 60_000,
+    anchorTimeoutMs = 30 * 60_000,
   } = args;
 
   const keyId = keccak256(publicKey);

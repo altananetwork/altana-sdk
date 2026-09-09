@@ -95,7 +95,7 @@ type EnsureKeyCachedArgs = {
   onStatus?: (status: EnsureKeyCachedStatus) => void;
   /** Poll cadence while waiting for L2 to anchor. Default 3s. */
   anchorPollIntervalMs?: number;
-  /** Max wait for the L1 anchor. Default 5 minutes. */
+  /** Max wait for the L1 anchor. Default 30 minutes (Celo Sepolia anchors about every 20 minutes; Base within 3). */
   anchorTimeoutMs?: number;
 };
 

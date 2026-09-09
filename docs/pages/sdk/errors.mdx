@@ -114,7 +114,7 @@ Passing a signer the SDK cannot use produces a multi-line message naming every s
 | Message | Cause |
 |---|---|
 | `syncKeyToL2: tx reverted (L1Block anchor moved); refresh to retry` | The L1 anchor advanced between proof construction and inclusion. Call again. |
-| `ensureKeyCached: L2 did not anchor past L1 block <n> within <ms>ms` | Base did not catch up within 5 minutes. Base normally anchors 1 to 3 minutes behind L1. |
+| `ensureKeyCached: L2 did not anchor past L1 block <n> within <ms>ms` | The L2 did not catch up within the wait (default 30 minutes). Base normally anchors 1 to 3 minutes behind L1; Celo Sepolia advances its anchor about every 20 minutes and lags Sepolia by 15 to 20 minutes. Call `syncSessionToCache` again later; the registry entry is already live. |
 | `L2 L1Block predeploy reports zero hash: chain not anchored yet` | The L2 has no anchored L1 block. |
 | `l2WalletClient has no account configured` / `... no chain configured` | The L2 wallet client is missing an account or chain. |
 
