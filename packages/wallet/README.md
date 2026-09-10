@@ -146,6 +146,35 @@ Registration is two-phase because the record embeds the id the mint assigns.
 
 Full reference: [ERC-8004 agent identity](https://docs.altana.network/sdk/erc8004).
 
+
+### Networks
+
+```ts
+import { BNB, ETHEREUM, BASE, BNB_TESTNET, CELO_SEPOLIA, SEPOLIA, CELO } from "@altananetwork/sdk";
+```
+
+| Export | Chain | Role |
+| --- | --- | --- |
+| `BNB` | BNB Smart Chain (56) | Default. Wallet execution, local KeyStore |
+| `ETHEREUM` | Ethereum (1) | Wallet execution, L1 KeyStore for cross-chain proofs |
+| `BASE` | Base (8453) | L2 KeyStore cache, read-only (`ensureKeyCached`) |
+| `BNB_TESTNET` | BNB testnet (97) | Full-stack testnet |
+| `CELO_SEPOLIA` | Celo Sepolia (11142220) | Testnet L2. KeyStore on Sepolia, cache on Celo Sepolia |
+| `SEPOLIA` | Sepolia (11155111) | Testnet L1 KeyStore; no relay |
+| `CELO` | Celo (42220) | L2. KeyStore on Ethereum, cache on Celo |
+
+On an L1 (`BNB`, `ETHEREUM`) the KeyStore is on the chain itself and a grant
+is one relay transaction. On an L2 (`CELO`, `CELO_SEPOLIA`) the KeyStore is
+on the L1 and a KeyStoreCache on the L2 mirrors it: `grantSession` writes the
+L1 KeyStore, authorizes the account through the L2 relay, then proves the
+entry into the L2 cache; the result carries `registry` and `cache` reports.
+`revokeSession` runs the same three steps in reverse.
+`client.syncSessionToCache` runs the proof on its own. Reads go to
+`registryNetwork(network)`, the L1. On testnet the L1 (Sepolia) has no relay,
+so KeyStore writes are direct transactions from the wallet's admin key: fund
+the wallet address with Sepolia ETH as well as CELO. See
+https://docs.altana.network/sdk/setup.
+
 ## Documentation
 
 Full docs, concept guides, and SDK reference: [**docs.altana.network**](https://docs.altana.network).

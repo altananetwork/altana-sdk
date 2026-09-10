@@ -189,6 +189,10 @@ export function networkToChainId(network: string): number {
     case "bsc-testnet":
     case "bnb-testnet":
       return 97;
+    case "celo":
+      return 42220;
+    case "celo-sepolia":
+      return 11142220;
     default:
       throw new Error(`x402: unsupported network "${network}".`);
   }

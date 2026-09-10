@@ -7,6 +7,10 @@
   "ignoreCommand": "git diff HEAD^ HEAD --quiet -- . ../packages/wallet",
   "redirects": [
     { "source": "/skill", "destination": "/mcp/skill", "permanent": true },
-    { "source": "/getting-started/bnb", "destination": "/sdk/bnb", "permanent": true }
+    { "source": "/getting-started/bnb", "destination": "/sdk/setup", "permanent": true },
+    { "source": "/sdk/bnb", "destination": "/sdk/setup", "permanent": true },
+    { "source": "/sdk/bnb-testnet", "destination": "/sdk/setup", "permanent": true },
+    { "source": "/sdk/celo", "destination": "/sdk/setup", "permanent": true },
+    { "source": "/sdk/celo-sepolia", "destination": "/sdk/setup", "permanent": true }
   ]
 }

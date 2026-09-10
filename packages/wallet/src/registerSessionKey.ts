@@ -14,15 +14,32 @@ import {
   readIsValidKey,
   readRegistrationFee,
 } from "./internal/keystore.js";
-import type { Session } from "./internal/sessions.js";
+import { isCachedRegistry, submitRegistryCalls } from "./internal/cachedRegistry.js";
+import type {
+  CacheSyncReport,
+  RegistryWriteReport,
+  Session,
+} from "./internal/sessions.js";
 import type { ExecuteResult, Wallet } from "./internal/types.js";
+import { proveIntoCache } from "./syncSessionToCache.js";
 
 const NATIVE_TOKEN: Address = "0x0000000000000000000000000000000000000000";
 
-/** Result of registerSessionKey. `alreadyRegistered: true` = nothing to do, no fee paid. */
+/**
+ * Result of registerSessionKey. `alreadyRegistered: true` = nothing to do, no
+ * fee paid.
+ *
+ * On an L2 (Celo Sepolia, Celo) the write lands on the registry
+ * chain and `registry` says how; when that chain has no relay (Sepolia) there
+ * is no relay bundle, so `callsId` carries the transaction hash. The proof
+ * into the network's cache follows and is reported in `cache`, never thrown.
+ */
 export type RegisterSessionKeyResult =
   | { alreadyRegistered: true }
-  | ({ alreadyRegistered: false } & ExecuteResult);
+  | ({ alreadyRegistered: false } & ExecuteResult & {
+      registry?: RegistryWriteReport;
+      cache?: CacheSyncReport;
+    });
 
 /**
  * Register an already-granted session key in the KeyStore registry — the lazy
@@ -46,9 +63,74 @@ export async function registerSessionKey(
   const network = config.network;
   const feeToken = config.feeToken ?? NATIVE_TOKEN;
 
-  const publicClient = buildPublicClient(network);
   const keyId = deriveKeyId(session.publicKey);
 
+  if (isCachedRegistry(network)) {
+    const registry = network.registry.l1;
+    const registryClient = buildPublicClient(registry);
+    const alreadyRegistered = await readIsValidKey(
+      registryClient,
+      registry,
+      wallet.address,
+      keyId,
+    );
+    if (alreadyRegistered) return { alreadyRegistered: true };
+
+    const fee = await readRegistrationFee(registryClient, registry);
+    const written = await submitRegistryCalls({
+      network,
+      walletAddress: wallet.address,
+      adminSigner,
+      registryClient,
+      calls: [
+        buildAdditionalRegisterCall({
+          publicKey: session.publicKey,
+          fee,
+          network: registry,
+          expiry: session.expiry,
+        }),
+      ],
+    });
+    const registryReport: RegistryWriteReport = {
+      chainId: written.chainId,
+      via: written.via,
+      status: written.status,
+      ...(written.transactionHash ? { transactionHash: written.transactionHash } : {}),
+      ...(written.blockNumber !== undefined ? { blockNumber: written.blockNumber } : {}),
+    };
+    const cacheReport: CacheSyncReport =
+      written.status === "CONFIRMED"
+        ? await proveIntoCache(
+            wallet,
+            adminSigner,
+            session.publicKey,
+            network,
+            written.blockNumber,
+            feeToken,
+          )
+        : {
+            chainId: network.chainId,
+            status: "SKIPPED",
+            reason: `registry write ${written.status.toLowerCase()}`,
+          };
+    const callsId = written.callsId ?? written.transactionHash;
+    if (!callsId) {
+      throw new Error(
+        `registerSessionKey: the registry write on ${registry.chain.name} reported ` +
+          `status ${written.status} without a transaction; nothing was registered.`,
+      );
+    }
+    return {
+      alreadyRegistered: false,
+      callsId,
+      status: written.status,
+      ...(written.transactionHash ? { transactionHash: written.transactionHash } : {}),
+      registry: registryReport,
+      cache: cacheReport,
+    };
+  }
+
+  const publicClient = buildPublicClient(network);
   const alreadyRegistered = await readIsValidKey(
     publicClient,
     network,

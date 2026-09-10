@@ -33,12 +33,41 @@ import { buildFirstActionPrepend } from "./keystore.js";
 
 const NATIVE_TOKEN: Address = "0x0000000000000000000000000000000000000000";
 
+/** Faucet for Celo Sepolia (chainId 11142220). */
+export const CELO_SEPOLIA_FAUCET_URL = "https://faucet.celo.org/celo-sepolia";
+/** Faucet for BNB Smart Chain testnet (chainId 97). */
+export const BNB_TESTNET_FAUCET_URL = "https://testnet.bnbchain.org/faucet-smart";
+/** Faucet for Sepolia (chainId 11155111), the registry chain behind Celo Sepolia. */
+export const SEPOLIA_FAUCET_URL =
+  "https://cloud.google.com/application/web3/faucet/ethereum/sepolia";
+
+/** Test-network faucets by chainId. Mainnets have none. */
+export const FAUCET_URLS: Readonly<Record<number, string>> = {
+  97: BNB_TESTNET_FAUCET_URL,
+  11142220: CELO_SEPOLIA_FAUCET_URL,
+  11155111: SEPOLIA_FAUCET_URL,
+};
+
+/** The faucet URL for a test chain, or undefined for chains without one. */
+export function faucetHint(chainId: number): string | undefined {
+  return FAUCET_URLS[chainId];
+}
+
+/**
+ * True when the network's KeyStore lives on another chain behind a local
+ * cache. Null-safe: the signer gate in submitCalls must fire before any
+ * network lookup, and some callers pass no network to reach it.
+ */
+function isCachedNetwork(network: NetworkConfig | null | undefined): boolean {
+  return network?.registry?.kind === "cached";
+}
+
 export function buildRelayClient(network: NetworkConfig) {
   if (!network.relayUrl) {
     throw new Error(
       `No Altana relay serves chain ${network.chainId} (${network.chain.name}). ` +
-        `The testnet relay serves BSC testnet (97) only; Sepolia and other ` +
-        `keystore-only networks cannot execute through a relay.`,
+        `The testnet relay serves BSC testnet (97) and Celo Sepolia (11142220); ` +
+        `Sepolia and other keystore-only networks cannot execute through a relay.`,
     );
   }
   return createClient({
@@ -79,10 +108,12 @@ export async function registerAccount(
     });
     const account = privateKeyToAccount(signer._privateKey);
 
-    const prepared: any = await prepareUpgradeAccount(client, {
-      address: account.address,
-      authorizeKeys: [adminKey],
-    });
+    const prepared: any = await withRelayChainCheck(client, () =>
+      prepareUpgradeAccount(client, {
+        address: account.address,
+        authorizeKeys: [adminKey],
+      }),
+    );
 
     const signatures: Record<string, Hex> = {};
     for (const [name, digest] of Object.entries(prepared.digests ?? {})) {
@@ -105,10 +136,12 @@ export async function registerAccount(
     const throwawayAccount = privateKeyToAccount(throwawayPk);
     const passkeyAdminKey = passkeyToPortoKey(signer, { role: "admin" });
 
-    const prepared: any = await prepareUpgradeAccount(client, {
-      address: throwawayAccount.address,
-      authorizeKeys: [passkeyAdminKey],
-    });
+    const prepared: any = await withRelayChainCheck(client, () =>
+      prepareUpgradeAccount(client, {
+        address: throwawayAccount.address,
+        authorizeKeys: [passkeyAdminKey],
+      }),
+    );
 
     const signatures: Record<string, Hex> = {};
     for (const [name, digest] of Object.entries(prepared.digests ?? {})) {
@@ -124,6 +157,42 @@ export async function registerAccount(
   }
 
   throw new Error(unsupportedSignerMessage(signer.type, "create a wallet"));
+}
+
+/**
+ * The message for a relay that answers but has no capabilities entry for the
+ * client's chain: porto surfaces that as an opaque TypeError while
+ * destructuring the missing entry. Seen when a chain is configured ahead of
+ * the relay redeploy that serves it (Celo Sepolia before the testnet relay
+ * added chain 11142220).
+ */
+export function relayDoesNotServeChainMessage(chainId: number, relayUrl?: string): string {
+  return (
+    `The Altana relay${relayUrl ? ` at ${relayUrl}` : ""} does not serve chain ${chainId} ` +
+    `(its wallet_getCapabilities has no entry for it). The chain is configured in the SDK ` +
+    `ahead of the relay: wait for the relay deployment that adds it, or point relayUrl at a ` +
+    `relay that lists chain ${chainId}.`
+  );
+}
+
+/** True when `err` is porto's failure mode for a chain the relay does not list. */
+export function isMissingRelayChainError(err: unknown): boolean {
+  const text = err instanceof Error ? err.message : String(err);
+  return /Cannot destructure property 'contracts'/.test(text);
+}
+
+async function withRelayChainCheck<T>(
+  client: ReturnType<typeof buildRelayClient>,
+  fn: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (!isMissingRelayChainError(err)) throw err;
+    const chainId = client.chain?.id ?? 0;
+    const url = (client.transport as { url?: string }).url;
+    throw new Error(relayDoesNotServeChainMessage(chainId, url), { cause: err });
+  }
 }
 
 /** Fund an EOA with native tokens via the upstream relay's faucet (test networks only). */
@@ -261,11 +330,22 @@ export async function submitCalls(
 ): Promise<Hex> {
   const isAdmin = opts.submittingKey.role === "admin";
 
+  // On a cached network (Celo Sepolia, Celo) the KeyStore contracts do not
+  // exist at network.keyStore / keyStoreController on this chain: those are
+  // the registry chain's addresses. A call aimed at them here would not
+  // revert, it would land as a plain transfer to a codeless address, so a
+  // registerKey carrying the registration fee would burn that fee. Refuse it
+  // before anything reaches the relay.
+  assertNoRegistryTargets(opts.network, calls);
+
   // First-action KeyStore registration. Only admins can register the admin
   // key; session-signed intents never trigger this (a session can't exist
-  // without a prior admin action that already would have registered).
+  // without a prior admin action that already would have registered). On a
+  // cached network the registry lives on another chain, so the prepend is
+  // skipped here: the admin registers lazily on the registry chain inside the
+  // wallet's first registry write (see submitRegistryCalls).
   let effectiveCalls: readonly Call[] = calls;
-  if (isAdmin) {
+  if (needsFirstActionPrepend(opts.network, opts.submittingKey.role)) {
     const publicClient = buildPublicClient(opts.network);
     const prepend = await buildFirstActionPrepend({
       publicClient,
@@ -378,6 +458,52 @@ export async function submitCalls(
 }
 
 /**
+ * Whether an intent signed by `role` on `network` must carry the admin's
+ * first-action KeyStore registration: admins on networks whose KeyStore is
+ * local. Cached networks register on their registry chain instead.
+ */
+export function needsFirstActionPrepend(
+  network: NetworkConfig,
+  role: "admin" | "session",
+): boolean {
+  return role === "admin" && !isCachedNetwork(network);
+}
+
+/**
+ * Refuses, on a cached network, any call whose target is the registry
+ * chain's KeyStore or Controller address. Those contracts are not deployed on
+ * the cached network, so the call would confirm as a plain native transfer
+ * to a codeless address and burn whatever value it carried (a registration
+ * fee, typically). Registry writes belong on the registry chain: grantSession
+ * and revokeSession route them there automatically.
+ */
+export function assertNoRegistryTargets(
+  network: NetworkConfig,
+  calls: readonly Call[],
+): void {
+  if (!isCachedNetwork(network)) return;
+  const registry = network.registry?.kind === "cached" ? network.registry.l1 : network;
+  const forbidden = new Map<string, string>([
+    [network.keyStore.toLowerCase(), "KeyStore"],
+    [network.keyStoreController.toLowerCase(), "KeyStoreController"],
+  ]);
+  for (const call of calls) {
+    const label = forbidden.get(call.to.toLowerCase());
+    if (!label) continue;
+    throw new Error(
+      `Refusing to send a call to ${call.to} on ${network.chain.name} (chainId ` +
+        `${network.chainId}): that is the ${label} address of ${registry.chain.name} ` +
+        `(chainId ${registry.chainId}), where this network's KeyStore registry lives. ` +
+        `No contract exists at it on ${network.chain.name}, so the call would confirm as ` +
+        `a plain transfer to a codeless address and burn its value` +
+        (call.value ? ` (${call.value} wei here)` : "") +
+        `. Registry writes go to ${registry.chain.name}: use grantSession, revokeSession ` +
+        `or registerSessionKey, which route them there.`,
+    );
+  }
+}
+
+/**
  * The relay explains rejections precisely ("fee token not supported: 0x…",
  * "quote expired", …), but that message rides several `.cause` levels below
  * viem's generic wrapper ("Invalid parameters were provided to the RPC
@@ -391,7 +517,7 @@ async function withRelayReason<T>(fn: () => Promise<T>, doing: string): Promise<
     const reason = deepestRelayReason(err);
     if (!reason) throw err;
     const hint = /fee token/i.test(reason)
-      ? " (the relay fee is paid in native currency, e.g. BNB — omit `feeToken` or set one the relay accepts; $U is for job escrow and x402, not relay fees)"
+      ? " (the relay fee is paid in the chain's native currency: BNB on BNB Chain, ETH on Ethereum, CELO on Celo. Omit `feeToken` or set one the relay accepts; $U is for job escrow and x402, not relay fees)"
       : "";
     throw new Error(`The relay rejected the request to ${doing}: ${reason}${hint}`, { cause: err });
   }

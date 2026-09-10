@@ -73,6 +73,10 @@ type ClientGrantSessionOptions = {
   sessionSigner?: Signer;
   /** Register the key in Keystore (default true). */
   register?: boolean;
+  /** L2 only: prove the Keystore entry into the L2 cache after the grant (default true). */
+  populateCache?: boolean;
+  /** L2 only: progress across the three steps. */
+  onStatus?: (status: "registry-write" | "account-authorization" | "cache-sync" | "done") => void;
   /** Fee token (default: native token). */
   feeToken?: Address;
   /** Target chain. Defaults to the client's default chain. */
@@ -88,6 +92,29 @@ See [Sessions](/concepts/sessions) for the full permission shape reference.
 type GrantSessionResult = Session & {
   /** The transaction that carried the grant, when the relay reported one. */
   transactionHash?: Hex;
+  /** L2 only: the Keystore write on the L1. */
+  registry?: RegistryWriteReport;
+  /** L2 only: the proof into the L2 cache. Reported, never thrown. */
+  cache?: CacheSyncReport;
+};
+
+type RegistryWriteReport = {
+  chainId: number;
+  via: "relay" | "eoa" | "skipped";
+  status: "CONFIRMED" | "FAILED" | "PENDING" | "SKIPPED";
+  transactionHash?: Hex;
+  blockNumber?: bigint;
+  reason?: string;
+};
+
+type CacheSyncReport = {
+  chainId: number;
+  status: "CONFIRMED" | "FAILED" | "SKIPPED";
+  keyStoreCache?: Address;
+  transactionHash?: Hex;
+  l1BlockNumber?: bigint;
+  cachedKey?: CachedKey;
+  reason?: string;
 };
 
 type Session = {
@@ -122,6 +149,16 @@ In a single userOp:
 2. The session is authorized on the wallet's smart account with its permissions hash.
 
 Both happen atomically. There is no intermediate state where one exists without the other.
+
+### On an L2
+
+On an L1 the grant is one relay transaction. On an [L2](/concepts/keystore#reaching-other-chains) the Keystore is on the L1 and a KeyStoreCache on the L2 mirrors it, so the grant is three steps, in order:
+
+1. **Keystore write** on the L1: `registerKey(session)`, preceded by `initialRegisterKey(admin)` on the wallet's first write. Skipped when the key is already valid there. It goes through the relay on the L1; on testnet, where the L1 (Sepolia) has no relay, it is a direct transaction from the wallet's admin key.
+2. **Account authorization** through the L2's relay, fee in the L2's native token. This is the step that gives the session its power.
+3. **Proof into the L2 cache**, executed as a wallet call through the same relay (see [`syncSessionToCache`](/sdk/sync-to-l2#syncsessiontocache)). Reported in `result.cache`; the session is already live on the account and in the Keystore. Skipped with `register: false` or `populateCache: false`.
+
+`result.registry` and `result.cache` are present on an L2. `onStatus` fires before each step.
 
 ## Persisting a session
 

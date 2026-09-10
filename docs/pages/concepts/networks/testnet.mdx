@@ -1,14 +1,19 @@
 ---
 title: Testnet
-description: Altana's BNB Smart Chain testnet — RPC, faucet, relay, and deployed contract addresses.
+description: "Altana's testnets, BNB Smart Chain Testnet and Celo Sepolia: RPCs, faucets, relay, and deployed contract addresses."
 ---
 
 # Testnet
 
-Altana's testnet runs on **BNB Smart Chain Testnet (chain 97)** — the full stack
-(keystore, account contracts, and the Altana testnet relay) is deployed there, so
-you can create wallets and execute end-to-end. The SDK ships a ready-made
-`BNB_TESTNET` config, importable from `@altananetwork/sdk`.
+Altana runs on two testnets, both served by the Altana testnet relay at
+`https://testnet-relay.altana.network`:
+
+- **BNB Smart Chain Testnet (chain 97)**: the full stack (keystore, account
+  contracts, relay) is deployed there. SDK config `BNB_TESTNET`.
+- **Celo Sepolia (chain 11142220)**: the account contracts and relay are
+  deployed there, the KeyStore is on Sepolia and a KeyStoreCache on Celo
+  Sepolia mirrors it. SDK configs `CELO_SEPOLIA` and `SEPOLIA`. See
+  [Celo Sepolia](#celo-sepolia) below.
 
 To see registered keys and sessions on testnet, use the [Keystore Explorer](/explorer) at
 [testnet.altana.network](https://testnet.altana.network). For raw transactions, use
@@ -62,3 +67,68 @@ minutes — see [Get testnet $U](/sdk/erc8183#get-testnet-u) for claim code):
 > Addresses are the source of truth in the SDK's
 > [`packages/wallet/src/config.ts`](https://github.com/altananetwork/altana-sdk/blob/main/packages/wallet/src/config.ts).
 > To verify independently, check the addresses above against the explorer.
+
+## Celo Sepolia: `CELO_SEPOLIA`
+
+Wallets execute through the Altana testnet relay on Celo Sepolia with fees in
+CELO. Their sessions are recorded in the Sepolia [Keystore](/concepts/keystore)
+and proven into the KeyStoreCache on Celo Sepolia, where they are read with
+one `eth_call`.
+
+- **Chain id:** 11142220
+- **Public RPC:** `https://forno.celo-sepolia.celo-testnet.org` (Forno, the same endpoint the testnet relay uses)
+- **Explorer:** https://sepolia.celoscan.io
+- **Faucet:** https://faucet.celo.org/celo-sepolia
+- **Relay:** `https://testnet-relay.altana.network`
+- **Keystore:** Sepolia (below)
+
+What to fund, and where:
+
+| Chain | Asset | Used for |
+| --- | --- | --- |
+| Celo Sepolia | CELO | Relay fees for wallet actions |
+| Sepolia | ETH | Keystore writes, sent from the wallet's admin key; about 0.0003 ETH each |
+
+| Contract | Address |
+| --- | --- |
+| KeyStoreCache (KeyStoreCacheOPStack 1.1.1, deploy block 35678512) | `0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD` |
+
+Account stack (used by the relay; the same testnet address set as chain 97):
+
+| Contract | Address |
+| --- | --- |
+| Orchestrator | `0xcb5CEf3C54aa90e9A7ad602A258D3d360cC862B9` |
+| Delegation proxy | `0x4F4ddE38Da9F8AbBb96C48cA520b992D4bADc3D6` |
+| Account implementation | `0x33aD2F49ab9f122f5F0FDF579f575724EfF353DE` |
+| Simulator | `0x3006de101E96e85272d5B5Ad07A9738fa7678008` |
+| Funder | `0xb248602EAadd9c3e2Db4575C4e4d58003b7a2740` |
+| Escrow | `0xCd075ceb5Cd463a9233a8085fc915767139F655c` |
+
+EXP fee tokens:
+
+| Token | Address |
+| --- | --- |
+| EXP | `0xa8071DA5e994cB8e3eB56CaD0FBB6ca424dD8dc0` |
+| EXP2 | `0x61727778216127D0843A99A3e91e99C27e9f3BC7` |
+
+Stablecoins for [x402](/sdk/x402-server#celo) (both 6 decimals):
+
+| Token | Address | Rails |
+| --- | --- | --- |
+| USDC | `0x01C5C0122039549AD1493B8220cABEdD739BC44E` | eip3009, permit2-exact (EIP-712 domain `USDC` / `2`) |
+| USDT | `0xd077A400968890Eacc75cdc901F0356c943e4fDb` | permit2-exact only |
+
+## Sepolia: `SEPOLIA`
+
+Hosts the testnet KeyStore behind Celo Sepolia. It has no relay; the SDK
+reaches it as `registryNetwork(CELO_SEPOLIA)`.
+
+- **Chain id:** 11155111
+- **Public RPC:** `https://ethereum-sepolia-rpc.publicnode.com`
+- **Explorer:** https://sepolia.etherscan.io
+- **Faucet:** https://cloud.google.com/application/web3/faucet/ethereum/sepolia
+
+| Contract | Address |
+| --- | --- |
+| KeyStore | `0x38Aaf396F462Ad3a4F38ADa653AF6bDEA55F772d` |
+| KeyStoreController | `0xc1525B766c134f7EB5B1d8e4a69C6Cb97Aff2379` |

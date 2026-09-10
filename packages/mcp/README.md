@@ -27,6 +27,8 @@ The chain is selected at startup via the `ALTANA_CHAIN` environment variable:
 | `bnb` (default), `56` | BNB Smart Chain (56) | Altana hosted (`https://relay.altana.network`) |
 | `ethereum`, `1` | Ethereum (1) | Altana relay (`https://relay.altana.network`) |
 | `bnb-testnet`, `bsc-testnet`, `97` | BNB Smart Chain Testnet (97) | Altana testnet relay |
+| `celo-sepolia`, `11142220` | Celo Sepolia (11142220), testnet L2; KeyStore on Sepolia | Altana testnet relay |
+| `celo`, `42220` | Celo (42220), L2; KeyStore on Ethereum | Altana relay |
 
 ```bash
 # Operate on Ethereum instead of the BNB default
@@ -34,10 +36,20 @@ ALTANA_CHAIN=ethereum bunx @altananetwork/mcp
 
 # Or the BSC testnet stack
 ALTANA_CHAIN=bnb-testnet bunx @altananetwork/mcp
+
+# Or Celo Sepolia
+ALTANA_CHAIN=celo-sepolia bunx @altananetwork/mcp
 ```
 
 An unrecognised value logs a warning and falls back to `bnb`. Sepolia and Base
 Sepolia are keystore-only (no relay), so they are not selectable here.
+
+On an L2 (`celo`, `celo-sepolia`) the KeyStore is on the L1 and a
+KeyStoreCache on the L2 mirrors it: `wallet_verification` and
+`verify_authorization` read the L1 and add a `cache` block (`cached`,
+`revoked`, `expiry`, `fresh`) from the L2 cache, and `grant_session` /
+`revoke_session` report the L1 KeyStore write and the cache proof as separate
+steps.
 
 One server process serves one chain, so restart with a different `ALTANA_CHAIN` to switch.
 

@@ -125,7 +125,7 @@ console.log("Session valid on Base:", isValid); // true
 ```
 
 :::info[L2 execution]
-The current SDK supports wallet execution on BNB and Ethereum. Cross-chain **verification** from Base is available today via `ensureKeyCached` + `isValidKey`; additional L2 execution support will be added as it ships.
+The SDK supports wallet execution on BNB, Ethereum and Celo. Cross-chain **verification** from Base is available via `ensureKeyCached` + `isValidKey`; on Celo, `grantSession` proves the session into the Celo cache itself (see [Setup](/sdk/setup)).
 :::
 
 ## Why it is different

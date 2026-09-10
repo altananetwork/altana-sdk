@@ -119,3 +119,28 @@ which client is paying:
 - **`resource`** in your challenge may be a bare URL string or an object
   (`{ url, description?, mimeType? }`). It is always emitted as the object form
   that b402 buyers echo back into their payment.
+
+## Celo
+
+The package ships token configs for Celo mainnet and Celo Sepolia; the merchant itself is chain-agnostic (`chainId` plus viem's `celo` / `celoSepolia` chain). USDC on Celo is Circle's native deployment (EIP-712 domain `USDC` / `2`, 6 decimals) and serves both rails; USDT on Celo has no EIP-3009, so it is permit2-exact only. Both are 6 decimals: price in micro-units.
+
+```ts
+import { celoSepolia } from "viem/chains";
+import { createX402Merchant, USDC_CELO_SEPOLIA, USDT_CELO_SEPOLIA } from "@altananetwork/x402-server";
+
+const merchant = createX402Merchant({
+  chainId: 11142220,
+  payTo: "0xYourAltanaSmartAccount",
+  price: 200_000n,                            // 0.2 (6 dec)
+  rails: [
+    { rail: "eip3009", token: USDC_CELO_SEPOLIA },
+    { rail: "permit2-exact", token: USDT_CELO_SEPOLIA, spender: facilitator.address },
+  ],
+  resource: "https://api.example.com/audit",
+  facilitator: privateKeyToAccount(process.env.FACILITATOR_KEY),  // needs CELO for gas
+  rpcUrl: "https://forno.celo-sepolia.celo-testnet.org",
+  chain: celoSepolia,
+});
+```
+
+`USDC_CELO` and `USDT_CELO` are the mainnet equivalents (chain 42220, `chain: celo`). Settlement transactions are standard EIP-1559: viem's Celo serializer only emits the Celo-specific type when a fee currency is set, which the merchant never does. Buyers name the chain as `eip155:11142220` (or the SDK alias `celo-sepolia`).

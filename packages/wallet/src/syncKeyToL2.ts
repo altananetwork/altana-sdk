@@ -10,6 +10,12 @@
  *
  * The submitter pays L2 gas. The operation is permissionless: anyone may
  * relay a proof on behalf of any user.
+ *
+ * The same building blocks serve cached networks such as Celo Sepolia, where
+ * the SDK submits the proof as a wallet call through the network's relay
+ * (see syncSessionToCache): `buildPopulateKeyCall` produces the call,
+ * `waitForL1Anchor` waits for the L2 to see the L1 block that holds the
+ * registry write, and `computeKeyPackedSlot` is the storage slot proven.
  */
 
 import {
@@ -24,6 +30,8 @@ import {
 } from "viem";
 
 const L1_BLOCK_PREDEPLOY: Address = "0x4200000000000000000000000000000000000015";
+const ZERO_HASH: Hex =
+  "0x0000000000000000000000000000000000000000000000000000000000000000";
 
 // L1 KeyStore v1.0.0 storage layout:
 //   slot 3: mapping(address => mapping(bytes32 => Key)) userKeys
@@ -36,6 +44,13 @@ const L1_BLOCK_ABI = [
     inputs: [],
     name: "hash",
     outputs: [{ type: "bytes32" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "number",
+    outputs: [{ type: "uint64" }],
     stateMutability: "view",
     type: "function",
   },
@@ -125,7 +140,7 @@ export function readCachedKey(
  * this as the authoritative check; the `CachedKey` struct is for inspection.
  *
  * Cache v1.1.0 reverts ("call populateKey before isValidKey") when the entry
- * was populated at an older L1 block than the one the L2 currently sees —
+ * was populated at an older L1 block than the one the L2 currently sees,
  * i.e. the cached data is stale. We map that revert to `false`: the key
  * needs a fresh populateKey proof before it can be considered valid.
  */
@@ -153,12 +168,101 @@ export async function isCachedKeyValid(
   }
 }
 
-export type SyncKeyToL2Args = {
-  /** Public client for the L1 chain (Ethereum) — used for eth_getProof and block lookup. */
+/** The L1 block an OP-stack L2 currently anchors, as its `L1Block` predeploy reports it. */
+export type L1Anchor = {
+  hash: Hex;
+  number: bigint;
+};
+
+/**
+ * Reads the L2's `L1Block` predeploy: the L1 block hash and number the L2
+ * currently anchors. Throws when the predeploy reports a zero hash (the
+ * chain has no anchor yet).
+ */
+export async function readL1Anchor(l2Client: PublicClient): Promise<L1Anchor> {
+  const [hash, number] = await Promise.all([
+    l2Client.readContract({
+      address: L1_BLOCK_PREDEPLOY,
+      abi: L1_BLOCK_ABI,
+      functionName: "hash",
+    }) as Promise<Hex>,
+    l2Client.readContract({
+      address: L1_BLOCK_PREDEPLOY,
+      abi: L1_BLOCK_ABI,
+      functionName: "number",
+    }) as Promise<bigint>,
+  ]);
+  if (hash === ZERO_HASH) {
+    throw new Error("L2 L1Block predeploy reports zero hash: chain not anchored yet");
+  }
+  return { hash, number: BigInt(number) };
+}
+
+export type WaitForL1AnchorArgs = {
+  /** Public client for the L1 chain, used to resolve the anchored hash to a block number. */
   l1Client: PublicClient;
-  /** Public client for the L2 chain (e.g. Base) — used for L1Block read + receipt wait. */
+  /** Public client for the L2 chain, used to read the `L1Block` predeploy. */
   l2Client: PublicClient;
-  /** Wallet client on the L2 chain — the relayer that pays L2 gas. */
+  /**
+   * The L1 block the anchor must reach. Pass the block that holds the
+   * registry write you want proven; anything older risks the storage slot
+   * not yet being set in the proven state.
+   */
+  targetL1Block: bigint;
+  /** Poll cadence. Default 3s. */
+  pollIntervalMs?: number;
+  /** Give-up timeout. Default 30 minutes. */
+  timeoutMs?: number;
+  /** Prefix for the timeout error. Default "waitForL1Anchor". */
+  label?: string;
+};
+
+/**
+ * Polls the L2's `L1Block` predeploy until it anchors an L1 block at or past
+ * `targetL1Block`, and returns that anchor. Base anchors 1 to 3 minutes
+ * behind L1; Celo Sepolia within a few L1 blocks.
+ */
+export async function waitForL1Anchor(args: WaitForL1AnchorArgs): Promise<L1Anchor> {
+  const {
+    l1Client,
+    l2Client,
+    targetL1Block,
+    pollIntervalMs = 3_000,
+    // Base anchors 1 to 3 minutes behind L1; Celo Sepolia's L1Block predeploy
+    // advances only about every 20 minutes and lags Sepolia by 15 to 20
+    // minutes, so a proof for a fresh registry write can need close to half
+    // an hour. Callers on faster chains can pass a shorter timeout.
+    timeoutMs = 30 * 60_000,
+    label = "waitForL1Anchor",
+  } = args;
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    const l1HashOnL2 = (await l2Client.readContract({
+      address: L1_BLOCK_PREDEPLOY,
+      abi: L1_BLOCK_ABI,
+      functionName: "hash",
+    })) as Hex;
+    if (l1HashOnL2 !== ZERO_HASH) {
+      const anchored = await l1Client.getBlock({ blockHash: l1HashOnL2 });
+      if (anchored.number >= targetL1Block) {
+        return { hash: l1HashOnL2, number: anchored.number };
+      }
+    }
+    if (Date.now() > deadline) {
+      throw new Error(
+        `${label}: L2 did not anchor past L1 block ${targetL1Block} within ${timeoutMs}ms`,
+      );
+    }
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
+  }
+}
+
+export type SyncKeyToL2Args = {
+  /** Public client for the L1 chain (Ethereum), used for eth_getProof and block lookup. */
+  l1Client: PublicClient;
+  /** Public client for the L2 chain (e.g. Base), used for L1Block read + receipt wait. */
+  l2Client: PublicClient;
+  /** Wallet client on the L2 chain: the relayer that pays L2 gas. */
   l2WalletClient: WalletClient;
   /** L1 KeyStore address whose state is being proven. */
   l1KeyStore: Address;
@@ -178,7 +282,7 @@ export type SyncKeyToL2Result = {
 /**
  * Submits a permissionless `populateKey` to the L2 cache proving the key's
  * active state on L1. Resolves after the L2 tx is mined and the cache state
- * has been read back. Single shot — if `keccak(blockHeader) != L1Block.hash()`
+ * has been read back. Single shot: if `keccak(blockHeader) != L1Block.hash()`
  * at inclusion time the tx reverts; callers retry by calling again.
  */
 export async function syncKeyToL2(args: SyncKeyToL2Args): Promise<SyncKeyToL2Result> {
@@ -193,31 +297,20 @@ export async function syncKeyToL2(args: SyncKeyToL2Args): Promise<SyncKeyToL2Res
 
   const keyId = keccak256(publicKey);
 
-  const prepared = await buildPopulateCall({
+  const call = await buildPopulateKeyCall({
     l1Client,
     l2Client,
     l1KeyStore,
+    l2Cache,
     user,
     publicKey,
-  });
-
-  const data = encodeFunctionData({
-    abi: POPULATE_KEY_ABI,
-    functionName: "populateKey",
-    args: [
-      user,
-      publicKey,
-      prepared.rlpHeader,
-      prepared.accountProof,
-      prepared.storageProof,
-    ],
   });
 
   const txHash = await l2WalletClient.sendTransaction({
     account: l2WalletClient.account,
     chain: l2WalletClient.chain,
-    to: l2Cache,
-    data,
+    to: call.to,
+    data: call.data,
   });
 
   const receipt = await l2Client.waitForTransactionReceipt({ hash: txHash });
@@ -249,7 +342,7 @@ export type EnsureKeyCachedArgs = SyncKeyToL2Args & {
    */
   anchorPollIntervalMs?: number;
   /**
-   * Max wait for the L1 anchor before giving up. Default 5 minutes.
+   * Max wait for the L1 anchor before giving up. Default 30 minutes.
    * Base typically anchors within 1–3 minutes.
    */
   anchorTimeoutMs?: number;
@@ -278,7 +371,7 @@ export async function ensureKeyCached(args: EnsureKeyCachedArgs): Promise<Cached
     publicKey,
     onStatus,
     anchorPollIntervalMs = 3_000,
-    anchorTimeoutMs = 5 * 60_000,
+    anchorTimeoutMs = 30 * 60_000,
   } = args;
 
   const keyId = keccak256(publicKey);
@@ -290,28 +383,18 @@ export async function ensureKeyCached(args: EnsureKeyCachedArgs): Promise<Cached
 
   // We need an L1 block that already contains the registration. Wait until
   // the L2's L1Block predeploy reports a hash that resolves to a block at
-  // or past the current L1 tip — anything older risks the storage slot
+  // or past the current L1 tip; anything older risks the storage slot
   // not yet being set in the proven account.
   onStatus?.("waiting-for-anchor");
   const targetL1Block = await l1Client.getBlockNumber();
-  const deadline = Date.now() + anchorTimeoutMs;
-  while (true) {
-    const l1HashOnL2 = (await l2Client.readContract({
-      address: L1_BLOCK_PREDEPLOY,
-      abi: L1_BLOCK_ABI,
-      functionName: "hash",
-    })) as Hex;
-    if (l1HashOnL2 !== "0x0000000000000000000000000000000000000000000000000000000000000000") {
-      const anchored = await l1Client.getBlock({ blockHash: l1HashOnL2 });
-      if (anchored.number >= targetL1Block) break;
-    }
-    if (Date.now() > deadline) {
-      throw new Error(
-        `ensureKeyCached: L2 did not anchor past L1 block ${targetL1Block} within ${anchorTimeoutMs}ms`,
-      );
-    }
-    await new Promise((r) => setTimeout(r, anchorPollIntervalMs));
-  }
+  await waitForL1Anchor({
+    l1Client,
+    l2Client,
+    targetL1Block,
+    pollIntervalMs: anchorPollIntervalMs,
+    timeoutMs: anchorTimeoutMs,
+    label: "ensureKeyCached",
+  });
 
   onStatus?.("submitting-proof");
   const result = await syncKeyToL2(args);
@@ -319,33 +402,79 @@ export async function ensureKeyCached(args: EnsureKeyCachedArgs): Promise<Cached
   return result.cachedKey;
 }
 
-async function buildPopulateCall(args: {
+export type BuildPopulateKeyCallArgs = {
+  /** Public client for the L1 chain, used for eth_getProof and the header fetch. */
   l1Client: PublicClient;
+  /** Public client for the L2 chain, used to read the current L1 anchor. */
   l2Client: PublicClient;
+  /** L1 KeyStore address whose state is being proven. */
   l1KeyStore: Address;
+  /** L2 KeyStoreCache address that will accept the proof. */
+  l2Cache: Address;
+  /** The user whose key is being proven. */
   user: Address;
+  /** Full SEC1-encoded public key bytes of the key being proven. */
   publicKey: Hex;
-}): Promise<{ rlpHeader: Hex; accountProof: readonly Hex[]; storageProof: readonly Hex[] }> {
-  const { l1Client, l2Client, l1KeyStore, user, publicKey } = args;
+  /**
+   * The anchor to build the proof against. Omit to read the L2's current
+   * anchor; pass the value from `waitForL1Anchor` to avoid a second read.
+   */
+  anchor?: L1Anchor;
+};
+
+export type PopulateKeyCall = {
+  to: Address;
+  value: bigint;
+  data: Hex;
+  /** The L1 block the proof was built against. The cache only accepts it while the L2 still anchors this block. */
+  l1BlockNumber: bigint;
+  l1BlockHash: Hex;
+};
+
+/**
+ * Builds the `populateKey` call that proves (user, publicKey)'s current L1
+ * KeyStore state into an L2 cache: the RLP-encoded L1 header the L2 anchors,
+ * the account proof for the KeyStore and the storage proof for the packed
+ * Key slot, all fetched at the anchored block. Send it from any funded L2
+ * account, or as a wallet call through the network's relay.
+ *
+ * The L1 RPC must serve `eth_getProof` for the anchored block. Public
+ * endpoints often only serve the latest few blocks and answer "distance to
+ * target block exceeds maximum proof window" otherwise; point the L1 client
+ * at an endpoint with historical proofs when that happens.
+ */
+export async function buildPopulateKeyCall(
+  args: BuildPopulateKeyCallArgs,
+): Promise<PopulateKeyCall> {
+  const { l1Client, l2Client, l1KeyStore, l2Cache, user, publicKey } = args;
   const keyId = keccak256(publicKey);
 
-  const l1HashOnL2 = (await l2Client.readContract({
-    address: L1_BLOCK_PREDEPLOY,
-    abi: L1_BLOCK_ABI,
-    functionName: "hash",
-  })) as Hex;
-  if (l1HashOnL2 === "0x0000000000000000000000000000000000000000000000000000000000000000") {
-    throw new Error("L2 L1Block predeploy reports zero hash — chain not anchored yet");
-  }
+  const anchor = args.anchor ?? (await readL1Anchor(l2Client));
 
-  const l1Block = await l1Client.getBlock({ blockHash: l1HashOnL2 });
+  const l1Block = await l1Client.getBlock({ blockHash: anchor.hash });
   const packedSlot = computeKeyPackedSlot(user, keyId);
 
-  const proof = await l1Client.getProof({
-    address: l1KeyStore,
-    storageKeys: [packedSlot],
-    blockNumber: l1Block.number,
-  });
+  let proof;
+  try {
+    proof = await l1Client.getProof({
+      address: l1KeyStore,
+      storageKeys: [packedSlot],
+      blockNumber: l1Block.number,
+    });
+  } catch (err) {
+    const text = err instanceof Error ? err.message : String(err);
+    if (/proof window|distance to target block/i.test(text)) {
+      throw new Error(
+        `The L1 RPC refused eth_getProof at block ${l1Block.number} (the block the L2 ` +
+          `anchors): ${text.split("\n")[0]}. This endpoint only serves proofs for its ` +
+          `newest blocks. Use an L1 RPC with a proof window that covers the anchor (for ` +
+          `Sepolia, https://0xrpc.io/sep or https://eth-sepolia.api.onfinality.io/public) ` +
+          `by overriding the registry network's publicRpcUrl or passing l1Client.`,
+        { cause: err },
+      );
+    }
+    throw err;
+  }
 
   const rlpHeader = rlpEncodeHeader(l1Block);
   if (keccak256(rlpHeader).toLowerCase() !== l1Block.hash.toLowerCase()) {
@@ -354,10 +483,18 @@ async function buildPopulateCall(args: {
     );
   }
 
+  const data = encodeFunctionData({
+    abi: POPULATE_KEY_ABI,
+    functionName: "populateKey",
+    args: [user, publicKey, rlpHeader, proof.accountProof, proof.storageProof[0]!.proof],
+  });
+
   return {
-    rlpHeader,
-    accountProof: proof.accountProof,
-    storageProof: proof.storageProof[0]!.proof,
+    to: l2Cache,
+    value: 0n,
+    data,
+    l1BlockNumber: l1Block.number,
+    l1BlockHash: l1Block.hash,
   };
 }
 
@@ -365,9 +502,10 @@ async function buildPopulateCall(args: {
  * Storage slot of the packed Key field (offset 3) inside
  * `userKeys[user][keyId]` in the L1 KeyStore v1.0.0. The packed slot holds
  * `(nonce|lastUpdated|revoked|expiry|isRoot)` and is exactly what the L2
- * cache reads to extract revocation / expiry / root status.
+ * cache reads to extract revocation / expiry / root status. Mirrors
+ * `KeyStoreCacheOPStack.keyPackedSlot`.
  */
-function computeKeyPackedSlot(user: Address, keyId: Hex): Hex {
+export function computeKeyPackedSlot(user: Address, keyId: Hex): Hex {
   const innerSlot = keccak256(
     encodeAbiParameters([{ type: "address" }, { type: "uint256" }], [user, L1_USERKEYS_SLOT]),
   );

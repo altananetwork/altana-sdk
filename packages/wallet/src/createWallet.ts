@@ -4,6 +4,7 @@ import {
   buildRelayClient,
   registerAccount,
 } from "./internal/relay.js";
+import { provisioningNetworks } from "./internal/cachedRegistry.js";
 import type { Address } from "viem";
 import type { Wallet } from "./internal/types.js";
 
@@ -51,6 +52,12 @@ export type CreateWalletResult = Wallet & {
  * across chains (private-key signers). For passkeys across chains, use
  * createPasskeyWallet, which reuses a single throwaway EOA.
  *
+ * A cached network whose registry chain has a relay (Celo, rooted in
+ * Ethereum) is provisioned on that registry chain too: registry writes there
+ * go through the wallet's smart account, and a passkey wallet cannot be
+ * provisioned later. A relay-less registry chain (Sepolia behind Celo
+ * Sepolia) needs no provisioning; writes there come from the admin EOA.
+ *
  * Custody follows the signer. Altana never persists keys.
  */
 export async function createWallet(
@@ -62,7 +69,7 @@ export async function createWallet(
   const signer = opts.signer ?? createPrivateKeySigner();
 
   let walletAddress: Address | undefined;
-  for (const network of opts.networks) {
+  for (const network of provisioningNetworks(opts.networks)) {
     const relayClient = buildRelayClient(network);
     const { walletAddress: addr } = await registerAccount(relayClient, signer);
     if (walletAddress && addr !== walletAddress) {
