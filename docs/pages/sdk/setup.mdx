@@ -1,0 +1,61 @@
+---
+title: Setup
+description: Install the SDK, choose a chain, create a client.
+---
+
+# Setup
+
+The SDK works the same way on every chain. You install it, pick the chain
+config, and create a client. Everything after that (wallets, sessions,
+execution) is the same code.
+
+## Install
+
+```bash
+npm install @altananetwork/sdk viem
+```
+
+## Choose a chain
+
+```ts
+import { createClient, BNB, signerFromPrivateKey } from "@altananetwork/sdk";
+
+const client = createClient({ chains: [BNB] }); // or ETHEREUM, CELO, BNB_TESTNET, CELO_SEPOLIA
+const signer = signerFromPrivateKey(process.env.PRIVATE_KEY as `0x${string}`);
+
+const wallet = await client.createWallet({ signer });
+console.log(wallet.address);
+```
+
+| Config | Chain | Chain id | Fund `wallet.address` with |
+| --- | --- | --- | --- |
+| `BNB` | BNB Smart Chain (default) | 56 | BNB |
+| `ETHEREUM` | Ethereum | 1 | ETH |
+| `CELO` | Celo | 42220 | CELO, plus ETH on Ethereum for Keystore writes |
+| `BNB_TESTNET` | BNB Smart Chain Testnet | 97 | test BNB: [faucet](https://testnet.bnbchain.org/faucet-smart) |
+| `CELO_SEPOLIA` | Celo Sepolia | 11142220 | test CELO: [faucet](https://faucet.celo.org/celo-sepolia), plus Sepolia ETH: [faucet](https://cloud.google.com/application/web3/faucet/ethereum/sepolia) |
+
+BNB Smart Chain and Ethereum are L1s: the [Keystore](/concepts/keystore) is
+on the chain itself. Celo is an L2: the Keystore is on Ethereum (Sepolia on
+testnet) and a KeyStoreCache on Celo mirrors it, which is why the wallet also
+holds a little of the L1's native token. The SDK handles the L1 write and the
+proof into the cache inside [`grantSession`](/sdk/grant-session) and
+[`revokeSession`](/sdk/revoke-session). `BASE` is also exported, for the L2
+Keystore cache used by [`ensureKeyCached`](/sdk/sync-to-l2).
+
+## Multiple chains
+
+`createClient` accepts several chains. Pass `chainId` per call to pick one:
+
+```ts
+import { createClient, BNB, ETHEREUM, CELO } from "@altananetwork/sdk";
+
+const client = createClient({ chains: [BNB, ETHEREUM, CELO], defaultChainId: 56 });
+await client.grantSession({ /* ... */, chainId: 42220 }); // operate on Celo
+```
+
+## What's next
+
+- [Create a smart agentic wallet](/getting-started/create-agentic-wallet). The full walkthrough.
+- [Grant a session](/sdk/grant-session). Scoped, time-bounded keys for AI agents.
+- [Networks & Addresses](/concepts/networks) and [Testnet](/concepts/networks/testnet). RPCs, explorers, faucets, contract addresses.

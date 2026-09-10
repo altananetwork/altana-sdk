@@ -173,7 +173,7 @@ entry into the L2 cache; the result carries `registry` and `cache` reports.
 `registryNetwork(network)`, the L1. On testnet the L1 (Sepolia) has no relay,
 so KeyStore writes are direct transactions from the wallet's admin key: fund
 the wallet address with Sepolia ETH as well as CELO. See
-https://docs.altana.network/sdk/celo and https://docs.altana.network/sdk/celo-sepolia.
+https://docs.altana.network/sdk/setup.
 
 ## Documentation
 

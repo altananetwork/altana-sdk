@@ -80,8 +80,8 @@ Beyond wallets and sessions, `@altananetwork/sdk` also covers:
 - **[Off-chain order signing](https://docs.altana.network/sdk/sign-order).** Session keys sign ERC-1271 authorizations that any contract can verify.
 - **[Reading balances](https://docs.altana.network/sdk/balances)**, including BEP-677 scaled-UI-amount tokens.
 - **[Syncing a key to an L2](https://docs.altana.network/sdk/sync-to-l2).** Prove KeyStore state to an OP Stack L2 so it can read the key without an L1 call.
-- **[BNB testnet](https://docs.altana.network/sdk/bnb-testnet)**, with a faucet helper for funding test accounts.
-- **L2 networks: [Celo](https://docs.altana.network/sdk/celo)** and **[Celo Sepolia](https://docs.altana.network/sdk/celo-sepolia)**. Wallets run on the L2 through the relay; sessions are recorded in the L1 KeyStore and proven into a KeyStoreCache on the L2.
+- **[Testnets](https://docs.altana.network/concepts/networks/testnet)**: BNB testnet and Celo Sepolia, with faucets.
+- **[L2 networks](https://docs.altana.network/concepts/keystore#reaching-other-chains)** (Celo). Wallets run on the L2 through the relay; sessions are recorded in the L1 KeyStore and proven into a KeyStoreCache on the L2.
 
 ## Packages
 

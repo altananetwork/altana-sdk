@@ -25,7 +25,7 @@ To browse what these contracts have recorded, open the [Keystore Explorer](/expl
 | `BNB` | BNB Smart Chain | 56 | Default wallet execution network with a standalone Keystore |
 | `ETHEREUM` | Ethereum | 1 | Wallet execution network and L1 Keystore source for cross-chain proofs |
 | `BASE` | Base | 8453 | L2 Keystore cache for cross-chain session verification |
-| `CELO` | Celo | 42220 | L2: wallet execution, Keystore on Ethereum, Keystore cache on Celo. See [Celo](/sdk/celo) |
+| `CELO` | Celo | 42220 | L2: wallet execution, Keystore on Ethereum, Keystore cache on Celo |
 
 ## BNB Smart Chain: `BNB`
 
@@ -72,8 +72,7 @@ execute through the Altana relay on Celo, their sessions are recorded in the
 Ethereum Keystore (`CELO.keyStore` and `CELO.keyStoreController` are the
 Ethereum contracts above; `registryNetwork(CELO)` is `ETHEREUM`) and proven
 into the Keystore cache on Celo, where they are read with one `eth_call`. A
-wallet created for `CELO` is provisioned on Ethereum in the same call. See
-[Celo](/sdk/celo).
+wallet created for `CELO` is provisioned on Ethereum in the same call.
 
 - **Chain id:** 42220
 - **Public RPC:** `https://celo-rpc.publicnode.com`

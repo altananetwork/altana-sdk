@@ -13,7 +13,7 @@ Altana runs on two testnets, both served by the Altana testnet relay at
 - **Celo Sepolia (chain 11142220)**: the account contracts and relay are
   deployed there, the KeyStore is on Sepolia and a KeyStoreCache on Celo
   Sepolia mirrors it. SDK configs `CELO_SEPOLIA` and `SEPOLIA`. See
-  [Celo Sepolia](#celo-sepolia) below and the [SDK setup page](/sdk/celo-sepolia).
+  [Celo Sepolia](#celo-sepolia) below.
 
 To see registered keys and sessions on testnet, use the [Keystore Explorer](/explorer) at
 [testnet.altana.network](https://testnet.altana.network). For raw transactions, use
@@ -73,8 +73,7 @@ minutes — see [Get testnet $U](/sdk/erc8183#get-testnet-u) for claim code):
 Wallets execute through the Altana testnet relay on Celo Sepolia with fees in
 CELO. Their sessions are recorded in the Sepolia [Keystore](/concepts/keystore)
 and proven into the KeyStoreCache on Celo Sepolia, where they are read with
-one `eth_call`. The [Celo Sepolia](/sdk/celo-sepolia) SDK page walks through
-a grant, a revoke and a read.
+one `eth_call`.
 
 - **Chain id:** 11142220
 - **Public RPC:** `https://forno.celo-sepolia.celo-testnet.org` (Forno, the same endpoint the testnet relay uses)
