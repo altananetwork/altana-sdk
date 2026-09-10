@@ -28,10 +28,10 @@ If the user is operating an existing wallet from Claude itself (one-off transact
 Everything goes through a client. Create one with `createClient`, configured with the chains it should support, then call its methods.
 
 ```ts
-import { createClient, BNB, ETHEREUM, BASE } from "@altananetwork/sdk";
+import { createClient, BNB, ETHEREUM, CELO, BASE } from "@altananetwork/sdk";
 
 const client = createClient({ chains: [BNB] });
-// Wallet execution: BNB (default) or ETHEREUM.
+// Wallet execution: BNB (default), ETHEREUM or CELO.
 // Cross-chain verification cache: BASE.
 // client.createWallet        : smart account from a local private key (CLI, script, agent)
 // client.createPasskeyWallet : smart account from a passkey (Face ID / Touch ID), browser

@@ -10,7 +10,7 @@ Every permission lives in a neutral onchain registry: openly verifiable, revocab
 - **Cross-app authorization.** Any DEX, orderbook, or protocol can read whether an agent is authorized, without integrating a specific wallet vendor.
 - **Instant revocation.** Change your mind at any point. Revoke a key in one transaction, and it takes effect before the next action.
 
-Live on mainnet across BNB Chain, Ethereum, and Base. The KeyStore contracts
+Live on mainnet across BNB Chain, Ethereum, Base, and Celo. The KeyStore contracts
 were [audited by CertiK](https://docs.altana.network/security/audits).
 
 ## Install

@@ -41,7 +41,7 @@ const client = createClient({ chains: [BNB, ETHEREUM], defaultChainId: 56 });
 await client.grantSession({ /* ... */, chainId: 1 }); // operate on Ethereum
 ```
 
-The SDK also exports `BASE` for the L2 Keystore cache used by cross-chain verification.
+The SDK also exports `CELO` for the Celo L2 (see [Celo](/sdk/celo)) and `BASE` for the L2 Keystore cache used by cross-chain verification.
 
 ## What's next
 
