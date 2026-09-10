@@ -73,14 +73,12 @@ export type GrantSessionResult = Session & {
    */
   transactionHash?: Hex;
   /**
-   * Cached networks only (Celo Sepolia, Celo): what happened to the registry
-   * write on the registry chain. Absent on networks with a local KeyStore,
+   * L2 only: what happened to the KeyStore write on the L1. Absent on networks with a local KeyStore,
    * where the registration rides in the grant transaction itself.
    */
   registry?: RegistryWriteReport;
   /**
-   * Cached networks only: the proof of the new registry entry into the
-   * network's KeyStoreCache. A failed proof is reported here, never thrown:
+   * L2 only: the proof of the new registry entry into the L2 KeyStoreCache. A failed proof is reported here, never thrown:
    * the session is live on the account and in the registry regardless, and
    * `syncSessionToCache` can be retried at any time.
    */
@@ -118,7 +116,7 @@ export type CacheSyncReport = {
   reason?: string;
 };
 
-/** Progress of grantSession on a cached network, in order. */
+/** Progress of grantSession on an L2, in order. */
 export type GrantSessionStatus =
   | "registry-write"
   | "account-authorization"
@@ -152,16 +150,15 @@ export type GrantSessionOptions = {
    */
   register?: boolean;
   /**
-   * Cached networks only (Celo Sepolia, Celo). After the registry write and
-   * the account authorization, prove the new registry entry into the
-   * network's KeyStoreCache (default true). The proof is a wallet call
+   * L2 only. After the L1 KeyStore write and the account authorization,
+   * prove the new entry into the L2 KeyStoreCache (default true). The proof is a wallet call
    * through the network's relay, paid in the network's native token. Pass
    * false to skip it and call `syncSessionToCache` yourself later. Ignored on
    * networks with a local KeyStore.
    */
   populateCache?: boolean;
   /**
-   * Cached networks only: progress callback across the three steps
+   * L2 only: progress callback across the three steps
    * (registry write, account authorization, cache proof). Not called on
    * networks with a local KeyStore, where the grant is one transaction.
    */

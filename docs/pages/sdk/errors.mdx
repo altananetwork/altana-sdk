@@ -98,7 +98,7 @@ There is no error class and no error code: every one of these is a plain `Error`
 
 | Message | Cause |
 |---|---|
-| `No Altana relay serves chain <id> (<name>). ...` | The chain has no relay and cannot execute. `BASE` and `SEPOLIA` are read-only in this sense: one is an L2 cache target, the other hosts the Keystore behind Celo Sepolia. [`holdings`](/sdk/balances#discovering-holdings) throws this too, since discovery goes through the relay. |
+| `No Altana relay serves chain <id> (<name>). ...` | The chain has no relay and cannot execute. `BASE` and `SEPOLIA` are read-only in this sense: one is an L2 cache target, the other is the testnet L1 Keystore. [`holdings`](/sdk/balances#discovering-holdings) throws this too, since discovery goes through the relay. |
 | `The Altana relay at <url> does not serve chain <id> (its wallet_getCapabilities has no entry for it). ...` | `createWallet` / `createPasskeyWallet` reached a relay that does not list the chain. Set `relayUrl` to a relay that serves it. |
 | `The relay rejected the request to ...: fee token not supported ...` | The relay fee is paid in the chain's native currency (BNB, ETH, CELO). Omit `feeToken` or set one the relay accepts. |
 | `Balance for <address> did not reach <n> wei within <ms>ms` | A funding wait timed out. |
@@ -118,18 +118,18 @@ Passing a signer the SDK cannot use produces a multi-line message naming every s
 | `L2 L1Block predeploy reports zero hash: chain not anchored yet` | The L2 has no anchored L1 block. |
 | `l2WalletClient has no account configured` / `... no chain configured` | The L2 wallet client is missing an account or chain. |
 
-### Celo Sepolia and Celo
+### L2 networks
 
 | Message | Cause |
 |---|---|
-| `Refusing to send a call to <address> on <chain>: that is the KeyStore/KeyStoreController address of <Keystore chain> ...` | A call targeted the Keystore or Controller address on Celo. Those contracts are on the Keystore chain; `grantSession`, `revokeSession` and `registerSessionKey` write them there. |
-| `Registry writes on <chain> are direct transactions from the admin's private key ... A passkey (P256) admin cannot sign one. ...` | Passkey wallet on Celo Sepolia, where Keystore writes are direct transactions on Sepolia. Grant with `register: false`. |
-| `Registry writes on <chain> are sent directly from the admin key, so the KeyStore records the sender as the wallet. The signer's address (...) is not the wallet address (...)` | On Sepolia the admin key must be the wallet's own key. |
+| `Refusing to send a call to <address> on <chain>: that is the KeyStore/KeyStoreController address of <Keystore chain> ...` | A call targeted the Keystore or Controller address on an L2. Those contracts are on the L1; `grantSession`, `revokeSession` and `registerSessionKey` write them there. |
+| `Registry writes on <chain> are direct transactions from the admin's private key ... A passkey (P256) admin cannot sign one. ...` | Passkey wallet on an L2 testnet, where Keystore writes are direct transactions on Sepolia. Grant with `register: false`. |
+| `Registry writes on <chain> are sent directly from the admin key, so the KeyStore records the sender as the wallet. The signer's address (...) is not the wallet address (...)` | On a testnet L1 (Sepolia) the admin key must be the wallet's own key. |
 | `Registry writes on <chain> are sent directly from the admin key <address>, which holds <n> but needs about <m> (registration fee plus gas). Fund ...` | The admin key needs Sepolia ETH. The message names the faucet. |
 | `Session registry write on <chain> did not confirm: status=... The account authorization was not attempted.` | The Keystore write failed; nothing else was done. |
-| `The L1 RPC refused eth_getProof at block <n> (the block the L2 anchors): ...` | The Keystore chain's RPC does not serve proofs at the anchored block. Pass `l1Client` to `syncSessionToCache` or override `publicRpcUrl`. |
+| `The L1 RPC refused eth_getProof at block <n> (the block the L2 anchors): ...` | The L1 RPC does not serve proofs at the anchored block. Pass `l1Client` to `syncSessionToCache` or override `publicRpcUrl`. |
 | `syncSessionToCache: the L1 anchor moved on every one of <n> attempts ...` | Every proof missed its anchor window. Raise `maxAttempts`. |
-| `syncSessionToCache: L2 did not anchor past L1 block <n> within <ms>ms` | The network did not anchor the Keystore block within the wait. Raise `anchorTimeoutMs`. |
+| `syncSessionToCache: L2 did not anchor past L1 block <n> within <ms>ms` | The L2 did not anchor the L1 block within the wait. Raise `anchorTimeoutMs`. |
 
 A failed cache proof inside `grantSession`, `revokeSession` or `registerSessionKey` is reported in `result.cache` (`status: "FAILED"`, `reason`); a failed Keystore revoke in `result.registry`.
 

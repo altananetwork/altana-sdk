@@ -499,10 +499,10 @@ tool(
       "to look up a session this server granted (server resolves the " +
       "wallet and keyId from local metadata). Note: this reads the public " +
       "KeyStore registry — a session granted with register: false works " +
-      "on-chain but reports false here until it is registered. On Celo and " +
-      "Celo Sepolia the registry lives on Ethereum / Sepolia; `authorized` " +
-      "is read there and a `cache` block reports what the Celo-side " +
-      "KeyStoreCache holds (`fresh` is the cache's own isValidKey).",
+      "on-chain but reports false here until it is registered. On an L2 the " +
+      "registry lives on the L1; `authorized` is read there and a `cache` " +
+      "block reports what the L2 KeyStoreCache holds (`fresh` is the " +
+      "cache's own isValidKey).",
     inputSchema: {
       walletAddress: z.string().optional(),
       keyId: z.string().optional(),

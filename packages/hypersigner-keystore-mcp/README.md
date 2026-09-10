@@ -45,7 +45,7 @@ Use stdio transport:
 
 Optional env vars:
 
-- `ALTANA_CHAIN`: `bnb`, `bsc`, `56`, `ethereum`, `eth`, `1`, `bnb-testnet`, `97`, `sepolia`, `11155111`. Defaults to `bnb`. Celo aliases resolve to the chain that holds the KeyStore: `celo` / `42220` to `ethereum`, `celo-sepolia` / `11142220` to `sepolia`. Encoded calls carry that chain's `chainId`; sign them there.
+- `ALTANA_CHAIN`: `bnb`, `bsc`, `56`, `ethereum`, `eth`, `1`, `bnb-testnet`, `97`, `sepolia`, `11155111`. Defaults to `bnb`. L2 aliases resolve to the L1 that holds the KeyStore: `celo` / `42220` to `ethereum`, `celo-sepolia` / `11142220` to `sepolia`. Encoded calls carry that chain's `chainId`; sign them there.
 - `RPC_URL`: override the default public RPC URL.
 
 ## Tools

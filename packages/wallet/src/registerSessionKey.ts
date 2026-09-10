@@ -29,7 +29,7 @@ const NATIVE_TOKEN: Address = "0x0000000000000000000000000000000000000000";
  * Result of registerSessionKey. `alreadyRegistered: true` = nothing to do, no
  * fee paid.
  *
- * On a cached network (Celo Sepolia, Celo) the write lands on the registry
+ * On an L2 (Celo Sepolia, Celo) the write lands on the registry
  * chain and `registry` says how; when that chain has no relay (Sepolia) there
  * is no relay bundle, so `callsId` carries the transaction hash. The proof
  * into the network's cache follows and is reported in `cache`, never thrown.

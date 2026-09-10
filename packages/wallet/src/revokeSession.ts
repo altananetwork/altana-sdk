@@ -22,14 +22,14 @@ const NATIVE_TOKEN: Address = "0x0000000000000000000000000000000000000000";
 
 /**
  * What revokeSession returns. On a network with a local KeyStore it is the
- * plain ExecuteResult of the one revoke intent. On a cached network the
- * account revoke is the ExecuteResult, and the two follow-up steps on the
- * registry chain and the cache are reported alongside it.
+ * plain ExecuteResult of the one revoke intent. On an L2 the account revoke
+ * is the ExecuteResult, and the two follow-up steps on the L1 and the cache
+ * are reported alongside it.
  */
 export type RevokeSessionResult = ExecuteResult & {
-  /** Cached networks only: the registry revoke on the registry chain. Reported, never thrown. */
+  /** L2 only: the KeyStore revoke on the L1. Reported, never thrown. */
   registry?: RegistryWriteReport;
-  /** Cached networks only: the post-revocation proof into the KeyStoreCache. Reported, never thrown. */
+  /** L2 only: the post-revocation proof into the L2 KeyStoreCache. Reported, never thrown. */
   cache?: CacheSyncReport;
 };
 
@@ -40,7 +40,7 @@ export type RevokeSessionResult = ExecuteResult & {
  * Accepts either a Session object or just the session's public key when
  * you've persisted the session metadata in your app.
  *
- * On a cached network (Celo Sepolia, Celo) the order is: account revoke on
+ * On an L2 (Celo Sepolia, Celo) the order is: account revoke on
  * the network first (this is what strips the session's power, and it is the
  * only step that throws), then the registry revoke on the registry chain,
  * then a post-revocation proof into the network's cache so third parties

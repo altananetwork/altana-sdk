@@ -81,7 +81,7 @@ Beyond wallets and sessions, `@altananetwork/sdk` also covers:
 - **[Reading balances](https://docs.altana.network/sdk/balances)**, including BEP-677 scaled-UI-amount tokens.
 - **[Syncing a key to an L2](https://docs.altana.network/sdk/sync-to-l2).** Prove KeyStore state to an OP Stack L2 so it can read the key without an L1 call.
 - **[BNB testnet](https://docs.altana.network/sdk/bnb-testnet)**, with a faucet helper for funding test accounts.
-- **[Celo](https://docs.altana.network/sdk/celo)** and **[Celo Sepolia](https://docs.altana.network/sdk/celo-sepolia)**: wallets run on Celo through the relay, their sessions are recorded in the Ethereum (Sepolia) KeyStore and proven into a KeyStoreCache on Celo.
+- **L2 networks: [Celo](https://docs.altana.network/sdk/celo)** and **[Celo Sepolia](https://docs.altana.network/sdk/celo-sepolia)**. Wallets run on the L2 through the relay; sessions are recorded in the L1 KeyStore and proven into a KeyStoreCache on the L2.
 
 ## Packages
 

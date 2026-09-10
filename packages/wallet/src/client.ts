@@ -121,8 +121,7 @@ export type ClientRegisterSessionKeyOptions = {
 } & ChainSelector;
 
 /**
- * Cached networks only (Celo Sepolia, Celo): prove a session key's registry
- * state into the network's KeyStoreCache. See syncSessionToCache.
+ * L2 only: prove a session key's registry state into the L2 KeyStoreCache. See syncSessionToCache.
  */
 export type ClientSyncSessionToCacheOptions = {
   wallet: Wallet;
@@ -189,7 +188,7 @@ export type Client = {
     opts: ClientRegisterSessionKeyOptions,
   ): Promise<RegisterSessionKeyResult>;
   /**
-   * Cached networks only: prove a session key's registry entry (or
+   * L2 only: prove a session key's registry entry (or
    * revocation) into the network's KeyStoreCache as a wallet call through
    * the network's relay. grantSession and revokeSession do this themselves;
    * call it to retry a proof they reported as failed, or after

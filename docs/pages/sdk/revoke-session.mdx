@@ -39,9 +39,9 @@ Sessions granted with `register: false` (see [grantSession](/sdk/grant-session))
 client.revokeSession(opts: ClientRevokeSessionOptions): Promise<RevokeSessionResult>;
 
 type RevokeSessionResult = ExecuteResult & {
-  /** Celo Sepolia, Celo: the Keystore revoke on the Keystore chain. Reported, never thrown. */
+  /** L2 only: the Keystore revoke on the L1. Reported, never thrown. */
   registry?: RegistryWriteReport;
-  /** Celo Sepolia, Celo: the proof of the revocation into the network's cache. Reported, never thrown. */
+  /** L2 only: the proof of the revocation into the L2 cache. Reported, never thrown. */
   cache?: CacheSyncReport;
 };
 
@@ -63,13 +63,13 @@ In a single userOp:
 
 Both atomic. After the userOp confirms, the session is dead on that chain: there is no window in which one half has landed and the other has not.
 
-### Celo Sepolia and Celo
+### On an L2
 
-On Celo Sepolia and Celo revocation is three steps, in order:
+On an L1 the revoke is one relay transaction. On an [L2](/concepts/keystore#reaching-other-chains) it is three steps, in order:
 
-1. **Account revoke** on the network, through its relay. This strips the session's power.
-2. **Keystore revoke** on the Keystore chain (`revokeKey`, from the admin key on Sepolia, through the relay on Ethereum). Reported in `result.registry`.
-3. **Proof of the revocation** into the network's KeyStoreCache, so readers on the network see the key as revoked. Reported in `result.cache`.
+1. **Account revoke** on the L2, through its relay. This strips the session's power.
+2. **Keystore revoke** on the L1 (`revokeKey`, through the L1 relay; on testnet from the admin key). Reported in `result.registry`.
+3. **Proof of the revocation** into the L2 cache, so readers on the L2 see the key as revoked. Reported in `result.cache`.
 
 ## Cross-chain revocation
 
@@ -99,7 +99,7 @@ await syncKeyToL2({
 `ensureKeyCached` will **not** do this for you. It returns early when the cache reports the key as valid, which is exactly the state a stale cache is in after a revocation. Use `syncKeyToL2`, which always submits a fresh proof.
 :::
 
-Once the cache observes `revoked=true` it cannot be flipped back, even by a proof against an older L1 block. See [ensureKeyCached](/sdk/sync-to-l2) for the full cross-chain model. On Celo Sepolia and Celo `revokeSession` submits this proof itself; see above.
+Once the cache observes `revoked=true` it cannot be flipped back, even by a proof against an older L1 block. See [ensureKeyCached](/sdk/sync-to-l2) for the full cross-chain model. On an L2 `revokeSession` submits this proof itself; see above.
 
 ## Notes
 

@@ -79,11 +79,10 @@ export function buildServer(): McpServer {
         `${CHAIN.chain.name} (chainId ${CHAIN.chainId}). Reads answer "is this ` +
         'key authorized right now"; encode tools return unsigned calldata for ' +
         "YOUR wallet/SDK to sign. This server never holds a key or signs. " +
-        "Celo wallets are rooted here too: Celo (42220) has no KeyStore of its " +
-        "own and reads the Ethereum registry through a cache, Celo Sepolia " +
-        "(11142220) the Sepolia registry, so ALTANA_CHAIN=celo resolves to " +
-        "ethereum and ALTANA_CHAIN=celo-sepolia to sepolia. Sign encoded calls " +
-        "on the chainId they carry (the registry chain), not on Celo.",
+        "L2 wallets are rooted here too: an L2 (Celo 42220, Celo Sepolia " +
+        "11142220) keeps its KeyStore on the L1 and reads it through a cache, " +
+        "so ALTANA_CHAIN=celo resolves to ethereum and ALTANA_CHAIN=celo-sepolia " +
+        "to sepolia. Sign encoded calls on the chainId they carry (the L1).",
     },
   );
 

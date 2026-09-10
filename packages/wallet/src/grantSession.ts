@@ -59,7 +59,7 @@ function ephemeralSessionSigner(): Signer {
  *
  * On a network with a local KeyStore (BNB, Ethereum, BNB testnet) the
  * registry entry and the account authorization land in one relay intent.
- * On a cached network (Celo Sepolia, Celo) they are three steps, in order:
+ * On an L2 (Celo Sepolia, Celo) they are three steps, in order:
  * the registry write on the registry chain (skipped when the key is already
  * valid there), the account authorization through the network's relay, and
  * the proof of the registry entry into the network's KeyStoreCache. A failed

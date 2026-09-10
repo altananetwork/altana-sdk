@@ -55,7 +55,7 @@ claude mcp add altana -e ALTANA_CHAIN=celo-sepolia -- bunx @altananetwork/mcp
 
 One server process serves one chain. Restart with a different `ALTANA_CHAIN` to switch.
 
-On `celo-sepolia` and `celo` the Keystore is on Sepolia and Ethereum respectively. `wallet_verification` and `verify_authorization` read it there and add a `cache` block with what the KeyStoreCache on Celo holds; `grant_session` and `revoke_session` report the Keystore write and the cache proof. See [Celo Sepolia](/sdk/celo-sepolia) and [Celo](/sdk/celo).
+On an L2 (`celo-sepolia`, `celo`) the server reads the Keystore on the L1 and the KeyStoreCache on the L2; see [Tools](/mcp/tools).
 
 ## Cursor / Continue / other hosts
 

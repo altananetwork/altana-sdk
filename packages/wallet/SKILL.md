@@ -221,7 +221,7 @@ The MCP server is a thin wrapper around this SDK. Anything the MCP does, you can
 ## Notes
 
 - **Funding.** Fund `wallet.address` with native tokens before the first `execute`. On Ethereum, send ETH from your own wallet or an exchange. On BNB, send BNB from your own wallet or an exchange. On Celo Sepolia, send CELO (https://faucet.celo.org/celo-sepolia) and Sepolia ETH for KeyStore writes to the same address. On Celo, send CELO and ETH on Ethereum for KeyStore writes.
-- **Celo Sepolia and Celo (CELO_SEPOLIA, CELO).** `grantSession` is three steps (KeyStore write on Sepolia or Ethereum, account authorization through the relay, proof into the KeyStoreCache on Celo); the result carries `registry` and `cache` reports (`client.syncSessionToCache` runs the proof on its own). `revokeSession` returns the same two reports. Passkey wallets on Celo Sepolia grant with `register: false`.
+- **L2 networks (CELO, CELO_SEPOLIA).** The KeyStore is on the L1 and a KeyStoreCache on the L2 mirrors it. `grantSession` is three steps (L1 KeyStore write, account authorization through the L2 relay, proof into the L2 cache); the result carries `registry` and `cache` reports (`client.syncSessionToCache` runs the proof on its own). `revokeSession` returns the same two reports. On testnet the L1 (Sepolia) has no relay, so passkey wallets grant with `register: false`.
 - **First execute registers the admin.** The Keystore `initialRegisterKey` is auto-prepended on the wallet's first admin-signed action. Don't pre-call it. The wallet is "live" but not on-chain until that first tx.
 - **Sessions must match the grant on execute.** The session's `permissions + expiry + publicKey` values must equal what was committed at grant time; a lossy round trip (bigints → number, re-cased hex) breaks the match. Persist with `serializeSession` and restore with `deserializeSession(stored, signer)` — never raw `JSON.stringify` on a `Session`.
 - **Empty calls means no calls.** `client.execute({ wallet, signer, calls: [] })` is rejected. Pass at least one call.
@@ -236,9 +236,9 @@ import { ETHEREUM, BNB, BASE, BNB_TESTNET, CELO_SEPOLIA, SEPOLIA, CELO } from "@
 // BNB  : BNB Smart Chain (chain 56)
 // BASE : Base (chain 8453), L2 Keystore cache
 // BNB_TESTNET  : BNB testnet (chain 97), full stack
-// CELO_SEPOLIA : Celo Sepolia (chain 11142220). KeyStore on Sepolia (SEPOLIA),
+// CELO         : Celo (chain 42220), L2. KeyStore on ETHEREUM, cache on Celo.
+// CELO_SEPOLIA : Celo Sepolia (chain 11142220), testnet L2. KeyStore on SEPOLIA,
 //                cache on Celo Sepolia. registryNetwork(CELO_SEPOLIA) === SEPOLIA.
-// CELO         : Celo (chain 42220). KeyStore on ETHEREUM, cache on Celo.
 //
 // ETHEREUM.keyStore           = 0xb70fDa90C1d576Ba8399946a0c10ECD9d9Ea923b
 // ETHEREUM.keyStoreController = 0x30a188Eecf14F4142B0d828ce838C9E1134e7FaA

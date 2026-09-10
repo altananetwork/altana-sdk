@@ -73,9 +73,9 @@ type ClientGrantSessionOptions = {
   sessionSigner?: Signer;
   /** Register the key in Keystore (default true). */
   register?: boolean;
-  /** Celo Sepolia, Celo: prove the Keystore entry into the network's cache after the grant (default true). */
+  /** L2 only: prove the Keystore entry into the L2 cache after the grant (default true). */
   populateCache?: boolean;
-  /** Celo Sepolia, Celo: progress across the three steps. */
+  /** L2 only: progress across the three steps. */
   onStatus?: (status: "registry-write" | "account-authorization" | "cache-sync" | "done") => void;
   /** Fee token (default: native token). */
   feeToken?: Address;
@@ -92,9 +92,9 @@ See [Sessions](/concepts/sessions) for the full permission shape reference.
 type GrantSessionResult = Session & {
   /** The transaction that carried the grant, when the relay reported one. */
   transactionHash?: Hex;
-  /** Celo Sepolia, Celo: the Keystore write on the Keystore chain. */
+  /** L2 only: the Keystore write on the L1. */
   registry?: RegistryWriteReport;
-  /** Celo Sepolia, Celo: the proof into the network's cache. Reported, never thrown. */
+  /** L2 only: the proof into the L2 cache. Reported, never thrown. */
   cache?: CacheSyncReport;
 };
 
@@ -150,15 +150,15 @@ In a single userOp:
 
 Both happen atomically. There is no intermediate state where one exists without the other.
 
-### Celo Sepolia and Celo
+### On an L2
 
-On Celo Sepolia and Celo the Keystore is on Sepolia and Ethereum respectively, with a KeyStoreCache on the network. The grant is three steps, in order:
+On an L1 the grant is one relay transaction. On an [L2](/concepts/keystore#reaching-other-chains) the Keystore is on the L1 and a KeyStoreCache on the L2 mirrors it, so the grant is three steps, in order:
 
-1. **Keystore write** on the Keystore chain: `registerKey(session)`, preceded by `initialRegisterKey(admin)` on the wallet's first write. Skipped when the key is already valid there. On Sepolia this is a direct transaction from the wallet's admin key; on Ethereum it goes through the relay.
-2. **Account authorization** through the network's relay, fee in CELO. This is the step that gives the session its power.
-3. **Proof into the cache**, executed as a wallet call through the same relay (see [`syncSessionToCache`](/sdk/sync-to-l2#syncsessiontocache)). Reported in `result.cache`; the session is already live on the account and in the Keystore. Skipped with `register: false` or `populateCache: false`.
+1. **Keystore write** on the L1: `registerKey(session)`, preceded by `initialRegisterKey(admin)` on the wallet's first write. Skipped when the key is already valid there. It goes through the relay on the L1; on testnet, where the L1 (Sepolia) has no relay, it is a direct transaction from the wallet's admin key.
+2. **Account authorization** through the L2's relay, fee in the L2's native token. This is the step that gives the session its power.
+3. **Proof into the L2 cache**, executed as a wallet call through the same relay (see [`syncSessionToCache`](/sdk/sync-to-l2#syncsessiontocache)). Reported in `result.cache`; the session is already live on the account and in the Keystore. Skipped with `register: false` or `populateCache: false`.
 
-`result.registry` and `result.cache` are present on these networks. `onStatus` fires before each step. See [Celo Sepolia](/sdk/celo-sepolia) and [Celo](/sdk/celo).
+`result.registry` and `result.cache` are present on an L2. `onStatus` fires before each step.
 
 ## Persisting a session
 
