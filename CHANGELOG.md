@@ -17,6 +17,21 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Added
 
+- **MCP `grant_session` can issue selector-scoped sessions.** The tool
+  only ever emitted `calls: [{ to: recipient }]` — one address, any
+  function — so the only way to give a session the two registry calls
+  `erc8004_register` needs was a registry-wide grant, which also
+  authorizes `transferFrom` and `setApprovalForAll` on the wallet's identity
+  (the exact grant the ERC-8004 docs say never to make), and the tool's
+  own permission pre-check accepted it silently. `grant_session` now takes
+  `scope` (`"erc8004-identity"` → `erc8004RegisterPermissions`,
+  `"erc8183-seller"` → `erc8183SubmitPermissions`) or `recipient` +
+  `signatures` (one address, only those functions), persists the
+  signatures alongside the session, and reports them in the result.
+  `erc8004_register` and `erc8004_set_agent_uri` still accept a
+  registry-wide grant but now return a `warning` naming the safe scope.
+  `recipient` alone keeps its original meaning.
+
 - **`client.holdings()` discovers which tokens a wallet holds.** `balances`
   needs an explicit token list; `holdings` asks the Altana relay for the
   wallet's assets on the chain (`wallet_getAssets`) and then reads every

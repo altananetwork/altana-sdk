@@ -76,6 +76,7 @@ import {
   toMetadataEntries,
   type MetadataInput,
 } from "./erc8004.js";
+import { buildGrantCalls, SESSION_SCOPES, type SessionScope } from "./scopes.js";
 
 // ---------- network ---------------------------------------------------------
 
@@ -621,13 +622,38 @@ tool(
     title: "Grant a scoped session key",
     description:
       "Admin (a named wallet) authorizes a fresh session key on-chain. " +
-      "Session is scoped by recipient, daily ETH spend cap, and lifetime. " +
+      "Session is scoped by what it may call, a daily ETH spend cap, and a " +
+      "lifetime. Scope it ONE of three ways: `scope` (a named preset — " +
+      "\"erc8004-identity\" for erc8004_register/erc8004_set_agent_uri, " +
+      "\"erc8183-seller\" for erc8183_submit — which authorizes exactly the " +
+      "selectors that flow needs), `recipient` + `signatures` (one address, " +
+      "only those functions), or `recipient` alone (one address, any " +
+      "function — do not use this for the ERC-8004 registry, it would also " +
+      "authorize transferFrom and setApprovalForAll on the wallet's identity). " +
       "The wallet needs to be funded first — check with wallet_balance " +
       "before calling.",
     inputSchema: {
       walletName: z.string(),
       sessionName: z.string(),
-      recipient: z.string(),
+      recipient: z
+        .string()
+        .optional()
+        .describe("The one address the session may call. Mutually exclusive with `scope`."),
+      signatures: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Restrict `recipient` to these functions, as signatures " +
+            "(\"transfer(address,uint256)\") or 4-byte selectors (\"0xa9059cbb\").",
+        ),
+      scope: z
+        .enum(SESSION_SCOPES)
+        .optional()
+        .describe(
+          "A named preset: \"erc8004-identity\" (register + setAgentURI on the " +
+            "ERC-8004 registry) or \"erc8183-seller\" (submit on the ERC-8183 " +
+            "kernel). Mutually exclusive with `recipient`.",
+        ),
       dailyCapEth: z.string().optional(),
       // Cap at 1 year. Sessions are short-lived delegations by design;
       // anything longer should be a fresh re-issue, not a single grant.
@@ -649,13 +675,17 @@ tool(
     walletName,
     sessionName,
     recipient,
+    signatures,
+    scope,
     dailyCapEth,
     lifetimeSeconds,
     register,
   }: {
     walletName: string;
     sessionName: string;
-    recipient: string;
+    recipient?: string;
+    signatures?: string[];
+    scope?: SessionScope;
     dailyCapEth?: string;
     lifetimeSeconds?: number;
     register?: boolean;
@@ -670,10 +700,17 @@ tool(
           `name, or revoke the existing one first with revoke_session.`,
       );
     }
+    // Resolve the calls rule before touching keys or the relay, so a bad
+    // combination of scope/recipient/signatures fails without side effects.
+    const calls = buildGrantCalls({
+      chainId: NETWORK.chainId,
+      ...(recipient !== undefined ? { recipient: assertAddress(recipient) } : {}),
+      ...(signatures !== undefined ? { signatures } : {}),
+      ...(scope !== undefined ? { scope } : {}),
+    });
     const admin = await getWalletKey(walletName);
     const adminSigner = signerFromPrivateKey(admin.privateKey);
     await ensureRegistered(adminSigner);
-    const recipientAddr = assertAddress(recipient);
     const capEth = dailyCapEth ?? "0.01";
     const lifetime = lifetimeSeconds ?? 3600;
     const expiry = Math.floor(Date.now() / 1000) + lifetime;
@@ -692,7 +729,7 @@ tool(
       signer: adminSigner,
       sessionSigner,
       permissions: {
-        calls: [{ to: recipientAddr }],
+        calls,
         spend: [{ limit: capWei, period: "day" }],
       },
       expiry,
@@ -707,7 +744,7 @@ tool(
     await setSessionKey(sessionName, sessionPk);
 
     const permissionsForFile: SessionPermissions = {
-      calls: [{ to: recipientAddr }],
+      calls,
       spend: [{ limit: capWei.toString(), period: "day" }],
     };
 
@@ -742,8 +779,9 @@ tool(
               // wallet's very first admin action. Surface the receipt so the
               // host can record what the user was actually charged for.
               transactionHash: session.transactionHash,
+              ...(scope !== undefined ? { scope } : {}),
               permissions: {
-                calls: [{ to: recipientAddr }],
+                calls,
                 spend: [{ limitEth: capEth, period: "day" }],
               },
               expiry,
@@ -1284,7 +1322,7 @@ tool(
     metadata?: MetadataInput[];
   }) => {
     const { stored, session } = await sessionFromName(sessionName);
-    assertErc8004Permissions(sessionName, stored.permissions, NETWORK.chainId);
+    const warning = assertErc8004Permissions(sessionName, stored.permissions, NETWORK.chainId);
 
     const outcome = await runErc8004Registration({
       session,
@@ -1299,7 +1337,12 @@ tool(
         {
           type: "text",
           text: JSON.stringify(
-            { sessionName, walletAddress: stored.walletAddress, ...outcome },
+            {
+              sessionName,
+              walletAddress: stored.walletAddress,
+              ...outcome,
+              ...(warning ? { warning } : {}),
+            },
             null,
             2,
           ),
@@ -1355,7 +1398,7 @@ tool(
     image?: string;
   }) => {
     const { stored, session } = await sessionFromName(sessionName);
-    assertErc8004Permissions(sessionName, stored.permissions, NETWORK.chainId);
+    const warning = assertErc8004Permissions(sessionName, stored.permissions, NETWORK.chainId);
 
     const id = BigInt(agentId);
     let uri = agentUri;
@@ -1390,6 +1433,7 @@ tool(
               agentId,
               agentUri: uri,
               status: result.status,
+              ...(warning ? { warning } : {}),
               ...(result.statusCode !== undefined ? { statusCode: result.statusCode } : {}),
               transactionHash: result.transactionHash,
             },
@@ -1729,11 +1773,12 @@ prompt(
   {
     title: "Grant a session to an agent",
     description:
-      "Give an AI agent scoped permission to act on your wallet — recipient, daily cap, expiry. Authorization is on-chain.",
+      "Give an AI agent scoped permission to act on your wallet — a recipient or a named scope, daily cap, expiry. Authorization is on-chain.",
     argsSchema: {
       walletName: z.string().optional(),
       sessionName: z.string().optional(),
       recipient: z.string().optional(),
+      scope: z.string().optional(),
       dailyCapEth: z.string().optional(),
       lifetimeSeconds: z.string().optional(),
     },
@@ -1742,13 +1787,19 @@ prompt(
     walletName?: string;
     sessionName?: string;
     recipient?: string;
+    scope?: string;
     dailyCapEth?: string;
     lifetimeSeconds?: string;
   }) => {
     const missing: string[] = [];
     if (!args.walletName) missing.push("which wallet to grant from (walletName)");
     if (!args.sessionName) missing.push("a name for the session (sessionName)");
-    if (!args.recipient) missing.push("the recipient address the agent is allowed to send to");
+    if (!args.recipient && !args.scope) {
+      missing.push(
+        "what the agent may call: either a recipient address, or a scope (\"erc8004-identity\" for agent identity, \"erc8183-seller\" for submitting job deliverables)",
+      );
+    }
+    const target = args.scope ? `scope="${args.scope}"` : `recipient="${args.recipient}"`;
     return {
       messages: [
         {
@@ -1760,7 +1811,7 @@ prompt(
                 ? `Before granting a session, ask me for: ${missing.join(", ")}. ` +
                   `Defaults available: dailyCapEth=0.01, lifetimeSeconds=3600. ` +
                   `Once I've given you the values, call grant_session and tell me the session address, keyId, and expiry.`
-                : `Call grant_session with walletName="${args.walletName}", sessionName="${args.sessionName}", recipient="${args.recipient}"${args.dailyCapEth ? `, dailyCapEth="${args.dailyCapEth}"` : ""}${args.lifetimeSeconds ? `, lifetimeSeconds=${args.lifetimeSeconds}` : ""}. Show me the session address, keyId, and expiry.`,
+                : `Call grant_session with walletName="${args.walletName}", sessionName="${args.sessionName}", ${target}${args.dailyCapEth ? `, dailyCapEth="${args.dailyCapEth}"` : ""}${args.lifetimeSeconds ? `, lifetimeSeconds=${args.lifetimeSeconds}` : ""}. Show me the session address, keyId, and expiry.`,
           },
         },
       ],

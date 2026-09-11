@@ -15,6 +15,7 @@ import { toFunctionSelector, toHex, type Address, type Hex } from "viem";
 import {
   encodeErc8004AgentUri,
   erc8004RegisterPermissions,
+  erc8183Addresses,
   registerErc8004Agent,
   setErc8004AgentUri,
   withErc8004Registration,
@@ -112,19 +113,55 @@ function signatureMatches(granted: string, required: string): boolean {
   return false;
 }
 
-/** Throw a tool-shaped error naming the session and what it would need. */
+/**
+ * Does this session hold a registry-wide `{ to: registry }` grant with no
+ * signature? Such a grant passes `missingErc8004Permissions` — it really does
+ * authorize `register` and `setAgentURI` on chain — but it authorizes every
+ * other function on the registry too: `transferFrom` / `safeTransferFrom`
+ * (give the identity away), `approve` / `setApprovalForAll` (an operator
+ * approval that outlives the session's revocation), `setAgentWallet` and
+ * `setMetadata` (identity poisoning). The SDK never emits one; `grant_session`
+ * used to be unable to emit anything else. Returns the warning to put in the
+ * tool result, or undefined when the session is selector-scoped.
+ */
+export function targetOnlyRegistryWarning(
+  permissions: SessionPermissions | undefined,
+  chainId: number,
+): string | undefined {
+  const registry = erc8183Addresses(chainId).registry.toLowerCase();
+  const targetOnly = permissions?.calls?.some((c) => {
+    const g = c as { to?: Address; signature?: string };
+    return g.signature === undefined && g.to?.toLowerCase() === registry;
+  });
+  if (!targetOnly) return undefined;
+  return (
+    `This session holds a registry-wide grant ({ to: ${erc8183Addresses(chainId).registry} } with no ` +
+    `signature), which also lets it call transferFrom, setApprovalForAll and setAgentWallet on every ` +
+    `identity this wallet owns — and an operator approval outlives session revocation. Prefer ` +
+    `revoke_session, then grant_session with scope="erc8004-identity", which authorizes only ` +
+    `register and setAgentURI.`
+  );
+}
+
+/**
+ * Throw a tool-shaped error naming the session and what it would need.
+ * Returns a warning (see `targetOnlyRegistryWarning`) when the session passes
+ * only because it holds a registry-wide grant.
+ */
 export function assertErc8004Permissions(
   sessionName: string,
   permissions: SessionPermissions | undefined,
   chainId: number,
-): void {
+): string | undefined {
   const missing = missingErc8004Permissions(permissions, chainId);
-  if (missing.length === 0) return;
-  throw new Error(
-    `Session "${sessionName}" is not scoped for ERC-8004 identity: missing ${missing.join(" and ")}. ` +
-      `Grant a session whose permissions.calls include erc8004RegisterPermissions(${chainId}) ` +
-      `(the registry address plus those two selectors) and retry.`,
-  );
+  if (missing.length > 0) {
+    throw new Error(
+      `Session "${sessionName}" is not scoped for ERC-8004 identity: missing ${missing.join(" and ")}. ` +
+        `Grant a session with grant_session scope="erc8004-identity" (the registry address plus ` +
+        `those two selectors, i.e. erc8004RegisterPermissions(${chainId})) and retry.`,
+    );
+  }
+  return targetOnlyRegistryWarning(permissions, chainId);
 }
 
 // ---------------------------------------------------------------------------

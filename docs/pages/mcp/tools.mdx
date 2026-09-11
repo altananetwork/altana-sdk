@@ -37,7 +37,7 @@ The Altana MCP server exposes 20 tools. AI hosts call them by name. Eleven of th
 
 | Tool | Purpose |
 |---|---|
-| `grant_session` | Generates a session key, registers it in Keystore, authorizes it with the given permissions. Returns the session details, keyId, and the grant's transaction hash. |
+| `grant_session` | Generates a session key, registers it in Keystore, authorizes it with the given permissions. Scope it with `scope` (a named preset: `erc8004-identity`, `erc8183-seller`), `recipient` + `signatures` (one address, only those functions), or `recipient` alone (one address, any function). Returns the session details, keyId, the calls rule, and the grant's transaction hash. |
 | `list_sessions` | Lists local session metadata (those granted from this machine). |
 | `session_execute` | Submits calls signed by a stored session key. |
 | `revoke_session` | Deactivates the session in Keystore and pulls onchain authority. |
@@ -54,7 +54,7 @@ The Altana MCP server exposes 20 tools. AI hosts call them by name. Eleven of th
 
 ## Agent identity
 
-On-chain [ERC-8004](/sdk/erc8004) identity, so an agent on an Altana wallet is discoverable by buyers and other agents. The session must have been granted `erc8004RegisterPermissions(chainId)`; the write tools check that client-side before spending gas.
+On-chain [ERC-8004](/sdk/erc8004) identity, so an agent on an Altana wallet is discoverable by buyers and other agents. The session must have been granted `erc8004RegisterPermissions(chainId)` — from this server, `grant_session` with `scope: "erc8004-identity"`. The write tools check that client-side before spending gas, and return a `warning` if the session passes only because it holds a registry-wide `{ to: registry }` grant (which also authorizes `transferFrom` and `setApprovalForAll` on the identity; see the [SDK page](/sdk/erc8004)).
 
 | Tool | Purpose |
 |---|---|
