@@ -19,6 +19,7 @@ import {
   buildRegistrationFile,
   missingErc8004Permissions,
   runErc8004Registration,
+  targetOnlyRegistryWarning,
   toMetadataEntries,
   type Erc8004Writers,
 } from "./erc8004.js";
@@ -136,13 +137,43 @@ describe("missingErc8004Permissions", () => {
 });
 
 describe("assertErc8004Permissions", () => {
-  test("passes a correctly scoped session", () => {
-    expect(() => assertErc8004Permissions("sentinel", scoped, CHAIN)).not.toThrow();
+  test("passes a correctly scoped session, with no warning", () => {
+    expect(assertErc8004Permissions("sentinel", scoped, CHAIN)).toBeUndefined();
   });
 
   test("names the session, what is missing, and how to fix it", () => {
     expect(() => assertErc8004Permissions("sentinel", { calls: [{ to: REGISTRY, signature: "x()" }] }, CHAIN))
-      .toThrow(/"sentinel".*missing register\(string,\(string,bytes\)\[\]\).*erc8004RegisterPermissions\(97\)/s);
+      .toThrow(/"sentinel".*missing register\(string,\(string,bytes\)\[\]\).*scope="erc8004-identity"/s);
+  });
+
+  // The registry-wide grant passes (it works on chain) but is the one shape
+  // that also authorizes transferFrom / setApprovalForAll on the identity —
+  // the caller gets a warning to surface, not silence.
+  test("a registry-wide to-only grant passes but returns a warning naming the safe scope", () => {
+    const warning = assertErc8004Permissions("sentinel", { calls: [{ to: REGISTRY }] }, CHAIN);
+    expect(warning).toMatch(/registry-wide grant/);
+    expect(warning).toMatch(/transferFrom, setApprovalForAll/);
+    expect(warning).toMatch(/scope="erc8004-identity"/);
+  });
+});
+
+describe("targetOnlyRegistryWarning", () => {
+  test("is silent for selector-scoped grants and for grants elsewhere", () => {
+    expect(targetOnlyRegistryWarning(scoped, CHAIN)).toBeUndefined();
+    expect(targetOnlyRegistryWarning({ calls: [{ to: "0x00000000000000000000000000000000000000a1" }] }, CHAIN)).toBeUndefined();
+    expect(targetOnlyRegistryWarning(undefined, CHAIN)).toBeUndefined();
+  });
+
+  test("fires on a registry-wide grant regardless of address casing", () => {
+    expect(targetOnlyRegistryWarning({ calls: [{ to: REGISTRY.toLowerCase() as Address }] }, CHAIN)).toMatch(
+      /registry-wide grant/,
+    );
+  });
+
+  test("fires when the registry-wide grant sits beside scoped entries", () => {
+    expect(targetOnlyRegistryWarning({ calls: [...scoped.calls!, { to: REGISTRY }] }, CHAIN)).toMatch(
+      /registry-wide grant/,
+    );
   });
 });
 
