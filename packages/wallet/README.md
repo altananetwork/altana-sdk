@@ -176,6 +176,7 @@ one leg per step per chain with a binary `status`.
 `registryNetwork(network)`, the L1. On testnet KeyStore writes go through the
 testnet relay on Sepolia: fund the wallet address with Sepolia ETH as well as
 CELO.
+
 The relay takes its fee in a token the wallet holds: the chain's native token
 everywhere, and on Celo also USDC, USDT, USDm, EURm or KESm, priced from
 Celo's own oracle. Omit `feeToken` and the relay charges whichever accepted

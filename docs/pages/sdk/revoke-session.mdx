@@ -76,7 +76,7 @@ type SessionLeg = {
 
 ## What it costs
 
-`client.quoteRevokeSession` takes the same options and returns one line per leg (fee and native value, who pays) plus the payers' balances, without signing or sending anything:
+`client.quoteRevokeSession` takes the same options and returns one line per leg (fee and native value, who pays) plus the payers' balances, without signing or sending anything. Each balance's `required` is the amount the relay says the payer must hold (its `feeTokenRequired`: the fee plus what the leg spends, such as a registration fee); against a relay that does not report it yet, it falls back to fee plus value, and `requiredFromRelay` is `false`.
 
 ```ts
 const quote = await client.quoteRevokeSession({ wallet, signer: admin, session });

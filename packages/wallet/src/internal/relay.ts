@@ -443,6 +443,12 @@ export type CallsQuote = {
   value: bigint;
   /** How much fee token the payer is missing, as the relay reports it. 0 when funded. */
   feeTokenDeficit: bigint;
+  /**
+   * The fee token balance the relay says the payer must hold for this intent (its
+   * `feeTokenRequired`): the fee plus what the calls spend in the fee token, such as a native
+   * registration fee. Absent when the relay does not report it (older relays).
+   */
+  feeTokenRequired?: bigint;
 };
 
 /**
@@ -457,13 +463,42 @@ export async function quoteCalls(
   calls: readonly Call[],
   opts: SubmitCallsOptions,
 ): Promise<CallsQuote> {
-  const { prepared, effectiveCalls, feeToken } = await prepareIntent(client, walletAddress, signer, calls, opts);
+  // porto decodes the response against its own quote schema, which drops fields it does not
+  // know (feeTokenRequired), and does not return the raw response. Keep a copy of it here.
+  let raw: unknown;
+  const capturing = {
+    ...client,
+    request: async (args: any, options?: any) => {
+      const result = await (client.request as any)(args, options);
+      if (args?.method === "wallet_prepareCalls") raw = result;
+      return result;
+    },
+  } as typeof client;
+  const { prepared, effectiveCalls, feeToken } = await prepareIntent(capturing, walletAddress, signer, calls, opts);
+  const required = feeTokenRequiredFromRaw(raw);
   return {
     ...feeFromPrepared(prepared),
     // The token the relay quoted in; the one the rule named when the quote does not say.
     feeToken: paymentTokenFromPrepared(prepared) ?? feeToken ?? NATIVE_TOKEN,
     value: effectiveCalls.reduce((sum, c) => sum + (c.value ?? 0n), 0n),
+    ...(required !== undefined ? { feeTokenRequired: required } : {}),
   };
+}
+
+/**
+ * Sums the relay's optional `feeTokenRequired` over the quotes of a raw `wallet_prepareCalls`
+ * response. Undefined unless every quote carries it: a partial sum would understate the need.
+ */
+export function feeTokenRequiredFromRaw(raw: any): bigint | undefined {
+  const quotes: any[] = raw?.context?.quote?.quotes ?? [];
+  if (quotes.length === 0) return undefined;
+  let total = 0n;
+  for (const q of quotes) {
+    const v = q?.feeTokenRequired;
+    if (v === undefined || v === null) return undefined;
+    total += toBigInt(v);
+  }
+  return total;
 }
 
 /** Reads the fee out of a prepareCalls response (porto decodes the quote's hex amounts). */

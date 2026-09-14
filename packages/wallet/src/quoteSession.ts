@@ -33,6 +33,11 @@ export type QuoteLine = {
   feeToken: Address;
   /** Native value the leg's calls carry: KeyStore registration fees. */
   value: bigint;
+  /**
+   * The fee token balance the relay says this leg needs from its payer (fee plus what the calls
+   * spend in the fee token). Absent on direct transactions and when the relay does not report it.
+   */
+  feeTokenRequired?: bigint;
   /** Why the fee could not be quoted. */
   reason?: string;
 };
@@ -43,8 +48,13 @@ export type QuoteBalance = {
   address: Address;
   symbol: string;
   balance: bigint;
-  /** Native wei the quoted lines need from this payer on this chain (fees in native plus values). */
+  /**
+   * Native wei the quoted lines need from this payer on this chain: the relay's reported
+   * requirement where it gave one, otherwise the fee plus the value the calls carry.
+   */
   required: bigint;
+  /** True when every line behind `required` came with the relay's own figure. */
+  requiredFromRelay: boolean;
   sufficient: boolean;
 };
 
@@ -110,6 +120,7 @@ export function quotingDeps(base: SessionLegDeps = realSessionLegDeps): {
         line.fee = q.fee;
         line.feeToken = q.feeToken;
         line.value = q.value;
+        if (q.feeTokenRequired !== undefined) line.feeTokenRequired = q.feeTokenRequired;
       } catch (err) {
         line.reason = errorMessage(err);
       }
@@ -136,6 +147,7 @@ export function quotingDeps(base: SessionLegDeps = realSessionLegDeps): {
           });
           line.fee = q.fee;
           line.value = q.value;
+          if (q.feeTokenRequired !== undefined) line.feeTokenRequired = q.feeTokenRequired;
         } else {
           const plan = planRegistryWrite(registry, args.adminSigner, args.wallet.address);
           if (plan.via !== "eoa") throw new Error("unreachable: relay-less registry planned via relay");
@@ -199,6 +211,7 @@ export function quotingDeps(base: SessionLegDeps = realSessionLegDeps): {
         );
         line.fee = q.fee;
         line.feeToken = q.feeToken;
+        if (q.feeTokenRequired !== undefined) line.feeTokenRequired = q.feeTokenRequired;
       } catch (err) {
         // The proof can only be simulated against registry state that
         // exists; before the registry write lands the relay may refuse it.
@@ -223,15 +236,16 @@ async function withBalances(
     byChain.set(n.chainId, n);
     if (n.registry?.kind === "cached") byChain.set(n.registry.l1.chainId, n.registry.l1);
   }
-  const required = new Map<string, { chainId: number; address: Address; wei: bigint }>();
+  const required = new Map<string, { chainId: number; address: Address; wei: bigint; fromRelay: boolean }>();
   for (const line of lines) {
     const key = `${line.chainId}:${line.payer.toLowerCase()}`;
-    const entry = required.get(key) ?? { chainId: line.chainId, address: line.payer, wei: 0n };
-    entry.wei += line.value + (line.feeToken === NATIVE_TOKEN ? (line.fee ?? 0n) : 0n);
+    const entry = required.get(key) ?? { chainId: line.chainId, address: line.payer, wei: 0n, fromRelay: true };
+    entry.wei += nativeNeed(line);
+    entry.fromRelay &&= line.feeToken === NATIVE_TOKEN && line.feeTokenRequired !== undefined;
     required.set(key, entry);
   }
   const balances = await Promise.all(
-    [...required.values()].map(async ({ chainId, address, wei }): Promise<QuoteBalance> => {
+    [...required.values()].map(async ({ chainId, address, wei, fromRelay }): Promise<QuoteBalance> => {
       const network = byChain.get(chainId)!;
       const balance = await buildPublicClient(network).getBalance({ address });
       return {
@@ -240,11 +254,23 @@ async function withBalances(
         symbol: network.chain.nativeCurrency.symbol,
         balance,
         required: wei,
+        requiredFromRelay: fromRelay,
         sufficient: balance >= wei,
       };
     }),
   );
   return { lines, balances, complete: lines.every((l) => l.fee !== undefined) };
+}
+
+/**
+ * Native wei a line needs from its payer. With a native fee token the relay's own requirement
+ * wins when it reported one; otherwise the fee plus the value the calls carry. With a token fee
+ * only the calls' native value counts here (the fee is owed in the token).
+ */
+export function nativeNeed(line: QuoteLine): bigint {
+  if (line.feeToken !== NATIVE_TOKEN) return line.value;
+  if (line.feeTokenRequired !== undefined) return line.feeTokenRequired;
+  return line.value + (line.fee ?? 0n);
 }
 
 /** A one-line human summary of a quote line, for logs. */

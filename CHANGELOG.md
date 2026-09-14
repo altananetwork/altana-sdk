@@ -75,7 +75,9 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
   descriptor for every key). New `client.quoteGrantSession` /
   `client.quoteRevokeSession` (and `quoteGrantSession`, `quoteRevokeSession`,
   `quoteCalls`) price each leg through the relay's `prepareCalls` without
-  signing, with the payers' balances. New account reads `getKeys`, `getKey`,
+  signing, with the payers' balances; each balance's `required` is the
+  relay's own `feeTokenRequired` (fee plus what the leg spends) when the
+  relay reports it, and fee plus value otherwise. New account reads `getKeys`, `getKey`,
   `accountHasKey`, `keyHashForSessionOrKey`, `keyIdForSessionOrKey`. New
   configs `BASE_SEPOLIA` (chain 84532, L1 Sepolia, KeyStoreCacheOPStack
   `0x37ebf8F17c3705568a03fB3A1629AcE7B3D95FFf`). `SEPOLIA` now carries the
