@@ -825,8 +825,60 @@ export type RelayLog = {
 export type RelayReceipt = {
   transactionHash?: Hex;
   status?: Hex | number;
+  /** Block the transaction was mined in. porto decodes it to a number; hex is accepted too. */
+  blockNumber?: Hex | number | bigint;
   logs?: readonly RelayLog[];
 };
+
+/** A receipt's block number as a bigint, or undefined when the relay did not include one. */
+export function receiptBlockNumber(receipt: RelayReceipt | undefined): bigint | undefined {
+  const raw = receipt?.blockNumber;
+  if (raw === undefined || raw === null) return undefined;
+  try {
+    return BigInt(raw);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The block a confirmed relay write landed in. The relay's own receipt is used first. Only when
+ * it did not carry a block number is a public RPC asked for the receipt, retried a few times
+ * because a public node can take a while to index a transaction the relay already saw mined.
+ * Never throws: an unknown block comes back with the reason, so callers can refuse to build a
+ * proof against it.
+ */
+export async function blockNumberOfWrite(args: {
+  relayBlockNumber: bigint | undefined;
+  transactionHash: Hex | undefined;
+  publicClient: Pick<PublicClient, "getTransactionReceipt">;
+  attempts?: number;
+  retryDelayMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+}): Promise<{ blockNumber: bigint } | { blockNumber?: undefined; blockNumberError: string }> {
+  if (args.relayBlockNumber !== undefined) return { blockNumber: args.relayBlockNumber };
+  if (!args.transactionHash) {
+    return { blockNumberError: "the relay reported no transaction hash and no block number" };
+  }
+  const attempts = Math.max(1, args.attempts ?? 5);
+  const retryDelayMs = args.retryDelayMs ?? 3_000;
+  const sleep = args.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  let lastError = "";
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const receipt = await args.publicClient.getTransactionReceipt({ hash: args.transactionHash });
+      return { blockNumber: receipt.blockNumber };
+    } catch (err) {
+      lastError = err instanceof Error ? err.message.split("\n")[0]! : String(err);
+      if (attempt < attempts) await sleep(retryDelayMs);
+    }
+  }
+  return {
+    blockNumberError:
+      `the relay receipt had no block number and the public RPC receipt lookup for ` +
+      `${args.transactionHash} failed ${attempts} times (${lastError})`,
+  };
+}
 
 /**
  * Polls the relay for the status of a submitted calls bundle.
@@ -858,6 +910,8 @@ export async function waitForCalls(
   status: string;
   statusCode?: number;
   transactionHash?: Hex;
+  /** Block of the first receipt, as the relay reported it. */
+  blockNumber?: bigint;
   receipts?: readonly RelayReceipt[];
 }> {
   const deadline = Date.now() + timeoutMs;
@@ -868,10 +922,12 @@ export async function waitForCalls(
       const code = status?.status;
       if (typeof code === "number") lastCode = code;
       if ((typeof code === "number" && code >= 200 && code < 300) || code === "CONFIRMED") {
+        const blockNumber = receiptBlockNumber(status?.receipts?.[0]);
         return {
           status: "CONFIRMED",
           ...(typeof code === "number" ? { statusCode: code } : {}),
           transactionHash: status?.receipts?.[0]?.transactionHash,
+          ...(blockNumber !== undefined ? { blockNumber } : {}),
           ...(status?.receipts ? { receipts: status.receipts as readonly RelayReceipt[] } : {}),
         };
       }

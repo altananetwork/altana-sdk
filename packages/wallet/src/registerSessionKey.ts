@@ -22,6 +22,7 @@ import type {
 } from "./internal/sessions.js";
 import type { ExecuteResult, Wallet } from "./internal/types.js";
 import { proveIntoCache } from "./syncSessionToCache.js";
+import { unknownRegistryBlockReason } from "./internal/sessionLegs.js";
 
 
 /**
@@ -99,7 +100,13 @@ export async function registerSessionKey(
       ...(written.blockNumber !== undefined ? { blockNumber: written.blockNumber } : {}),
     };
     const cacheReport: CacheSyncReport =
-      written.status === "CONFIRMED"
+      written.status === "CONFIRMED" && written.blockNumber === undefined
+        ? {
+            chainId: network.chainId,
+            status: "FAILED",
+            reason: unknownRegistryBlockReason(written.chainId, written.blockNumberError),
+          }
+        : written.status === "CONFIRMED"
         ? await proveIntoCache(
             wallet,
             adminSigner,

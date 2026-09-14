@@ -169,6 +169,19 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Fixed
 
+- **Cache proofs no longer start before the L2 has anchored the registry
+  write.** A relayed KeyStore write took its block number from a public RPC
+  receipt lookup; when that lookup failed (the node had not indexed the
+  transaction yet) the error was swallowed and the cache proof was built
+  right away against an older L1 block, where the key did not exist, so the
+  cache rejected it. The block number now comes from the relay's own call
+  status receipt (`waitForCalls` returns it), with a retried RPC lookup only
+  as a fallback. If it stays unknown, the cache step of `grantSession`,
+  `revokeSession` and `registerSessionKey` fails with "registry block
+  unknown, proof not attempted" instead of proving. `syncSessionToCache`
+  (as used by those three) also refuses to submit a proof whose storage
+  value shows the key absent: it waits for the next anchor and rebuilds it.
+
 - **Relay rejections now lead with the relay's actual reason.** A rejected
   request (for example an unaccepted `feeToken`) used to surface only
   viem's generic `Invalid parameters were provided to the RPC method`,

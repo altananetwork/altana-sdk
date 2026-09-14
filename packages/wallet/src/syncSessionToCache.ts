@@ -58,8 +58,16 @@ export type SyncSessionToCacheOptions = {
     status: SyncSessionToCacheStatus,
     detail: { attempt: number; l1BlockNumber?: bigint },
   ) => void;
-  /** How many anchors to try before giving up. Default 3. */
+  /** How many anchors to try before giving up. Default 5. */
   maxAttempts?: number;
+  /**
+   * The key must exist in the proven registry state (default false). When the proof built
+   * against the current anchor shows the key's slot empty, it is not submitted: the call waits
+   * for the L2 to anchor a newer L1 block and rebuilds it, since the cache would reject it.
+   * grantSession, revokeSession and registerSessionKey set it: after their registry write the
+   * key always has a non-zero slot, registered or revoked.
+   */
+  requireKeyInProof?: boolean;
   /**
    * Pause after the anchor first passes `afterL1Block` before building the
    * proof, so every backend of a load-balanced RPC (and the relay's) sees the
@@ -114,6 +122,53 @@ export async function syncSessionToCache(
   sessionOrPublicKey: Session | Hex,
   opts: SyncSessionToCacheOptions,
 ): Promise<SyncSessionToCacheResult> {
+  return runSyncSessionToCache(wallet, adminSigner, sessionOrPublicKey, opts, realSyncDeps);
+}
+
+/** The chain I/O syncSessionToCache performs. Internal: tests pass fakes. */
+export type SyncSessionToCacheDeps = {
+  waitForL1Anchor: typeof waitForL1Anchor;
+  readL1Anchor: typeof readL1Anchor;
+  buildPopulateKeyCall: typeof buildPopulateKeyCall;
+  readCachedKey: typeof readCachedKey;
+  /** Submits the proof as an admin-signed wallet call and waits for the relay's verdict. */
+  submitProof(args: {
+    relayClient: ReturnType<typeof buildRelayClient>;
+    wallet: Wallet;
+    adminSigner: Signer;
+    call: { to: Address; value: bigint; data: Hex };
+    /** The caller's fee token selector; omitted, the relay picks. */
+    feeToken?: Address | readonly Address[];
+    network: NetworkConfig;
+  }): Promise<{ callsId: Hex; status: { status: string; statusCode?: number; transactionHash?: Hex } }>;
+  sleep(ms: number): Promise<void>;
+};
+
+const realSyncDeps: SyncSessionToCacheDeps = {
+  waitForL1Anchor,
+  readL1Anchor,
+  buildPopulateKeyCall,
+  readCachedKey,
+  async submitProof({ relayClient, wallet, adminSigner, call, feeToken, network }) {
+    const adminKeyDesc: KeyDescriptor = { type: "secp256k1", publicKey: adminSigner.publicKey, role: "admin" };
+    const callsId = await submitCalls(relayClient, wallet.address, adminSigner, [call], {
+      ...(feeToken ? { feeToken } : {}),
+      submittingKey: adminKeyDesc,
+      network,
+    });
+    return { callsId, status: await waitForCalls(relayClient, callsId) };
+  },
+  sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+};
+
+/** syncSessionToCache with its chain I/O injected. */
+export async function runSyncSessionToCache(
+  wallet: Wallet,
+  adminSigner: Signer,
+  sessionOrPublicKey: Session | Hex,
+  opts: SyncSessionToCacheOptions,
+  deps: SyncSessionToCacheDeps,
+): Promise<SyncSessionToCacheResult> {
   const network = opts.network;
   if (!isCachedRegistry(network)) {
     throw new Error(
@@ -142,12 +197,6 @@ export async function syncSessionToCache(
   const l2Client = buildPublicClient(network);
   const relayClient = buildRelayClient(network);
 
-  const adminKeyDesc: KeyDescriptor = {
-    type: "secp256k1",
-    publicKey: adminSigner.publicKey,
-    role: "admin",
-  };
-
   let lastError: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     if (attempt > 1) opts.onStatus?.("retrying", { attempt });
@@ -155,7 +204,7 @@ export async function syncSessionToCache(
     let anchor: L1Anchor;
     if (opts.afterL1Block !== undefined) {
       opts.onStatus?.("waiting-for-anchor", { attempt, l1BlockNumber: opts.afterL1Block });
-      anchor = await waitForL1Anchor({
+      anchor = await deps.waitForL1Anchor({
         l1Client,
         l2Client,
         targetL1Block: opts.afterL1Block,
@@ -166,16 +215,16 @@ export async function syncSessionToCache(
         label: "syncSessionToCache",
       });
       if (attempt === 1 && anchorSettleMs > 0) {
-        await new Promise((r) => setTimeout(r, anchorSettleMs));
+        await deps.sleep(anchorSettleMs);
         // Re-read after settling: the anchor may have advanced again.
-        anchor = await readL1Anchor(l2Client);
+        anchor = await deps.readL1Anchor(l2Client);
       }
     } else {
-      anchor = await readL1Anchor(l2Client);
+      anchor = await deps.readL1Anchor(l2Client);
     }
 
     opts.onStatus?.("building-proof", { attempt, l1BlockNumber: anchor.number });
-    const call = await buildPopulateKeyCall({
+    const call = await deps.buildPopulateKeyCall({
       l1Client,
       l2Client,
       l1KeyStore: registry.keyStore,
@@ -185,18 +234,44 @@ export async function syncSessionToCache(
       anchor,
     });
 
+    if (opts.requireKeyInProof && call.provenKeySlot === 0n) {
+      // The anchored L1 block predates the registry write: this proof shows the key absent
+      // and the cache would reject it. Wait for the next anchor and build it again.
+      lastError = new Error(
+        `the proof at L1 block ${anchor.number} shows no KeyStore entry for the key yet`,
+      );
+      if (attempt < maxAttempts) {
+        opts.onStatus?.("waiting-for-anchor", { attempt, l1BlockNumber: anchor.number + 1n });
+        await deps.waitForL1Anchor({
+          l1Client,
+          l2Client,
+          targetL1Block: anchor.number + 1n,
+          ...(opts.anchorPollIntervalMs !== undefined ? { pollIntervalMs: opts.anchorPollIntervalMs } : {}),
+          ...(opts.anchorTimeoutMs !== undefined ? { timeoutMs: opts.anchorTimeoutMs } : {}),
+          label: "syncSessionToCache",
+        });
+        continue;
+      }
+      throw new Error(
+        `syncSessionToCache: every one of ${maxAttempts} proofs showed no KeyStore entry for the ` +
+          `key on ${registry.chain.name} (last at block ${anchor.number}), so none was submitted. ` +
+          `The L2 has not anchored the registry write yet; retry syncSessionToCache later.`,
+        { cause: lastError },
+      );
+    }
+
     opts.onStatus?.("submitting-proof", { attempt, l1BlockNumber: anchor.number });
     let callsId: Hex;
     let status: { status: string; statusCode?: number; transactionHash?: Hex };
     try {
-      callsId = await submitCalls(
+      ({ callsId, status } = await deps.submitProof({
         relayClient,
-        wallet.address,
+        wallet,
         adminSigner,
-        [{ to: call.to, value: call.value, data: call.data }],
-        { ...(feeToken ? { feeToken } : {}), submittingKey: adminKeyDesc, network },
-      );
-      status = await waitForCalls(relayClient, callsId);
+        call: { to: call.to, value: call.value, data: call.data },
+        ...(feeToken ? { feeToken } : {}),
+        network,
+      }));
     } catch (err) {
       // The relay simulates before accepting. A proof built against an anchor
       // the relay's node no longer holds fails that simulation with
@@ -207,10 +282,10 @@ export async function syncSessionToCache(
       lastError = err;
       if (attempt < maxAttempts) {
         if (isHeaderMismatch(err)) {
-          await new Promise((r) => setTimeout(r, mismatchBackoffMs));
+          await deps.sleep(mismatchBackoffMs);
           continue;
         }
-        if (await anchorMoved(l2Client, anchor)) continue;
+        if (await anchorMoved(deps, l2Client, anchor)) continue;
       }
       throw err;
     }
@@ -220,7 +295,7 @@ export async function syncSessionToCache(
       // Public RPCs can lag the relay's confirmation by a few seconds; read
       // until the entry reflects this proof's anchor (or give up after 60s and
       // return whatever the node reports).
-      const cachedKey = await readCachedKeyAtLeast(l2Client, keyStoreCache, wallet.address, keyId, anchor.number);
+      const cachedKey = await readCachedKeyAtLeast(deps, l2Client, keyStoreCache, wallet.address, keyId, anchor.number);
       return {
         callsId,
         status: "CONFIRMED",
@@ -233,9 +308,9 @@ export async function syncSessionToCache(
       };
     }
 
-    if (attempt < maxAttempts && (await anchorMoved(l2Client, anchor))) continue;
+    if (attempt < maxAttempts && (await anchorMoved(deps, l2Client, anchor))) continue;
 
-    const cachedKey = await readCachedKey(l2Client, keyStoreCache, wallet.address, keyId);
+    const cachedKey = await deps.readCachedKey(l2Client, keyStoreCache, wallet.address, keyId);
     return {
       callsId,
       status: status.status as ExecuteResult["status"],
@@ -257,6 +332,7 @@ export async function syncSessionToCache(
 }
 
 async function readCachedKeyAtLeast(
+  deps: SyncSessionToCacheDeps,
   l2Client: PublicClient,
   cache: Address,
   user: Address,
@@ -265,10 +341,10 @@ async function readCachedKeyAtLeast(
   timeoutMs = 60_000,
 ): Promise<CachedKey> {
   const deadline = Date.now() + timeoutMs;
-  let last = await readCachedKey(l2Client, cache, user, keyId);
+  let last = await deps.readCachedKey(l2Client, cache, user, keyId);
   while (last.sourceBlockNumber < minSourceBlock && Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 3_000));
-    last = await readCachedKey(l2Client, cache, user, keyId);
+    await deps.sleep(3_000);
+    last = await deps.readCachedKey(l2Client, cache, user, keyId);
   }
   return last;
 }
@@ -282,9 +358,13 @@ function isHeaderMismatch(err: unknown): boolean {
   return text.replace(/\s+/g, "").toLowerCase().includes(hexReason);
 }
 
-async function anchorMoved(l2Client: PublicClient, used: L1Anchor): Promise<boolean> {
+async function anchorMoved(
+  deps: SyncSessionToCacheDeps,
+  l2Client: PublicClient,
+  used: L1Anchor,
+): Promise<boolean> {
   try {
-    const now = await readL1Anchor(l2Client);
+    const now = await deps.readL1Anchor(l2Client);
     return now.hash.toLowerCase() !== used.hash.toLowerCase();
   } catch {
     return false;
@@ -309,6 +389,7 @@ export async function proveIntoCache(
       network,
       ...(afterL1Block !== undefined ? { afterL1Block } : {}),
       ...(feeToken ? { feeToken } : {}),
+      requireKeyInProof: true,
     });
     return {
       chainId: network.chainId,

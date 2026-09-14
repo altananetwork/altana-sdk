@@ -36,6 +36,7 @@ import { hasRawPrivateKey, type Signer } from "./signer.js";
 import { isPasskeySigner } from "./passkey.js";
 import { buildFirstActionPrepend } from "./keystore.js";
 import {
+  blockNumberOfWrite,
   buildPublicClient,
   buildRelayClient,
   faucetHint,
@@ -157,8 +158,10 @@ export type RegistryWriteResult = {
   status: "CONFIRMED" | "FAILED" | "PENDING";
   /** The transaction that carried the write (the last one on the EOA path). */
   transactionHash?: Hex;
-  /** Block the write landed in, when the receipt was read. Proofs must be anchored at or past it. */
+  /** Block the write landed in. Proofs must be anchored at or past it. */
   blockNumber?: bigint;
+  /** Set when the write confirmed but its block could not be learned: why. Never prove without it. */
+  blockNumberError?: string;
   /** Relay bundle id on the relay path. */
   callsId?: Hex;
 };
@@ -227,22 +230,22 @@ export async function submitRegistryWrite(
       network: registry,
     });
     const result = await waitForCalls(relayClient, callsId);
-    let blockNumber: bigint | undefined;
-    if (result.status === "CONFIRMED" && result.transactionHash) {
-      try {
-        const receipt = await registryClient.getTransactionReceipt({ hash: result.transactionHash });
-        blockNumber = receipt.blockNumber;
-      } catch {
-        // The relay confirmed; a lagging public RPC is not a failure of the write.
-      }
-    }
+    const block =
+      result.status === "CONFIRMED"
+        ? await blockNumberOfWrite({
+            relayBlockNumber: result.blockNumber,
+            transactionHash: result.transactionHash,
+            publicClient: registryClient,
+          })
+        : undefined;
     return {
       via: "relay",
       chainId: registry.chainId,
       status: result.status as RegistryWriteResult["status"],
       callsId,
       ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
-      ...(blockNumber !== undefined ? { blockNumber } : {}),
+      ...(block?.blockNumber !== undefined ? { blockNumber: block.blockNumber } : {}),
+      ...(block && "blockNumberError" in block ? { blockNumberError: block.blockNumberError } : {}),
     };
   }
 

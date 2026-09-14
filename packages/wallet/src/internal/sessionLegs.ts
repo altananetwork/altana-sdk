@@ -14,6 +14,7 @@ import { isCachedRegistry, keyStoreCacheOf, submitRegistryWrite } from "./cached
 import type { FeeTokenOption } from "./feeTokenSelection.js";
 import { readIsValidKey, readRegistrationFee } from "./keystore.js";
 import {
+  blockNumberOfWrite,
   buildPublicClient,
   buildRelayClient,
   submitCalls,
@@ -31,8 +32,10 @@ import { proveIntoCache } from "../syncSessionToCache.js";
 export type IntentOutcome = {
   status: "CONFIRMED" | "FAILED";
   transactionHash?: Hex;
-  /** Only read when asked for (`needBlockNumber`), best effort. */
+  /** Block the intent landed in; read when asked for (`needBlockNumber`). */
   blockNumber?: bigint;
+  /** Set when a block number was asked for, the intent confirmed, and the block stayed unknown. */
+  blockNumberError?: string;
   reason?: string;
 };
 
@@ -116,21 +119,18 @@ export const realSessionLegDeps: SessionLegDeps = {
             (result.statusCode !== undefined ? ` (code ${result.statusCode})` : ""),
         };
       }
-      let blockNumber: bigint | undefined;
-      if (args.needBlockNumber && result.transactionHash) {
-        try {
-          const receipt = await buildPublicClient(network).getTransactionReceipt({
-            hash: result.transactionHash,
-          });
-          blockNumber = receipt.blockNumber;
-        } catch {
-          // The relay confirmed; a lagging public RPC is not a failure of the intent.
-        }
-      }
+      const block = args.needBlockNumber
+        ? await blockNumberOfWrite({
+            relayBlockNumber: result.blockNumber,
+            transactionHash: result.transactionHash,
+            publicClient: buildPublicClient(network),
+          })
+        : undefined;
       return {
         status: "CONFIRMED",
         ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
-        ...(blockNumber !== undefined ? { blockNumber } : {}),
+        ...(block?.blockNumber !== undefined ? { blockNumber: block.blockNumber } : {}),
+        ...(block && "blockNumberError" in block ? { blockNumberError: block.blockNumberError } : {}),
       };
     } catch (err) {
       return { status: "FAILED", reason: errorMessage(err) };
@@ -150,6 +150,7 @@ export const realSessionLegDeps: SessionLegDeps = {
         status: written.status === "CONFIRMED" ? "CONFIRMED" : "FAILED",
         ...(written.transactionHash ? { transactionHash: written.transactionHash } : {}),
         ...(written.blockNumber !== undefined ? { blockNumber: written.blockNumber } : {}),
+        ...(written.blockNumberError ? { blockNumberError: written.blockNumberError } : {}),
         ...(written.status !== "CONFIRMED" ? { reason: `registry write status ${written.status}` } : {}),
       };
     } catch (err) {
@@ -236,6 +237,18 @@ export function legFromCacheReport(report: CacheSyncReport): SessionLeg {
     ...(report.cachedKey ? { cachedKey: report.cachedKey } : {}),
     ...(report.reason ? { reason: report.reason } : {}),
   };
+}
+
+/**
+ * The reason a cache proof is refused after a confirmed registry write whose block is unknown.
+ * Proving without that block would build the proof against whatever older L1 block the L2
+ * anchors, where the write is not visible yet, and the cache would reject it.
+ */
+export function unknownRegistryBlockReason(registryChainId: number, detail?: string): string {
+  return (
+    `registry block unknown on chain ${registryChainId}, proof not attempted` +
+    (detail ? ` (${detail})` : "")
+  );
 }
 
 export function skippedLeg(chainId: number, kind: SessionLeg["kind"], reason: string): SessionLeg {

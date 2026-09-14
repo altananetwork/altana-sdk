@@ -36,6 +36,8 @@ function fakeChains(script: {
   failRegistry?: number[];
   failCache?: number[];
   readErrorAccount?: number[];
+  /** Registry chains whose confirmed write comes back without a block number. */
+  unknownBlock?: number[];
 } = {}) {
   const log = {
     account: [] as Submitted[],
@@ -67,7 +69,11 @@ function fakeChains(script: {
       return {
         status: "CONFIRMED",
         transactionHash: `0x${n.chainId.toString(16).padStart(64, "0")}` as Hex,
-        ...(args.needBlockNumber ? { blockNumber: ++block } : {}),
+        ...(args.needBlockNumber && has(script.unknownBlock, n.chainId)
+          ? { blockNumberError: "public RPC receipt lookup failed 5 times" }
+          : args.needBlockNumber
+            ? { blockNumber: ++block }
+            : {}),
       };
     },
     async submitRegistry(r, args) {
@@ -76,6 +82,9 @@ function fakeChains(script: {
       log.order.push(`registry:${r.chainId}`);
       const via = r.relayUrl ? "relay" : "eoa";
       if (has(script.failRegistry, r.chainId)) return { via, status: "FAILED", reason: "reverted" };
+      if (has(script.unknownBlock, r.chainId)) {
+        return { via, status: "CONFIRMED", blockNumberError: "public RPC receipt lookup failed 5 times" };
+      }
       return { via, status: "CONFIRMED", blockNumber: ++block };
     },
     async proveIntoCache(_w, _a, _pk, n, afterL1Block): Promise<CacheSyncReport> {
@@ -411,3 +420,85 @@ describe("descriptor carried to every account leg", () => {
     expect(new Set(keys)).toEqual(new Set([result.publicKey]));
   });
 });
+
+describe("cache proofs wait for the registry write's block", () => {
+  test("grant: the Sepolia registration's block reaches both cache proofs", async () => {
+    const { deps, log } = fakeChains();
+    const result = await grant([CELO_SEPOLIA, BASE_SEPOLIA], deps);
+
+    const registryBlock = legOfKind(result, "registry").blockNumber;
+    expect(registryBlock).toBeDefined();
+    expect(log.cache.map((c) => c.afterL1Block)).toEqual([registryBlock, registryBlock]);
+  });
+
+  test("grant: a confirmed registration with an unknown block fails the cache legs and never proves", async () => {
+    const { deps, log } = fakeChains({ unknownBlock: [11155111] });
+    const result = await grant([CELO_SEPOLIA, BASE_SEPOLIA], deps);
+
+    expect(log.cache).toEqual([]);
+    const caches = result.legs.filter((l) => l.kind === "cache");
+    expect(caches.map((l) => [l.chainId, l.status])).toEqual([
+      [11142220, "FAILED"],
+      [84532, "FAILED"],
+    ]);
+    expect(caches[0]!.reason).toContain("registry block unknown on chain 11155111, proof not attempted");
+    expect(caches[0]!.reason).toContain("public RPC receipt lookup failed 5 times");
+    // The registration and the account authorizations themselves still confirmed.
+    expect(legOfKind(result, "registry").status).toBe("CONFIRMED");
+    expect(result.status).toBe("failed");
+  });
+
+  test("grant: a key already valid in the registry is proven without a block (no write happened)", async () => {
+    const { deps, log } = fakeChains({ registryValid: [11155111], unknownBlock: [11155111] });
+    const result = await grant([CELO_SEPOLIA], deps);
+
+    expect(log.cache).toEqual([{ chainId: 11142220, afterL1Block: undefined }]);
+    expect(result.status).toBe("granted");
+  });
+
+  test("grant: the same guard holds when the registration rides in a local L1's account intent", async () => {
+    const { deps, log } = fakeChains({ unknownBlock: [1] });
+    const celoWithCache: NetworkConfig = {
+      ...CELO,
+      registry: { kind: "cached", l1: ETHEREUM, keyStoreCache: "0x0000000000000000000000000000000000000c0c" },
+    };
+    const result = await grant([ETHEREUM, celoWithCache], deps);
+
+    expect(log.cache).toEqual([]);
+    expect(result.legs.find((l) => l.kind === "cache")!.reason).toContain("registry block unknown on chain 1");
+  });
+
+  test("revoke: the Sepolia revocation's block reaches the cache proofs", async () => {
+    const { deps, log } = fakeChains({ holds: [11142220, 84532], registryValid: [11155111] });
+    const result = await revoke([CELO_SEPOLIA, BASE_SEPOLIA], deps);
+
+    const registryBlock = legOfKind(result, "registry").blockNumber;
+    expect(registryBlock).toBeDefined();
+    expect(log.cache.map((c) => c.afterL1Block)).toEqual([registryBlock, registryBlock]);
+  });
+
+  test("revoke: a confirmed revocation with an unknown block fails the cache legs and never proves", async () => {
+    const { deps, log } = fakeChains({ holds: [11142220, 84532], registryValid: [11155111], unknownBlock: [11155111] });
+    const result = await revoke([CELO_SEPOLIA, BASE_SEPOLIA], deps);
+
+    expect(log.cache).toEqual([]);
+    const caches = result.legs.filter((l) => l.kind === "cache");
+    expect(caches.every((l) => l.status === "FAILED")).toBe(true);
+    expect(caches[0]!.reason).toContain("registry block unknown on chain 11155111, proof not attempted");
+    expect(result.status).toBe("failed");
+  });
+
+  test("revoke: Ethereum already clean and no write still proves the current state", async () => {
+    const { deps, log } = fakeChains({ cacheLive: [84532], unknownBlock: [11155111] });
+    const result = await revoke([CELO_SEPOLIA, BASE_SEPOLIA], deps);
+
+    expect(log.cache).toEqual([{ chainId: 84532, afterL1Block: undefined }]);
+    expect(result.status).toBe("revoked");
+  });
+});
+
+function legOfKind(result: { legs: { kind: string; blockNumber?: bigint; status: string }[] }, kind: string) {
+  const leg = result.legs.find((l) => l.kind === kind);
+  if (!leg) throw new Error(`no ${kind} leg`);
+  return leg;
+}

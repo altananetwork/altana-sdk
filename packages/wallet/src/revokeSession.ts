@@ -19,6 +19,7 @@ import {
   registriesOf,
   settle,
   skippedLeg,
+  unknownRegistryBlockReason,
   uniqueNetworks,
   type IntentOutcome,
   type SessionLegDeps,
@@ -213,6 +214,14 @@ export async function runRevokeSession(
         return skippedLeg(n.chainId, "cache", `registry revoke on chain ${l1} did not confirm`);
       }
       if (!hasCache(n)) return skippedLeg(n.chainId, "cache", "no KeyStoreCache configured");
+      if (written.blockNumber === undefined) {
+        return {
+          chainId: n.chainId,
+          kind: "cache",
+          status: "FAILED",
+          reason: unknownRegistryBlockReason(l1, written.blockNumberError),
+        };
+      }
       afterL1Block = written.blockNumber;
     } else {
       if (!hasCache(n)) return undefined;

@@ -23,6 +23,7 @@ import {
   registriesOf,
   settle,
   skippedLeg,
+  unknownRegistryBlockReason,
   uniqueNetworks,
   type IntentOutcome,
   type SessionLegDeps,
@@ -274,6 +275,16 @@ export async function runGrantSession(
     }
     if (written && written.status !== "CONFIRMED") {
       return skippedLeg(n.chainId, "cache", `registry write on chain ${l1} did not confirm`);
+    }
+    // A write happened: the proof must wait for the L2 to anchor its block. Without the block,
+    // do not prove at all. (No write means the key was already valid; proving now is correct.)
+    if (written && written.blockNumber === undefined) {
+      return {
+        chainId: n.chainId,
+        kind: "cache",
+        status: "FAILED",
+        reason: unknownRegistryBlockReason(l1, written.blockNumberError),
+      };
     }
     onStatus?.("cache-sync", { chainId: n.chainId });
     return legFromCacheReport(

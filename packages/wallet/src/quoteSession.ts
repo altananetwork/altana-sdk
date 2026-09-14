@@ -121,7 +121,8 @@ export function quotingDeps(base: SessionLegDeps = realSessionLegDeps): {
         line.reason = errorMessage(err);
       }
       lines.push(line);
-      return { status: "CONFIRMED" };
+      // Nothing is sent, so there is no block: a placeholder keeps the cache legs quoted.
+      return { status: "CONFIRMED", ...(args.needBlockNumber ? { blockNumber: 0n } : {}) };
     },
 
     async submitRegistry(registry, args) {
@@ -172,7 +173,7 @@ export function quotingDeps(base: SessionLegDeps = realSessionLegDeps): {
         line.reason = errorMessage(err);
       }
       lines.push(line);
-      return { via, status: "CONFIRMED" };
+      return { via, status: "CONFIRMED", blockNumber: 0n };
     },
 
     async proveIntoCache(wallet, adminSigner, publicKey, network, _afterL1Block, feeToken) {
