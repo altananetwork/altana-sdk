@@ -138,7 +138,7 @@ For every chain you grant on, the SDK runs up to three legs:
 
 ## What it costs
 
-`client.quoteGrantSession` takes the same options and returns one line per leg plus the payers' balances, without signing or sending anything. A balance's `required` is what the relay says the payer must hold for the leg, the fee included, not the registration fee alone (see [revokeSession](/sdk/revoke-session#what-it-costs)). A cache proof can only be quoted once its Keystore entry exists, so on a first grant those lines come back without a fee and `complete` is `false`.
+`client.quoteGrantSession` takes the same options and returns one line per leg plus the payers' balances, without signing or sending anything. A balance's `outflow` is what the relay says the leg takes from the payer, the fee included, not the registration fee alone (see [revokeSession](/sdk/revoke-session#what-it-costs)). A cache proof can only be quoted once its Keystore entry exists, so on a first grant those lines come back without a fee and `complete` is `false`.
 
 ## Persisting a session
 

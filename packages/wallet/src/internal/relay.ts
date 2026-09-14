@@ -444,11 +444,11 @@ export type CallsQuote = {
   /** How much fee token the payer is missing, as the relay reports it. 0 when funded. */
   feeTokenDeficit: bigint;
   /**
-   * The fee token balance the relay says the payer must hold for this intent (its
-   * `feeTokenRequired`): the fee plus what the calls spend in the fee token, such as a native
+   * The net fee token amount the relay says this intent takes from its payer (its
+   * `feeTokenOutflow`): the fee plus what the calls spend in the fee token, such as a native
    * registration fee. Absent when the relay does not report it (older relays).
    */
-  feeTokenRequired?: bigint;
+  feeTokenOutflow?: bigint;
 };
 
 /**
@@ -464,7 +464,7 @@ export async function quoteCalls(
   opts: SubmitCallsOptions,
 ): Promise<CallsQuote> {
   // porto decodes the response against its own quote schema, which drops fields it does not
-  // know (feeTokenRequired), and does not return the raw response. Keep a copy of it here.
+  // know (feeTokenOutflow), and does not return the raw response. Keep a copy of it here.
   let raw: unknown;
   const capturing = {
     ...client,
@@ -475,26 +475,26 @@ export async function quoteCalls(
     },
   } as typeof client;
   const { prepared, effectiveCalls, feeToken } = await prepareIntent(capturing, walletAddress, signer, calls, opts);
-  const required = feeTokenRequiredFromRaw(raw);
+  const outflow = feeTokenOutflowFromRaw(raw);
   return {
     ...feeFromPrepared(prepared),
     // The token the relay quoted in; the one the rule named when the quote does not say.
     feeToken: paymentTokenFromPrepared(prepared) ?? feeToken ?? NATIVE_TOKEN,
     value: effectiveCalls.reduce((sum, c) => sum + (c.value ?? 0n), 0n),
-    ...(required !== undefined ? { feeTokenRequired: required } : {}),
+    ...(outflow !== undefined ? { feeTokenOutflow: outflow } : {}),
   };
 }
 
 /**
- * Sums the relay's optional `feeTokenRequired` over the quotes of a raw `wallet_prepareCalls`
+ * Sums the relay's optional `feeTokenOutflow` over the quotes of a raw `wallet_prepareCalls`
  * response. Undefined unless every quote carries it: a partial sum would understate the need.
  */
-export function feeTokenRequiredFromRaw(raw: any): bigint | undefined {
+export function feeTokenOutflowFromRaw(raw: any): bigint | undefined {
   const quotes: any[] = raw?.context?.quote?.quotes ?? [];
   if (quotes.length === 0) return undefined;
   let total = 0n;
   for (const q of quotes) {
-    const v = q?.feeTokenRequired;
+    const v = q?.feeTokenOutflow;
     if (v === undefined || v === null) return undefined;
     total += toBigInt(v);
   }

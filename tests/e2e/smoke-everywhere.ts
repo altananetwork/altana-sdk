@@ -65,7 +65,7 @@ const status = (s: string, d?: { chainId: number }) => console.log(`    status: 
 function printQuote(q: SessionQuote) {
   for (const line of q.lines) console.log(`    ${formatQuoteLine(line, networkByChainId(line.chainId)!)}`);
   for (const b of q.balances) {
-    console.log(`    balance chain ${b.chainId} ${b.address}: ${formatEther(b.balance)} ${b.symbol}, needs ${formatEther(b.required)} ${b.symbol}${b.sufficient ? "" : "  INSUFFICIENT"}`);
+    console.log(`    balance chain ${b.chainId} ${b.address}: ${formatEther(b.balance)} ${b.symbol}, takes ${formatEther(b.outflow)} ${b.symbol}${b.sufficient ? "" : "  INSUFFICIENT"}`);
   }
   if (!q.complete) console.log("    (incomplete: some legs could not be quoted ahead of time)");
 }
