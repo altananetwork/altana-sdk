@@ -119,6 +119,11 @@ const POLICY_INITIALISED_EVENT = {
   ],
 } as const;
 
+/**
+ * The ERC-8183 kernel is deployed on BNB Chain (56) and BNB testnet (97)
+ * only. Every other network, Celo and Celo Sepolia included, throws here:
+ * hiring is a BNB agent-economy rail, not an Altana-wide one.
+ */
 export function erc8183Addresses(chainId: number): Erc8183Addresses {
   const addresses = ERC8183_ADDRESSES[chainId];
   if (!addresses) {

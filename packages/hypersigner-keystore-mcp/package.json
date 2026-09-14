@@ -1,6 +1,6 @@
 {
   "name": "@altananetwork/hypersigner-keystore-mcp",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Non-custodial MCP server for KeyStore agent authorization: verify, register, timebox, and revoke keys without signing.",
   "license": "Apache-2.0",
   "type": "module",

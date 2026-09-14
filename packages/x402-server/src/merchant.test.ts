@@ -22,7 +22,7 @@ import { buildChallenge } from "./challenge.js";
 import { createX402Merchant } from "./merchant.js";
 import { decodeXPayment } from "./decode.js";
 import { verifyPayment } from "./verify.js";
-import { U_TOKEN, USDT_BSC } from "./tokens.js";
+import { U_TOKEN, USDC_CELO_SEPOLIA, USDT_BSC, USDT_CELO_SEPOLIA } from "./tokens.js";
 import type { MerchantConfig } from "./types.js";
 
 const MERCHANT = "0x3C5f3a6cE224BB89D72f5EB4232ecC27F67B3eeA" as const;
@@ -595,5 +595,92 @@ describe("requirePayment: a broadcast payment is never answered with a fresh cha
 
   test("createX402Merchant needs rpcUrl or clients", () => {
     expect(() => createX402Merchant({ ...CFG, facilitator: privateKeyToAccount(generatePrivateKey()) })).toThrow(/rpcUrl or clients/);
+  });
+});
+
+describe("Celo Sepolia (chainId 11142220)", () => {
+  const CELO_CFG: MerchantConfig = {
+    chainId: 11142220,
+    payTo: MERCHANT,
+    price: 200_000n, // 0.2 USDC / USDT (6 decimals on Celo)
+    rails: [
+      { rail: "eip3009", token: USDC_CELO_SEPOLIA },
+      { rail: "permit2-exact", token: USDT_CELO_SEPOLIA, spender: FACILITATOR },
+    ],
+    maxTimeoutSeconds: 600,
+    resource: "https://api.example.com/audit",
+  };
+
+  test("challenge advertises eip155:11142220 with the Celo Sepolia tokens and their EIP-712 domains", () => {
+    const body = buildChallenge(CELO_CFG);
+    expect(body.accepts).toHaveLength(2);
+    for (const a of body.accepts) expect(a.network).toBe("eip155:11142220");
+    const eip3009 = body.accepts.find((a) => a.extra.assetTransferMethod === "eip3009")!;
+    expect(eip3009.asset).toBe(USDC_CELO_SEPOLIA.address);
+    expect(eip3009.extra.name).toBe("USDC");
+    expect(eip3009.extra.version).toBe("2");
+    expect(eip3009.amount).toBe("200000");
+    const permit2 = body.accepts.find((a) => a.extra.assetTransferMethod === "permit2-exact")!;
+    expect(permit2.asset).toBe(USDT_CELO_SEPOLIA.address);
+    expect(permit2.extra.spenderAddress).toBe(FACILITATOR);
+  });
+
+  test("an EOA buyer's eip3009 USDC authorization on 11142220 verifies", async () => {
+    const key = generatePrivateKey();
+    const account = privateKeyToAccount(key);
+    const auth = {
+      from: account.address,
+      to: MERCHANT as string,
+      value: CELO_CFG.price.toString(),
+      validAfter: String(NOW - 600),
+      validBefore: String(NOW + 600),
+      nonce: `0x${"22".repeat(32)}`,
+    };
+    const typed = buildEip3009TypedData({
+      chainId: 11142220,
+      token: USDC_CELO_SEPOLIA.address,
+      name: USDC_CELO_SEPOLIA.name,
+      version: USDC_CELO_SEPOLIA.version,
+      from: auth.from,
+      to: auth.to as `0x${string}`,
+      value: BigInt(auth.value),
+      validAfter: BigInt(auth.validAfter),
+      validBefore: BigInt(auth.validBefore),
+      nonce: auth.nonce as `0x${string}`,
+    });
+    const signature = await account.signTypedData(typed as never);
+    const envelope = {
+      x402Version: 2,
+      resource: CELO_CFG.resource,
+      accepted: {
+        scheme: "exact",
+        network: "eip155:11142220",
+        asset: USDC_CELO_SEPOLIA.address,
+        payTo: MERCHANT,
+        amount: CELO_CFG.price.toString(),
+        maxTimeoutSeconds: 600,
+        extra: { name: USDC_CELO_SEPOLIA.name, version: USDC_CELO_SEPOLIA.version, assetTransferMethod: "eip3009" },
+      },
+      payload: { signature, authorization: auth },
+    };
+    const header = Buffer.from(JSON.stringify(envelope)).toString("base64");
+    const decoded = decodeXPayment(header);
+    expect(decoded.rail).toBe("eip3009");
+    expect(decoded.token.toLowerCase()).toBe(USDC_CELO_SEPOLIA.address.toLowerCase());
+    const verdict = await verifyPayment(decoded, CELO_CFG, {
+      now: NOW,
+      verifySignature: (args) => verifyTypedData(args as never),
+    });
+    expect(verdict.ok, "reason" in verdict ? String(verdict.reason) : "").toBe(true);
+  });
+
+  test("a BNB-signed authorization does not verify on Celo Sepolia (domain chainId differs)", async () => {
+    const { header } = await studioPayment();
+    const decoded = decodeXPayment(header);
+    const verdict = await verifyPayment(decoded, { ...CELO_CFG, rails: [{ rail: "eip3009", token: U_TOKEN[56] }] }, {
+      now: NOW,
+      verifySignature: (args) => verifyTypedData(args as never),
+    });
+    expect(verdict.ok).toBe(false);
   });
 });

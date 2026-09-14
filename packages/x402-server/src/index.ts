@@ -9,7 +9,15 @@ export {
   type MerchantOptions,
   type PaymentReceipt,
 } from "./merchant.js";
-export { U_TOKEN, USDT_BSC, type TokenConfig } from "./tokens.js";
+export {
+  U_TOKEN,
+  USDT_BSC,
+  USDC_CELO,
+  USDC_CELO_SEPOLIA,
+  USDT_CELO,
+  USDT_CELO_SEPOLIA,
+  type TokenConfig,
+} from "./tokens.js";
 export type {
   ChallengeAccept,
   ChallengeBody,

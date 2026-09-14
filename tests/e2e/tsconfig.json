@@ -5,7 +5,7 @@
     "allowImportingTsExtensions": false,
     "types": ["node", "bun"]
   },
-  "include": ["./fork-*.ts", "./demo-*.ts", "./live-*.ts"],
-  "comment": "smoke-*.ts are parked: they target a Sepolia testnet config the SDK no longer exports (only ETHEREUM/BNB/BASE). Re-include once a testnet NetworkConfig returns.",
-  "exclude": ["./spike-*.ts", "./smoke-*.ts"]
+  "include": ["./fork-*.ts", "./demo-*.ts", "./live-*.ts", "./smoke-celo-*.ts"],
+  "comment": "The BNB-testnet smoke-*.ts scripts predate the typed e2e harness and are excluded; the Celo Sepolia smokes (smoke-celo-*.ts) are typechecked.",
+  "exclude": ["./spike-*.ts", "./smoke-test.ts", "./smoke-session.ts", "./smoke-passkey.ts", "./smoke-grant-first.ts", "./smoke-mcp.ts"]
 }

@@ -17,6 +17,53 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Added
 
+- **L2 execution networks, with Celo and Celo Sepolia.** A network can now
+  keep its KeyStore on its L1 and mirror it into a KeyStoreCache on the L2:
+  `NetworkConfig` gains an optional `registry` field naming the L1 and the
+  cache (absent means the KeyStore is on the chain itself, so existing
+  configs are untouched), plus `registryNetwork(network)`, `isCachedRegistry`,
+  `keyStoreCacheOf` and `provisioningNetworks`. On an L2 `grantSession` runs
+  three steps (L1 KeyStore write, account authorization through the L2
+  relay, proof into the L2 cache through the OP-stack `L1Block` predeploy)
+  and reports the first and last on the result (`registry`, `cache`);
+  `revokeSession` runs them in reverse and returns the same reports
+  (`RevokeSessionResult`); `registerSessionKey` and `recoverFromPasskey` read
+  and write the L1. New `client.syncSessionToCache` (and
+  `syncSessionToCache`) submits the proof as a wallet call through the L2
+  relay, waiting for the anchor and retrying when it moves;
+  `GrantSessionOptions` gains `populateCache` and `onStatus`. On testnet the
+  L1 (Sepolia) has no relay, so KeyStore writes are direct transactions from
+  the wallet's admin key (passkey wallets grant with `register: false`). The
+  proof building blocks are exported: `buildPopulateKeyCall`,
+  `waitForL1Anchor`, `readL1Anchor`, `computeKeyPackedSlot`. New configs
+  `CELO` (chain 42220, L1 Ethereum), `CELO_SEPOLIA` (chain 11142220, L1
+  Sepolia, cache `0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD`,
+  KeyStoreCacheOPStack 1.1.1) and `SEPOLIA` (chain 11155111). Per-chain
+  faucet map (`FAUCET_URLS`, `faucetHint`, `CELO_SEPOLIA_FAUCET_URL`), x402
+  aliases `celo` / `celo-sepolia`, and docs (L1/L2 shape in Keystore, grant,
+  revoke, sync and errors; Celo and Celo Sepolia setup pages). Covered by unit tests, two anvil fork tests
+  (`fork-celo-cache`: KeyStoreCacheOPStack 1.1.1 accepts a real Sepolia proof
+  built by the SDK; `fork-celo-x402-server`) and two live smoke scripts.
+
+- **`@altananetwork/mcp`: `ALTANA_CHAIN=celo-sepolia` / `celo`.** Chain
+  selection moved to `network.ts`; on an L2 the server reads the KeyStore on
+  the L1, `wallet_verification` and `verify_authorization` add a `cache`
+  block (`cached`, `revoked`, `expiry`, `fresh`) from the L2 cache,
+  `grant_session` and `revoke_session` report the L1 write and the cache
+  proof, `create_wallet` names what to fund, and the startup log names the
+  L1.
+
+- **`@altananetwork/x402-server`: Celo tokens.** `USDC_CELO`,
+  `USDC_CELO_SEPOLIA` (Circle USDC, EIP-712 domain `USDC` / `2`, 6 decimals,
+  both rails) and `USDT_CELO`, `USDT_CELO_SEPOLIA` (6 decimals, permit2-exact
+  only). Settlement through viem's Celo chains is a standard EIP-1559
+  transaction, pinned by a unit test and the Celo Sepolia fork test.
+
+- **`@altananetwork/hypersigner-keystore-mcp` 0.2.1: `sepolia` chain and
+  Celo aliases.** `ALTANA_CHAIN=sepolia` (the registry behind Celo Sepolia),
+  with `celo-sepolia` / `11142220` resolving to it and `celo` / `42220` to
+  `ethereum`, the L1s that hold the KeyStore.
+
 - **`client.holdings()` discovers which tokens a wallet holds.** `balances`
   needs an explicit token list; `holdings` asks the Altana relay for the
   wallet's assets on the chain (`wallet_getAssets`) and then reads every

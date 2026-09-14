@@ -17,7 +17,7 @@ import {
   encodeFunctionData,
   keccak256,
 } from "viem";
-import { bsc, bscTestnet, mainnet } from "viem/chains";
+import { bsc, bscTestnet, mainnet, sepolia } from "viem/chains";
 
 export const ZERO_ADDRESS =
   "0x0000000000000000000000000000000000000000" as Address;
@@ -172,17 +172,42 @@ export const CHAINS: Record<string, ChainConfig> = {
     explorerUrl: "https://testnet.bscscan.com",
     currencySymbol: "tBNB",
   },
+  // Sepolia KeyStore: the registry behind Celo Sepolia. Celo Sepolia itself
+  // has no KeyStore, only a cache mirrored from this one, so "celo-sepolia"
+  // resolves here: authority for a Celo Sepolia wallet is rooted in Sepolia.
+  sepolia: {
+    key: "sepolia",
+    chainId: 11155111,
+    chain: sepolia,
+    keyStore: "0x38Aaf396F462Ad3a4F38ADa653AF6bDEA55F772d",
+    controller: "0xc1525B766c134f7EB5B1d8e4a69C6Cb97Aff2379",
+    rpcUrl: "https://ethereum-sepolia-rpc.publicnode.com",
+    explorerUrl: "https://sepolia.etherscan.io",
+    currencySymbol: "SepoliaETH",
+  },
 };
 
+/**
+ * Aliases resolve to the chain that HOLDS the registry. Celo (42220) has no
+ * KeyStore of its own: its authority is rooted in the Ethereum KeyStore and
+ * mirrored into a cache on Celo, so "celo" resolves to ethereum. Likewise
+ * "celo-sepolia" (11142220) resolves to sepolia. Encoded calls carry the
+ * resolved chainId, so a host signs them on the registry chain.
+ */
 const ALIASES: Record<string, string> = {
   bsc: "bnb",
   "56": "bnb",
   eth: "ethereum",
   mainnet: "ethereum",
   "1": "ethereum",
+  celo: "ethereum",
+  "42220": "ethereum",
   "bsc-testnet": "bnb-testnet",
   tbnb: "bnb-testnet",
   "97": "bnb-testnet",
+  "11155111": "sepolia",
+  "celo-sepolia": "sepolia",
+  "11142220": "sepolia",
 };
 
 export function resolveChain(name?: string): ChainConfig {

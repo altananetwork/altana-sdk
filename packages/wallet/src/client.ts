@@ -30,6 +30,12 @@ import { grantSession as grantSessionImpl } from "./grantSession.js";
 import { revokeSession as revokeSessionImpl } from "./revokeSession.js";
 import { registerSessionKey as registerSessionKeyImpl } from "./registerSessionKey.js";
 import type { RegisterSessionKeyResult } from "./registerSessionKey.js";
+import type { RevokeSessionResult } from "./revokeSession.js";
+import {
+  syncSessionToCache as syncSessionToCacheImpl,
+  type SyncSessionToCacheOptions,
+  type SyncSessionToCacheResult,
+} from "./syncSessionToCache.js";
 import { balances as balancesImpl, type BalancesResult } from "./balances.js";
 import { holdings as holdingsImpl, type HoldingsResult } from "./holdings.js";
 import {
@@ -114,6 +120,17 @@ export type ClientRegisterSessionKeyOptions = {
   feeToken?: Address;
 } & ChainSelector;
 
+/**
+ * L2 only: prove a session key's registry state into the L2 KeyStoreCache. See syncSessionToCache.
+ */
+export type ClientSyncSessionToCacheOptions = {
+  wallet: Wallet;
+  /** The wallet's admin signer; the proof is a wallet call it signs. */
+  signer: Signer;
+  session: Session | Hex;
+} & Omit<SyncSessionToCacheOptions, "network"> &
+  ChainSelector;
+
 export type ClientBalancesOptions = {
   wallet: Wallet | Address;
   /** ERC-20 tokens to include. BEP-677 display scaling is applied automatically. */
@@ -165,11 +182,21 @@ export type Client = {
   ): Promise<CreateWalletResult & { signer: PasskeySigner }>;
   execute(opts: ClientExecuteOptions): Promise<ExecuteResult>;
   grantSession(opts: ClientGrantSessionOptions): Promise<GrantSessionResult>;
-  revokeSession(opts: ClientRevokeSessionOptions): Promise<ExecuteResult>;
+  revokeSession(opts: ClientRevokeSessionOptions): Promise<RevokeSessionResult>;
   /** Lazily register a session key granted with `register: false`. Idempotent. */
   registerSessionKey(
     opts: ClientRegisterSessionKeyOptions,
   ): Promise<RegisterSessionKeyResult>;
+  /**
+   * L2 only: prove a session key's registry entry (or
+   * revocation) into the network's KeyStoreCache as a wallet call through
+   * the network's relay. grantSession and revokeSession do this themselves;
+   * call it to retry a proof they reported as failed, or after
+   * `populateCache: false`.
+   */
+  syncSessionToCache(
+    opts: ClientSyncSessionToCacheOptions,
+  ): Promise<SyncSessionToCacheResult>;
   balances(opts: ClientBalancesOptions): Promise<BalancesResult>;
   /**
    * Discover which tokens the wallet holds on a chain. Asks the Altana relay
@@ -289,6 +316,8 @@ export function createClient(opts: CreateClientOptions): Client {
           expiry: o.expiry,
           ...(o.sessionSigner ? { sessionSigner: o.sessionSigner } : {}),
           ...(o.register !== undefined ? { register: o.register } : {}),
+          ...(o.populateCache !== undefined ? { populateCache: o.populateCache } : {}),
+          ...(o.onStatus ? { onStatus: o.onStatus } : {}),
         },
         {
           network: resolve(o.chainId),
@@ -308,6 +337,14 @@ export function createClient(opts: CreateClientOptions): Client {
       return registerSessionKeyImpl(o.wallet, o.signer, o.session, {
         network: resolve(o.chainId),
         ...(o.feeToken ? { feeToken: o.feeToken } : {}),
+      });
+    },
+
+    syncSessionToCache(o) {
+      const { wallet, signer, session, chainId, ...rest } = o;
+      return syncSessionToCacheImpl(wallet, signer, session, {
+        network: resolve(chainId),
+        ...rest,
       });
     },
 

@@ -11,6 +11,8 @@ import { Eyebrow } from '../../components/Eyebrow'
 
 The Altana MCP server exposes 20 tools. AI hosts call them by name. Eleven of them also have a slash command for users to invoke directly (e.g. `/altana-agentic-wallet:create-wallet`); the rest are host-callable only. See [Slash command equivalents](#slash-command-equivalents).
 
+On an L1 the Keystore is on the chain itself and every tool works on that one chain. On an L2 the Keystore is on the L1 and a KeyStoreCache on the L2 mirrors it: `wallet_verification` and `verify_authorization` read the L1 Keystore and add a `cache` block (`cached`, `revoked`, `expiry`, `fresh`) from the L2 cache; `grant_session` and `revoke_session` return `registry` (the L1 Keystore write) and `cache` (the proof into the L2 cache). See [Keystore](/concepts/keystore#reaching-other-chains).
+
 ## Discovery
 
 | Tool | Purpose |

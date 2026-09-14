@@ -36,7 +36,14 @@ Sessions granted with `register: false` (see [grantSession](/sdk/grant-session))
 ## Parameters
 
 ```ts
-client.revokeSession(opts: ClientRevokeSessionOptions): Promise<ExecuteResult>;
+client.revokeSession(opts: ClientRevokeSessionOptions): Promise<RevokeSessionResult>;
+
+type RevokeSessionResult = ExecuteResult & {
+  /** L2 only: the Keystore revoke on the L1. Reported, never thrown. */
+  registry?: RegistryWriteReport;
+  /** L2 only: the proof of the revocation into the L2 cache. Reported, never thrown. */
+  cache?: CacheSyncReport;
+};
 
 type ClientRevokeSessionOptions = {
   wallet: Wallet;
@@ -55,6 +62,14 @@ In a single userOp:
 2. The session's authority on the wallet's smart account is pulled.
 
 Both atomic. After the userOp confirms, the session is dead on that chain: there is no window in which one half has landed and the other has not.
+
+### On an L2
+
+On an L1 the revoke is one relay transaction. On an [L2](/concepts/keystore#reaching-other-chains) it is three steps, in order:
+
+1. **Account revoke** on the L2, through its relay. This strips the session's power.
+2. **Keystore revoke** on the L1 (`revokeKey`, through the L1 relay; on testnet from the admin key). Reported in `result.registry`.
+3. **Proof of the revocation** into the L2 cache, so readers on the L2 see the key as revoked. Reported in `result.cache`.
 
 ## Cross-chain revocation
 
@@ -84,7 +99,7 @@ await syncKeyToL2({
 `ensureKeyCached` will **not** do this for you. It returns early when the cache reports the key as valid, which is exactly the state a stale cache is in after a revocation. Use `syncKeyToL2`, which always submits a fresh proof.
 :::
 
-Once the cache observes `revoked=true` it cannot be flipped back, even by a proof against an older L1 block. See [ensureKeyCached](/sdk/sync-to-l2) for the full cross-chain model.
+Once the cache observes `revoked=true` it cannot be flipped back, even by a proof against an older L1 block. See [ensureKeyCached](/sdk/sync-to-l2) for the full cross-chain model. On an L2 `revokeSession` submits this proof itself; see above.
 
 ## Notes
 

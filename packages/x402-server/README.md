@@ -113,3 +113,13 @@ eip3009 settlement, Altana session-key permit2-witness settlement, replay
 refusal, and a settlement whose receipt read fails (exactly one transfer lands,
 the buyer is never re-challenged). Run it with `bun run fork:x402-server` from
 `tests/e2e`; CI runs it on every push.
+
+## Celo
+
+Token configs ship for Celo mainnet (`USDC_CELO`, `USDT_CELO`, chain 42220)
+and Celo Sepolia (`USDC_CELO_SEPOLIA`, `USDT_CELO_SEPOLIA`, chain 11142220).
+USDC is Circle's native deployment (EIP-712 domain `USDC` / `2`) and serves
+both rails; USDT on Celo has no EIP-3009 and is permit2-exact only. Both are
+6 decimals. Pass viem's `celo` / `celoSepolia` as `chain`; settlement
+transactions come out as standard EIP-1559 (no fee currency is ever set).
+Covered end to end by `tests/e2e/fork-celo-x402-server.ts`.
