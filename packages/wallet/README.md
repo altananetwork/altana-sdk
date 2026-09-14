@@ -161,7 +161,7 @@ import { BNB, ETHEREUM, BASE, BNB_TESTNET, CELO_SEPOLIA, BASE_SEPOLIA, SEPOLIA, 
 | `BNB_TESTNET` | BNB testnet (97) | Full-stack testnet |
 | `CELO_SEPOLIA` | Celo Sepolia (11142220) | Testnet L2. KeyStore on Sepolia, cache on Celo Sepolia |
 | `BASE_SEPOLIA` | Base Sepolia (84532) | Testnet L2. KeyStore on Sepolia, cache on Base Sepolia |
-| `SEPOLIA` | Sepolia (11155111) | Testnet L1 KeyStore; no relay |
+| `SEPOLIA` | Sepolia (11155111) | Testnet L1 KeyStore, served by the testnet relay |
 | `CELO` | Celo (42220) | L2. KeyStore on Ethereum, cache on Celo |
 
 On an L1 (`BNB`, `ETHEREUM`) the KeyStore is on the chain itself and a grant
@@ -173,10 +173,9 @@ chain of the client at once (`NETWORKS.mainnet` / `NETWORKS.testnet` list the
 groups): revoke finds the chains whose account holds the key, and both report
 one leg per step per chain with a binary `status`.
 `client.syncSessionToCache` runs the proof on its own. Reads go to
-`registryNetwork(network)`, the L1. On testnet the L1 (Sepolia) has no relay,
-so KeyStore writes are direct transactions from the wallet's admin key: fund
-the wallet address with Sepolia ETH as well as CELO.
-
+`registryNetwork(network)`, the L1. On testnet KeyStore writes go through the
+testnet relay on Sepolia: fund the wallet address with Sepolia ETH as well as
+CELO.
 The relay takes its fee in a token the wallet holds: the chain's native token
 everywhere, and on Celo also USDC, USDT, USDm, EURm or KESm, priced from
 Celo's own oracle. Omit `feeToken` and the relay charges whichever accepted

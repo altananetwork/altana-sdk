@@ -98,7 +98,7 @@ There is no error class and no error code: every one of these is a plain `Error`
 
 | Message | Cause |
 |---|---|
-| `No Altana relay serves chain <id> (<name>). ...` | The chain has no relay and cannot execute. `BASE` and `SEPOLIA` are read-only in this sense: one is an L2 cache target, the other is the testnet L1 Keystore. [`holdings`](/sdk/balances#discovering-holdings) throws this too, since discovery goes through the relay. |
+| `No Altana relay serves chain <id> (<name>). ...` | The chain has no relay and cannot execute. `BASE` is read-only in this sense: it is an L2 cache target. [`holdings`](/sdk/balances#discovering-holdings) throws this too, since discovery goes through the relay. |
 | `The Altana relay at <url> does not serve chain <id> (its wallet_getCapabilities has no entry for it). ...` | `createWallet` / `createPasskeyWallet` reached a relay that does not list the chain. Set `relayUrl` to a relay that serves it. |
 | `The relay rejected the request to ...: fee token not supported ... (fee tokens the relay accepts on <chain>: ...)` | `feeToken` named a token the relay does not take on that chain. The message lists the tokens it does accept, read live. Omit `feeToken` and the relay charges one the wallet holds, or set one from the list (`client.feeCurrencies()` returns it). |
 | `Balance for <address> did not reach <n> wei within <ms>ms` | A funding wait timed out. |

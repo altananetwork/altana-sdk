@@ -6,8 +6,8 @@
  *
  *   1. createWallet (admin signer)
  *   2. fund the wallet on Celo Sepolia (CELO, relay fees) and on Sepolia
- *      (ETH: registry writes are direct transactions from the admin key,
- *      which is the wallet address itself)
+ *      (ETH: registry writes are relayed wallet calls there, paying the
+ *      relay fee and the registration fee)
  *   3. execute(wallet, admin, ...) on Celo Sepolia (no registry prepend here)
  *   4. grantSession: registry write on Sepolia, account authorization on
  *      Celo Sepolia, proof into the cache; all three reported

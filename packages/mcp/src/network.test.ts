@@ -83,13 +83,21 @@ describe("fundingSteps", () => {
     expect(fundingSteps(BNB_TESTNET, addr)[0]).toContain("https://testnet.bnbchain.org/faucet-smart");
   });
 
-  test("celo-sepolia: CELO faucet plus Sepolia ETH for the registry writes", () => {
+  test("celo-sepolia: the Sepolia registry is relayed now, so one step only (like celo mainnet)", () => {
     const steps = fundingSteps(CELO_SEPOLIA, addr);
-    expect(steps).toHaveLength(2);
+    expect(steps).toHaveLength(1);
     expect(steps[0]).toContain(`Send some ${CELO_SEPOLIA.chain.nativeCurrency.symbol} to`);
     expect(steps[0]).toContain("https://faucet.celo.org/celo-sepolia");
+  });
+
+  test("a relay-less registry chain adds the direct-write funding step", () => {
+    const relayless = {
+      ...CELO_SEPOLIA,
+      registry: { kind: "cached" as const, l1: { ...SEPOLIA, relayUrl: undefined }, keyStoreCache: CELO_SEPOLIA.registry!.kind === "cached" ? CELO_SEPOLIA.registry!.keyStoreCache : "0x0000000000000000000000000000000000000000" as const },
+    };
+    const steps = fundingSteps(relayless, addr);
+    expect(steps).toHaveLength(2);
     expect(steps[1]).toContain("registry on Sepolia");
-    expect(steps[1]).toContain("ETH");
     expect(steps[1]).toContain("cloud.google.com/application/web3/faucet/ethereum/sepolia");
   });
 

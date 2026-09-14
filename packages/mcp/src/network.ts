@@ -4,7 +4,7 @@
  * One server process serves one chain, picked at startup through the
  * ALTANA_CHAIN env var. Every chain listed here executes through an Altana
  * relay (mainnet relay for mainnets, testnet relay for bnb-testnet and
- * celo-sepolia). Sepolia and Base Sepolia are keystore-only (no relay) and
+ * celo-sepolia). Sepolia and Base Sepolia are not in the map below and
  * are therefore not selectable.
  *
  * Celo and Celo Sepolia are cached-registry networks: their KeyStore lives

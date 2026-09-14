@@ -132,7 +132,7 @@ type Session = {
 
 For every chain you grant on, the SDK runs up to three legs:
 
-1. **Registry.** One Keystore write per Keystore chain: `registerKey(session)`, preceded by `initialRegisterKey(admin)` on the wallet's first write, skipped when the key is already valid there. On a chain with its own Keystore (BNB, Ethereum) it rides in that chain's account leg, in the same userOp, so the registration and the authorization land atomically. For an [L2](/concepts/keystore#reaching-other-chains) it is a separate write on the L1, through the L1 relay; on testnet, where Sepolia has no relay yet, a direct transaction from the wallet's admin key. Two L2s behind the same L1 share one write.
+1. **Registry.** One Keystore write per Keystore chain: `registerKey(session)`, preceded by `initialRegisterKey(admin)` on the wallet's first write, skipped when the key is already valid there. On a chain with its own Keystore (BNB, Ethereum) it rides in that chain's account leg, in the same userOp, so the registration and the authorization land atomically. For an [L2](/concepts/keystore#reaching-other-chains) it is a separate write on the L1, through the L1 relay (the testnet relay serves Sepolia). Two L2s behind the same L1 share one write.
 2. **Account.** The session authorized on the wallet's smart account on that chain, through its relay, the fee paid in an accepted token the wallet holds there (or the `feeToken` you name). The chains run in parallel; an L2 waits for its L1 write and is skipped if that write failed.
 3. **Cache.** On an L2, the proof of the Keystore entry into its KeyStoreCache, as a wallet call through the same relay (see [`syncSessionToCache`](/sdk/sync-to-l2#syncsessiontocache)). Skipped with `register: false` or `populateCache: false`.
 

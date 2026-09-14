@@ -64,13 +64,24 @@ describe("keyStoreCacheOf", () => {
   });
 });
 
+// Sepolia as it was before the testnet relay served it: the EOA path.
+const RELAYLESS_SEPOLIA: NetworkConfig = { ...SEPOLIA, relayUrl: undefined };
+
 describe("provisioningNetworks", () => {
   test("local networks pass through unchanged", () => {
     expect(provisioningNetworks([BNB, ETHEREUM])).toEqual([BNB, ETHEREUM]);
   });
 
   test("a cached network with a relay-less registry chain adds nothing (EOA writes)", () => {
-    expect(provisioningNetworks([CELO_SEPOLIA])).toEqual([CELO_SEPOLIA]);
+    const relayless: NetworkConfig = {
+      ...CELO_SEPOLIA,
+      registry: { kind: "cached", l1: RELAYLESS_SEPOLIA, keyStoreCache: "0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD" },
+    };
+    expect(provisioningNetworks([relayless])).toEqual([relayless]);
+  });
+
+  test("the testnet L2s are provisioned on Sepolia too, now that the relay serves it", () => {
+    expect(provisioningNetworks([CELO_SEPOLIA])).toEqual([CELO_SEPOLIA, SEPOLIA]);
   });
 
   test("a cached network whose registry chain has a relay is provisioned there too, once", () => {
@@ -90,8 +101,12 @@ describe("planRegistryWrite", () => {
     expect(passkeyPlan.via).toBe("relay");
   });
 
-  test("direct EOA transaction when the registry chain has no relay (Sepolia)", () => {
-    const plan = planRegistryWrite(SEPOLIA, admin, admin.address);
+  test("relay on Sepolia, now that the testnet relay serves it", () => {
+    expect(planRegistryWrite(SEPOLIA, createHeadlessPasskey(), "0x0000000000000000000000000000000000000001").via).toBe("relay");
+  });
+
+  test("direct EOA transaction when the registry chain has no relay", () => {
+    const plan = planRegistryWrite(RELAYLESS_SEPOLIA, admin, admin.address);
     expect(plan.via).toBe("eoa");
     if (plan.via !== "eoa") throw new Error("unreachable");
     expect(plan.account.address).toBe(admin.address);
@@ -101,7 +116,7 @@ describe("planRegistryWrite", () => {
     const other = privateKeyToAccount(
       "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
     );
-    expect(() => planRegistryWrite(SEPOLIA, admin, other.address)).toThrow(
+    expect(() => planRegistryWrite(RELAYLESS_SEPOLIA, admin, other.address)).toThrow(
       /is not the wallet address/,
     );
   });
@@ -109,10 +124,10 @@ describe("planRegistryWrite", () => {
   test("passkey admin on a relay-less registry chain throws the documented message", () => {
     const passkey = createHeadlessPasskey();
     expect(() =>
-      planRegistryWrite(SEPOLIA, passkey, "0x0000000000000000000000000000000000000001"),
+      planRegistryWrite(RELAYLESS_SEPOLIA, passkey, "0x0000000000000000000000000000000000000001"),
     ).toThrow(/passkey \(P256\) admin cannot sign one/);
     expect(() =>
-      planRegistryWrite(SEPOLIA, passkey, "0x0000000000000000000000000000000000000001"),
+      planRegistryWrite(RELAYLESS_SEPOLIA, passkey, "0x0000000000000000000000000000000000000001"),
     ).toThrow(/register: false/);
   });
 
@@ -121,7 +136,7 @@ describe("planRegistryWrite", () => {
       "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
     );
     const opaque = { type: real.type, address: real.address, publicKey: real.publicKey, signDigest: real.signDigest };
-    expect(() => planRegistryWrite(SEPOLIA, opaque, real.address)).toThrow(/direct transactions/);
+    expect(() => planRegistryWrite(RELAYLESS_SEPOLIA, opaque, real.address)).toThrow(/direct transactions/);
   });
 });
 

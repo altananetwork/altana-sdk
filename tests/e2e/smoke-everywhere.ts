@@ -3,9 +3,8 @@
  * cached networks behind the Sepolia KeyStore.
  *
  *   1. createWallet on both chains (same address)
- *   2. fund the wallet: CELO on Celo Sepolia, ETH on Base Sepolia (relay
- *      fees), ETH on Sepolia (registry writes are direct transactions from
- *      the admin key while no relay serves Sepolia)
+ *   2. fund the wallet: CELO on Celo Sepolia, ETH on Base Sepolia and ETH on
+ *      Sepolia (relay fees on each chain, plus the Sepolia registration fee)
  *   3. quoteGrantSession, then grantSession on both chains: one registry
  *      write on Sepolia, one account leg and one cache proof per chain
  *   4. reads: both accounts hold the key, Sepolia lists it as valid

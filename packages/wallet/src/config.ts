@@ -59,9 +59,8 @@ export type NetworkConfig = {
 export const RELAY_URL = "https://relay.altana.network";
 
 /**
- * Altana testnet relay. Serves BSC testnet (chainId 97), Celo Sepolia
- * (chainId 11142220) and Base Sepolia (chainId 84532). Sepolia is a
- * keystore-only testnet with no relay yet.
+ * Altana testnet relay. Serves BSC testnet (chainId 97), Sepolia (chainId
+ * 11155111), Celo Sepolia (chainId 11142220) and Base Sepolia (chainId 84532).
  */
 export const TESTNET_RELAY_URL = "https://testnet-relay.altana.network";
 
@@ -118,9 +117,9 @@ export const BNB_TESTNET: NetworkConfig = {
 };
 
 /**
- * Sepolia: hosts the testnet KeyStore behind Celo Sepolia. No Altana relay
- * serves it; KeyStore writes are sent as direct transactions from the
- * wallet's admin key, funded with Sepolia ETH:
+ * Sepolia: hosts the testnet KeyStore behind Celo Sepolia and Base Sepolia.
+ * The Altana testnet relay serves it, so KeyStore writes are relayed wallet
+ * calls with fees in Sepolia ETH:
  * https://cloud.google.com/application/web3/faucet/ethereum/sepolia
  *
  * The public RPC must serve `eth_getProof` for the block Celo Sepolia
@@ -137,6 +136,7 @@ export const SEPOLIA: NetworkConfig = {
   keyStoreController: "0xc1525B766c134f7EB5B1d8e4a69C6Cb97Aff2379",
   publicRpcUrl: "https://0xrpc.io/sep",
   explorer: "https://sepolia.etherscan.io",
+  relayUrl: TESTNET_RELAY_URL,
 };
 
 /**

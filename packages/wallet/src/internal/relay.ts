@@ -67,8 +67,8 @@ export function buildRelayClient(network: NetworkConfig) {
   if (!network.relayUrl) {
     throw new Error(
       `No Altana relay serves chain ${network.chainId} (${network.chain.name}). ` +
-        `The testnet relay serves BSC testnet (97), Celo Sepolia (11142220) and Base Sepolia (84532); ` +
-        `Sepolia and other keystore-only networks cannot execute through a relay.`,
+        `The testnet relay serves BSC testnet (97), Sepolia (11155111), Celo Sepolia (11142220) ` +
+        `and Base Sepolia (84532); keystore-only networks cannot execute through a relay.`,
     );
   }
   return createClient({

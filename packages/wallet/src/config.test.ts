@@ -22,13 +22,13 @@ import {
   type NetworkConfig,
 } from "./config.js";
 
-describe("SEPOLIA (registry only)", () => {
-  test("carries the testnet KeyStore and no relay", () => {
+describe("SEPOLIA (testnet registry chain)", () => {
+  test("carries the testnet KeyStore and the testnet relay", () => {
     expect(SEPOLIA.chainId).toBe(11155111);
     expect(SEPOLIA.chain.id).toBe(11155111);
     expect(SEPOLIA.keyStore).toBe("0x38Aaf396F462Ad3a4F38ADa653AF6bDEA55F772d");
     expect(SEPOLIA.keyStoreController).toBe("0xc1525B766c134f7EB5B1d8e4a69C6Cb97Aff2379");
-    expect(SEPOLIA.relayUrl).toBeUndefined();
+    expect(SEPOLIA.relayUrl).toBe(TESTNET_RELAY_URL);
     expect(SEPOLIA.registry).toBeUndefined();
     expect(SEPOLIA.explorer).toBe("https://sepolia.etherscan.io");
   });

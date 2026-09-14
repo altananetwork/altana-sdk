@@ -5,7 +5,7 @@ description: "Altana's testnets, BNB Smart Chain Testnet, Celo Sepolia and Base 
 
 # Testnet
 
-Altana runs on three testnets, all served by the Altana testnet relay at
+Altana runs on three testnets, plus Sepolia as their KeyStore chain, all served by the Altana testnet relay at
 `https://testnet-relay.altana.network`:
 
 - **BNB Smart Chain Testnet (chain 97)**: the full stack (keystore, account
@@ -93,7 +93,7 @@ What to fund, and where:
 | Chain | Asset | Used for |
 | --- | --- | --- |
 | Celo Sepolia | CELO, or any fee token below | Relay fees for wallet actions; the relay charges whichever accepted token the wallet holds |
-| Sepolia | ETH | Keystore writes, sent from the wallet's admin key; about 0.0003 ETH each |
+| Sepolia | ETH | Keystore writes through the relay (registration fee plus relay fee) |
 
 Fee tokens the relay accepts besides CELO, priced live from Celo's
 FeeCurrencyDirectory (`client.feeCurrencies()` returns the current list and
@@ -154,7 +154,7 @@ What to fund, and where:
 | Chain | Asset | Used for |
 | --- | --- | --- |
 | Base Sepolia | ETH | Relay fees for wallet actions |
-| Sepolia | ETH | Keystore writes, sent from the wallet's admin key |
+| Sepolia | ETH | Keystore writes through the relay (registration fee plus relay fee) |
 
 | Contract | Address |
 | --- | --- |
@@ -162,8 +162,11 @@ What to fund, and where:
 
 ## Sepolia: `SEPOLIA`
 
-Hosts the testnet KeyStore behind Celo Sepolia and Base Sepolia. It has no
-relay yet; the SDK reaches it as `registryNetwork(CELO_SEPOLIA)`.
+Hosts the testnet KeyStore behind Celo Sepolia and Base Sepolia. The Altana
+testnet relay serves it, so KeyStore writes are relayed wallet calls paid in
+Sepolia ETH; the SDK reaches it as `registryNetwork(CELO_SEPOLIA)`.
+
+- **Relay:** `https://testnet-relay.altana.network`
 
 - **Chain id:** 11155111
 - **Public RPC:** `https://ethereum-sepolia-rpc.publicnode.com`

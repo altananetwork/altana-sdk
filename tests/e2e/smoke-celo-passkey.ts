@@ -7,19 +7,18 @@
  *   3. fund the wallet with CELO
  *   4. execute(wallet, passkey, sendOneWei): the P256 signature is verified
  *      by the account through the P256 canary on Celo Sepolia
- *   5. grantSession(wallet, passkey, { register: false }): account-only
- *      session. Registry writes for passkey wallets are out of scope on this
- *      testnet: Sepolia has no relay, and a P256 admin cannot sign a direct
- *      Sepolia transaction. The account still enforces permissions/expiry.
- *      (The script also asserts that a registered grant throws the
- *      documented error instead of doing something else.)
+ *   5. grantSession(wallet, passkey): a registered grant, its Sepolia
+ *      registry write relayed (the testnet relay serves Sepolia, so a P256
+ *      admin can register); then grantSession({ register: false }): an
+ *      account-only session. The account enforces permissions/expiry on both.
  *   6. execute(session, ...): the session-key path under a passkey admin
  *   7. revokeSession(wallet, passkey, session): account revoke; registry and
  *      cache steps are reported as skipped
  *
  * Needs, and fails loudly without:
- *   TEST_FUNDER_KEY   funded with CELO on Celo Sepolia (>= 0.2 CELO,
- *                     https://faucet.celo.org/celo-sepolia)
+ *   TEST_FUNDER_KEY   funded with CELO on Celo Sepolia (>= 1 CELO,
+ *                     https://faucet.celo.org/celo-sepolia) and ETH on Sepolia
+ *                     (>= 0.01 ETH, for the relayed registry write)
  *   CELO_SEPOLIA_RPC_URL  optional override of the Celo Sepolia read RPC
  *
  * Run: bun run smoke:celo-passkey   (from tests/e2e)
@@ -29,6 +28,7 @@ import {
   createClient,
   createHeadlessPasskey,
   CELO_SEPOLIA,
+  SEPOLIA,
   type NetworkConfig,
 } from "@altananetwork/sdk";
 import { createPublicClient, createWalletClient, formatEther, http, parseEther, type Hex } from "viem";
@@ -65,7 +65,13 @@ async function main() {
   const bal = await celoPublic.getBalance({ address: funder.address });
   console.log(`funder ${funder.address}: ${formatEther(bal)} CELO on Celo Sepolia`);
   if (bal < parseEther("1")) {
-    throw new Error(`Fund ${funder.address} with at least 0.2 CELO on Celo Sepolia: https://faucet.celo.org/celo-sepolia`);
+    throw new Error(`Fund ${funder.address} with at least 1 CELO on Celo Sepolia: https://faucet.celo.org/celo-sepolia`);
+  }
+  const sepoliaPublic = createPublicClient({ chain: SEPOLIA.chain, transport: http(SEPOLIA.publicRpcUrl) });
+  const sepoliaFunder = createWalletClient({ account: funder, chain: SEPOLIA.chain, transport: http(SEPOLIA.publicRpcUrl) });
+  const sepoliaBal = await sepoliaPublic.getBalance({ address: funder.address });
+  if (sepoliaBal < parseEther("0.01")) {
+    throw new Error(`Fund ${funder.address} with at least 0.01 ETH on Sepolia: https://cloud.google.com/application/web3/faucet/ethereum/sepolia`);
   }
 
   // 1. Passkey signer (headless for Node)
@@ -82,9 +88,13 @@ async function main() {
   console.log(`    upgraded [${ms(t0)}]`);
 
   // 3. Fund
-  console.log("\n[3] Fund the wallet with 0.5 CELO");
+  console.log("\n[3] Fund the wallet with 0.5 CELO on Celo Sepolia and 0.003 ETH on Sepolia");
   const fundTx = await celoFunder.sendTransaction({ to: wallet.address, value: parseEther("0.5") });
-  await celoPublic.waitForTransactionReceipt({ hash: fundTx });
+  const sepoliaFundTx = await sepoliaFunder.sendTransaction({ to: wallet.address, value: parseEther("0.003") });
+  await Promise.all([
+    celoPublic.waitForTransactionReceipt({ hash: fundTx }),
+    sepoliaPublic.waitForTransactionReceipt({ hash: sepoliaFundTx }),
+  ]);
   console.log(`    funded [${ms(t0)}]`);
 
   // 4. First execute: P256 signature verified on Celo Sepolia (P256 canary)
@@ -94,19 +104,19 @@ async function main() {
   console.log("    tx:    ", firstExec.transactionHash);
   if (firstExec.status !== "CONFIRMED") throw new Error("First execute failed");
 
-  // 5a. A registered grant must throw the documented error (no relay on Sepolia, P256 admin).
-  console.log("\n[5a] grantSession with register: true must refuse (passkey admin, relay-less registry chain)");
-  const refusedGrant = await client.grantSession({
+  // 5a. A registered grant: the Sepolia registry write goes through the relay, so a passkey admin can sign it.
+  console.log("\n[5a] grantSession with register: true (passkey admin, registry write relayed on Sepolia)");
+  const registered = await client.grantSession({
     wallet,
     signer: passkey,
     permissions: { calls: [{ to: funder.address }] },
     expiry: Math.floor(Date.now() / 1000) + 3600,
   });
-  const refused = refusedGrant.status === "failed" ? (refusedGrant.legs.find((l) => l.status === "FAILED")?.reason ?? "") : "";
-  if (!/passkey \(P256\) admin cannot sign one/.test(refused)) {
-    throw new Error(`expected the documented passkey refusal, got: ${refused.slice(0, 200) || "no error"}`);
+  printLegs(registered.legs);
+  assertStatus(registered, "granted", "registered grantSession");
+  if (legOf(registered.legs, "registry", SEPOLIA.chainId).via !== "relay") {
+    throw new Error("expected the Sepolia registry write to go through the relay");
   }
-  console.log("    refused as documented:", refused.slice(0, 100) + "...");
 
   // 5b. Account-only session
   console.log("\n[5b] grantSession({ register: false }) (1h, scoped to funder, 1 CELO/day)");
@@ -138,6 +148,9 @@ async function main() {
   console.log("    status:", revokeRes.status, `[${ms(t0)}]`);
   printLegs(revokeRes.legs);
   assertStatus(revokeRes, "revoked", "revokeSession");
+  const revokeRegistered = await client.revokeSession({ wallet, signer: passkey, session: registered });
+  printLegs(revokeRegistered.legs);
+  assertStatus(revokeRegistered, "revoked", "revokeSession (registered session)");
 
   console.log("\n==================================================");
   console.log(`Total wall-clock: ${ms(t0)}`);

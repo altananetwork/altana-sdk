@@ -86,8 +86,8 @@ import {
 // for the map). Defaults to BNB Chain. All selectable chains execute through
 // an Altana relay (mainnet relay for mainnets, testnet relay for bnb-testnet
 // and celo-sepolia). One MCP process serves one chain; restart with a
-// different ALTANA_CHAIN to switch. Sepolia/Base Sepolia are keystore-only
-// (no relay) and so are not selectable here.
+// different ALTANA_CHAIN to switch. Sepolia and Base Sepolia are not in the
+// ALTANA_CHAIN map, so they are not selectable here.
 //
 // Celo and Celo Sepolia keep their KeyStore registry on another chain
 // (Ethereum / Sepolia) behind a local cache, so KeyStore reads go to the

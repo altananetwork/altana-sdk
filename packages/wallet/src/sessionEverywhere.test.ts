@@ -179,7 +179,7 @@ describe("revokeSession registry legs", () => {
     expect(legKinds(result)).toEqual([
       "account:11142220:CONFIRMED",
       "account:84532:CONFIRMED",
-      "registry:11155111:CONFIRMED:eoa",
+      "registry:11155111:CONFIRMED:relay",
       "cache:11142220:CONFIRMED",
       "cache:84532:CONFIRMED",
     ]);

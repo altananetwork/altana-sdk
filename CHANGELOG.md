@@ -78,7 +78,10 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
   signing, with the payers' balances. New account reads `getKeys`, `getKey`,
   `accountHasKey`, `keyHashForSessionOrKey`, `keyIdForSessionOrKey`. New
   configs `BASE_SEPOLIA` (chain 84532, L1 Sepolia, KeyStoreCacheOPStack
-  `0x37ebf8F17c3705568a03fB3A1629AcE7B3D95FFf`), `NETWORKS` (`mainnet`:
+  `0x37ebf8F17c3705568a03fB3A1629AcE7B3D95FFf`). `SEPOLIA` now carries the
+  testnet relay URL, so Sepolia KeyStore writes are relayed wallet calls
+  (passkey wallets can register there) instead of direct transactions from
+  the admin key. New `NETWORKS` (`mainnet`:
   BNB, Ethereum, Celo; `testnet`: BNB testnet, Celo Sepolia, Base Sepolia)
   and `networkByChainId`. The MCP `revoke_session` tool revokes across the
   whole mainnet or testnet group of its chain.
