@@ -18,7 +18,13 @@
  *   TEST_FUNDER_KEY  funded with CELO on Celo Sepolia (>= 1 CELO,
  *                    https://faucet.celo.org/celo-sepolia), ETH on Base
  *                    Sepolia (>= 0.01 ETH) and ETH on Sepolia (>= 0.01 ETH)
- *   SEPOLIA_RPC_URL  optional override (must serve eth_getProof ~100 blocks behind head)
+ *   SEPOLIA_RPC_URL, BASE_SEPOLIA_RPC_URL, CELO_SEPOLIA_RPC_URL  optional RPC
+ *                    overrides (Sepolia's must serve eth_getProof ~100 blocks behind head)
+ *
+ * All of them come from the shared testnet env:
+ *   set -a; source <ecosystem>/.env.testnet; set +a
+ *
+ * The throwaway wallet's leftover funds go back to the funder at the end, pass or fail.
  *
  * Run: bun run smoke:everywhere   (from tests/e2e)
  */
@@ -33,11 +39,15 @@ import {
   CELO_SEPOLIA,
   SEPOLIA,
   networkByChainId,
+  quoteCalls,
+  signerFromPrivateKey,
+  type Signer,
   type NetworkConfig,
   type SessionQuote,
 } from "@altananetwork/sdk";
-import { createPublicClient, createWalletClient, formatEther, http, keccak256, parseEther, type Hex, type PublicClient } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
+import { createClient as createViemClient, createPublicClient, createWalletClient, formatEther, http, keccak256, parseEther, type Hex, type PublicClient } from "viem";
+import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
+import { appendFileSync } from "node:fs";
 import { assertStatus, legOf, printLegs, signatureCount } from "./session-legs.js";
 
 const TEST_FUNDER_KEY = process.env.TEST_FUNDER_KEY as Hex;
@@ -48,10 +58,13 @@ if (!TEST_FUNDER_KEY) {
 }
 
 const sepolia: NetworkConfig = { ...SEPOLIA, publicRpcUrl: process.env.SEPOLIA_RPC_URL || SEPOLIA.publicRpcUrl };
-const withL1 = (n: NetworkConfig): NetworkConfig =>
-  n.registry?.kind === "cached" ? { ...n, registry: { ...n.registry, l1: sepolia } } : n;
-const celoSepolia = withL1(CELO_SEPOLIA);
-const baseSepolia = withL1(BASE_SEPOLIA);
+const withL1 = (n: NetworkConfig, rpc: string | undefined): NetworkConfig => ({
+  ...n,
+  ...(rpc ? { publicRpcUrl: rpc } : {}),
+  ...(n.registry?.kind === "cached" ? { registry: { ...n.registry, l1: sepolia } } : {}),
+});
+const celoSepolia = withL1(CELO_SEPOLIA, process.env.CELO_SEPOLIA_RPC_URL);
+const baseSepolia = withL1(BASE_SEPOLIA, process.env.BASE_SEPOLIA_RPC_URL);
 const CHAINS = [celoSepolia, baseSepolia];
 
 const KEYSTORE_ABI = [
@@ -79,7 +92,8 @@ async function main() {
   const funding: [NetworkConfig, bigint, bigint][] = [
     [celoSepolia, parseEther("1"), parseEther("0.5")],
     [baseSepolia, parseEther("0.01"), parseEther("0.003")],
-    [sepolia, parseEther("0.01"), parseEther("0.004")],
+    // Relayed registry writes on Sepolia: two registration fees plus the relay fee (about 0.006 ETH).
+    [sepolia, parseEther("0.02"), parseEther("0.012")],
   ];
   for (const [n, min] of funding) {
     const bal = await publicOf(n).getBalance({ address: funder.address });
@@ -89,17 +103,35 @@ async function main() {
 
   console.log("\n[1] createWallet on both chains");
   const client = createClient({ chains: CHAINS });
-  const admin = createPrivateKeySigner();
+  const adminKey = generatePrivateKey();
+  const admin = signerFromPrivateKey(adminKey);
   const wallet = await client.createWallet({ signer: admin });
   console.log(`    wallet ${wallet.address} [${ms()}]`);
+  // Save the throwaway key before any funds are sent, so nothing is stranded if the run dies.
+  saveThrowawayKey(wallet.address, adminKey);
+  try {
+    await run(client, admin, wallet, funder, publicOf, funding);
+  } finally {
+    await sweepBack(admin, wallet, funder.address, publicOf, funding.map(([n]) => n));
+  }
+}
 
+async function run(
+  client: ReturnType<typeof createClient>,
+  admin: Signer,
+  wallet: { address: `0x${string}` },
+  funder: ReturnType<typeof privateKeyToAccount>,
+  publicOf: (n: NetworkConfig) => PublicClient,
+  funding: [NetworkConfig, bigint, bigint][],
+) {
   console.log("\n[2] fund the wallet on Celo Sepolia, Base Sepolia and Sepolia");
-  await Promise.all(
-    funding.map(async ([n, , amount]) => {
-      const hash = await createWalletClient({ account: funder, chain: n.chain, transport: http(n.publicRpcUrl) }).sendTransaction({ to: wallet.address, value: amount });
-      await publicOf(n).waitForTransactionReceipt({ hash });
-    }),
-  );
+  // One chain at a time: the shared funder can be used by other sessions, so a dropped or
+  // replaced transaction is detected by the wallet's balance and sent again.
+  for (const [n, , amount] of funding) {
+    await fundOnce(n, funder, wallet.address, amount, publicOf(n));
+    console.log(`    ${n.chain.name}: funded ${formatEther(amount)} ${n.chain.nativeCurrency.symbol} [${ms()}]`);
+  }
+
   console.log(`    funded [${ms()}]`);
 
   const permissions = { calls: [{ to: funder.address }], spend: [{ limit: parseEther("0.001"), period: "day" as const }] };
@@ -162,6 +194,86 @@ async function main() {
   console.log("\n==================================================================================================");
   console.log(`Total wall-clock: ${ms()}`);
   console.log("Result: PASS ✓");
+}
+
+/** Appends the throwaway admin key to the shared testnet env file (never printed). */
+function saveThrowawayKey(address: `0x${string}`, key: Hex) {
+  const file = process.env.TESTNET_ENV_FILE ?? new URL("../../../.env.testnet", import.meta.url).pathname;
+  appendFileSync(
+    file,
+    `\n# smoke-everywhere throwaway wallet ${address}, ${new Date().toISOString()}: admin key\n` +
+      `SMOKE_THROWAWAY_${address.slice(2, 10).toUpperCase()}_KEY=${key}\n`,
+  );
+  console.log(`    throwaway key saved to the shared testnet env file`);
+}
+
+/** Funds `to` with `amount`, resending (fresh nonce) if the transaction is dropped. */
+async function fundOnce(
+  n: NetworkConfig,
+  funder: ReturnType<typeof privateKeyToAccount>,
+  to: `0x${string}`,
+  amount: bigint,
+  pc: PublicClient,
+) {
+  const walletClient = createWalletClient({ account: funder, chain: n.chain, transport: http(n.publicRpcUrl) });
+  const start = await pc.getBalance({ address: to });
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const nonce = await pc.getTransactionCount({ address: funder.address, blockTag: "pending" });
+    const hash = await walletClient.sendTransaction({ to, value: amount, nonce });
+    try {
+      await pc.waitForTransactionReceipt({ hash, timeout: 180_000 });
+      return;
+    } catch (err) {
+      if ((await pc.getBalance({ address: to })) >= start + amount) return;
+      console.log(`    ${n.chain.name}: funding tx ${hash} not mined (attempt ${attempt}), resending`);
+      if (attempt === 3) throw err;
+    }
+  }
+}
+
+/**
+ * Sends what is left in the throwaway wallet back to the funder on each chain: the balance minus
+ * the relay's quoted fee for the transfer (with headroom). Best effort, logged, never throws.
+ */
+async function sweepBack(
+  admin: Signer,
+  wallet: { address: `0x${string}` },
+  funder: `0x${string}`,
+  publicOf: (n: NetworkConfig) => PublicClient,
+  networks: NetworkConfig[],
+) {
+  console.log("\n[sweep] return leftover funds to the funder");
+  for (const n of networks) {
+    const symbol = n.chain.nativeCurrency.symbol;
+    try {
+      const balance = await publicOf(n).getBalance({ address: wallet.address });
+      if (balance === 0n) {
+        console.log(`    ${n.chain.name}: nothing left`);
+        continue;
+      }
+      const opts = {
+        feeToken: "0x0000000000000000000000000000000000000000" as const,
+        submittingKey: { type: "secp256k1" as const, publicKey: admin.publicKey, role: "admin" as const },
+        network: n,
+      };
+      const relay = createViemClient({ chain: n.chain, transport: http(n.relayUrl!) });
+      // Quote the transfer at the amount actually sent and take the relay's fee off it; repeat
+      // while the relay still reports a deficit (the fee depends on the call).
+      // Size the transfer from the relay's own quote: everything but the fee (and any registration
+      // fee a first action prepends), with headroom.
+      const probe = await quoteCalls(relay, wallet.address, admin, [{ to: funder, value: 1n, data: "0x" }], opts);
+      const fee = probe.nativeNeeded - 1n;
+      const amount = balance - (fee * 13n) / 10n;
+      if (amount <= 0n) {
+        console.log(`    ${n.chain.name}: ${formatEther(balance)} ${symbol} left, below the transfer fee (${formatEther(fee)}); kept`);
+        continue;
+      }
+      const res = await createClient({ chains: [n] }).execute({ wallet, signer: admin, calls: { to: funder, value: amount, data: "0x" } });
+      console.log(`    ${n.chain.name}: returned ${formatEther(amount)} ${symbol} (${res.status}${res.transactionHash ? ` ${res.transactionHash}` : ""})`);
+    } catch (err) {
+      console.log(`    ${n.chain.name}: sweep failed: ${(err instanceof Error ? err.message : String(err)).split("\n")[0]}`);
+    }
+  }
 }
 
 main().catch((err) => {

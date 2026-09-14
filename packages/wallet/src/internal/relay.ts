@@ -514,7 +514,9 @@ export function feeFromPrepared(prepared: any): { fee: bigint; feeTokenDeficit: 
   let fee = 0n;
   let feeTokenDeficit = 0n;
   for (const q of quotes) {
-    fee += toBigInt(q?.intent?.totalPaymentMaxAmount);
+    // The relay's intent comes in two shapes: the current one names the fee
+    // `paymentMaxAmount`, the newer one `totalPaymentMaxAmount`.
+    fee += toBigInt(q?.intent?.totalPaymentMaxAmount ?? q?.intent?.paymentMaxAmount);
     feeTokenDeficit += toBigInt(q?.feeTokenDeficit);
   }
   return { fee, feeTokenDeficit };

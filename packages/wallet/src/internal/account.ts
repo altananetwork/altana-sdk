@@ -9,6 +9,8 @@
 
 import {
   BaseError,
+  ContractFunctionRevertedError,
+  ContractFunctionZeroDataError,
   HttpRequestError,
   RpcRequestError,
   TimeoutError,
@@ -111,10 +113,20 @@ export async function accountHasKey(
 }
 
 function isTransportError(err: unknown): boolean {
-  const transport = (e: unknown) =>
-    e instanceof HttpRequestError || e instanceof TimeoutError || e instanceof RpcRequestError;
-  if (err instanceof BaseError) return Boolean(err.walk(transport));
-  return transport(err);
+  if (err instanceof BaseError) {
+    // A contract revert (the account's KeyDoesNotExist, say) or a call to an address with no code
+    // is an answer, not an outage. viem nests the node's reply in an RpcRequestError even then,
+    // so check for the revert first.
+    if (err.walk((e) => e instanceof ContractFunctionRevertedError || e instanceof ContractFunctionZeroDataError)) {
+      return false;
+    }
+    return Boolean(err.walk(isTransport));
+  }
+  return isTransport(err);
+}
+
+function isTransport(e: unknown): boolean {
+  return e instanceof HttpRequestError || e instanceof TimeoutError || e instanceof RpcRequestError;
 }
 
 /**
