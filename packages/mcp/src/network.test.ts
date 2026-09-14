@@ -6,12 +6,14 @@ import {
   CELO_SEPOLIA,
   ETHEREUM,
   SEPOLIA,
+  BASE_SEPOLIA,
 } from "@altananetwork/sdk";
 import {
   NETWORKS,
   SUPPORTED_CHAINS,
   describeNetwork,
   fundingSteps,
+  networkGroup,
   resolveNetwork,
 } from "./network.js";
 
@@ -106,5 +108,20 @@ describe("fundingSteps", () => {
   test("a relay that only takes the native token changes nothing", () => {
     const native = BNB.chain.nativeCurrency.symbol;
     expect(fundingSteps(BNB, addr, { feeSymbols: [native] })).toEqual(fundingSteps(BNB, addr));
+  });
+});
+
+describe("networkGroup", () => {
+  test("a testnet chain revokes across the whole testnet group", () => {
+    expect(networkGroup(CELO_SEPOLIA).map((n) => n.chainId)).toEqual([97, 11142220, 84532]);
+    expect(networkGroup(BNB_TESTNET)).toContain(BASE_SEPOLIA);
+  });
+
+  test("a mainnet chain revokes across the mainnet group", () => {
+    expect(networkGroup(BNB).map((n) => n.chainId)).toEqual([56, 1, 42220]);
+  });
+
+  test("a chain outside both groups stands alone", () => {
+    expect(networkGroup(SEPOLIA)).toEqual([SEPOLIA]);
   });
 });

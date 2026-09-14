@@ -1,6 +1,6 @@
 ---
 title: revokeSession
-description: Pull a session's authority. Immediate on the chain where the key is registered; L2 caches need an explicit proof.
+description: Pull a session's authority on every chain that holds it, in one call.
 ---
 
 import { Eyebrow } from '../../components/Eyebrow'
@@ -9,13 +9,14 @@ import { Eyebrow } from '../../components/Eyebrow'
 
 # revokeSession
 
-Revoke a session key from a wallet onchain. After confirmation, the session's next execute attempt reverts at validation. On the chain where the key is registered the effect is immediate, and no off-chain coordination is required.
-
-If you have mirrored the key to an L2 cache, revocation does **not** reach that cache on its own. See [Cross-chain revocation](#cross-chain-revocation) below.
+Revoke a session key everywhere it lives. One call finds the chains whose account holds the key, revokes it on each, revokes it in the [Keystore](/concepts/keystore), proves the revocation into every L2 cache, and reports each step per chain. After it confirms, the session's next execute attempt reverts at validation on every one of those chains.
 
 ```ts
 // `client`, `wallet`, `admin`, and `session` from earlier
-await client.revokeSession({ wallet, signer: admin, session });
+const result = await client.revokeSession({ wallet, signer: admin, session });
+if (result.status !== "revoked") {
+  console.error(result.legs.filter((leg) => leg.status === "FAILED"));
+}
 ```
 
 You can also pass just the session's public key:
@@ -25,68 +26,80 @@ const sessionPublicKey = "0x04..." as `0x${string}`;
 await client.revokeSession({ wallet, signer: admin, session: sessionPublicKey });
 ```
 
-## Keystore impact
+A bare public key is read as secp256k1. Pass the `Session` for a passkey session, so the SDK revokes it as a WebAuthn P256 key.
 
-Revocation calls Keystore directly, not the Controller. The call is gated onchain by `onlyKeyOwnerOrValidator`, so only the wallet itself (executing inside its own userOp) or a designated validator can revoke a key. A random caller reverts at the modifier.
+## Which chains it acts on
 
-Revocation is **monotonic**: once a key is revoked, it cannot be reactivated. To restore session access for a wallet, grant a new session with a fresh keypair.
+`client.revokeSession` acts on every chain the client was configured with. There is no `chainId` option: pass the whole group, for example `createClient({ chains: [...NETWORKS.testnet] })`, and the SDK does the rest.
 
-Sessions granted with `register: false` (see [grantSession](/sdk/grant-session)) have no Keystore entry — for those, `revokeSession` skips the Keystore call automatically and revokes the account-level authority alone, which is what actually strips the session's power.
+1. **Discovery.** In parallel, it reads which chains' accounts hold the key, and whether each Keystore behind those chains lists it as valid.
+2. **Revoke.** In parallel, one account leg per chain holding the key, and one registry leg per Keystore that lists it. Two L2s behind the same L1 share one registry leg. When the Keystore chain is itself a chain holding the key (BNB, Ethereum), the registry revoke rides in that chain's account leg, in the same intent.
+3. **Cache.** For each L2, once its registry revoke confirmed, a proof of the revocation into its KeyStoreCache, so readers on the L2 see the key as revoked.
 
-## Parameters
+## Result
 
 ```ts
 client.revokeSession(opts: ClientRevokeSessionOptions): Promise<RevokeSessionResult>;
-
-type RevokeSessionResult = ExecuteResult & {
-  /** L2 only: the Keystore revoke on the L1. Reported, never thrown. */
-  registry?: RegistryWriteReport;
-  /** L2 only: the proof of the revocation into the L2 cache. Reported, never thrown. */
-  cache?: CacheSyncReport;
-};
 
 type ClientRevokeSessionOptions = {
   wallet: Wallet;
   signer: Signer;                 // the wallet's admin signer
   session: Session | Hex;         // the Session object or just its public key
   feeToken?: Address;
-  chainId?: number;               // defaults to the client's default chain
+  onStatus?: (status: "discovery" | "registry-write" | "account-revoke" | "cache-sync" | "done",
+              detail?: { chainId: number }) => void;
+};
+
+type RevokeSessionResult = {
+  keyId: Hex;
+  status: "revoked" | "failed";
+  legs: SessionLeg[];
+};
+
+type SessionLeg = {
+  chainId: number;
+  kind: "account" | "registry" | "cache";
+  status: "CONFIRMED" | "FAILED" | "SKIPPED";
+  via?: "relay" | "eoa" | "bundled";   // registry legs
+  transactionHash?: Hex;
+  blockNumber?: bigint;                // registry legs
+  keyStoreCache?: Address;             // cache legs
+  l1BlockNumber?: bigint;              // cache legs
+  cachedKey?: CachedKey;               // cache legs
+  reason?: string;                     // why it was skipped or failed
 };
 ```
 
-## What lands onchain
+`status` is either `revoked` or `failed`. It is `revoked` only when every leg confirmed or had nothing to do. Any failed leg makes it `failed`, and the other legs still run, so `legs` tells you exactly which chain and which step is left. Calling `revokeSession` again is safe: discovery only picks up what is still pending (an account still holding the key, a Keystore still listing it, a cache still showing it live).
 
-In a single userOp:
+`revokeSession` never throws for a failed leg. Check `status`.
 
-1. The session is **revoked in Keystore** (skipped if the session was never registered). From the next block onward, `isValidKey` returns `false` for that key and the key id is dropped from `getKeys`.
-2. The session's authority on the wallet's smart account is pulled.
+## What it costs
 
-Both atomic. After the userOp confirms, the session is dead on that chain: there is no window in which one half has landed and the other has not.
+`client.quoteRevokeSession` takes the same options and returns one line per leg (fee and native value, who pays) plus the payers' balances, without signing or sending anything:
 
-### On an L2
+```ts
+const quote = await client.quoteRevokeSession({ wallet, signer: admin, session });
+for (const line of quote.lines) console.log(line.chainId, line.kind, line.fee);
+```
 
-On an L1 the revoke is one relay transaction. On an [L2](/concepts/keystore#reaching-other-chains) it is three steps, in order:
+Each leg is one signature today, so a revoke on two L2s is five: two account legs, one registry leg, two cache proofs.
 
-1. **Account revoke** on the L2, through its relay. This strips the session's power.
-2. **Keystore revoke** on the L1 (`revokeKey`, through the L1 relay; on testnet from the admin key). Reported in `result.registry`.
-3. **Proof of the revocation** into the L2 cache, so readers on the L2 see the key as revoked. Reported in `result.cache`.
+## Keystore impact
 
-## Cross-chain revocation
+Revocation calls Keystore directly, not the Controller. The call is gated onchain by `onlyKeyOwnerOrValidator`, so only the wallet itself (executing inside its own userOp) or a designated validator can revoke a key. A random caller reverts at the modifier.
 
-`revokeSession` acts on one chain, the one you passed via `chainId` (or the client's default). It does not touch any other chain's state.
+Revocation is **monotonic**: once a key is revoked, it cannot be reactivated. To restore session access for a wallet, grant a new session with a fresh keypair.
 
-:::warning[An L2 cache keeps reporting the old answer until you prove otherwise]
-If the session was mirrored to an L2 cache with [`ensureKeyCached`](/sdk/sync-to-l2), that cache still returns `isValidKey == true` after you revoke on L1. Anyone verifying against the cache, such as a counterparty checking whether your agent is authorized, sees a live key until a post-revocation proof lands.
+Sessions granted with `register: false` (see [grantSession](/sdk/grant-session)) have no Keystore entry. For those, `revokeSession` skips the registry leg and revokes the account-level authority alone, which is what actually strips the session's power.
 
-Call `syncKeyToL2` explicitly after `revokeSession`:
+## Caches you populated yourself
+
+`revokeSession` proves the revocation into the cache of every L2 in the client's chains. A cache it does not know about, such as one you populated with [`ensureKeyCached`](/sdk/sync-to-l2) on a chain outside the client, keeps reporting the key as valid until a post-revocation proof lands there:
 
 ```ts
 import { syncKeyToL2, ETHEREUM, BASE } from "@altananetwork/sdk";
 
-await client.revokeSession({ wallet, signer: admin, session });
-
-// Push the revocation to every L2 cache holding this key. The clients are the
-// same ones ensureKeyCached takes — see /sdk/sync-to-l2 for how to build them.
 await syncKeyToL2({
   l1Client, l2Client, l2WalletClient,
   l1KeyStore: ETHEREUM.keyStore,
@@ -96,13 +109,10 @@ await syncKeyToL2({
 });
 ```
 
-`ensureKeyCached` will **not** do this for you. It returns early when the cache reports the key as valid, which is exactly the state a stale cache is in after a revocation. Use `syncKeyToL2`, which always submits a fresh proof.
-:::
-
-Once the cache observes `revoked=true` it cannot be flipped back, even by a proof against an older L1 block. See [ensureKeyCached](/sdk/sync-to-l2) for the full cross-chain model. On an L2 `revokeSession` submits this proof itself; see above.
+`ensureKeyCached` will **not** do this for you: it returns early when the cache reports the key as valid, which is exactly the state a stale cache is in after a revocation. Once a cache observes `revoked=true` it cannot be flipped back, even by a proof against an older L1 block.
 
 ## Notes
 
 - Revocation does not require the session signer, only the wallet's admin signer.
 - Revocation needs only the session's public key (`revokeSession` accepts `Session | Hex`). But keep the full serialized session ([`serializeSession`](/sdk/grant-session#persisting-a-session)) while the session is meant to keep working — an agent needs `permissions + expiry` to execute, not just the key.
-- A failed revocation **returns** `status: "FAILED"` rather than throwing. Check the returned status; do not assume success because nothing was raised. See [Errors](/sdk/errors).
+- A failed revocation **returns** `status: "failed"` rather than throwing. Check the returned status; do not assume success because nothing was raised. See [Errors](/sdk/errors).

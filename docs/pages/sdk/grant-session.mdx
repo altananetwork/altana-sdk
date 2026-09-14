@@ -32,8 +32,11 @@ const session = await client.grantSession({
   expiry: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60, // 7 days
 });
 
+if (session.status !== "granted") throw new Error("grant failed");
 // Hand `session` to whichever process runs the agent.
 ```
+
+`grantSession` authorizes the session on every chain the client was configured with, or on the chains you pass in `chainIds`. It never throws for a failed step: check `status`.
 
 :::warning[Spend limits are raw token units, and decimals differ by chain]
 `limit` is denominated in the token's smallest unit, so you need that token's decimals on that chain. USDT and USDC use **18 decimals on BNB Chain** and 6 on Ethereum. Writing `100_000_000n` for "100 USDT" on BNB sets a cap of 0.0000000001 USDT, and the agent's payments revert against a limit that looks generous.
@@ -73,21 +76,23 @@ type ClientGrantSessionOptions = {
   sessionSigner?: Signer;
   /** Register the key in Keystore (default true). */
   register?: boolean;
-  /** L2 only: prove the Keystore entry into the L2 cache after the grant (default true). */
+  /** L2s only: prove the Keystore entry into each L2 cache after the grant (default true). */
   populateCache?: boolean;
-  /** L2 only: progress across the three steps. */
-  onStatus?: (status: "registry-write" | "account-authorization" | "cache-sync" | "done") => void;
+  /** Progress, per chain where it applies. */
+  onStatus?: (status: "registry-write" | "account-authorization" | "cache-sync" | "done",
+              detail?: { chainId: number }) => void;
   /**
    * The token(s) the session may pay relay fees in, one address or a list.
    * Each gets a daily spend cap added to the session (default one whole
    * token; see feeSpendLimit), and the grant itself pays its fee with the
-   * first one the wallet holds.
+   * first one the wallet holds. Omitted, the relay charges whichever
+   * accepted token the wallet holds.
    */
   feeToken?: Address | readonly Address[];
   /** The cap added for each fee token, in its smallest unit. Default one whole token per day. */
   feeSpendLimit?: bigint;
-  /** Target chain. Defaults to the client's default chain. */
-  chainId?: number;
+  /** The chains to grant on. Defaults to every chain the client was configured with. */
+  chainIds?: number[];
 };
 ```
 
@@ -97,7 +102,7 @@ holds the most of. Pass `feeToken` here (one address or a list) so a session can
 from a stablecoin the wallet holds (on Celo: USDC, USDT, USDm, EURm, KESm); the
 returned `Session.permissions` carries the added caps, and `execute` must be
 called with that session, not with the permissions you passed in. A token the
-relay does not accept on the chain is refused.
+relay does not accept on any of the chains granted on is refused.
 
 See [Sessions](/concepts/sessions) for the full permission shape reference.
 
@@ -105,31 +110,9 @@ See [Sessions](/concepts/sessions) for the full permission shape reference.
 
 ```ts
 type GrantSessionResult = Session & {
-  /** The transaction that carried the grant, when the relay reported one. */
-  transactionHash?: Hex;
-  /** L2 only: the Keystore write on the L1. */
-  registry?: RegistryWriteReport;
-  /** L2 only: the proof into the L2 cache. Reported, never thrown. */
-  cache?: CacheSyncReport;
-};
-
-type RegistryWriteReport = {
-  chainId: number;
-  via: "relay" | "eoa" | "skipped";
-  status: "CONFIRMED" | "FAILED" | "PENDING" | "SKIPPED";
-  transactionHash?: Hex;
-  blockNumber?: bigint;
-  reason?: string;
-};
-
-type CacheSyncReport = {
-  chainId: number;
-  status: "CONFIRMED" | "FAILED" | "SKIPPED";
-  keyStoreCache?: Address;
-  transactionHash?: Hex;
-  l1BlockNumber?: bigint;
-  cachedKey?: CachedKey;
-  reason?: string;
+  keyId: Hex;
+  status: "granted" | "failed";
+  legs: SessionLeg[];       // one per step per chain; see revokeSession for the shape
 };
 
 type Session = {
@@ -143,37 +126,19 @@ type Session = {
 
 `GrantSessionResult` is a `Session`, so it goes anywhere a `Session` goes: `execute`, `revokeSession`, `registerSessionKey`, `signOrder`.
 
-`transactionHash` is the receipt for the grant. It is optional because the relay can confirm an intent without surfacing one, so check before you use it. It sits on the result rather than on `Session` deliberately: a session outlives the transaction that created it, and a hash carried around on a session you loaded from disk weeks later describes something that already happened.
-
-:::warning[Annotating the variable hides the hash]
-An explicit `Session` annotation narrows the type back down and drops the new field:
-
-```ts
-const session: Session = await client.grantSession({ ... });
-session.transactionHash;  // does not typecheck
-```
-
-Let the type be inferred, or annotate with `GrantSessionResult`.
-:::
+`status` is either `granted` or `failed`. It is `granted` only when every leg confirmed or had nothing to do; any failed leg makes it `failed`, and `legs` says which chain and which step. Each leg carries its own `transactionHash`, which is the receipt to record for the registration fee. Granting again with the same `sessionSigner` is safe: a key already valid in the Keystore is not written or charged twice.
 
 ## What lands onchain
 
-In a single userOp:
+For every chain you grant on, the SDK runs up to three legs:
 
-1. The session's public key is registered in [Keystore](/concepts/keystore), making it discoverable by any tool.
-2. The session is authorized on the wallet's smart account with its permissions hash.
+1. **Registry.** One Keystore write per Keystore chain: `registerKey(session)`, preceded by `initialRegisterKey(admin)` on the wallet's first write, skipped when the key is already valid there. On a chain with its own Keystore (BNB, Ethereum) it rides in that chain's account leg, in the same userOp, so the registration and the authorization land atomically. For an [L2](/concepts/keystore#reaching-other-chains) it is a separate write on the L1, through the L1 relay; on testnet, where Sepolia has no relay yet, a direct transaction from the wallet's admin key. Two L2s behind the same L1 share one write.
+2. **Account.** The session authorized on the wallet's smart account on that chain, through its relay, the fee paid in an accepted token the wallet holds there (or the `feeToken` you name). The chains run in parallel; an L2 waits for its L1 write and is skipped if that write failed.
+3. **Cache.** On an L2, the proof of the Keystore entry into its KeyStoreCache, as a wallet call through the same relay (see [`syncSessionToCache`](/sdk/sync-to-l2#syncsessiontocache)). Skipped with `register: false` or `populateCache: false`.
 
-Both happen atomically. There is no intermediate state where one exists without the other.
+## What it costs
 
-### On an L2
-
-On an L1 the grant is one relay transaction. On an [L2](/concepts/keystore#reaching-other-chains) the Keystore is on the L1 and a KeyStoreCache on the L2 mirrors it, so the grant is three steps, in order:
-
-1. **Keystore write** on the L1: `registerKey(session)`, preceded by `initialRegisterKey(admin)` on the wallet's first write. Skipped when the key is already valid there. It goes through the relay on the L1; on testnet, where the L1 (Sepolia) has no relay, it is a direct transaction from the wallet's admin key.
-2. **Account authorization** through the L2's relay, fee in a token the wallet holds on the L2. This is the step that gives the session its power.
-3. **Proof into the L2 cache**, executed as a wallet call through the same relay (see [`syncSessionToCache`](/sdk/sync-to-l2#syncsessiontocache)). Reported in `result.cache`; the session is already live on the account and in the Keystore. Skipped with `register: false` or `populateCache: false`.
-
-`result.registry` and `result.cache` are present on an L2. `onStatus` fires before each step.
+`client.quoteGrantSession` takes the same options and returns one line per leg plus the payers' balances, without signing or sending anything. A cache proof can only be quoted once its Keystore entry exists, so on a first grant those lines come back without a fee and `complete` is `false`.
 
 ## Persisting a session
 
@@ -209,4 +174,4 @@ If you omit `sessionSigner`, the SDK generates a key that exists **only in the c
 
 - **Persist both halves**: the serialized session (above) *and* the key, separately. An agent needs `permissions + expiry` to execute, not just the key.
 - **`permissions.calls` omitted = unrestricted.** Always set both `calls` and `spend` unless you specifically want an open-scope session.
-- **This is the call that costs the user money.** It pays a one-time [Keystore](/concepts/keystore) registration fee, and on a wallet's very first admin action it pays that fee twice, because `initialRegisterKey` for the admin is prepended into the same userOp. Record `transactionHash` if you show users a history of what they were charged for. Pass `register: false` to skip the registration fee entirely.
+- **This is the call that costs the user money.** It pays a one-time [Keystore](/concepts/keystore) registration fee, and on a wallet's very first admin action it pays that fee twice, because `initialRegisterKey` for the admin is prepended into the same userOp. Record the legs' `transactionHash` if you show users a history of what they were charged for. Pass `register: false` to skip the registration fee entirely.

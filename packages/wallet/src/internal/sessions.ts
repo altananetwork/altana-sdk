@@ -55,34 +55,59 @@ export type Session = {
 };
 
 /**
- * What grantSession returns: the live Session, plus provenance for the grant
- * itself.
+ * One step of a multi-chain grant or revoke, on one chain.
  *
- * The hash is not on Session because a Session outlives the transaction that
- * created it. Integrators persist it, hand it to an agent process, and pass it
- * to execute() for days afterwards. A transaction hash sitting on it that long
- * describes something that already happened, so it belongs to the grant's
- * result, not to the session.
+ * - `account`: the key authorized on (or revoked from) the account on `chainId`.
+ * - `registry`: the KeyStore write on the registry chain `chainId`. `via:
+ *   "bundled"` means it rode in the account leg's intent on the same chain,
+ *   with the same transaction hash.
+ * - `cache`: the proof of the registry state into the KeyStoreCache on the
+ *   cached network `chainId`.
  *
- * Assignable to Session, so every existing caller keeps working unchanged.
+ * `SKIPPED` means there was nothing to do (already registered, not
+ * registered, no cache configured) or a leg it depends on did not confirm;
+ * `reason` says which.
+ */
+export type SessionLeg = {
+  chainId: number;
+  kind: "account" | "registry" | "cache";
+  status: "CONFIRMED" | "FAILED" | "SKIPPED";
+  /** Registry legs: how the write reached the registry chain. */
+  via?: "relay" | "eoa" | "bundled";
+  transactionHash?: Hex;
+  /** Registry legs: the block the write landed in. */
+  blockNumber?: bigint;
+  /** Cache legs: the cache the proof went to. */
+  keyStoreCache?: Address;
+  /** Cache legs: the registry-chain block the accepted proof was built against. */
+  l1BlockNumber?: bigint;
+  /** Cache legs: the cache entry after the proof, when one was read. */
+  cachedKey?: CachedKey;
+  /** Why the leg was skipped or failed. */
+  reason?: string;
+};
+
+/** A leg of revokeSession. */
+export type RevokeLeg = SessionLeg;
+/** A leg of grantSession. */
+export type GrantLeg = SessionLeg;
+
+/**
+ * What grantSession returns: the Session, plus how the grant went on every
+ * chain it was asked for.
+ *
+ * `status` is `granted` only when every leg confirmed or had nothing to do.
+ * Any failed leg makes it `failed`, and `legs` says which chain and why.
+ * Granting again with the same `sessionSigner` is safe: a key already in the
+ * registry is not written twice.
+ *
+ * Assignable to Session. Check `status` before handing the session to an agent.
  */
 export type GrantSessionResult = Session & {
-  /**
-   * The transaction that carried the grant, when the relay reported one.
-   * Optional: the relay can confirm an intent without surfacing a receipt.
-   */
-  transactionHash?: Hex;
-  /**
-   * L2 only: what happened to the KeyStore write on the L1. Absent on networks with a local KeyStore,
-   * where the registration rides in the grant transaction itself.
-   */
-  registry?: RegistryWriteReport;
-  /**
-   * L2 only: the proof of the new registry entry into the L2 KeyStoreCache. A failed proof is reported here, never thrown:
-   * the session is live on the account and in the registry regardless, and
-   * `syncSessionToCache` can be retried at any time.
-   */
-  cache?: CacheSyncReport;
+  /** The session's KeyStore keyId. */
+  keyId: Hex;
+  status: "granted" | "failed";
+  legs: GrantLeg[];
 };
 
 /**
@@ -116,12 +141,23 @@ export type CacheSyncReport = {
   reason?: string;
 };
 
-/** Progress of grantSession on an L2, in order. */
+/** Progress of grantSession. Per-chain phases carry the chain in `detail`. */
 export type GrantSessionStatus =
   | "registry-write"
   | "account-authorization"
   | "cache-sync"
   | "done";
+
+/** Progress of revokeSession. Per-chain phases carry the chain in `detail`. */
+export type RevokeSessionStatus =
+  | "discovery"
+  | "registry-write"
+  | "account-revoke"
+  | "cache-sync"
+  | "done";
+
+/** The chain a per-chain progress event is about. */
+export type SessionStatusDetail = { chainId: number };
 
 /** Options for grantSession. */
 export type GrantSessionOptions = {
@@ -150,19 +186,18 @@ export type GrantSessionOptions = {
    */
   register?: boolean;
   /**
-   * L2 only. After the L1 KeyStore write and the account authorization,
-   * prove the new entry into the L2 KeyStoreCache (default true). The proof is a wallet call
-   * through the network's relay, paid in the network's native token. Pass
-   * false to skip it and call `syncSessionToCache` yourself later. Ignored on
-   * networks with a local KeyStore.
+   * Cached networks only. After the L1 KeyStore write and the account
+   * authorization, prove the new entry into each L2 KeyStoreCache (default
+   * true). The proof is a wallet call through the network's relay, paid in the
+   * network's native token. Pass false to skip it and call
+   * `syncSessionToCache` yourself later.
    */
   populateCache?: boolean;
   /**
-   * L2 only: progress callback across the three steps
-   * (registry write, account authorization, cache proof). Not called on
-   * networks with a local KeyStore, where the grant is one transaction.
+   * Progress callback: a registry write per registry chain, an account
+   * authorization per network, a cache proof per cached network, then `done`.
    */
-  onStatus?: (status: GrantSessionStatus) => void;
+  onStatus?: (status: GrantSessionStatus, detail?: SessionStatusDetail) => void;
   /**
    * When `feeToken` is passed to grantSession (one address or a list), each
    * named token gets a daily spend cap in the session's permissions so the

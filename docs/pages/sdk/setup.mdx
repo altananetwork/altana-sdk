@@ -20,7 +20,7 @@ npm install @altananetwork/sdk viem
 ```ts
 import { createClient, BNB, signerFromPrivateKey } from "@altananetwork/sdk";
 
-const client = createClient({ chains: [BNB] }); // or ETHEREUM, CELO, BNB_TESTNET, CELO_SEPOLIA
+const client = createClient({ chains: [BNB] }); // or ETHEREUM, CELO, BNB_TESTNET, CELO_SEPOLIA, BASE_SEPOLIA
 const signer = signerFromPrivateKey(process.env.PRIVATE_KEY as `0x${string}`);
 
 const wallet = await client.createWallet({ signer });
@@ -34,10 +34,11 @@ console.log(wallet.address);
 | `CELO` | Celo | 42220 | CELO, or USDC, USDT, USDm, EURm or KESm (the relay takes its fee in whichever the wallet holds), plus ETH on Ethereum for Keystore writes |
 | `BNB_TESTNET` | BNB Smart Chain Testnet | 97 | test BNB: [faucet](https://testnet.bnbchain.org/faucet-smart) |
 | `CELO_SEPOLIA` | Celo Sepolia | 11142220 | test CELO: [faucet](https://faucet.celo.org/celo-sepolia), or test USDC, USDm, EURm or KESm; plus Sepolia ETH: [faucet](https://cloud.google.com/application/web3/faucet/ethereum/sepolia) |
+| `BASE_SEPOLIA` | Base Sepolia | 84532 | Base Sepolia ETH, plus Sepolia ETH: [faucet](https://cloud.google.com/application/web3/faucet/ethereum/sepolia) |
 
 BNB Smart Chain and Ethereum are L1s: the [Keystore](/concepts/keystore) is
-on the chain itself. Celo is an L2: the Keystore is on Ethereum (Sepolia on
-testnet) and a KeyStoreCache on Celo mirrors it, which is why the wallet also
+on the chain itself. Celo and Base Sepolia are L2s: the Keystore is on Ethereum (Sepolia on
+testnet) and a KeyStoreCache on the L2 mirrors it, which is why the wallet also
 holds a little of the L1's native token. The SDK handles the L1 write and the
 proof into the cache inside [`grantSession`](/sdk/grant-session) and
 [`revokeSession`](/sdk/revoke-session). `BASE` is also exported, for the L2
@@ -45,14 +46,24 @@ Keystore cache used by [`ensureKeyCached`](/sdk/sync-to-l2).
 
 ## Multiple chains
 
-`createClient` accepts several chains. Pass `chainId` per call to pick one:
+`createClient` accepts several chains. A wallet has the same address on all
+of them. Most calls pick one with `chainId`; sessions are granted and revoked
+on all of them at once:
 
 ```ts
-import { createClient, BNB, ETHEREUM, CELO } from "@altananetwork/sdk";
+import { createClient, NETWORKS } from "@altananetwork/sdk";
 
-const client = createClient({ chains: [BNB, ETHEREUM, CELO], defaultChainId: 56 });
-await client.grantSession({ /* ... */, chainId: 42220 }); // operate on Celo
+const client = createClient({ chains: [...NETWORKS.mainnet], defaultChainId: 56 });
+
+await client.execute({ /* ... */, chainId: 42220 });      // one chain: Celo
+await client.grantSession({ /* ... */ });                  // every chain of the client
+await client.grantSession({ /* ... */, chainIds: [56] });  // or only the ones you list
+await client.revokeSession({ wallet, signer, session });   // wherever the key lives
 ```
+
+`NETWORKS.mainnet` is BNB, Ethereum and Celo; `NETWORKS.testnet` is BNB
+testnet, Celo Sepolia and Base Sepolia. `networkByChainId(id)` returns the
+config for any chain the SDK knows, Sepolia included.
 
 ## What's next
 

@@ -15,6 +15,20 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Breaking
+
+- **`chainId` is gone from session grant and revoke.**
+  `client.revokeSession` acts on every chain the client was configured with
+  and no longer accepts `chainId` (a type error). `client.grantSession`
+  grants on every chain of the client by default; pick chains with
+  `chainIds: number[]` instead of `chainId`. The low-level functions take
+  `{ networks }` instead of `{ network }`. `RevokeSessionResult` is now
+  `{ keyId, status: "revoked" | "failed", legs }` instead of an
+  `ExecuteResult` with `registry` / `cache` reports; `GrantSessionResult`
+  replaces `transactionHash`, `registry` and `cache` with `keyId`, `status`
+  and `legs`. `grantSession` no longer throws when a step fails: check
+  `status`. `onStatus` receives the chain as a second argument.
+
 ### Added
 
 - **Relay fees in the token the wallet holds.** The SDK no longer names the
@@ -45,6 +59,30 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
   to pay every fee in CELO and now pays in whichever of the two the relay
   values higher. Pass `feeToken: NATIVE_TOKEN` to keep paying in CELO. On
   every other chain the relay accepts native only, so nothing changes.
+- **Grant and revoke a session on every chain in one call.**
+  `grantSession` and `revokeSession` act on a set of networks instead of
+  one. Revoke discovers, in parallel, which chains' accounts hold the key and
+  which Keystores list it, then revokes on each: one account leg per chain
+  holding the key, one registry leg per Keystore chain (shared by the L2s
+  behind it, bundled into the account intent when the Keystore chain is itself
+  one of the chains), and one post-revocation cache proof per L2. Grant writes
+  the Keystore once per registry chain, then authorizes the session on each
+  chain and proves it into each L2 cache. Both return a per-chain report
+  (`legs`, each with `chainId`, `kind`, `status`, `transactionHash`, `reason`)
+  and a binary `status` (`granted` / `revoked` or `failed`), never throw for a
+  failed leg, and are safe to call again: a retry only acts on what is still
+  pending. Passkey sessions are now revocable (the revoke used a secp256k1
+  descriptor for every key). New `client.quoteGrantSession` /
+  `client.quoteRevokeSession` (and `quoteGrantSession`, `quoteRevokeSession`,
+  `quoteCalls`) price each leg through the relay's `prepareCalls` without
+  signing, with the payers' balances. New account reads `getKeys`, `getKey`,
+  `accountHasKey`, `keyHashForSessionOrKey`, `keyIdForSessionOrKey`. New
+  configs `BASE_SEPOLIA` (chain 84532, L1 Sepolia, KeyStoreCacheOPStack
+  `0x37ebf8F17c3705568a03fB3A1629AcE7B3D95FFf`), `NETWORKS` (`mainnet`:
+  BNB, Ethereum, Celo; `testnet`: BNB testnet, Celo Sepolia, Base Sepolia)
+  and `networkByChainId`. The MCP `revoke_session` tool revokes across the
+  whole mainnet or testnet group of its chain.
+
 - **L2 execution networks, with Celo and Celo Sepolia.** A network can now
   keep its KeyStore on its L1 and mirror it into a KeyStoreCache on the L2:
   `NetworkConfig` gains an optional `registry` field naming the L1 and the

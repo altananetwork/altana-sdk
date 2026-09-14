@@ -1,4 +1,4 @@
-import { base, bsc, bscTestnet, celo, celoSepolia, mainnet, sepolia } from "viem/chains";
+import { base, baseSepolia, bsc, bscTestnet, celo, celoSepolia, mainnet, sepolia } from "viem/chains";
 import type { Address, Chain } from "viem";
 
 /**
@@ -59,9 +59,9 @@ export type NetworkConfig = {
 export const RELAY_URL = "https://relay.altana.network";
 
 /**
- * Altana testnet relay. Serves BSC testnet (chainId 97) and Celo Sepolia
- * (chainId 11142220). Sepolia and Base Sepolia are keystore-only testnets and
- * have no relay.
+ * Altana testnet relay. Serves BSC testnet (chainId 97), Celo Sepolia
+ * (chainId 11142220) and Base Sepolia (chainId 84532). Sepolia is a
+ * keystore-only testnet with no relay yet.
  */
 export const TESTNET_RELAY_URL = "https://testnet-relay.altana.network";
 
@@ -167,6 +167,32 @@ export const CELO_SEPOLIA: NetworkConfig = {
 };
 
 /**
+ * Base Sepolia (chain 84532). Same shape as Celo Sepolia: wallets run through
+ * the Altana testnet relay with fees in ETH, session keys are registered in
+ * the Sepolia KeyStore and proven into the KeyStoreCacheOPStack contract on
+ * Base Sepolia through the OP-stack `L1Block` predeploy.
+ *
+ * Addresses sourced from the Altana KeyStore deployment manifest:
+ *   <altana-keystore>/deployments/base-sepolia.json
+ */
+export const BASE_SEPOLIA: NetworkConfig = {
+  chain: baseSepolia,
+  chainId: 84532,
+  keyStore: SEPOLIA.keyStore,
+  keyStoreController: SEPOLIA.keyStoreController,
+  publicRpcUrl: "https://sepolia.base.org",
+  explorer: "https://sepolia.basescan.org",
+  relayUrl: TESTNET_RELAY_URL,
+  registry: {
+    kind: "cached",
+    l1: SEPOLIA,
+    // KeyStoreCacheOPStack, deployed 2026-08-20.
+    // Source: <altana-keystore>/deployments/base-sepolia.json.
+    keyStoreCache: "0x37ebf8F17c3705568a03fB3A1629AcE7B3D95FFf",
+  },
+};
+
+/**
  * Celo (chain 42220). Wallets run through the Altana relay with fees in
  * CELO; session keys are registered in the Ethereum KeyStore and proven into
  * the KeyStoreCache on Celo.
@@ -195,6 +221,35 @@ export const CELO: NetworkConfig = {
  */
 export function registryNetwork(network: NetworkConfig): NetworkConfig {
   return network.registry?.kind === "cached" ? network.registry.l1 : network;
+}
+
+/**
+ * The networks a wallet executes on, grouped by environment. Pass a group as
+ * a client's `chains` to grant and revoke session keys on every one of them.
+ * Registry-only chains (Sepolia) are not listed: they are reached as the
+ * registry of the cached networks in the group.
+ */
+export const NETWORKS: {
+  readonly mainnet: readonly NetworkConfig[];
+  readonly testnet: readonly NetworkConfig[];
+} = {
+  mainnet: [BNB, ETHEREUM, CELO],
+  testnet: [BNB_TESTNET, CELO_SEPOLIA, BASE_SEPOLIA],
+};
+
+const KNOWN_NETWORKS: readonly NetworkConfig[] = [
+  ETHEREUM,
+  BNB,
+  CELO,
+  BNB_TESTNET,
+  SEPOLIA,
+  CELO_SEPOLIA,
+  BASE_SEPOLIA,
+];
+
+/** The SDK's config for a chainId, registry-only chains included, or undefined. */
+export function networkByChainId(chainId: number): NetworkConfig | undefined {
+  return KNOWN_NETWORKS.find((n) => n.chainId === chainId);
 }
 
 /**

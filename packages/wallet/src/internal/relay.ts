@@ -67,7 +67,7 @@ export function buildRelayClient(network: NetworkConfig) {
   if (!network.relayUrl) {
     throw new Error(
       `No Altana relay serves chain ${network.chainId} (${network.chain.name}). ` +
-        `The testnet relay serves BSC testnet (97) and Celo Sepolia (11142220); ` +
+        `The testnet relay serves BSC testnet (97), Celo Sepolia (11142220) and Base Sepolia (84532); ` +
         `Sepolia and other keystore-only networks cannot execute through a relay.`,
     );
   }
@@ -388,6 +388,120 @@ export async function submitCallsDetailed(
   calls: readonly Call[],
   opts: SubmitCallsOptions,
 ): Promise<SubmitCallsResult> {
+  const { prepared, signingKeyForPorto, isAdmin } = await prepareIntent(
+    client,
+    walletAddress,
+    signer,
+    calls,
+    opts,
+  );
+  const feeToken = paymentTokenFromPrepared(prepared);
+
+  // Porto's signCalls dispatches by `key`: for secp256k1 / webauthn-p256
+  // keys with embedded signing material, it calls Key.sign which produces
+  // the correctly-wrapped signature. We only need to hand it the key —
+  // except when the signer carries custom WebAuthn functions (React Native
+  // etc.), which signCalls cannot forward; signPreparedCalls handles that.
+  const customWebAuthn =
+    isPasskeySigner(signer) && signer.webAuthn?.getFn
+      ? { getFn: signer.webAuthn.getFn }
+      : undefined;
+  const signature = customWebAuthn
+    ? await signPreparedCalls(prepared, signingKeyForPorto, customWebAuthn)
+    : await signCalls(prepared, {
+        key: signingKeyForPorto,
+      } as any);
+
+  // For non-EOA paths (sessions, passkey admin), the relay needs to know
+  // which key authority signed so it can verify with the right scheme.
+  // The privateKey admin path can omit this — Porto infers from the EOA.
+  const sendKey =
+    !isAdmin || isPasskeySigner(signer) ? signingKeyForPorto : undefined;
+
+  const sent: any = await withRelayReason(
+    () =>
+      sendPreparedCalls(client as any, {
+        context: prepared.context,
+        capabilities: prepared.capabilities,
+        signature,
+        ...(sendKey ? { key: sendKey } : {}),
+      } as any),
+    "submit the call",
+    { client, network: opts.network },
+  );
+
+  return { callsId: (sent?.id ?? sent) as Hex, ...(feeToken ? { feeToken } : {}) };
+}
+
+/** What the relay would charge for an intent, without signing or sending it. */
+export type CallsQuote = {
+  /** Maximum fee the intent pays, in `feeToken` base units, summed over the relay's quotes. */
+  fee: bigint;
+  /** The token the relay is charging its fee in (the zero address is native). */
+  feeToken: Address;
+  /** Native value the intent's calls carry (registration fees), first-action prepend included. */
+  value: bigint;
+  /** How much fee token the payer is missing, as the relay reports it. 0 when funded. */
+  feeTokenDeficit: bigint;
+};
+
+/**
+ * Quotes an intent: the same preparation as submitCalls (first-action
+ * prepend, key descriptors, registry-target guard), then the relay's quote,
+ * with nothing signed or sent. For a passkey admin this does not prompt.
+ */
+export async function quoteCalls(
+  client: ReturnType<typeof buildRelayClient>,
+  walletAddress: Address,
+  signer: Signer,
+  calls: readonly Call[],
+  opts: SubmitCallsOptions,
+): Promise<CallsQuote> {
+  const { prepared, effectiveCalls, feeToken } = await prepareIntent(client, walletAddress, signer, calls, opts);
+  return {
+    ...feeFromPrepared(prepared),
+    // The token the relay quoted in; the one the rule named when the quote does not say.
+    feeToken: paymentTokenFromPrepared(prepared) ?? feeToken ?? NATIVE_TOKEN,
+    value: effectiveCalls.reduce((sum, c) => sum + (c.value ?? 0n), 0n),
+  };
+}
+
+/** Reads the fee out of a prepareCalls response (porto decodes the quote's hex amounts). */
+export function feeFromPrepared(prepared: any): { fee: bigint; feeTokenDeficit: bigint } {
+  const quotes: any[] = prepared?.context?.quote?.quotes ?? [];
+  if (quotes.length === 0) {
+    throw new Error("The relay's prepareCalls response carried no quote to read a fee from.");
+  }
+  let fee = 0n;
+  let feeTokenDeficit = 0n;
+  for (const q of quotes) {
+    fee += toBigInt(q?.intent?.totalPaymentMaxAmount);
+    feeTokenDeficit += toBigInt(q?.feeTokenDeficit);
+  }
+  return { fee, feeTokenDeficit };
+}
+
+function toBigInt(x: unknown): bigint {
+  if (typeof x === "bigint") return x;
+  if (typeof x === "number") return BigInt(x);
+  if (typeof x === "string" && x.length > 0) return BigInt(x);
+  return 0n;
+}
+
+async function prepareIntent(
+  client: ReturnType<typeof buildRelayClient>,
+  walletAddress: Address,
+  signer: Signer,
+  calls: readonly Call[],
+  opts: SubmitCallsOptions,
+): Promise<{
+  prepared: any;
+  signingKeyForPorto: any;
+  isAdmin: boolean;
+  effectiveCalls: readonly Call[];
+  /** The fee token named in the request, if the fee token rule named one. */
+  feeToken: Address | undefined;
+}> {
   const isAdmin = opts.submittingKey.role === "admin";
 
   // On a cached network (Celo Sepolia, Celo) the KeyStore contracts do not
@@ -494,42 +608,8 @@ export async function submitCallsDetailed(
     "prepare the call",
     { client, network: opts.network },
   );
-  const feeToken = paymentTokenFromPrepared(prepared);
 
-  // Porto's signCalls dispatches by `key`: for secp256k1 / webauthn-p256
-  // keys with embedded signing material, it calls Key.sign which produces
-  // the correctly-wrapped signature. We only need to hand it the key —
-  // except when the signer carries custom WebAuthn functions (React Native
-  // etc.), which signCalls cannot forward; signPreparedCalls handles that.
-  const customWebAuthn =
-    isPasskeySigner(signer) && signer.webAuthn?.getFn
-      ? { getFn: signer.webAuthn.getFn }
-      : undefined;
-  const signature = customWebAuthn
-    ? await signPreparedCalls(prepared, signingKeyForPorto, customWebAuthn)
-    : await signCalls(prepared, {
-        key: signingKeyForPorto,
-      } as any);
-
-  // For non-EOA paths (sessions, passkey admin), the relay needs to know
-  // which key authority signed so it can verify with the right scheme.
-  // The privateKey admin path can omit this — Porto infers from the EOA.
-  const sendKey =
-    !isAdmin || isPasskeySigner(signer) ? signingKeyForPorto : undefined;
-
-  const sent: any = await withRelayReason(
-    () =>
-      sendPreparedCalls(client as any, {
-        context: prepared.context,
-        capabilities: prepared.capabilities,
-        signature,
-        ...(sendKey ? { key: sendKey } : {}),
-      } as any),
-    "submit the call",
-    { client, network: opts.network },
-  );
-
-  return { callsId: (sent?.id ?? sent) as Hex, ...(feeToken ? { feeToken } : {}) };
+  return { prepared, signingKeyForPorto, isAdmin, effectiveCalls, feeToken: chosenFeeToken };
 }
 
 /**

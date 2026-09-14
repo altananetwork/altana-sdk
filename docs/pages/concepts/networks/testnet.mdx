@@ -1,11 +1,11 @@
 ---
 title: Testnet
-description: "Altana's testnets, BNB Smart Chain Testnet and Celo Sepolia: RPCs, faucets, relay, and deployed contract addresses."
+description: "Altana's testnets, BNB Smart Chain Testnet, Celo Sepolia and Base Sepolia: RPCs, faucets, relay, and deployed contract addresses."
 ---
 
 # Testnet
 
-Altana runs on two testnets, both served by the Altana testnet relay at
+Altana runs on three testnets, all served by the Altana testnet relay at
 `https://testnet-relay.altana.network`:
 
 - **BNB Smart Chain Testnet (chain 97)**: the full stack (keystore, account
@@ -14,6 +14,12 @@ Altana runs on two testnets, both served by the Altana testnet relay at
   deployed there, the KeyStore is on Sepolia and a KeyStoreCache on Celo
   Sepolia mirrors it. SDK configs `CELO_SEPOLIA` and `SEPOLIA`. See
   [Celo Sepolia](#celo-sepolia) below.
+- **Base Sepolia (chain 84532)**: the same shape as Celo Sepolia, behind the
+  same Sepolia KeyStore. SDK config `BASE_SEPOLIA`. See
+  [Base Sepolia](#base-sepolia) below.
+
+`NETWORKS.testnet` lists all three. A client created with it grants and
+revokes a session on all of them in one call.
 
 To see registered keys and sessions on testnet, use the [Keystore Explorer](/explorer) at
 [testnet.altana.network](https://testnet.altana.network). For raw transactions, use
@@ -130,10 +136,34 @@ Stablecoins for [x402](/sdk/x402-server#celo) (both 6 decimals):
 | USDC | `0x01C5C0122039549AD1493B8220cABEdD739BC44E` | eip3009, permit2-exact (EIP-712 domain `USDC` / `2`) |
 | USDT | `0xd077A400968890Eacc75cdc901F0356c943e4fDb` | permit2-exact only |
 
+## Base Sepolia: `BASE_SEPOLIA`
+
+Wallets execute through the Altana testnet relay on Base Sepolia with fees in
+ETH. Their sessions are recorded in the Sepolia [Keystore](/concepts/keystore),
+the same one behind Celo Sepolia, and proven into the KeyStoreCache on Base
+Sepolia. A session granted on both L2s is written to Sepolia once.
+
+- **Chain id:** 84532
+- **Public RPC:** `https://sepolia.base.org`
+- **Explorer:** https://sepolia.basescan.org
+- **Relay:** `https://testnet-relay.altana.network`
+- **Keystore:** Sepolia (below)
+
+What to fund, and where:
+
+| Chain | Asset | Used for |
+| --- | --- | --- |
+| Base Sepolia | ETH | Relay fees for wallet actions |
+| Sepolia | ETH | Keystore writes, sent from the wallet's admin key |
+
+| Contract | Address |
+| --- | --- |
+| KeyStoreCache (KeyStoreCacheOPStack) | `0x37ebf8F17c3705568a03fB3A1629AcE7B3D95FFf` |
+
 ## Sepolia: `SEPOLIA`
 
-Hosts the testnet KeyStore behind Celo Sepolia. It has no relay; the SDK
-reaches it as `registryNetwork(CELO_SEPOLIA)`.
+Hosts the testnet KeyStore behind Celo Sepolia and Base Sepolia. It has no
+relay yet; the SDK reaches it as `registryNetwork(CELO_SEPOLIA)`.
 
 - **Chain id:** 11155111
 - **Public RPC:** `https://ethereum-sepolia-rpc.publicnode.com`

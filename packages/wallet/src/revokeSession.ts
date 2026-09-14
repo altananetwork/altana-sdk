@@ -1,242 +1,251 @@
-import { keccak256, type Address, type Hex } from "viem";
-import { type NetworkConfig } from "./config.js";
+import { type Address, type Hex } from "viem";
+import { registryNetwork, type NetworkConfig } from "./config.js";
 import type { Signer } from "./internal/signer.js";
 import {
-  buildPublicClient,
-  buildRelayClient,
-  submitCalls,
-  waitForCalls,
-  type KeyDescriptor,
-} from "./internal/relay.js";
-import { buildRevokeKeyCall, readIsValidKey } from "./internal/keystore.js";
-import { isCachedRegistry, submitRegistryCalls } from "./internal/cachedRegistry.js";
+  keyHashForSessionOrKey,
+  keyIdForSessionOrKey,
+  sessionKeyDescriptor,
+} from "./internal/account.js";
+import { buildRevokeKeyCall } from "./internal/keystore.js";
+import { isCachedRegistry } from "./internal/cachedRegistry.js";
+import {
+  allLegsSucceeded,
+  errorMessage,
+  hasCache,
+  legFromCacheReport,
+  legFromOutcome,
+  orderLegs,
+  realSessionLegDeps,
+  registriesOf,
+  settle,
+  skippedLeg,
+  uniqueNetworks,
+  type IntentOutcome,
+  type SessionLegDeps,
+} from "./internal/sessionLegs.js";
 import type {
-  CacheSyncReport,
-  RegistryWriteReport,
+  RevokeLeg,
+  RevokeSessionStatus,
   Session,
+  SessionLeg,
+  SessionStatusDetail,
 } from "./internal/sessions.js";
-import type { ExecuteResult, Wallet } from "./internal/types.js";
-import { proveIntoCache } from "./syncSessionToCache.js";
+import type { Wallet } from "./internal/types.js";
 
 
 /**
- * What revokeSession returns. On a network with a local KeyStore it is the
- * plain ExecuteResult of the one revoke intent. On an L2 the account revoke
- * is the ExecuteResult, and the two follow-up steps on the L1 and the cache
- * are reported alongside it.
+ * What revokeSession returns.
+ *
+ * `status` is `revoked` only when every leg confirmed or had nothing to do:
+ * no account on the given networks holds the key, no registry lists it as
+ * valid, and no cache reports it live. Any failed leg makes it `failed`, and
+ * `legs` says which chain and why. Calling revokeSession again is safe and
+ * only acts on what is still pending.
  */
-export type RevokeSessionResult = ExecuteResult & {
-  /** L2 only: the KeyStore revoke on the L1. Reported, never thrown. */
-  registry?: RegistryWriteReport;
-  /** L2 only: the post-revocation proof into the L2 KeyStoreCache. Reported, never thrown. */
-  cache?: CacheSyncReport;
+export type RevokeSessionResult = {
+  /** The session's KeyStore keyId. */
+  keyId: Hex;
+  status: "revoked" | "failed";
+  legs: RevokeLeg[];
+};
+
+export type RevokeSessionOptions = {
+  /** Every network to revoke on. Only the ones whose account holds the key get an account leg. */
+  networks: readonly NetworkConfig[];
+  /**
+   * Relay fee token on the account legs and cache proofs. Omitted, the relay
+   * charges whichever accepted token the wallet holds.
+   */
+  feeToken?: Address;
+  onStatus?: (status: RevokeSessionStatus, detail?: SessionStatusDetail) => void;
 };
 
 /**
- * Revoke a session key from a wallet on-chain. After confirmation, the
- * session's next execute attempt fails at validator level.
+ * Revoke a session key everywhere it lives.
  *
- * Accepts either a Session object or just the session's public key when
- * you've persisted the session metadata in your app.
+ * Accepts a Session or just the session's public key when you've persisted
+ * the session metadata in your app. Pass the Session for a passkey session:
+ * a bare public key is read as secp256k1.
  *
- * On an L2 (Celo Sepolia, Celo) the order is: account revoke on
- * the network first (this is what strips the session's power, and it is the
- * only step that throws), then the registry revoke on the registry chain,
- * then a post-revocation proof into the network's cache so third parties
- * reading the cache stop seeing a live key. Steps two and three are reported
- * in the result; a failure there leaves a stale registry or cache entry that
- * `registerSessionKey` cannot fix (revocation is monotonic) but a retry of
- * `revokeSession` or `syncSessionToCache` can.
+ * 1. Discovery: reads, in parallel, which of `networks` hold the key on the
+ *    account, and which of their registry chains list it as valid.
+ * 2. Revoke, in parallel: one account leg per network holding the key, and
+ *    one registry leg per registry chain that lists it. When the registry
+ *    chain is itself a network holding the key (BNB, Ethereum), the registry
+ *    revoke rides in that account leg's intent.
+ * 3. Cache: for each cached network, once its registry revoke confirmed (and
+ *    its own account leg finished), a post-revocation proof into its
+ *    KeyStoreCache so third parties reading the cache stop seeing a live key.
+ *    A cache still showing the key live after an earlier run is proven again.
+ *
+ * Never throws for a failed leg. Throws only for an empty `networks`.
  */
 export async function revokeSession(
   wallet: Wallet,
   adminSigner: Signer,
   sessionOrPublicKey: Session | Hex,
-  config: { network: NetworkConfig; feeToken?: Address },
+  options: RevokeSessionOptions,
 ): Promise<RevokeSessionResult> {
-  const network = config.network;
-  // Undefined lets the relay charge whichever accepted token the wallet holds.
-  const feeToken = config.feeToken;
-
-  const sessionPublicKey =
-    typeof sessionOrPublicKey === "string"
-      ? sessionOrPublicKey
-      : sessionOrPublicKey.publicKey;
-
-  const sessionKeyDesc: KeyDescriptor = {
-    type: "secp256k1",
-    publicKey: sessionPublicKey,
-    role: "session",
-  };
-
-  const adminKeyDesc: KeyDescriptor = {
-    type: "secp256k1",
-    publicKey: adminSigner.publicKey,
-    role: "admin",
-  };
-
-  const relayClient = buildRelayClient(network);
-  const publicClient = buildPublicClient(network);
-  const keyId = keccak256(sessionPublicKey);
-
-  if (isCachedRegistry(network)) {
-    return revokeOnCachedNetwork(wallet, adminSigner, sessionPublicKey, keyId, {
-      network,
-      ...(feeToken ? { feeToken } : {}),
-      sessionKeyDesc,
-      adminKeyDesc,
-    });
-  }
-
-  // Revoke in KeyStore alongside revoking on Porto. KeyStore is the
-  // public registry — leaving a revoked session there would be a stale
-  // record that other tools would still treat as active. Both ops land in
-  // the same userOp. Revocation is monotonic in v1.0.0.
-  //
-  // Gated on the key actually being registered: sessions granted with
-  // `register: false` have no KeyStore entry, and revoking a missing keyId
-  // would revert — taking the account-level revoke (the one that removes the
-  // session's authority) down with it, since the bundle is atomic.
-  const isRegistered = await readIsValidKey(
-    publicClient,
-    network,
-    wallet.address,
-    keyId,
-  );
-  const revokeCalls = isRegistered
-    ? [buildRevokeKeyCall({ walletAddress: wallet.address, keyId, network })]
-    : [];
-
-  const callsId = await submitCalls(
-    relayClient,
-    wallet.address,
-    adminSigner,
-    revokeCalls,
-    {
-      ...(feeToken ? { feeToken } : {}),
-      submittingKey: adminKeyDesc,
-      revokeKeys: [sessionKeyDesc],
-      network,
-    },
-  );
-
-  const result = await waitForCalls(relayClient, callsId);
-  return {
-    callsId,
-    status: result.status as ExecuteResult["status"],
-    ...(result.statusCode !== undefined ? { statusCode: result.statusCode } : {}),
-    ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
-  };
+  return runRevokeSession(wallet, adminSigner, sessionOrPublicKey, options, realSessionLegDeps);
 }
 
-async function revokeOnCachedNetwork(
+/** revokeSession with its chain I/O injected. Internal: tests call it with fakes. */
+export async function runRevokeSession(
   wallet: Wallet,
   adminSigner: Signer,
-  sessionPublicKey: Hex,
-  keyId: Hex,
-  ctx: {
-    network: NetworkConfig & { registry: { kind: "cached"; l1: NetworkConfig; keyStoreCache: Address } };
-    feeToken?: Address;
-    sessionKeyDesc: KeyDescriptor;
-    adminKeyDesc: KeyDescriptor;
-  },
+  sessionOrPublicKey: Session | Hex,
+  options: RevokeSessionOptions,
+  deps: SessionLegDeps,
 ): Promise<RevokeSessionResult> {
-  const { network, feeToken } = ctx;
-  const registry = network.registry.l1;
-  const relayClient = buildRelayClient(network);
-
-  // 1. Account revoke on the network. The only step that can throw.
-  const callsId = await submitCalls(relayClient, wallet.address, adminSigner, [], {
-    ...(feeToken ? { feeToken } : {}),
-    submittingKey: ctx.adminKeyDesc,
-    revokeKeys: [ctx.sessionKeyDesc],
-    network,
-  });
-  const account = await waitForCalls(relayClient, callsId);
-  const base: ExecuteResult = {
-    callsId,
-    status: account.status as ExecuteResult["status"],
-    ...(account.statusCode !== undefined ? { statusCode: account.statusCode } : {}),
-    ...(account.transactionHash ? { transactionHash: account.transactionHash } : {}),
-  };
-  if (account.status !== "CONFIRMED") {
-    // The session still has its account authority; nothing downstream is
-    // meaningful until that lands.
-    return {
-      ...base,
-      registry: {
-        chainId: registry.chainId,
-        via: "skipped",
-        status: "SKIPPED",
-        reason: `account revoke did not confirm (status ${account.status})`,
-      },
-      cache: {
-        chainId: network.chainId,
-        status: "SKIPPED",
-        reason: `account revoke did not confirm (status ${account.status})`,
-      },
-    };
+  const networks = uniqueNetworks(options.networks);
+  if (networks.length === 0) {
+    throw new Error("revokeSession: pass at least one network in `networks`.");
   }
+  const feeToken = options.feeToken;
+  const onStatus = options.onStatus;
+  const publicKey =
+    typeof sessionOrPublicKey === "string" ? sessionOrPublicKey : sessionOrPublicKey.publicKey;
+  const keyId = keyIdForSessionOrKey(sessionOrPublicKey);
+  const keyHash = keyHashForSessionOrKey(sessionOrPublicKey);
+  const descriptor = sessionKeyDescriptor(sessionOrPublicKey);
+  const legs: SessionLeg[] = [];
 
-  // 2. Registry revoke on the registry chain. Reported, not thrown.
-  let registryReport: RegistryWriteReport;
-  try {
-    const registryClient = buildPublicClient(registry);
-    const isRegistered = await readIsValidKey(registryClient, registry, wallet.address, keyId);
-    if (!isRegistered) {
-      registryReport = {
-        chainId: registry.chainId,
-        via: "skipped",
-        status: "SKIPPED",
-        reason: "not registered (or already revoked) on the registry chain",
-      };
-    } else {
-      const written = await submitRegistryCalls({
-        network,
-        walletAddress: wallet.address,
-        adminSigner,
-        registryClient,
-        calls: [buildRevokeKeyCall({ walletAddress: wallet.address, keyId, network: registry })],
+  // 1. Discovery.
+  onStatus?.("discovery");
+  const registries = registriesOf(networks);
+  const [accountReads, registryReads] = await Promise.all([
+    Promise.all(networks.map((n) => settle(deps.accountHasKey(n, wallet.address, keyHash)))),
+    Promise.all(registries.map((r) => settle(deps.isValidRegistryKey(r, wallet.address, keyId)))),
+  ]);
+
+  const holding: NetworkConfig[] = [];
+  networks.forEach((n, i) => {
+    const read = accountReads[i]!;
+    if ("error" in read) {
+      legs.push({
+        chainId: n.chainId,
+        kind: "account",
+        status: "FAILED",
+        reason: `could not read the account's keys: ${read.error}`,
       });
-      registryReport = {
-        chainId: written.chainId,
-        via: written.via,
-        status: written.status,
-        ...(written.transactionHash ? { transactionHash: written.transactionHash } : {}),
-        ...(written.blockNumber !== undefined ? { blockNumber: written.blockNumber } : {}),
-      };
+    } else if (read.value) {
+      holding.push(n);
     }
-  } catch (err) {
-    registryReport = {
-      chainId: registry.chainId,
-      via: registry.relayUrl ? "relay" : "eoa",
-      status: "FAILED",
-      reason: err instanceof Error ? err.message : String(err),
-    };
-  }
+  });
 
-  // 3. Post-revocation proof into the cache, so the cache stops reporting a
-  // live key. Only meaningful once the registry revoke has landed.
-  let cacheReport: CacheSyncReport;
-  if (registryReport.status === "CONFIRMED") {
-    cacheReport = await proveIntoCache(
+  // registry chainId -> whether it lists the key (undefined: the read failed).
+  const registryValid = new Map<number, boolean>();
+  registries.forEach((r, i) => {
+    const read = registryReads[i]!;
+    if ("error" in read) {
+      legs.push({
+        chainId: r.chainId,
+        kind: "registry",
+        status: "FAILED",
+        reason: `could not read the registry: ${read.error}`,
+      });
+    } else {
+      registryValid.set(r.chainId, read.value);
+      if (!read.value) {
+        legs.push(skippedLeg(r.chainId, "registry", "not registered (or already revoked)"));
+      }
+    }
+  });
+
+  // 2. Revoke. A registry that is itself a network holding the key bundles
+  // its revoke into that account leg; the rest get a leg of their own.
+  const bundled = new Set(
+    holding
+      .filter((n) => !isCachedRegistry(n) && registryValid.get(n.chainId) === true)
+      .map((n) => n.chainId),
+  );
+  const accountDone = new Map<number, Promise<IntentOutcome>>();
+  const registryDone = new Map<number, Promise<IntentOutcome>>();
+
+  for (const n of holding) {
+    const bundle = bundled.has(n.chainId);
+    onStatus?.("account-revoke", { chainId: n.chainId });
+    const done = deps.submitAccountIntent(n, {
       wallet,
       adminSigner,
-      sessionPublicKey,
-      network,
-      registryReport.blockNumber,
-      feeToken,
-    );
-  } else {
-    cacheReport = {
-      chainId: network.chainId,
-      status: "SKIPPED",
-      reason:
-        registryReport.status === "SKIPPED"
-          ? "no registry entry to propagate"
-          : `registry revoke ${registryReport.status.toLowerCase()}`,
-    };
+      calls: bundle ? [buildRevokeKeyCall({ walletAddress: wallet.address, keyId, network: n })] : [],
+      ...(feeToken ? { feeToken } : {}),
+      revokeKeys: [descriptor],
+      needBlockNumber: bundle,
+    });
+    accountDone.set(n.chainId, done);
+    if (bundle) registryDone.set(n.chainId, done);
+  }
+  const accountLegs = holding.map(async (n) =>
+    legFromOutcome(n.chainId, "account", await accountDone.get(n.chainId)!),
+  );
+
+  const registryLegs: Promise<SessionLeg>[] = [];
+  for (const r of registries) {
+    if (registryValid.get(r.chainId) !== true) continue;
+    if (bundled.has(r.chainId)) {
+      registryLegs.push(
+        registryDone.get(r.chainId)!.then((o) => legFromOutcome(r.chainId, "registry", o, "bundled")),
+      );
+      continue;
+    }
+    onStatus?.("registry-write", { chainId: r.chainId });
+    const done = deps.submitRegistry(r, {
+      wallet,
+      adminSigner,
+      calls: [buildRevokeKeyCall({ walletAddress: wallet.address, keyId, network: r })],
+    });
+    registryDone.set(r.chainId, done);
+    registryLegs.push(done.then((o) => legFromOutcome(r.chainId, "registry", o, o.via)));
   }
 
-  return { ...base, registry: registryReport, cache: cacheReport };
+  // 3. Cache proofs, per cached network.
+  const cacheLegs = networks.filter(isCachedRegistry).map(async (n): Promise<SessionLeg | undefined> => {
+    const l1 = registryNetwork(n).chainId;
+    if (!registryValid.has(l1)) return undefined; // registry read failed; already a failed leg
+
+    const ownAccount = accountDone.get(n.chainId);
+    const registryWrite = registryDone.get(l1);
+    let afterL1Block: bigint | undefined;
+    if (registryWrite) {
+      const [written] = await Promise.all([registryWrite, ownAccount]);
+      if (written.status !== "CONFIRMED") {
+        return skippedLeg(n.chainId, "cache", `registry revoke on chain ${l1} did not confirm`);
+      }
+      if (!hasCache(n)) return skippedLeg(n.chainId, "cache", "no KeyStoreCache configured");
+      afterL1Block = written.blockNumber;
+    } else {
+      if (!hasCache(n)) return undefined;
+      // Registry already clean. Prove again only if this cache still shows the key live.
+      let live: boolean;
+      try {
+        live = await deps.cacheHoldsLiveKey(n, wallet.address, keyId);
+      } catch (err) {
+        return {
+          chainId: n.chainId,
+          kind: "cache",
+          status: "FAILED",
+          reason: `could not read the cache: ${errorMessage(err)}`,
+        };
+      }
+      if (!live) return undefined;
+      await ownAccount;
+    }
+    onStatus?.("cache-sync", { chainId: n.chainId });
+    return legFromCacheReport(
+      await deps.proveIntoCache(wallet, adminSigner, publicKey, n, afterL1Block, feeToken),
+    );
+  });
+
+  const settled = await Promise.all([
+    Promise.all(accountLegs),
+    Promise.all(registryLegs),
+    Promise.all(cacheLegs),
+  ]);
+  legs.push(...settled[0], ...settled[1]);
+  for (const leg of settled[2]) if (leg) legs.push(leg);
+
+  onStatus?.("done");
+  const ordered = orderLegs(legs);
+  return { keyId, status: allLegsSucceeded(ordered) ? "revoked" : "failed", legs: ordered };
 }

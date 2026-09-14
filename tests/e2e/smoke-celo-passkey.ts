@@ -33,6 +33,7 @@ import {
 } from "@altananetwork/sdk";
 import { createPublicClient, createWalletClient, formatEther, http, parseEther, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { assertStatus, legOf, printLegs } from "./session-legs.js";
 
 const TEST_FUNDER_KEY = process.env.TEST_FUNDER_KEY as Hex;
 if (!TEST_FUNDER_KEY) {
@@ -95,17 +96,13 @@ async function main() {
 
   // 5a. A registered grant must throw the documented error (no relay on Sepolia, P256 admin).
   console.log("\n[5a] grantSession with register: true must refuse (passkey admin, relay-less registry chain)");
-  let refused = "";
-  try {
-    await client.grantSession({
-      wallet,
-      signer: passkey,
-      permissions: { calls: [{ to: funder.address }] },
-      expiry: Math.floor(Date.now() / 1000) + 3600,
-    });
-  } catch (err) {
-    refused = err instanceof Error ? err.message : String(err);
-  }
+  const refusedGrant = await client.grantSession({
+    wallet,
+    signer: passkey,
+    permissions: { calls: [{ to: funder.address }] },
+    expiry: Math.floor(Date.now() / 1000) + 3600,
+  });
+  const refused = refusedGrant.status === "failed" ? (refusedGrant.legs.find((l) => l.status === "FAILED")?.reason ?? "") : "";
   if (!/passkey \(P256\) admin cannot sign one/.test(refused)) {
     throw new Error(`expected the documented passkey refusal, got: ${refused.slice(0, 200) || "no error"}`);
   }
@@ -121,11 +118,10 @@ async function main() {
     expiry: Math.floor(Date.now() / 1000) + 3600,
     onStatus: (s) => console.log(`    status: ${s} [${ms(t0)}]`),
   });
-  console.log("    account tx:", session.transactionHash);
-  console.log("    registry:  ", show(session.registry));
-  console.log("    cache:     ", show(session.cache));
-  if (session.registry?.status !== "SKIPPED" || session.cache?.status !== "SKIPPED") {
-    throw new Error("expected registry and cache steps to be skipped for register: false");
+  printLegs(session.legs);
+  assertStatus(session, "granted", "grantSession");
+  if (session.legs.some((l) => l.kind === "registry") || legOf(session.legs, "cache", CELO_SEPOLIA.chainId).status !== "SKIPPED") {
+    throw new Error("expected no registry write and a skipped cache step for register: false");
   }
   console.log(`    granted [${ms(t0)}]`);
 
@@ -139,10 +135,9 @@ async function main() {
   // 7. Revoke
   console.log("\n[7] revokeSession (passkey admin)");
   const revokeRes = await client.revokeSession({ wallet, signer: passkey, session });
-  console.log("    account:", revokeRes.status, revokeRes.transactionHash, `[${ms(t0)}]`);
-  console.log("    registry:", show(revokeRes.registry));
-  console.log("    cache:   ", show(revokeRes.cache));
-  if (revokeRes.status !== "CONFIRMED") throw new Error("account revoke failed");
+  console.log("    status:", revokeRes.status, `[${ms(t0)}]`);
+  printLegs(revokeRes.legs);
+  assertStatus(revokeRes, "revoked", "revokeSession");
 
   console.log("\n==================================================");
   console.log(`Total wall-clock: ${ms(t0)}`);

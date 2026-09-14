@@ -31,7 +31,12 @@ import { grantSession as grantSessionImpl } from "./grantSession.js";
 import { revokeSession as revokeSessionImpl } from "./revokeSession.js";
 import { registerSessionKey as registerSessionKeyImpl } from "./registerSessionKey.js";
 import type { RegisterSessionKeyResult } from "./registerSessionKey.js";
-import type { RevokeSessionResult } from "./revokeSession.js";
+import type { RevokeSessionOptions, RevokeSessionResult } from "./revokeSession.js";
+import {
+  quoteGrantSession as quoteGrantSessionImpl,
+  quoteRevokeSession as quoteRevokeSessionImpl,
+  type SessionQuote,
+} from "./quoteSession.js";
 import {
   syncSessionToCache as syncSessionToCacheImpl,
   type SyncSessionToCacheOptions,
@@ -110,15 +115,26 @@ export type ClientGrantSessionOptions = {
    * (see `feeSpendLimit`). One address or a list.
    */
   feeToken?: Address | readonly Address[];
-} & GrantSessionOptions &
-  ChainSelector;
+  /** The chains to grant on. Defaults to every chain the client was configured with. */
+  chainIds?: readonly number[];
+  chainId?: never;
+} & GrantSessionOptions;
 
+/**
+ * Revokes on every chain the client was configured with: the SDK finds the
+ * chains whose account holds the key. There is no per-chain selector.
+ */
 export type ClientRevokeSessionOptions = {
   wallet: Wallet;
   signer: Signer;
   session: Session | Hex;
   feeToken?: Address;
-} & ChainSelector;
+  onStatus?: RevokeSessionOptions["onStatus"];
+  chainId?: never;
+};
+
+export type ClientQuoteGrantSessionOptions = Omit<ClientGrantSessionOptions, "onStatus">;
+export type ClientQuoteRevokeSessionOptions = Omit<ClientRevokeSessionOptions, "onStatus">;
 
 export type ClientRegisterSessionKeyOptions = {
   wallet: Wallet;
@@ -190,8 +206,14 @@ export type Client = {
     opts?: ClientRecoverFromPasskeyOptions,
   ): Promise<CreateWalletResult & { signer: PasskeySigner }>;
   execute(opts: ClientExecuteOptions): Promise<ExecuteResult>;
+  /** Grant a session on every chain in `chainIds` (default: all of the client's chains). */
   grantSession(opts: ClientGrantSessionOptions): Promise<GrantSessionResult>;
+  /** Revoke a session everywhere it lives across the client's chains. */
   revokeSession(opts: ClientRevokeSessionOptions): Promise<RevokeSessionResult>;
+  /** What grantSession would cost, one line per leg, plus the balances that pay it. */
+  quoteGrantSession(opts: ClientQuoteGrantSessionOptions): Promise<SessionQuote>;
+  /** What revokeSession would cost, one line per leg, plus the balances that pay it. */
+  quoteRevokeSession(opts: ClientQuoteRevokeSessionOptions): Promise<SessionQuote>;
   /** Lazily register a session key granted with `register: false`. Idempotent. */
   registerSessionKey(
     opts: ClientRegisterSessionKeyOptions,
@@ -282,6 +304,22 @@ export function createClient(opts: CreateClientOptions): Client {
     return network;
   }
 
+  function grantNetworks(chainIds?: readonly number[]): NetworkConfig[] {
+    return chainIds ? chainIds.map((id) => resolve(id)) : [...chains];
+  }
+
+  function grantOptions(o: ClientGrantSessionOptions): GrantSessionOptions {
+    return {
+      permissions: o.permissions,
+      expiry: o.expiry,
+      ...(o.sessionSigner ? { sessionSigner: o.sessionSigner } : {}),
+      ...(o.register !== undefined ? { register: o.register } : {}),
+      ...(o.populateCache !== undefined ? { populateCache: o.populateCache } : {}),
+      ...(o.onStatus ? { onStatus: o.onStatus } : {}),
+      ...(o.feeSpendLimit !== undefined ? { feeSpendLimit: o.feeSpendLimit } : {}),
+    };
+  }
+
   return {
     chains,
     defaultChainId,
@@ -323,28 +361,30 @@ export function createClient(opts: CreateClientOptions): Client {
     },
 
     grantSession(o) {
-      return grantSessionImpl(
-        o.wallet,
-        o.signer,
-        {
-          permissions: o.permissions,
-          expiry: o.expiry,
-          ...(o.sessionSigner ? { sessionSigner: o.sessionSigner } : {}),
-          ...(o.register !== undefined ? { register: o.register } : {}),
-          ...(o.populateCache !== undefined ? { populateCache: o.populateCache } : {}),
-          ...(o.onStatus ? { onStatus: o.onStatus } : {}),
-          ...(o.feeSpendLimit !== undefined ? { feeSpendLimit: o.feeSpendLimit } : {}),
-        },
-        {
-          network: resolve(o.chainId),
-          ...(o.feeToken ? { feeToken: o.feeToken } : {}),
-        },
-      );
+      return grantSessionImpl(o.wallet, o.signer, grantOptions(o), {
+        networks: grantNetworks(o.chainIds),
+        ...(o.feeToken ? { feeToken: o.feeToken } : {}),
+      });
     },
 
     revokeSession(o) {
       return revokeSessionImpl(o.wallet, o.signer, o.session, {
-        network: resolve(o.chainId),
+        networks: chains,
+        ...(o.feeToken ? { feeToken: o.feeToken } : {}),
+        ...(o.onStatus ? { onStatus: o.onStatus } : {}),
+      });
+    },
+
+    quoteGrantSession(o) {
+      return quoteGrantSessionImpl(o.wallet, o.signer, grantOptions(o), {
+        networks: grantNetworks(o.chainIds),
+        ...(o.feeToken ? { feeToken: o.feeToken } : {}),
+      });
+    },
+
+    quoteRevokeSession(o) {
+      return quoteRevokeSessionImpl(o.wallet, o.signer, o.session, {
+        networks: chains,
         ...(o.feeToken ? { feeToken: o.feeToken } : {}),
       });
     },

@@ -6,15 +6,18 @@
 import { describe, expect, test } from "bun:test";
 import { getAddress } from "viem";
 import {
+  BASE_SEPOLIA,
   BNB,
   BNB_TESTNET,
   CELO,
   CELO_SEPOLIA,
   ETHEREUM,
   KEYSTORE_CACHE_UNSET,
+  NETWORKS,
   RELAY_URL,
   SEPOLIA,
   TESTNET_RELAY_URL,
+  networkByChainId,
   registryNetwork,
   type NetworkConfig,
 } from "./config.js";
@@ -98,9 +101,50 @@ describe("existing networks are untouched", () => {
   });
 });
 
+describe("BASE_SEPOLIA (cached registry on Sepolia)", () => {
+  test("executes through the testnet relay, registry on Sepolia, OP-stack cache", () => {
+    expect(BASE_SEPOLIA.chainId).toBe(84532);
+    expect(BASE_SEPOLIA.chain.id).toBe(84532);
+    expect(BASE_SEPOLIA.relayUrl).toBe(TESTNET_RELAY_URL);
+    expect(BASE_SEPOLIA.keyStore).toBe(SEPOLIA.keyStore);
+    expect(BASE_SEPOLIA.keyStoreController).toBe(SEPOLIA.keyStoreController);
+    if (BASE_SEPOLIA.registry?.kind !== "cached") throw new Error("BASE_SEPOLIA must be cached");
+    expect(BASE_SEPOLIA.registry.l1).toBe(SEPOLIA);
+    // keyStoreCacheOPStack in <altana-keystore>/deployments/base-sepolia.json, not the gate.
+    expect(BASE_SEPOLIA.registry.keyStoreCache).toBe("0x37ebf8F17c3705568a03fB3A1629AcE7B3D95FFf");
+  });
+});
+
+describe("NETWORKS", () => {
+  test("groups execution networks by environment, registry-only chains excluded", () => {
+    expect(NETWORKS.mainnet.map((n) => n.chainId)).toEqual([56, 1, 42220]);
+    expect(NETWORKS.testnet.map((n) => n.chainId)).toEqual([97, 11142220, 84532]);
+    for (const n of [...NETWORKS.mainnet, ...NETWORKS.testnet]) {
+      expect(n.relayUrl).toBeDefined();
+    }
+  });
+
+  test("the two testnet L2s share Sepolia as their registry", () => {
+    expect(registryNetwork(CELO_SEPOLIA)).toBe(registryNetwork(BASE_SEPOLIA));
+  });
+});
+
+describe("networkByChainId", () => {
+  test("finds every SDK network, registry-only chains included", () => {
+    for (const n of [ETHEREUM, BNB, CELO, BNB_TESTNET, SEPOLIA, CELO_SEPOLIA, BASE_SEPOLIA]) {
+      expect(networkByChainId(n.chainId)).toBe(n);
+    }
+  });
+
+  test("returns undefined for an unknown chain", () => {
+    expect(networkByChainId(8453)).toBeUndefined();
+    expect(networkByChainId(0)).toBeUndefined();
+  });
+});
+
 describe("EIP-55", () => {
   test("every address literal in the configs is checksummed", () => {
-    const configs = [BNB, ETHEREUM, BNB_TESTNET, SEPOLIA, CELO_SEPOLIA, CELO];
+    const configs = [BNB, ETHEREUM, BNB_TESTNET, SEPOLIA, CELO_SEPOLIA, BASE_SEPOLIA, CELO];
     for (const c of configs) {
       for (const addr of [c.keyStore, c.keyStoreController]) {
         expect(getAddress(addr)).toBe(addr);

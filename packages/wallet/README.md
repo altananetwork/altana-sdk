@@ -150,7 +150,7 @@ Full reference: [ERC-8004 agent identity](https://docs.altana.network/sdk/erc800
 ### Networks
 
 ```ts
-import { BNB, ETHEREUM, BASE, BNB_TESTNET, CELO_SEPOLIA, SEPOLIA, CELO } from "@altananetwork/sdk";
+import { BNB, ETHEREUM, BASE, BNB_TESTNET, CELO_SEPOLIA, BASE_SEPOLIA, SEPOLIA, CELO, NETWORKS } from "@altananetwork/sdk";
 ```
 
 | Export | Chain | Role |
@@ -160,6 +160,7 @@ import { BNB, ETHEREUM, BASE, BNB_TESTNET, CELO_SEPOLIA, SEPOLIA, CELO } from "@
 | `BASE` | Base (8453) | L2 KeyStore cache, read-only (`ensureKeyCached`) |
 | `BNB_TESTNET` | BNB testnet (97) | Full-stack testnet |
 | `CELO_SEPOLIA` | Celo Sepolia (11142220) | Testnet L2. KeyStore on Sepolia, cache on Celo Sepolia |
+| `BASE_SEPOLIA` | Base Sepolia (84532) | Testnet L2. KeyStore on Sepolia, cache on Base Sepolia |
 | `SEPOLIA` | Sepolia (11155111) | Testnet L1 KeyStore; no relay |
 | `CELO` | Celo (42220) | L2. KeyStore on Ethereum, cache on Celo |
 
@@ -167,8 +168,10 @@ On an L1 (`BNB`, `ETHEREUM`) the KeyStore is on the chain itself and a grant
 is one relay transaction. On an L2 (`CELO`, `CELO_SEPOLIA`) the KeyStore is
 on the L1 and a KeyStoreCache on the L2 mirrors it: `grantSession` writes the
 L1 KeyStore, authorizes the account through the L2 relay, then proves the
-entry into the L2 cache; the result carries `registry` and `cache` reports.
-`revokeSession` runs the same three steps in reverse.
+entry into the L2 cache. Both `grantSession` and `revokeSession` act on every
+chain of the client at once (`NETWORKS.mainnet` / `NETWORKS.testnet` list the
+groups): revoke finds the chains whose account holds the key, and both report
+one leg per step per chain with a binary `status`.
 `client.syncSessionToCache` runs the proof on its own. Reads go to
 `registryNetwork(network)`, the L1. On testnet the L1 (Sepolia) has no relay,
 so KeyStore writes are direct transactions from the wallet's admin key: fund

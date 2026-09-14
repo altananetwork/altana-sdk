@@ -192,14 +192,28 @@ export type SubmitRegistryCallsArgs = {
 export async function submitRegistryCalls(
   args: SubmitRegistryCallsArgs,
 ): Promise<RegistryWriteResult> {
-  const { network, walletAddress, adminSigner, calls } = args;
+  const { network } = args;
   if (!isCachedRegistry(network)) {
     throw new Error(
       `submitRegistryCalls: ${network.chain.name} keeps its KeyStore locally; ` +
         `use submitCalls on the network itself.`,
     );
   }
-  const registry = network.registry.l1;
+  return submitRegistryWrite(network.registry.l1, args);
+}
+
+/**
+ * Submits registry calls on a registry chain directly: through its relay when
+ * it has one, otherwise as transactions from the admin key. Used for a
+ * registry chain that is not itself one of the networks being operated on
+ * (Sepolia behind Celo Sepolia and Base Sepolia, or Ethereum behind Celo when
+ * the Ethereum account holds no copy of the key).
+ */
+export async function submitRegistryWrite(
+  registry: NetworkConfig,
+  args: Omit<SubmitRegistryCallsArgs, "network">,
+): Promise<RegistryWriteResult> {
+  const { walletAddress, adminSigner, calls } = args;
   const registryClient = args.registryClient ?? buildPublicClient(registry);
   const plan = planRegistryWrite(registry, adminSigner, walletAddress);
 
