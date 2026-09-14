@@ -76,7 +76,7 @@ type SessionLeg = {
 
 ## What it costs
 
-`client.quoteRevokeSession` takes the same options and returns one line per leg (fee and native value, who pays) plus the payers' balances, without signing or sending anything. Each balance's `outflow` is what the relay says the leg takes from the payer (its `feeTokenOutflow`: the fee plus what the leg spends, such as a registration fee). Against a relay that does not report it yet, it falls back to fee plus value, and `outflowFromRelay` is `false`:
+`client.quoteRevokeSession` takes the same options and returns one line per leg (fee and native value, who pays) plus the payers' balances, without signing or sending anything. Each line's `needed`, and each balance's sum of them, is the native amount the leg needs: the fee plus the value it carries, such as a registration fee. When the wallet is short, the relay's own figure is used and `neededFromRelay` is `true`:
 
 ```ts
 const quote = await client.quoteRevokeSession({ wallet, signer: admin, session });

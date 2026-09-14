@@ -444,11 +444,13 @@ export type CallsQuote = {
   /** How much fee token the payer is missing, as the relay reports it. 0 when funded. */
   feeTokenDeficit: bigint;
   /**
-   * The net fee token amount the relay says this intent takes from its payer (its
-   * `feeTokenOutflow`): the fee plus what the calls spend in the fee token, such as a native
-   * registration fee. Absent when the relay does not report it (older relays).
+   * Native wei the wallet needs for this intent: the fee (when paid in the native token) plus the
+   * value the calls carry, such as a registration fee. When the wallet is short, the relay's own
+   * figure for the native token (its asset deficit `required`) is used instead.
    */
-  feeTokenOutflow?: bigint;
+  nativeNeeded: bigint;
+  /** True when `nativeNeeded` is the relay's own figure rather than fee plus value. */
+  nativeNeededFromRelay: boolean;
 };
 
 /**
@@ -463,42 +465,44 @@ export async function quoteCalls(
   calls: readonly Call[],
   opts: SubmitCallsOptions,
 ): Promise<CallsQuote> {
-  // porto decodes the response against its own quote schema, which drops fields it does not
-  // know (feeTokenOutflow), and does not return the raw response. Keep a copy of it here.
-  let raw: unknown;
-  const capturing = {
-    ...client,
-    request: async (args: any, options?: any) => {
-      const result = await (client.request as any)(args, options);
-      if (args?.method === "wallet_prepareCalls") raw = result;
-      return result;
-    },
-  } as typeof client;
-  const { prepared, effectiveCalls, feeToken } = await prepareIntent(capturing, walletAddress, signer, calls, opts);
-  const outflow = feeTokenOutflowFromRaw(raw);
+  const { prepared, effectiveCalls, feeToken: named } = await prepareIntent(client, walletAddress, signer, calls, opts);
+  const { fee, feeTokenDeficit } = feeFromPrepared(prepared);
+  const value = effectiveCalls.reduce((sum, c) => sum + (c.value ?? 0n), 0n);
+  // The token the relay quoted in; the one the rule named when the quote does not say.
+  const feeToken = paymentTokenFromPrepared(prepared) ?? named ?? NATIVE_TOKEN;
   return {
-    ...feeFromPrepared(prepared),
-    // The token the relay quoted in; the one the rule named when the quote does not say.
-    feeToken: paymentTokenFromPrepared(prepared) ?? feeToken ?? NATIVE_TOKEN,
-    value: effectiveCalls.reduce((sum, c) => sum + (c.value ?? 0n), 0n),
-    ...(outflow !== undefined ? { feeTokenOutflow: outflow } : {}),
+    fee,
+    feeTokenDeficit,
+    feeToken,
+    value,
+    ...nativeNeededFromPrepared(prepared, { fee, value, feeToken }),
   };
 }
 
 /**
- * Sums the relay's optional `feeTokenOutflow` over the quotes of a raw `wallet_prepareCalls`
- * response. Undefined unless every quote carries it: a partial sum would understate the need.
+ * Native wei an intent needs from the wallet. The relay only states a balance figure when the
+ * wallet is short: then each quote carries an asset deficit for the native token whose
+ * `required` covers the fee and everything the intent spends. Otherwise the need is the fee (if
+ * paid natively) plus the value the calls carry.
  */
-export function feeTokenOutflowFromRaw(raw: any): bigint | undefined {
-  const quotes: any[] = raw?.context?.quote?.quotes ?? [];
-  if (quotes.length === 0) return undefined;
-  let total = 0n;
+export function nativeNeededFromPrepared(
+  prepared: any,
+  args: { fee: bigint; value: bigint; feeToken: Address },
+): { nativeNeeded: bigint; nativeNeededFromRelay: boolean } {
+  const estimate = args.value + (args.feeToken.toLowerCase() === NATIVE_TOKEN ? args.fee : 0n);
+  const quotes: any[] = prepared?.context?.quote?.quotes ?? [];
+  let fromRelay = 0n;
+  let reported = false;
   for (const q of quotes) {
-    const v = q?.feeTokenOutflow;
-    if (v === undefined || v === null) return undefined;
-    total += toBigInt(v);
+    for (const d of (q?.assetDeficits ?? []) as any[]) {
+      const native = d?.address === null || d?.address === undefined || String(d.address).toLowerCase() === NATIVE_TOKEN;
+      if (!native) continue;
+      fromRelay += toBigInt(d.required);
+      reported = true;
+    }
   }
-  return total;
+  if (reported && fromRelay >= estimate) return { nativeNeeded: fromRelay, nativeNeededFromRelay: true };
+  return { nativeNeeded: estimate, nativeNeededFromRelay: false };
 }
 
 /** Reads the fee out of a prepareCalls response (porto decodes the quote's hex amounts). */

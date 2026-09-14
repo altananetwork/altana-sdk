@@ -11,8 +11,7 @@ import {
   type PublicClient,
 } from "viem";
 import { accountHasKey, getKeys } from "./account.js";
-import { feeFromPrepared, feeTokenOutflowFromRaw } from "./relay.js";
-import { nativeOutflow, type QuoteLine } from "../quoteSession.js";
+import { feeFromPrepared, nativeNeededFromPrepared } from "./relay.js";
 
 const WALLET = "0x1111111111111111111111111111111111111111" as const;
 const HASH = ("0x" + "ab".repeat(32)) as `0x${string}`;
@@ -73,32 +72,42 @@ describe("feeFromPrepared", () => {
   });
 });
 
-describe("feeTokenOutflowFromRaw", () => {
-  test("sums the relay's optional feeTokenOutflow across quotes (hex on the wire)", () => {
-    const raw = { context: { quote: { quotes: [{ feeTokenOutflow: "0x384" }, { feeTokenOutflow: "0x64" }] } } };
-    expect(feeTokenOutflowFromRaw(raw)).toBe(1000n);
-  });
-
-  test("undefined when any quote leaves it out (older relay), never a partial sum", () => {
-    const raw = { context: { quote: { quotes: [{ feeTokenOutflow: "0x384" }, {}] } } };
-    expect(feeTokenOutflowFromRaw(raw)).toBeUndefined();
-    expect(feeTokenOutflowFromRaw(undefined)).toBeUndefined();
-  });
-});
-
-describe("nativeOutflow", () => {
+describe("nativeNeededFromPrepared", () => {
   const NATIVE = "0x0000000000000000000000000000000000000000" as const;
-  const base: QuoteLine = { chainId: 11155111, kind: "registry", payer: WALLET, feeToken: NATIVE, fee: 700n, value: 200n };
+  const TOKEN = "0x00000000000000000000000000000000000000ee" as const;
 
-  test("the relay's outflow wins over the registration fee plus fee", () => {
-    expect(nativeOutflow({ ...base, feeTokenOutflow: 1234n })).toBe(1234n);
+  test("a funded wallet: the fee plus the registration fee, not the registration fee alone", () => {
+    const prepared = { context: { quote: { quotes: [{ intent: { totalPaymentMaxAmount: 700n } }] } } };
+    expect(nativeNeededFromPrepared(prepared, { fee: 700n, value: 200n, feeToken: NATIVE })).toEqual({
+      nativeNeeded: 900n,
+      nativeNeededFromRelay: false,
+    });
   });
 
-  test("without it, the fee plus the value the calls carry, not the value alone", () => {
-    expect(nativeOutflow(base)).toBe(900n);
+  test("a short wallet: the relay's native asset deficit figure is used", () => {
+    const prepared = {
+      context: { quote: { quotes: [{ assetDeficits: [{ address: null, required: 950n, deficit: 950n }] }] } },
+    };
+    expect(nativeNeededFromPrepared(prepared, { fee: 700n, value: 200n, feeToken: NATIVE })).toEqual({
+      nativeNeeded: 950n,
+      nativeNeededFromRelay: true,
+    });
   });
 
-  test("a token fee leaves only the native value", () => {
-    expect(nativeOutflow({ ...base, feeToken: "0x00000000000000000000000000000000000000ee", feeTokenOutflow: 5n })).toBe(200n);
+  test("a token deficit is ignored for the native need", () => {
+    const prepared = {
+      context: { quote: { quotes: [{ assetDeficits: [{ address: TOKEN, required: 5n, deficit: 5n }] }] } },
+    };
+    expect(nativeNeededFromPrepared(prepared, { fee: 700n, value: 200n, feeToken: TOKEN })).toEqual({
+      nativeNeeded: 200n,
+      nativeNeededFromRelay: false,
+    });
+  });
+
+  test("never below fee plus value, even if the relay's figure is lower", () => {
+    const prepared = {
+      context: { quote: { quotes: [{ assetDeficits: [{ address: null, required: 100n, deficit: 100n }] }] } },
+    };
+    expect(nativeNeededFromPrepared(prepared, { fee: 700n, value: 200n, feeToken: NATIVE }).nativeNeeded).toBe(900n);
   });
 });
