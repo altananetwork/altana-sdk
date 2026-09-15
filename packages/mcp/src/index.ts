@@ -10,8 +10,8 @@
  * Tools:
  *   - Identity:  about_altana
  *   - Bootstrap: create_wallet
- *   - Inspect:   list_wallets, wallet_balance, wallet_verification,
- *                verify_authorization, list_sessions
+ *   - Inspect:   list_wallets, wallet_balance, list_fee_currencies,
+ *                wallet_verification, verify_authorization, list_sessions
  *   - Operate:   wallet_execute, grant_session, revoke_session, session_execute
  *   - Pay:       x402_request
  *   - Jobs:      erc8183_create_job, erc8183_job_status, erc8183_settle,
@@ -70,6 +70,7 @@ import {
 } from "./sessions.js";
 import { searchSkills, getSkill } from "./skills.js";
 import { SUPPORTED_CHAINS, describeNetwork, fundingSteps, resolveNetwork } from "./network.js";
+import { acceptedFeeSymbols, feeCurrenciesPayload } from "./feeCurrencies.js";
 import {
   assertErc8004Permissions,
   buildRegistrationFile,
@@ -321,6 +322,14 @@ tool(
     const address = privateKeyToAccount(privateKey).address;
     await setWalletKey(walletName, privateKey);
 
+    // The relay's fee tokens, so the funding step can name the stablecoins
+    // the wallet may be funded with instead of the native token. Best effort:
+    // an unreachable relay leaves the generic native-token step.
+    const feeSymbols = await client
+      .feeCurrencies()
+      .then(acceptedFeeSymbols)
+      .catch(() => undefined);
+
     return {
       content: [
         {
@@ -332,7 +341,7 @@ tool(
               storedIn: "OS keychain (service: altana)",
               network: NETWORK.chain.name,
               nextSteps: [
-                ...fundingSteps(NETWORK, address),
+                ...fundingSteps(NETWORK, address, feeSymbols ? { feeSymbols } : {}),
                 `BACK UP the private key. Open Keychain Access (macOS) or your platform's credential manager, find service "altana" / account "${walletName}", copy the password, store it in a password manager or encrypted file. If you lose your machine without a backup, the wallet is gone.`,
                 `Once funded, the wallet is ready — call wallet_balance, grant_session, wallet_execute, etc. by name "${walletName}".`,
               ],
@@ -423,6 +432,42 @@ tool(
     return {
       content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
     };
+  },
+);
+
+// list_fee_currencies — which tokens the relay takes its fee in on this
+// chain, read live, optionally with a wallet's balance of each. The relay
+// charges whichever accepted token the wallet holds, so this is how an agent
+// learns that a wallet holding only USDC can transact.
+tool(
+  "list_fee_currencies",
+  {
+    title: "List relay fee currencies",
+    description:
+      "List the tokens the Altana relay accepts as payment for its fee on " +
+      "the selected chain, with the rate each is priced at right now. Pass " +
+      "a wallet `name` to include that wallet's balance of each token. The " +
+      "relay charges whichever accepted token the wallet holds, so a wallet " +
+      "funded with any listed token can execute without the native token.",
+    inputSchema: {
+      name: z.string().optional(),
+    },
+  },
+  async ({ name }: { name?: string }) => {
+    const listed = await client.feeCurrencies();
+    const nativeSymbol = NETWORK.chain.nativeCurrency.symbol;
+    if (name === undefined) {
+      const payload = feeCurrenciesPayload(listed, nativeSymbol);
+      return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
+    }
+    const key = await getWalletKey(name);
+    const tokens = listed.currencies.filter((c) => !c.isNative).map((c) => c.address);
+    const balances = await client.balances({ wallet: key.address, tokens });
+    const payload = {
+      wallet: { name, address: key.address },
+      ...feeCurrenciesPayload(listed, nativeSymbol, balances),
+    };
+    return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
   },
 );
 

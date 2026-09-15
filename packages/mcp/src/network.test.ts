@@ -94,4 +94,17 @@ describe("fundingSteps", () => {
   test("celo mainnet: registry chain has a relay, so one step only", () => {
     expect(fundingSteps(CELO, addr)).toHaveLength(1);
   });
+
+  test("with the relay's fee tokens: names them as alternatives to the native token", () => {
+    const native = CELO_SEPOLIA.chain.nativeCurrency.symbol;
+    const [first] = fundingSteps(CELO_SEPOLIA, addr, { feeSymbols: [native, "USDC", "USDm"] });
+    expect(first).toContain(`Send some ${native}, or any of USDC, USDm, to ${addr}`);
+    expect(first).toContain("whichever of these tokens the wallet holds");
+    expect(first).toContain("https://faucet.celo.org/celo-sepolia");
+  });
+
+  test("a relay that only takes the native token changes nothing", () => {
+    const native = BNB.chain.nativeCurrency.symbol;
+    expect(fundingSteps(BNB, addr, { feeSymbols: [native] })).toEqual(fundingSteps(BNB, addr));
+  });
 });
