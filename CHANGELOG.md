@@ -17,6 +17,21 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Added
 
+- **Relay fees in the token the wallet holds.** The SDK no longer names the
+  native token on every call: with no `feeToken`, the request carries none
+  and the relay charges whichever of its accepted tokens the wallet holds
+  (on Celo: CELO, USDC, USDT, USDm, EURm or KESm, priced from Celo's own
+  oracle), so a wallet funded with a stablecoin transacts without CELO.
+  `feeToken` still forces one. `ExecuteResult` gains `feeToken`, the token
+  the relay charged, read from the intent it quoted. New
+  `client.feeCurrencies()` (and `feeCurrencies({ network })`) lists what a
+  chain's relay accepts with each token's rate and the relay's `rateTtl`;
+  `formatFeeAmount` prints an amount with its symbol; `NATIVE_TOKEN` is
+  exported. A "fee token not supported" rejection now names the tokens the
+  relay accepts on that chain, read live. MCP: `create_wallet` names the
+  accepted fee tokens in its funding steps, and the new `list_fee_currencies`
+  tool lists them (with the wallet's balance of each when a wallet is
+  named).
 - **L2 execution networks, with Celo and Celo Sepolia.** A network can now
   keep its KeyStore on its L1 and mirror it into a KeyStoreCache on the L2:
   `NetworkConfig` gains an optional `registry` field naming the L1 and the

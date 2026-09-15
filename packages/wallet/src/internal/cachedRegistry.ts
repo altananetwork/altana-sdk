@@ -44,7 +44,7 @@ import {
   type Call,
 } from "./relay.js";
 
-const NATIVE_TOKEN: Address = "0x0000000000000000000000000000000000000000";
+import { NATIVE_TOKEN } from "../config.js";
 
 export type CachedRegistry = Extract<KeyStoreRegistry, { kind: "cached" }>;
 

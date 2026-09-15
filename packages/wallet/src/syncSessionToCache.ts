@@ -36,7 +36,6 @@ import {
   type L1Anchor,
 } from "./syncKeyToL2.js";
 
-const NATIVE_TOKEN: Address = "0x0000000000000000000000000000000000000000";
 
 export type SyncSessionToCacheStatus =
   | "waiting-for-anchor"
@@ -128,7 +127,8 @@ export async function syncSessionToCache(
   // proof against it, and back off between mismatch retries.
   const anchorSettleMs = opts.anchorSettleMs ?? 60_000;
   const mismatchBackoffMs = 30_000;
-  const feeToken = opts.feeToken ?? NATIVE_TOKEN;
+  // Undefined lets the relay charge whichever accepted token the wallet holds.
+  const feeToken = opts.feeToken;
 
   const publicKey =
     typeof sessionOrPublicKey === "string" ? sessionOrPublicKey : sessionOrPublicKey.publicKey;
@@ -190,7 +190,7 @@ export async function syncSessionToCache(
         wallet.address,
         adminSigner,
         [{ to: call.to, value: call.value, data: call.data }],
-        { feeToken, submittingKey: adminKeyDesc, network },
+        { ...(feeToken ? { feeToken } : {}), submittingKey: adminKeyDesc, network },
       );
       status = await waitForCalls(relayClient, callsId);
     } catch (err) {
@@ -298,13 +298,13 @@ export async function proveIntoCache(
   publicKey: Hex,
   network: NetworkConfig,
   afterL1Block: bigint | undefined,
-  feeToken: Address,
+  feeToken?: Address,
 ): Promise<CacheSyncReport> {
   try {
     const synced = await syncSessionToCache(wallet, adminSigner, publicKey, {
       network,
       ...(afterL1Block !== undefined ? { afterL1Block } : {}),
-      feeToken,
+      ...(feeToken ? { feeToken } : {}),
     });
     return {
       chainId: network.chainId,

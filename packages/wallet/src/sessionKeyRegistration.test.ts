@@ -39,6 +39,8 @@ let readIsValidKeyImpl: any = realKeystore.readIsValidKey;
 mock.module("./internal/relay.js", () => ({
   ...realRelay,
   submitCalls: (...a: any[]) => submitCallsImpl(...a),
+  // execute() goes through the detailed variant; same stub, wrapped.
+  submitCallsDetailed: async (...a: any[]) => ({ callsId: await submitCallsImpl(...a) }),
   waitForCalls: (...a: any[]) => waitForCallsImpl(...a),
   buildPublicClient: (...a: any[]) => buildPublicClientImpl(...a),
   buildRelayClient: (...a: any[]) => buildRelayClientImpl(...a),

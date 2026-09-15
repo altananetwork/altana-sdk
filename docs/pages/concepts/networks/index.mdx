@@ -74,6 +74,11 @@ Ethereum contracts above; `registryNetwork(CELO)` is `ETHEREUM`) and proven
 into the Keystore cache on Celo, where they are read with one `eth_call`. A
 wallet created for `CELO` is provisioned on Ethereum in the same call.
 
+The relay on Celo takes its fee in CELO or in a stablecoin the wallet holds:
+USDC, USDT, USAT, USDm, EURm or KESm, priced live from Celo's
+FeeCurrencyDirectory. A wallet funded with any of them transacts without
+CELO; `client.feeCurrencies()` returns the current list and rates.
+
 - **Chain id:** 42220
 - **Public RPC:** `https://celo-rpc.publicnode.com`
 - **Explorer:** https://celoscan.io

@@ -26,7 +26,6 @@ import type {
 import type { Wallet } from "./internal/types.js";
 import { proveIntoCache } from "./syncSessionToCache.js";
 
-const NATIVE_TOKEN: Address = "0x0000000000000000000000000000000000000000";
 
 // Warn once per process: an SDK-generated session key lives only in memory,
 // and the grant it backs is a live on-chain authorization. Losing the key
@@ -72,7 +71,8 @@ export async function grantSession(
   config: { network: NetworkConfig; feeToken?: Address },
 ): Promise<GrantSessionResult> {
   const network = config.network;
-  const feeToken = config.feeToken ?? NATIVE_TOKEN;
+  // Undefined lets the relay charge whichever accepted token the wallet holds.
+  const feeToken = config.feeToken;
 
   const sessionSigner = opts.sessionSigner ?? ephemeralSessionSigner();
 
@@ -190,7 +190,7 @@ export async function grantSession(
     adminSigner,
     registerCalls,
     {
-      feeToken,
+      ...(feeToken ? { feeToken } : {}),
       submittingKey: adminKeyDesc,
       authorizeKeys: [sessionKeyDesc],
       network,

@@ -95,6 +95,12 @@ export {
 // Testnet faucet helper — funds an EOA with native tokens via the testnet
 // relay's faucet. Works only on networks whose relay exposes it (BSC testnet).
 export { fundNative, waitForBalance } from "./internal/relay.js";
+
+// Relay fee tokens: what the relay accepts as fee payment on a chain, read
+// live, and the constant that forces the native token.
+export { feeCurrencies, formatFeeAmount } from "./feeCurrencies.js";
+export type { FeeCurrenciesOptions, FeeCurrenciesResult, FeeCurrency } from "./feeCurrencies.js";
+export { NATIVE_TOKEN } from "./config.js";
 // Test-network faucets by chainId, for funding hints.
 export {
   FAUCET_URLS,
