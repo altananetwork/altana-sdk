@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { generatePrivateKey } from "viem/accounts";
-import { NATIVE_FAUCETS, STABLECOINS, chainName, nativeSymbol } from "../lib/chains";
+import { NATIVE_FAUCETS, STABLECOINS, chainName } from "../lib/chains";
+import { nativeLabel } from "../lib/fees";
 import { addressUrl, tokenUrl } from "../lib/explorer";
 import { formatAmount } from "../lib/format";
 import { isPrivateKey } from "../lib/storage";
@@ -50,7 +51,7 @@ export function WalletPanel() {
       }
     });
 
-  const native = nativeSymbol(state.chainId, chains);
+  const native = nativeLabel(state.chainId, state.feeCurrenciesChainId === state.chainId ? state.feeCurrencies : undefined, chains);
   const holdings = state.holdingsChainId === state.chainId ? state.holdings : undefined;
 
   return (

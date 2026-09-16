@@ -13,7 +13,7 @@ describe("WalletPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "Generate a new key" }));
     await waitFor(() => expect(storage.dump()?.walletKey).toMatch(/^0x[0-9a-f]{64}$/));
     await waitFor(() => expect(client.holdings).toHaveBeenCalledWith(expect.any(String), 11142220));
-    const balances = (await screen.findByText("Balances")).closest(".card")!;
+    const balances = (await screen.findByText("Balances")).closest(".card") as HTMLElement;
     expect(await within(balances).findByText("USDC", { exact: false })).toBeInTheDocument();
     expect(within(balances).getByText("2")).toBeInTheDocument();
     expect(screen.getByText("Not registered yet")).toBeInTheDocument();
