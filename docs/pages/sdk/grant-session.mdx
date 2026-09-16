@@ -40,7 +40,7 @@ const session = await client.grantSession({
 :::
 
 :::warning[The spend cap also pays relay fees]
-Every transaction's relay fee is paid out of the session's spend cap on the fee token, so the cap covers fees, not just what the agent sends. A near-zero native cap (say, 1 wei "so the agent can't spend anything") creates a session that can never execute a single transaction: the relay rejects each bundle before inclusion (`FAILED`, `statusCode` 300, see [Errors](/sdk/errors)). Leave fee headroom in the cap on top of the agent's intended spending. Where the relay accepts other fee tokens (on Celo: USDC, USDT, USDm, EURm, KESm), a session whose wallet pays fees in one of them needs a spend cap on that token too, since the relay charges the token the wallet holds.
+Every transaction's relay fee is paid out of the session's spend cap on the fee token, so the cap covers fees, not just what the agent sends. A near-zero native cap (say, 1 wei "so the agent can't spend anything") creates a session that can never execute a single transaction: the relay rejects each bundle before inclusion (`FAILED`, `statusCode` 300, see [Errors](/sdk/errors)). Leave fee headroom in the cap on top of the agent's intended spending. Where the relay accepts other fee tokens (on Celo: USDC, USDT, USDm, EURm, KESm), a session pays fees from whichever capped token the wallet holds; pass `feeToken` or `feeTokens` to `grantSession` to add the cap for a stablecoin.
 :::
 
 ## Registering the session key
@@ -77,12 +77,27 @@ type ClientGrantSessionOptions = {
   populateCache?: boolean;
   /** L2 only: progress across the three steps. */
   onStatus?: (status: "registry-write" | "account-authorization" | "cache-sync" | "done") => void;
-  /** Force the fee token; omitted, the relay charges an accepted token the wallet holds. */
+  /**
+   * The token(s) the session may pay relay fees in. Each gets a daily spend
+   * cap added to the session (default one whole token; see feeSpendLimit),
+   * and the grant itself pays its fee with the first one the wallet holds.
+   */
   feeToken?: Address;
+  feeTokens?: readonly Address[];
+  /** The cap added for each fee token, in its smallest unit. Default one whole token per day. */
+  feeSpendLimit?: bigint;
   /** Target chain. Defaults to the client's default chain. */
   chainId?: number;
 };
 ```
+
+A session pays relay fees only out of its spend caps: with no `feeToken` on an
+execute, the SDK charges the capped token the relay accepts that the wallet
+holds the most of. Pass `feeToken` or `feeTokens` here so a session can pay
+from a stablecoin the wallet holds (on Celo: USDC, USDT, USDm, EURm, KESm); the
+returned `Session.permissions` carries the added caps, and `execute` must be
+called with that session, not with the permissions you passed in. A token the
+relay does not accept on the chain is refused.
 
 See [Sessions](/concepts/sessions) for the full permission shape reference.
 

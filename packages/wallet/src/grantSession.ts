@@ -17,6 +17,7 @@ import {
   readRegistrationFee,
 } from "./internal/keystore.js";
 import { isCachedRegistry, submitRegistryCalls } from "./internal/cachedRegistry.js";
+import { withFeeSpendCaps } from "./internal/feeTokenSelection.js";
 import type {
   CacheSyncReport,
   GrantSessionOptions,
@@ -68,19 +69,32 @@ export async function grantSession(
   wallet: Wallet,
   adminSigner: Signer,
   opts: GrantSessionOptions,
-  config: { network: NetworkConfig; feeToken?: Address },
+  config: { network: NetworkConfig; feeToken?: Address; feeTokens?: readonly Address[] },
 ): Promise<GrantSessionResult> {
   const network = config.network;
   // Undefined lets the relay charge whichever accepted token the wallet holds.
   const feeToken = config.feeToken;
+  const feeTokens = config.feeTokens;
 
   const sessionSigner = opts.sessionSigner ?? ephemeralSessionSigner();
+
+  // The tokens the session may pay relay fees in must sit inside its spend
+  // cap, or the relay rejects its transactions later. Each named fee token
+  // gets a daily cap unless the caller capped it already; the returned
+  // Session carries these effective permissions, which execute must match.
+  const permissions = await withFeeSpendCaps(
+    buildRelayClient(network),
+    network,
+    opts.permissions,
+    feeToken ? [feeToken] : (feeTokens ?? []),
+    opts.feeSpendLimit,
+  );
 
   // Session key descriptor — secp256k1 or passkey (WebAuthnP256), by signer.
   const sessionKeyDesc: KeyDescriptor = keyDescriptorFromSigner(sessionSigner, {
     role: "session",
     expiry: opts.expiry,
-    permissions: opts.permissions,
+    permissions,
   });
 
   // Admin descriptor. Only `role` is consumed by submitCalls for signing (the
@@ -191,6 +205,7 @@ export async function grantSession(
     registerCalls,
     {
       ...(feeToken ? { feeToken } : {}),
+      ...(feeTokens ? { feeTokens } : {}),
       submittingKey: adminKeyDesc,
       authorizeKeys: [sessionKeyDesc],
       network,
@@ -260,7 +275,7 @@ export async function grantSession(
     walletAddress: wallet.address,
     signer: sessionSigner,
     publicKey: sessionSigner.publicKey,
-    permissions: opts.permissions,
+    permissions,
     expiry: opts.expiry,
     // Same as execute, revokeSession and registerSessionKey. This was the only
     // entry point that dropped it, which left integrators unable to record a

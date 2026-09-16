@@ -21,6 +21,12 @@ export type ExecuteOptions = {
    * lists them. The token charged comes back as `ExecuteResult.feeToken`.
    */
   feeToken?: Address;
+  /**
+   * Pay the relay fee with the first of these tokens that the relay accepts
+   * on the chain and the wallet holds. Fails before anything is sent when
+   * none qualifies. Ignored when `feeToken` is set.
+   */
+  feeTokens?: readonly Address[];
   noWait?: boolean;
 };
 
@@ -121,6 +127,7 @@ export async function executeWithReceipts(
     userCalls,
     {
       ...(opts.feeToken ? { feeToken: opts.feeToken } : {}),
+      ...(opts.feeTokens ? { feeTokens: opts.feeTokens } : {}),
       submittingKey,
       network,
     },

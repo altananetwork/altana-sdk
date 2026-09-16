@@ -61,6 +61,7 @@ One server process serves one chain, so restart with a different `ALTANA_CHAIN` 
   - `wallet_balance` reads the native balance; pass `tokens` for specific ERC-20s, or `discover: true` to list every token the wallet holds (found through the Altana relay, zero balances omitted, result flagged `discovered: true`). No extra configuration: discovery uses the relay already selected by `ALTANA_CHAIN`.
   - `list_fee_currencies` lists the tokens the relay accepts as fee payment on the selected chain, with the rate each is priced at, read live; pass a wallet `name` to see its balance of each. The relay charges whichever accepted token the wallet holds, so on Celo a wallet funded with USDC (or USDT, USDm, EURm, KESm) transacts without CELO.
 - **Operate:** `wallet_execute`, `grant_session`, `revoke_session`, `session_execute`
+  - The relay fee is paid in a token the wallet holds. `wallet_execute` lets the relay pick; `session_execute` pays from the session's spend caps (pass `feeTokens` to `grant_session` so a session can pay in a stablecoin, each gets a daily cap). Both accept `feeTokens` to pay with the first listed token the relay accepts and the wallet holds, and report the token charged as `feeToken`.
 - **Skills:** `search_skills`, `get_skill`
 
 Built on [`@altananetwork/sdk`](https://www.npmjs.com/package/@altananetwork/sdk).

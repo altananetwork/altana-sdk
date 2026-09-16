@@ -133,14 +133,28 @@ export function formatFeeAmount(
   return `${formatUnits(amount, currency.decimals)} ${currency.symbol}`;
 }
 
+/** How long the error path waits for the relay's fee token list. */
+export const FEE_TOKEN_HINT_TIMEOUT_MS = 3_000;
+
 /**
  * The hint appended to a "fee token" relay rejection: which tokens the relay
  * accepts on this chain, read live. Falls back to a generic sentence when
- * the relay cannot be asked.
+ * the relay cannot be asked, or does not answer within a few seconds (a
+ * degraded relay must not hold the error back).
  */
-export async function feeTokenHint(relay: Client, network: NetworkConfig): Promise<string> {
+export async function feeTokenHint(
+  relay: Client,
+  network: NetworkConfig,
+  timeoutMs: number = FEE_TOKEN_HINT_TIMEOUT_MS,
+): Promise<string> {
   try {
-    const { currencies } = await fetchFeeCurrencies(relay, network);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("fee token hint timed out")), timeoutMs);
+    });
+    const { currencies } = await Promise.race([fetchFeeCurrencies(relay, network), timeout]).finally(
+      () => clearTimeout(timer),
+    );
     if (currencies.length > 0) {
       const symbols = currencies.map((c) => c.symbol).join(", ");
       return (

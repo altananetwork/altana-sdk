@@ -8,10 +8,12 @@
  *   3. execute(wallet, admin, ...) with no feeToken: CONFIRMED, result.feeToken
  *      is the token, the wallet still holds no CELO, and the wallet's token
  *      balance dropped by at most the relay's quoted maximum
- *   4. the same with a second token (--token=eurm by default), when the
- *      funder holds it
+ *   4. grantSession with `feeTokens: [token]` (register: false), then
+ *      execute(session) with nothing named: the session pays its fee in the
+ *      token from the cap the grant added, CELO still 0
  *   5. sweep: the leftover tokens go back to the funder through the relay,
  *      paying that transfer's fee in the token as well
+ *   The whole sequence runs once per token under test (default usdc,eurm).
  *
  * Needs, and fails loudly without:
  *   TEST_FUNDER_KEY        funded on Celo Sepolia with the tokens under test
@@ -130,9 +132,37 @@ async function main() {
     console.log(`    fee paid: ${formatFeeAmount(paid, currency)}; CELO balance still 0`);
     proven += 1;
 
+    // 4. A session with a cap on this token, nothing named on execute: the SDK
+    //    picks the capped token from the caps (porto would guess otherwise).
+    //    register: false keeps the registry write, which needs Sepolia ETH,
+    //    out of a test that is about the fee.
+    console.log(`\n[4] grantSession with a ${currency.symbol} fee cap, then execute(session) with no feeToken`);
+    const session = await client.grantSession({
+      wallet,
+      signer: adminSigner,
+      permissions: { calls: [{ to: wallet.address }], spend: [{ limit: 1n, period: "day" }] },
+      expiry: Math.floor(Date.now() / 1000) + 3600,
+      register: false,
+      feeTokens: [currency.address],
+    });
+    const capped = session.permissions.spend?.map((s) => s.token ?? "native").join(", ");
+    console.log(`    granted, caps on: ${capped}, tx ${session.transactionHash} [${ms(t0)}]`);
+    if (!session.transactionHash) throw new Error("grant reported no transaction");
+    const sessionBefore = await balanceOf(currency.address, wallet.address);
+    const sessionExec = await client.execute({ session, calls: { to: wallet.address, value: 0n, data: "0x" } });
+    console.log(`    status: ${sessionExec.status} feeToken: ${sessionExec.feeToken} tx: ${sessionExec.transactionHash} [${ms(t0)}]`);
+    if (sessionExec.status !== "CONFIRMED") throw new Error(`session execute failed: ${JSON.stringify(sessionExec)}`);
+    if (sessionExec.feeToken?.toLowerCase() !== currency.address.toLowerCase()) {
+      throw new Error(`the session paid in ${sessionExec.feeToken}, expected ${currency.symbol}`);
+    }
+    const sessionPaid = sessionBefore - (await balanceOf(currency.address, wallet.address));
+    if (sessionPaid <= 0n) throw new Error("the session's fee did not come out of the token balance");
+    if ((await celo.getBalance({ address: wallet.address })) !== 0n) throw new Error("the session spent CELO the wallet did not have");
+    console.log(`    session fee paid: ${formatFeeAmount(sessionPaid, currency)}; CELO balance still 0`);
+
     // 5. Sweep the leftover back to the funder, fee in the token again.
     console.log(`\n[5] sweep ${currency.symbol} back to the funder through the relay`);
-    const reserve = paid * 3n;
+    const reserve = paid * 4n;
     const leftover = after > reserve ? after - reserve : 0n;
     if (leftover > 0n) {
       const sweep = await client.execute({

@@ -25,6 +25,7 @@ import {
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { NATIVE_TOKEN, type NetworkConfig } from "../config.js";
 import { feeTokenHint } from "./feeCurrencies.js";
+import { resolveFeeToken } from "./feeTokenSelection.js";
 import { hasRawPrivateKey, type Signer } from "./signer.js";
 import {
   isPasskeySigner,
@@ -323,10 +324,14 @@ export async function submitCalls(
 
 export type SubmitCallsOptions = {
   /**
-   * The token to pay the relay fee in. Omitted, the request names none and
-   * the relay charges whichever accepted token the wallet holds.
+   * The token to pay the relay fee in. Omitted (and no `feeTokens`), a wallet
+   * key names none and the relay charges whichever accepted token the wallet
+   * holds; a session key names the token of its spend cap the wallet holds
+   * the most of. See `resolveFeeToken`.
    */
   feeToken?: Address;
+  /** Pay with the first of these the relay accepts and the wallet holds. */
+  feeTokens?: readonly Address[];
   submittingKey: KeyDescriptor;
   authorizeKeys?: readonly KeyDescriptor[];
   revokeKeys?: readonly KeyDescriptor[];
@@ -455,10 +460,23 @@ export async function submitCallsDetailed(
     throw new Error(unsupportedSignerMessage(signer.type, "sign a transaction"));
   }
 
+  // Decided here, before the request is built: porto fills a blank fee token
+  // from a session key's first spend cap, which the relay may not accept.
+  const chosenFeeToken = await resolveFeeToken({
+    relay: client,
+    network: opts.network,
+    walletAddress,
+    ...(opts.feeToken ? { feeToken: opts.feeToken } : {}),
+    ...(opts.feeTokens ? { feeTokens: opts.feeTokens } : {}),
+    submittingKey: {
+      role: opts.submittingKey.role,
+      ...(opts.submittingKey.permissions ? { permissions: opts.submittingKey.permissions } : {}),
+    },
+  });
   const prepareParams: any = buildPrepareParams({
     account: accountForPrepare,
     calls: effectiveCalls,
-    ...(opts.feeToken ? { feeToken: opts.feeToken } : {}),
+    ...(chosenFeeToken ? { feeToken: chosenFeeToken } : {}),
   });
   // Tell Porto which key will sign whenever it's not the implicit admin EOA
   // (i.e. session path always, and passkey path always — there's no EOA for

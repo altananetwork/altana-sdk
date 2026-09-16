@@ -170,7 +170,13 @@ export type SubmitRegistryCallsArgs = {
   adminSigner: Signer;
   /** Registry calls (registerKey, revokeKey). Targets must be the registry chain's contracts. */
   calls: readonly Call[];
-  /** Relay path only. Defaults to the registry chain's native token; never the execution chain's fee token. */
+  /**
+   * Relay path only. Defaults to the registry chain's native token, never the
+   * execution chain's fee token: the registry chains (Ethereum, Sepolia)
+   * accept native only today, so naming it is the fee token rule's outcome
+   * without a round trip to the relay. Revisit if a registry chain's relay
+   * ever lists other fee tokens.
+   */
   feeToken?: Address;
   /** Public client for the registry chain. Built from the config when omitted. */
   registryClient?: PublicClient;

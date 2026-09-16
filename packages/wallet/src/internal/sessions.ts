@@ -163,6 +163,14 @@ export type GrantSessionOptions = {
    * networks with a local KeyStore, where the grant is one transaction.
    */
   onStatus?: (status: GrantSessionStatus) => void;
+  /**
+   * When `feeToken` / `feeTokens` are passed to grantSession, each named
+   * token gets a daily spend cap in the session's permissions so the session
+   * can pay relay fees in it. This is that cap, in the token's smallest
+   * unit, applied to each added token; default one whole token per day.
+   * Tokens already capped keep their cap.
+   */
+  feeSpendLimit?: bigint;
 };
 
 /**
