@@ -18,7 +18,6 @@ import type {
 import type { ExecuteResult, Wallet } from "./internal/types.js";
 import { proveIntoCache } from "./syncSessionToCache.js";
 
-const NATIVE_TOKEN: Address = "0x0000000000000000000000000000000000000000";
 
 /**
  * What revokeSession returns. On a network with a local KeyStore it is the
@@ -56,7 +55,8 @@ export async function revokeSession(
   config: { network: NetworkConfig; feeToken?: Address },
 ): Promise<RevokeSessionResult> {
   const network = config.network;
-  const feeToken = config.feeToken ?? NATIVE_TOKEN;
+  // Undefined lets the relay charge whichever accepted token the wallet holds.
+  const feeToken = config.feeToken;
 
   const sessionPublicKey =
     typeof sessionOrPublicKey === "string"
@@ -82,7 +82,7 @@ export async function revokeSession(
   if (isCachedRegistry(network)) {
     return revokeOnCachedNetwork(wallet, adminSigner, sessionPublicKey, keyId, {
       network,
-      feeToken,
+      ...(feeToken ? { feeToken } : {}),
       sessionKeyDesc,
       adminKeyDesc,
     });
@@ -113,7 +113,7 @@ export async function revokeSession(
     adminSigner,
     revokeCalls,
     {
-      feeToken,
+      ...(feeToken ? { feeToken } : {}),
       submittingKey: adminKeyDesc,
       revokeKeys: [sessionKeyDesc],
       network,
@@ -136,7 +136,7 @@ async function revokeOnCachedNetwork(
   keyId: Hex,
   ctx: {
     network: NetworkConfig & { registry: { kind: "cached"; l1: NetworkConfig; keyStoreCache: Address } };
-    feeToken: Address;
+    feeToken?: Address;
     sessionKeyDesc: KeyDescriptor;
     adminKeyDesc: KeyDescriptor;
   },
@@ -147,7 +147,7 @@ async function revokeOnCachedNetwork(
 
   // 1. Account revoke on the network. The only step that can throw.
   const callsId = await submitCalls(relayClient, wallet.address, adminSigner, [], {
-    feeToken,
+    ...(feeToken ? { feeToken } : {}),
     submittingKey: ctx.adminKeyDesc,
     revokeKeys: [ctx.sessionKeyDesc],
     network,

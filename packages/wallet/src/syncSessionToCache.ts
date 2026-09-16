@@ -36,7 +36,6 @@ import {
   type L1Anchor,
 } from "./syncKeyToL2.js";
 
-const NATIVE_TOKEN: Address = "0x0000000000000000000000000000000000000000";
 
 export type SyncSessionToCacheStatus =
   | "waiting-for-anchor"
@@ -67,8 +66,12 @@ export type SyncSessionToCacheOptions = {
    * same anchor. Default 60 seconds.
    */
   anchorSettleMs?: number;
-  /** Relay fee token on the cached network. Default: native (CELO). */
-  feeToken?: Address;
+  /**
+   * Relay fee token on the cached network: one address to force it, or a list
+   * to pay with the first the relay accepts and the wallet holds. Omitted,
+   * the relay charges whichever accepted token the wallet holds.
+   */
+  feeToken?: Address | readonly Address[];
   /** Poll cadence while waiting for the anchor. Default 3s. */
   anchorPollIntervalMs?: number;
   /** Max wait for the anchor to pass `afterL1Block`. Default 30 minutes (Celo Sepolia anchors about every 20 minutes). */
@@ -128,7 +131,8 @@ export async function syncSessionToCache(
   // proof against it, and back off between mismatch retries.
   const anchorSettleMs = opts.anchorSettleMs ?? 60_000;
   const mismatchBackoffMs = 30_000;
-  const feeToken = opts.feeToken ?? NATIVE_TOKEN;
+  // Undefined lets the relay charge whichever accepted token the wallet holds.
+  const feeToken = opts.feeToken;
 
   const publicKey =
     typeof sessionOrPublicKey === "string" ? sessionOrPublicKey : sessionOrPublicKey.publicKey;
@@ -190,7 +194,7 @@ export async function syncSessionToCache(
         wallet.address,
         adminSigner,
         [{ to: call.to, value: call.value, data: call.data }],
-        { feeToken, submittingKey: adminKeyDesc, network },
+        { ...(feeToken ? { feeToken } : {}), submittingKey: adminKeyDesc, network },
       );
       status = await waitForCalls(relayClient, callsId);
     } catch (err) {
@@ -298,13 +302,13 @@ export async function proveIntoCache(
   publicKey: Hex,
   network: NetworkConfig,
   afterL1Block: bigint | undefined,
-  feeToken: Address,
+  feeToken?: Address | readonly Address[],
 ): Promise<CacheSyncReport> {
   try {
     const synced = await syncSessionToCache(wallet, adminSigner, publicKey, {
       network,
       ...(afterL1Block !== undefined ? { afterL1Block } : {}),
-      feeToken,
+      ...(feeToken ? { feeToken } : {}),
     });
     return {
       chainId: network.chainId,

@@ -1,0 +1,212 @@
+{
+ "context": {
+  "quote": {
+   "quotes": [
+    {
+     "chainId": "0xaa044c",
+     "intent": {
+      "eoa": "0x4f896f6a7e9a5265bf405a9f80e73597fbd855a9",
+      "executionData": "0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000004f896f6a7e9a5265bf405a9f80e73597fbd855a9000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000000",
+      "nonce": "0x3971b999386c4a3b229ad4997f288225dd0e132abc5ae0cf0000000000000000",
+      "payer": "0x0000000000000000000000000000000000000000",
+      "paymentToken": "0x0000000000000000000000000000000000000000",
+      "paymentMaxAmount": "0x7239b5b8fac7ec",
+      "combinedGas": "0x10970",
+      "encodedPreCalls": [],
+      "encodedFundTransfers": [],
+      "settler": "0x0000000000000000000000000000000000000000",
+      "expiry": "0x0",
+      "isMultichain": false,
+      "funder": "0x0000000000000000000000000000000000000000",
+      "funderSignature": "0x",
+      "settlerContext": "0x",
+      "paymentAmount": "0x7239b5b8fac7ec",
+      "paymentRecipient": "0xb248602eaadd9c3e2db4575c4e4d58003b7a2740",
+      "signature": "0x",
+      "paymentSignature": "0x",
+      "supportedAccountImplementation": "0x33ad2f49ab9f122f5f0fdf579f575724eff353de"
+     },
+     "extraPayment": "0x0",
+     "ethPrice": "0xde0b6b3a7640000",
+     "paymentTokenDecimals": 18,
+     "txGas": "0x3c618",
+     "nativeFeeEstimate": {
+      "maxFeePerGas": "0x174876e801",
+      "maxPriorityFeePerGas": "0x1"
+     },
+     "authorizationAddress": "0x0000000000000000000000000000000000000000",
+     "additionalAuthorization": null,
+     "orchestrator": "0xcb5cef3c54aa90e9a7ad602a258d3d360cc862b9",
+     "feeTokenDeficit": "0x7239b5b8fac7ec",
+     "assetDeficits": [
+      {
+       "address": null,
+       "required": "0x7239b5b8fac7ec",
+       "deficit": "0x7239b5b8fac7ec"
+      }
+     ]
+    }
+   ],
+   "ttl": 1789486969,
+   "multiChainRoot": null,
+   "feePayerQuote": null,
+   "r": "0x1474bdfde5f65c5d481e97efb4df572429e69d8f2e28a616f9d4cdf8385211ab",
+   "s": "0x6082649f72a8e6b6b78dcf82be969ee2fd545ff08869af5f9251918bddc42543",
+   "yParity": "0x0",
+   "v": "0x0",
+   "hash": "0x93acae2b5ad8b081d466b519d34ecd424f063f54493622d4874331f6c686eead"
+  }
+ },
+ "digest": "0x57c4f10cb3c0aa0f2edaa04af34c0ae27dc15d6a87f0ab97d4dc2f0270837c3b",
+ "typedData": {
+  "domain": {
+   "name": "Orchestrator",
+   "version": "0.5.5",
+   "chainId": "0xaa044c",
+   "verifyingContract": "0xcb5cef3c54aa90e9a7ad602a258d3d360cc862b9"
+  },
+  "types": {
+   "Call": [
+    {
+     "type": "address",
+     "name": "to"
+    },
+    {
+     "type": "uint256",
+     "name": "value"
+    },
+    {
+     "type": "bytes",
+     "name": "data"
+    }
+   ],
+   "EIP712Domain": [
+    {
+     "type": "string",
+     "name": "name"
+    },
+    {
+     "type": "string",
+     "name": "version"
+    },
+    {
+     "type": "uint256",
+     "name": "chainId"
+    },
+    {
+     "type": "address",
+     "name": "verifyingContract"
+    }
+   ],
+   "Intent": [
+    {
+     "type": "bool",
+     "name": "multichain"
+    },
+    {
+     "type": "address",
+     "name": "eoa"
+    },
+    {
+     "type": "Call[]",
+     "name": "calls"
+    },
+    {
+     "type": "uint256",
+     "name": "nonce"
+    },
+    {
+     "type": "address",
+     "name": "payer"
+    },
+    {
+     "type": "address",
+     "name": "paymentToken"
+    },
+    {
+     "type": "uint256",
+     "name": "paymentMaxAmount"
+    },
+    {
+     "type": "uint256",
+     "name": "combinedGas"
+    },
+    {
+     "type": "bytes[]",
+     "name": "encodedPreCalls"
+    },
+    {
+     "type": "bytes[]",
+     "name": "encodedFundTransfers"
+    },
+    {
+     "type": "address",
+     "name": "settler"
+    },
+    {
+     "type": "uint256",
+     "name": "expiry"
+    }
+   ]
+  },
+  "primaryType": "Intent",
+  "message": {
+   "calls": [
+    {
+     "data": "0x",
+     "to": "0x4f896f6a7e9a5265bf405a9f80e73597fbd855a9",
+     "value": "0x0"
+    }
+   ],
+   "combinedGas": "0x10970",
+   "encodedFundTransfers": [],
+   "encodedPreCalls": [],
+   "eoa": "0x4f896f6a7e9a5265bf405a9f80e73597fbd855a9",
+   "expiry": "0x0",
+   "multichain": false,
+   "nonce": "0x3971b999386c4a3b229ad4997f288225dd0e132abc5ae0cf0000000000000000",
+   "payer": "0x0000000000000000000000000000000000000000",
+   "paymentMaxAmount": "0x7239b5b8fac7ec",
+   "paymentToken": "0x0000000000000000000000000000000000000000",
+   "settler": "0x0000000000000000000000000000000000000000"
+  }
+ },
+ "capabilities": {
+  "authorizeKeys": [],
+  "revokeKeys": [],
+  "feeTotals": {
+   "0xaa044c": {
+    "currency": "usd",
+    "value": "0.032151600000321516"
+   },
+   "0x0": {
+    "currency": "usd",
+    "value": "0.032151600000321516"
+   }
+  },
+  "assetDiffs": {
+   "0xaa044c": [
+    [
+     "0xb248602eaadd9c3e2db4575c4e4d58003b7a2740",
+     [
+      {
+       "address": null,
+       "type": null,
+       "symbol": "ETH",
+       "decimals": 18,
+       "value": "0x1",
+       "direction": "incoming",
+       "fiat": {
+        "currency": "usd",
+        "value": "0.000000000000000001"
+       },
+       "recipients": []
+      }
+     ]
+    ]
+   ]
+  }
+ },
+ "key": null,
+ "signature": "0xe09cf6011f1a9742cf5ef2fca0e600eb70846bad7026225af2dad1a904decaa87f0dba14e82b171e22811bdc70421949c2920124419f04e2edc8fa3e314d90e81c"
+}

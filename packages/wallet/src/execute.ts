@@ -3,7 +3,7 @@ import { type NetworkConfig } from "./config.js";
 import { type Signer } from "./internal/signer.js";
 import {
   buildRelayClient,
-  submitCalls,
+  submitCallsDetailed,
   waitForCalls,
   type Call,
   type KeyDescriptor,
@@ -12,12 +12,19 @@ import {
 import type { ExecuteResult, Wallet } from "./internal/types.js";
 import type { Session } from "./internal/sessions.js";
 
-const NATIVE_TOKEN: Address = "0x0000000000000000000000000000000000000000";
-
 export type ExecuteOptions = {
   /** Which chain to run on. Resolved by the client from a chainId. */
   network: NetworkConfig;
-  feeToken?: Address;
+  /**
+   * The token the relay fee is paid in. One address forces it. A list pays
+   * with the first token the relay accepts on the chain and the wallet
+   * holds, failing before anything is sent when none qualifies. Omitted, a
+   * wallet key lets the relay charge whichever accepted token the wallet
+   * holds, and a session key pays from its spend caps. `feeCurrencies()`
+   * lists the accepted tokens; the token charged comes back as
+   * `ExecuteResult.feeToken`.
+   */
+  feeToken?: Address | readonly Address[];
   noWait?: boolean;
 };
 
@@ -90,7 +97,6 @@ export async function executeWithReceipts(
   const opts = (isSessionCall ? callsOrOpts : maybeOpts) as ExecuteOptions;
 
   const network = opts.network;
-  const feeToken = opts.feeToken ?? NATIVE_TOKEN;
 
   const relayClient = buildRelayClient(network);
   const userCalls = Array.isArray(callsArg) ? callsArg : [callsArg as Call];
@@ -112,20 +118,28 @@ export async function executeWithReceipts(
         role: "admin",
       };
 
-  const callsId = await submitCalls(relayClient, walletAddress, signer, userCalls, {
-    feeToken,
-    submittingKey,
-    network,
-  });
+  const { callsId, feeToken } = await submitCallsDetailed(
+    relayClient,
+    walletAddress,
+    signer,
+    userCalls,
+    {
+      ...(opts.feeToken ? { feeToken: opts.feeToken } : {}),
+      submittingKey,
+      network,
+    },
+  );
+  const charged = feeToken ? { feeToken } : {};
 
   if (opts?.noWait) {
-    return { callsId, status: "PENDING" };
+    return { callsId, status: "PENDING", ...charged };
   }
 
   const result = await waitForCalls(relayClient, callsId);
   return {
     callsId,
     status: result.status as ExecuteResult["status"],
+    ...charged,
     ...(result.statusCode !== undefined ? { statusCode: result.statusCode } : {}),
     ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
     ...(result.receipts ? { receipts: result.receipts } : {}),

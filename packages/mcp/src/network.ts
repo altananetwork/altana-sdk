@@ -75,13 +75,30 @@ export function describeNetwork(network: NetworkConfig): string {
  * chain has no relay, the registry chain too (registry writes are direct
  * transactions from the wallet's key there).
  */
-export function fundingSteps(network: NetworkConfig, address: string): string[] {
+export function fundingSteps(
+  network: NetworkConfig,
+  address: string,
+  opts: {
+    /**
+     * The fee tokens the network's relay accepts, native first, as
+     * `feeCurrencies()` lists them. With more than the native token, the
+     * wallet can be funded with any of them instead.
+     */
+    feeSymbols?: readonly string[];
+  } = {},
+): string[] {
   const steps: string[] = [];
   const symbol = network.chain.nativeCurrency.symbol;
   const faucet = faucetHint(network.chainId);
+  const others = (opts.feeSymbols ?? []).filter((s) => s !== symbol);
   steps.push(
-    `Send some ${symbol} to ${address} on ${network.chain.name}` +
+    `Send some ${symbol}` +
+      (others.length > 0 ? `, or any of ${others.join(", ")},` : "") +
+      ` to ${address} on ${network.chain.name}` +
       (faucet ? ` (faucet: ${faucet})` : "") +
+      (others.length > 0
+        ? `. The relay takes its fee in whichever of these tokens the wallet holds, so no ${symbol} is needed when it holds one of the others`
+        : "") +
       `. Your smart agentic wallet will be activated automatically when you make your first transaction.`,
   );
   if (isCachedRegistry(network) && !network.registry.l1.relayUrl) {

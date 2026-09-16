@@ -39,8 +39,8 @@ const session = await client.grantSession({
 `limit` is denominated in the token's smallest unit, so you need that token's decimals on that chain. USDT and USDC use **18 decimals on BNB Chain** and 6 on Ethereum. Writing `100_000_000n` for "100 USDT" on BNB sets a cap of 0.0000000001 USDT, and the agent's payments revert against a limit that looks generous.
 :::
 
-:::warning[The native spend cap also pays relay fees]
-Every transaction's relay fee is paid out of the session's native spend cap — the cap covers fees, not just what the agent sends. A near-zero native cap (say, 1 wei "so the agent can't spend anything") creates a session that can never execute a single transaction: the relay rejects each bundle before inclusion (`FAILED`, `statusCode` 300 — see [Errors](/sdk/errors)). Leave fee headroom in the native cap on top of the agent's intended spending.
+:::warning[The spend cap also pays relay fees]
+Every transaction's relay fee is paid out of the session's spend cap on the fee token, so the cap covers fees, not just what the agent sends. A near-zero native cap (say, 1 wei "so the agent can't spend anything") creates a session that can never execute a single transaction: the relay rejects each bundle before inclusion (`FAILED`, `statusCode` 300, see [Errors](/sdk/errors)). Leave fee headroom in the cap on top of the agent's intended spending. Where the relay accepts other fee tokens (on Celo: USDC, USDT, USDm, EURm, KESm), a session pays fees from whichever capped token the wallet holds; pass `feeToken` to `grantSession` to add the cap for a stablecoin.
 :::
 
 ## Registering the session key
@@ -77,12 +77,27 @@ type ClientGrantSessionOptions = {
   populateCache?: boolean;
   /** L2 only: progress across the three steps. */
   onStatus?: (status: "registry-write" | "account-authorization" | "cache-sync" | "done") => void;
-  /** Fee token (default: native token). */
-  feeToken?: Address;
+  /**
+   * The token(s) the session may pay relay fees in, one address or a list.
+   * Each gets a daily spend cap added to the session (default one whole
+   * token; see feeSpendLimit), and the grant itself pays its fee with the
+   * first one the wallet holds.
+   */
+  feeToken?: Address | readonly Address[];
+  /** The cap added for each fee token, in its smallest unit. Default one whole token per day. */
+  feeSpendLimit?: bigint;
   /** Target chain. Defaults to the client's default chain. */
   chainId?: number;
 };
 ```
+
+A session pays relay fees only out of its spend caps: with no `feeToken` on an
+execute, the SDK charges the capped token the relay accepts that the wallet
+holds the most of. Pass `feeToken` here (one address or a list) so a session can pay
+from a stablecoin the wallet holds (on Celo: USDC, USDT, USDm, EURm, KESm); the
+returned `Session.permissions` carries the added caps, and `execute` must be
+called with that session, not with the permissions you passed in. A token the
+relay does not accept on the chain is refused.
 
 See [Sessions](/concepts/sessions) for the full permission shape reference.
 
@@ -155,7 +170,7 @@ Both happen atomically. There is no intermediate state where one exists without 
 On an L1 the grant is one relay transaction. On an [L2](/concepts/keystore#reaching-other-chains) the Keystore is on the L1 and a KeyStoreCache on the L2 mirrors it, so the grant is three steps, in order:
 
 1. **Keystore write** on the L1: `registerKey(session)`, preceded by `initialRegisterKey(admin)` on the wallet's first write. Skipped when the key is already valid there. It goes through the relay on the L1; on testnet, where the L1 (Sepolia) has no relay, it is a direct transaction from the wallet's admin key.
-2. **Account authorization** through the L2's relay, fee in the L2's native token. This is the step that gives the session its power.
+2. **Account authorization** through the L2's relay, fee in a token the wallet holds on the L2. This is the step that gives the session its power.
 3. **Proof into the L2 cache**, executed as a wallet call through the same relay (see [`syncSessionToCache`](/sdk/sync-to-l2#syncsessiontocache)). Reported in `result.cache`; the session is already live on the account and in the Keystore. Skipped with `register: false` or `populateCache: false`.
 
 `result.registry` and `result.cache` are present on an L2. `onStatus` fires before each step.

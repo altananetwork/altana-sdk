@@ -71,7 +71,7 @@ minutes — see [Get testnet $U](/sdk/erc8183#get-testnet-u) for claim code):
 ## Celo Sepolia: `CELO_SEPOLIA`
 
 Wallets execute through the Altana testnet relay on Celo Sepolia with fees in
-CELO. Their sessions are recorded in the Sepolia [Keystore](/concepts/keystore)
+CELO or in one of the stablecoins below. Their sessions are recorded in the Sepolia [Keystore](/concepts/keystore)
 and proven into the KeyStoreCache on Celo Sepolia, where they are read with
 one `eth_call`.
 
@@ -86,8 +86,20 @@ What to fund, and where:
 
 | Chain | Asset | Used for |
 | --- | --- | --- |
-| Celo Sepolia | CELO | Relay fees for wallet actions |
+| Celo Sepolia | CELO, or any fee token below | Relay fees for wallet actions; the relay charges whichever accepted token the wallet holds |
 | Sepolia | ETH | Keystore writes, sent from the wallet's admin key; about 0.0003 ETH each |
+
+Fee tokens the relay accepts besides CELO, priced live from Celo's
+FeeCurrencyDirectory (`client.feeCurrencies()` returns the current list and
+rates):
+
+| Token | Address |
+| --- | --- |
+| USDC | `0x01C5C0122039549AD1493B8220cABEdD739BC44E` |
+| USD₮ | `0xd077A400968890Eacc75cdc901F0356c943e4fDb` |
+| USDm | `0xdE9e4C3ce781b4bA68120d6261cbad65ce0aB00b` |
+| EURm | `0xA99dC247d6b7B2E3ab48a1fEE101b83cD6aCd82a` |
+| KESm | `0xC7e4635651E3e3Af82b61d3E23c159438daE3BbF` |
 
 | Contract | Address |
 | --- | --- |

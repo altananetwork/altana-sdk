@@ -16,13 +16,16 @@ import * as Key from "porto/viem/Key";
 import {
   createClient,
   createPublicClient,
+  getAddress,
   http,
   type Address,
   type Hex,
   type PublicClient,
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import type { NetworkConfig } from "../config.js";
+import { NATIVE_TOKEN, type NetworkConfig } from "../config.js";
+import { feeTokenHint } from "./feeCurrencies.js";
+import { resolveFeeToken, type FeeTokenOption } from "./feeTokenSelection.js";
 import { hasRawPrivateKey, type Signer } from "./signer.js";
 import {
   isPasskeySigner,
@@ -30,8 +33,6 @@ import {
   type PasskeySigner,
 } from "./passkey.js";
 import { buildFirstActionPrepend } from "./keystore.js";
-
-const NATIVE_TOKEN: Address = "0x0000000000000000000000000000000000000000";
 
 /** Faucet for Celo Sepolia (chainId 11142220). */
 export const CELO_SEPOLIA_FAUCET_URL = "https://faucet.celo.org/celo-sepolia";
@@ -315,19 +316,78 @@ export async function submitCalls(
   walletAddress: Address,
   signer: Signer,
   calls: readonly Call[],
-  opts: {
-    feeToken: Address;
-    submittingKey: KeyDescriptor;
-    authorizeKeys?: readonly KeyDescriptor[];
-    revokeKeys?: readonly KeyDescriptor[];
-    /**
-     * Network is required so we can read KeyStore to decide whether the
-     * admin authority needs first-action registration in this intent. Pass
-     * the same NetworkConfig you used to build the relay client.
-     */
-    network: NetworkConfig;
-  },
+  opts: SubmitCallsOptions,
 ): Promise<Hex> {
+  const { callsId } = await submitCallsDetailed(client, walletAddress, signer, calls, opts);
+  return callsId;
+}
+
+export type SubmitCallsOptions = {
+  /**
+   * The token to pay the relay fee in: one address to force it, or a list to
+   * pay with the first the relay accepts and the wallet holds. Omitted, a
+   * wallet key names none and the relay charges whichever accepted token the
+   * wallet holds; a session key names the token of its spend cap the wallet
+   * holds the most of. See `resolveFeeToken`.
+   */
+  feeToken?: FeeTokenOption;
+  submittingKey: KeyDescriptor;
+  authorizeKeys?: readonly KeyDescriptor[];
+  revokeKeys?: readonly KeyDescriptor[];
+  /**
+   * Network is required so we can read KeyStore to decide whether the
+   * admin authority needs first-action registration in this intent. Pass
+   * the same NetworkConfig you used to build the relay client.
+   */
+  network: NetworkConfig;
+};
+
+/** What `submitCalls` learned from the relay's quote, beyond the calls id. */
+export type SubmitCallsResult = {
+  callsId: Hex;
+  /** The token the relay is charging its fee in, from the quoted intent. */
+  feeToken?: Address;
+};
+
+/**
+ * The `wallet_prepareCalls` parameters for a set of calls. `feeToken` is only
+ * sent when the caller named one, so the relay picks otherwise.
+ */
+export function buildPrepareParams(args: {
+  account: unknown;
+  calls: readonly Call[];
+  feeToken?: Address;
+}): { account: unknown; calls: readonly Call[]; feeToken?: Address } {
+  return {
+    account: args.account,
+    calls: args.calls,
+    ...(args.feeToken ? { feeToken: args.feeToken } : {}),
+  };
+}
+
+/**
+ * The fee token of a prepared intent, read from the quote the relay signed:
+ * `context.quote.quotes[0].intent.paymentToken`. Undefined when the answer
+ * carries no quote (a pre-call, for instance).
+ */
+export function paymentTokenFromPrepared(prepared: unknown): Address | undefined {
+  const quotes = (prepared as { context?: { quote?: { quotes?: unknown } } })?.context?.quote
+    ?.quotes;
+  if (!Array.isArray(quotes) || quotes.length === 0) return undefined;
+  const token = (quotes[0] as { intent?: { paymentToken?: unknown } })?.intent?.paymentToken;
+  return typeof token === "string" && /^0x[0-9a-fA-F]{40}$/.test(token)
+    ? getAddress(token)
+    : undefined;
+}
+
+/** `submitCalls`, also reporting which token the relay charged. */
+export async function submitCallsDetailed(
+  client: ReturnType<typeof buildRelayClient>,
+  walletAddress: Address,
+  signer: Signer,
+  calls: readonly Call[],
+  opts: SubmitCallsOptions,
+): Promise<SubmitCallsResult> {
   const isAdmin = opts.submittingKey.role === "admin";
 
   // On a cached network (Celo Sepolia, Celo) the KeyStore contracts do not
@@ -399,11 +459,23 @@ export async function submitCalls(
     throw new Error(unsupportedSignerMessage(signer.type, "sign a transaction"));
   }
 
-  const prepareParams: any = {
+  // Decided here, before the request is built: porto fills a blank fee token
+  // from a session key's first spend cap, which the relay may not accept.
+  const chosenFeeToken = await resolveFeeToken({
+    relay: client,
+    network: opts.network,
+    walletAddress,
+    ...(opts.feeToken ? { feeToken: opts.feeToken } : {}),
+    submittingKey: {
+      role: opts.submittingKey.role,
+      ...(opts.submittingKey.permissions ? { permissions: opts.submittingKey.permissions } : {}),
+    },
+  });
+  const prepareParams: any = buildPrepareParams({
     account: accountForPrepare,
     calls: effectiveCalls,
-    feeToken: opts.feeToken,
-  };
+    ...(chosenFeeToken ? { feeToken: chosenFeeToken } : {}),
+  });
   // Tell Porto which key will sign whenever it's not the implicit admin EOA
   // (i.e. session path always, and passkey path always — there's no EOA for
   // Porto to infer from).
@@ -420,7 +492,9 @@ export async function submitCalls(
   const prepared: any = await withRelayReason(
     () => prepareCalls(client, prepareParams),
     "prepare the call",
+    { client, network: opts.network },
   );
+  const feeToken = paymentTokenFromPrepared(prepared);
 
   // Porto's signCalls dispatches by `key`: for secp256k1 / webauthn-p256
   // keys with embedded signing material, it calls Key.sign which produces
@@ -452,9 +526,10 @@ export async function submitCalls(
         ...(sendKey ? { key: sendKey } : {}),
       } as any),
     "submit the call",
+    { client, network: opts.network },
   );
 
-  return (sent?.id ?? sent) as Hex;
+  return { callsId: (sent?.id ?? sent) as Hex, ...(feeToken ? { feeToken } : {}) };
 }
 
 /**
@@ -510,15 +585,19 @@ export function assertNoRegistryTargets(
  * method"), where nobody finds it. Run a relay call through this so the real
  * reason leads the thrown error; the original is kept as `cause`.
  */
-async function withRelayReason<T>(fn: () => Promise<T>, doing: string): Promise<T> {
+async function withRelayReason<T>(
+  fn: () => Promise<T>,
+  doing: string,
+  relay?: { client: ReturnType<typeof buildRelayClient>; network: NetworkConfig },
+): Promise<T> {
   try {
     return await fn();
   } catch (err) {
     const reason = deepestRelayReason(err);
     if (!reason) throw err;
-    const hint = /fee token/i.test(reason)
-      ? " (the relay fee is paid in the chain's native currency: BNB on BNB Chain, ETH on Ethereum, CELO on Celo. Omit `feeToken` or set one the relay accepts; $U is for job escrow and x402, not relay fees)"
-      : "";
+    // A fee token rejection names the tokens this relay does accept, read live.
+    const hint =
+      /fee token/i.test(reason) && relay ? await feeTokenHint(relay.client, relay.network) : "";
     throw new Error(`The relay rejected the request to ${doing}: ${reason}${hint}`, { cause: err });
   }
 }

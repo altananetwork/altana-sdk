@@ -172,7 +172,13 @@ entry into the L2 cache; the result carries `registry` and `cache` reports.
 `client.syncSessionToCache` runs the proof on its own. Reads go to
 `registryNetwork(network)`, the L1. On testnet the L1 (Sepolia) has no relay,
 so KeyStore writes are direct transactions from the wallet's admin key: fund
-the wallet address with Sepolia ETH as well as CELO. See
+the wallet address with Sepolia ETH as well as CELO.
+
+The relay takes its fee in a token the wallet holds: the chain's native token
+everywhere, and on Celo also USDC, USDT, USDm, EURm or KESm, priced from
+Celo's own oracle. Omit `feeToken` and the relay charges whichever accepted
+token the wallet holds; the result's `feeToken` says which.
+`client.feeCurrencies()` lists what a chain's relay accepts. See
 https://docs.altana.network/sdk/setup.
 
 ## Documentation

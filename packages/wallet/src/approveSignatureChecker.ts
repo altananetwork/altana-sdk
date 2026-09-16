@@ -11,7 +11,6 @@ import { sessionKeyHash } from "./internal/erc1271.js";
 import type { Session } from "./internal/sessions.js";
 import type { ExecuteResult, Wallet } from "./internal/types.js";
 
-const NATIVE_TOKEN: Address = "0x0000000000000000000000000000000000000000";
 
 const SET_CHECKER_ABI = [
   {
@@ -65,7 +64,8 @@ async function setChecker(
   config: { network: NetworkConfig; feeToken?: Address },
 ): Promise<ExecuteResult> {
   const network = config.network;
-  const feeToken = config.feeToken ?? NATIVE_TOKEN;
+  // Undefined lets the relay charge whichever accepted token the wallet holds.
+  const feeToken = config.feeToken;
 
   const adminKeyDesc: KeyDescriptor = {
     type: "secp256k1",
@@ -86,7 +86,7 @@ async function setChecker(
     wallet.address,
     adminSigner,
     [call],
-    { feeToken, submittingKey: adminKeyDesc, network },
+    { ...(feeToken ? { feeToken } : {}), submittingKey: adminKeyDesc, network },
   );
 
   const result = await waitForCalls(relayClient, callsId);

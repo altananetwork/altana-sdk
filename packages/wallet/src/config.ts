@@ -66,6 +66,13 @@ export const RELAY_URL = "https://relay.altana.network";
 export const TESTNET_RELAY_URL = "https://testnet-relay.altana.network";
 
 /**
+ * The zero address, which the relay reads as "pay the fee in the chain's
+ * native token". Pass it as `feeToken` to force native; omit `feeToken` to
+ * let the relay charge whichever accepted token the wallet holds.
+ */
+export const NATIVE_TOKEN: Address = "0x0000000000000000000000000000000000000000";
+
+/**
  * Placeholder for a `registry.keyStoreCache` that has not been filled in.
  * `keyStoreCacheOf` refuses it, so no proof is ever sent to the zero address.
  */

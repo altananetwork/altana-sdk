@@ -39,6 +39,8 @@ let readIsValidKeyImpl: any = realKeystore.readIsValidKey;
 mock.module("./internal/relay.js", () => ({
   ...realRelay,
   submitCalls: (...a: any[]) => submitCallsImpl(...a),
+  // execute() goes through the detailed variant; same stub, wrapped.
+  submitCallsDetailed: async (...a: any[]) => ({ callsId: await submitCallsImpl(...a) }),
   waitForCalls: (...a: any[]) => waitForCallsImpl(...a),
   buildPublicClient: (...a: any[]) => buildPublicClientImpl(...a),
   buildRelayClient: (...a: any[]) => buildRelayClientImpl(...a),
@@ -188,6 +190,62 @@ test("default grant bundles the KeyStore registerKey call and reads the fee", as
   );
   expect(submitted!.calls[0].to).toBe(BNB.keyStoreController);
   expect(submitted!.opts.authorizeKeys.length).toBe(1);
+});
+
+test("grant with a feeToken list adds a daily cap per fee token and returns the effective caps on the session", async () => {
+  const USDT: Address = "0x55d398326f99059fF775485246999027B3197955";
+  // The relay client the grant asks for accepted fee tokens: BNB plus a 18-dp USDT.
+  buildRelayClientImpl = () =>
+    ({
+      request: async ({ method }: { method: string }) => {
+        if (method !== "wallet_getCapabilities") throw new Error(`unexpected ${method}`);
+        return {
+          "0x38": {
+            fees: {
+              quoteConfig: { rateTtl: 300 },
+              tokens: [
+                { uid: "bnb", address: "0x0000000000000000000000000000000000000000", decimals: 18, feeToken: true, symbol: "BNB", nativeRate: "0xde0b6b3a7640000" },
+                { uid: "usdt", address: USDT, decimals: 18, feeToken: true, symbol: "USDT", nativeRate: "0x3782dace9d90000" },
+              ],
+            },
+          },
+        };
+      },
+    }) as any;
+  confirmTxHash = ("0x" + "ab".repeat(32)) as Hex;
+  const sessionSigner = createPrivateKeySigner();
+  // Same shortcuts as runGrantToCompletion: the key is already visible and the
+  // relay catch-up delay is zero.
+  buildPublicClientImpl = () => ({
+    readContract: async () => [[], [keyHashForSigner(sessionSigner)]],
+  });
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = ((fn: () => void) => realSetTimeout(fn, 0)) as any;
+  let session: Session;
+  try {
+    session = await grantSession(
+      WALLET as any,
+      createPrivateKeySigner(),
+      {
+        permissions: { calls: [{ to: WALLET.address }], spend: [{ limit: 5n, period: "day" }] },
+        expiry: 1_800_000_000,
+        sessionSigner,
+        register: false,
+      },
+      { network: BNB, feeToken: [USDT, "0x0000000000000000000000000000000000000000"] },
+    );
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+  }
+  // The native cap the caller set is kept; USDT gets one whole token per day.
+  expect(session.permissions.spend).toEqual([
+    { limit: 5n, period: "day" },
+    { limit: 10n ** 18n, period: "day", token: USDT },
+  ]);
+  // The key authorized on the account carries the same caps, and the grant's
+  // own fee goes through the same list.
+  expect(submitted!.opts.authorizeKeys[0].permissions.spend).toEqual(session.permissions.spend);
+  expect(submitted!.opts.feeToken).toEqual([USDT, "0x0000000000000000000000000000000000000000"]);
 });
 
 test("register: true behaves like the default", async () => {

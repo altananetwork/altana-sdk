@@ -23,7 +23,6 @@ import type {
 import type { ExecuteResult, Wallet } from "./internal/types.js";
 import { proveIntoCache } from "./syncSessionToCache.js";
 
-const NATIVE_TOKEN: Address = "0x0000000000000000000000000000000000000000";
 
 /**
  * Result of registerSessionKey. `alreadyRegistered: true` = nothing to do, no
@@ -61,7 +60,8 @@ export async function registerSessionKey(
   config: { network: NetworkConfig; feeToken?: Address },
 ): Promise<RegisterSessionKeyResult> {
   const network = config.network;
-  const feeToken = config.feeToken ?? NATIVE_TOKEN;
+  // Undefined lets the relay charge whichever accepted token the wallet holds.
+  const feeToken = config.feeToken;
 
   const keyId = deriveKeyId(session.publicKey);
 
@@ -163,7 +163,7 @@ export async function registerSessionKey(
     adminSigner,
     [registerCall],
     {
-      feeToken,
+      ...(feeToken ? { feeToken } : {}),
       submittingKey: adminKeyDesc,
       network,
     },

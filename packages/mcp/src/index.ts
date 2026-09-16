@@ -10,8 +10,8 @@
  * Tools:
  *   - Identity:  about_altana
  *   - Bootstrap: create_wallet
- *   - Inspect:   list_wallets, wallet_balance, wallet_verification,
- *                verify_authorization, list_sessions
+ *   - Inspect:   list_wallets, wallet_balance, list_fee_currencies,
+ *                wallet_verification, verify_authorization, list_sessions
  *   - Operate:   wallet_execute, grant_session, revoke_session, session_execute
  *   - Pay:       x402_request
  *   - Jobs:      erc8183_create_job, erc8183_job_status, erc8183_settle,
@@ -33,6 +33,7 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import {
   createClient,
   deserializeSession,
+  serializeSession,
   signerFromPrivateKey,
   fetchWithX402,
   hireErc8183Agent,
@@ -70,6 +71,7 @@ import {
 } from "./sessions.js";
 import { searchSkills, getSkill } from "./skills.js";
 import { SUPPORTED_CHAINS, describeNetwork, fundingSteps, resolveNetwork } from "./network.js";
+import { acceptedFeeSymbols, feeCurrenciesPayload } from "./feeCurrencies.js";
 import {
   assertErc8004Permissions,
   buildRegistrationFile,
@@ -191,6 +193,10 @@ function assertAddress(value: string): Address {
     throw new Error(`Not a valid 0x-prefixed 20-byte address: ${value}`);
   }
   return value as Address;
+}
+/** A `feeToken` tool input: one address, or a list to choose from. */
+function assertFeeToken(value: string | string[]): Address | Address[] {
+  return Array.isArray(value) ? value.map(assertAddress) : assertAddress(value);
 }
 function assertBytes32(value: string): Hex {
   if (!/^0x[0-9a-fA-F]{64}$/.test(value)) {
@@ -321,6 +327,14 @@ tool(
     const address = privateKeyToAccount(privateKey).address;
     await setWalletKey(walletName, privateKey);
 
+    // The relay's fee tokens, so the funding step can name the stablecoins
+    // the wallet may be funded with instead of the native token. Best effort:
+    // an unreachable relay leaves the generic native-token step.
+    const feeSymbols = await client
+      .feeCurrencies()
+      .then(acceptedFeeSymbols)
+      .catch(() => undefined);
+
     return {
       content: [
         {
@@ -332,7 +346,7 @@ tool(
               storedIn: "OS keychain (service: altana)",
               network: NETWORK.chain.name,
               nextSteps: [
-                ...fundingSteps(NETWORK, address),
+                ...fundingSteps(NETWORK, address, feeSymbols ? { feeSymbols } : {}),
                 `BACK UP the private key. Open Keychain Access (macOS) or your platform's credential manager, find service "altana" / account "${walletName}", copy the password, store it in a password manager or encrypted file. If you lose your machine without a backup, the wallet is gone.`,
                 `Once funded, the wallet is ready — call wallet_balance, grant_session, wallet_execute, etc. by name "${walletName}".`,
               ],
@@ -423,6 +437,42 @@ tool(
     return {
       content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
     };
+  },
+);
+
+// list_fee_currencies — which tokens the relay takes its fee in on this
+// chain, read live, optionally with a wallet's balance of each. The relay
+// charges whichever accepted token the wallet holds, so this is how an agent
+// learns that a wallet holding only USDC can transact.
+tool(
+  "list_fee_currencies",
+  {
+    title: "List relay fee currencies",
+    description:
+      "List the tokens the Altana relay accepts as payment for its fee on " +
+      "the selected chain, with the rate each is priced at right now. Pass " +
+      "a wallet `name` to include that wallet's balance of each token. The " +
+      "relay charges whichever accepted token the wallet holds, so a wallet " +
+      "funded with any listed token can execute without the native token.",
+    inputSchema: {
+      name: z.string().optional(),
+    },
+  },
+  async ({ name }: { name?: string }) => {
+    const listed = await client.feeCurrencies();
+    const nativeSymbol = NETWORK.chain.nativeCurrency.symbol;
+    if (name === undefined) {
+      const payload = feeCurrenciesPayload(listed, nativeSymbol);
+      return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
+    }
+    const key = await getWalletKey(name);
+    const tokens = listed.currencies.filter((c) => !c.isNative).map((c) => c.address);
+    const balances = await client.balances({ wallet: key.address, tokens });
+    const payload = {
+      wallet: { name, address: key.address },
+      ...feeCurrenciesPayload(listed, nativeSymbol, balances),
+    };
+    return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
   },
 );
 
@@ -584,6 +634,15 @@ tool(
       to: z.string(),
       valueEth: z.string().optional(),
       data: z.string().optional(),
+      feeToken: z
+        .union([z.string(), z.array(z.string())])
+        .optional()
+        .describe(
+          "The token to pay the relay fee in: one address to force it, or a " +
+            "list to pay with the first the relay accepts and the wallet holds " +
+            "(list_fee_currencies shows what is accepted). Omitted, the relay " +
+            "charges whichever accepted token the wallet holds.",
+        ),
     },
   },
   async ({
@@ -591,11 +650,13 @@ tool(
     to,
     valueEth,
     data,
+    feeToken,
   }: {
     name: string;
     to: string;
     valueEth?: string;
     data?: string;
+    feeToken?: string | string[];
   }) => {
     const key = await getWalletKey(name);
     const recipient = assertAddress(to);
@@ -613,6 +674,7 @@ tool(
         value: parseEther(valueEth ?? "0"),
         data: dataHex,
       },
+      ...(feeToken !== undefined ? { feeToken: assertFeeToken(feeToken) } : {}),
     });
     return {
       content: [
@@ -625,6 +687,8 @@ tool(
               ...(result.statusCode !== undefined ? { statusCode: result.statusCode } : {}),
               callsId: result.callsId,
               transactionHash: result.transactionHash,
+              // The token the relay charged its fee in (zero address: native).
+              ...(result.feeToken ? { feeToken: result.feeToken } : {}),
             },
             null,
             2,
@@ -695,6 +759,24 @@ tool(
             "false, verify_authorization reports the key as not authorized " +
             "even though the session works.",
         ),
+      feeToken: z
+        .union([z.string(), z.array(z.string())])
+        .optional()
+        .describe(
+          "The token(s) the session may pay relay fees in, one address or a list " +
+            "(list_fee_currencies shows what the relay accepts). Each gets a daily " +
+            "spend cap of one whole token added to the session, so a wallet holding " +
+            "only a stablecoin can run the session. The grant itself pays its fee " +
+            "with the first of them the wallet holds.",
+        ),
+      feeSpendLimit: z
+        .string()
+        .regex(/^\d+$/)
+        .optional()
+        .describe(
+          "The daily cap added for each fee token, in the token's smallest unit " +
+            "(for example 5000000 for 5 USDC). Default one whole token.",
+        ),
     },
   },
   async ({
@@ -704,6 +786,8 @@ tool(
     dailyCapEth,
     lifetimeSeconds,
     register,
+    feeToken,
+    feeSpendLimit,
   }: {
     walletName: string;
     sessionName: string;
@@ -711,6 +795,8 @@ tool(
     dailyCapEth?: string;
     lifetimeSeconds?: number;
     register?: boolean;
+    feeToken?: string | string[];
+    feeSpendLimit?: string;
   }) => {
     // Refuse to overwrite an existing session entry. Sessions live in their
     // own keychain namespace (altana-session), so this only collides with
@@ -749,19 +835,20 @@ tool(
       },
       expiry,
       ...(register !== undefined ? { register } : {}),
+      ...(feeToken !== undefined ? { feeToken: assertFeeToken(feeToken) } : {}),
+      ...(feeSpendLimit !== undefined ? { feeSpendLimit: BigInt(feeSpendLimit) } : {}),
     });
 
     // Persist:
     //   1. PK in keychain (encrypted at rest)
     //   2. Metadata in ~/.altana/sessions.json (needed to rebuild Session
     //      at session_execute time — permissions/expiry must match grant
-    //      byte-for-byte or Porto can't find the key hash).
+    //      byte-for-byte or Porto can't find the key hash). The grant may
+    //      have added fee spend caps, so the effective permissions come from
+    //      the returned session, not from the inputs.
     await setSessionKey(sessionName, sessionPk);
 
-    const permissionsForFile: SessionPermissions = {
-      calls: [{ to: recipientAddr }],
-      spend: [{ limit: capWei.toString(), period: "day" }],
-    };
+    const permissionsForFile: SessionPermissions = serializeSession(session).permissions;
 
     await saveSession({
       name: sessionName,
@@ -801,7 +888,13 @@ tool(
               ...(session.cache ? { cache: jsonSafe(session.cache) } : {}),
               permissions: {
                 calls: [{ to: recipientAddr }],
-                spend: [{ limitEth: capEth, period: "day" }],
+                // The native cap in ETH terms, plus any fee token caps the
+                // grant added (limits in the token's smallest unit).
+                spend: session.permissions.spend?.map((cap) =>
+                  cap.token
+                    ? { token: cap.token, limit: cap.limit.toString(), period: cap.period }
+                    : { limitEth: capEth, period: cap.period },
+                ),
               },
               expiry,
               expiresAt: new Date(expiry * 1000).toISOString(),
@@ -890,6 +983,15 @@ tool(
       to: z.string(),
       valueEth: z.string().optional(),
       data: z.string().optional(),
+      feeToken: z
+        .union([z.string(), z.array(z.string())])
+        .optional()
+        .describe(
+          "The token to pay the relay fee in: one address to force it, or a " +
+            "list to pay with the first the relay accepts and the wallet holds. " +
+            "Omitted, the SDK pays from the session's spend caps: the capped " +
+            "token the relay accepts that the wallet holds the most of.",
+        ),
     },
   },
   async ({
@@ -897,11 +999,13 @@ tool(
     to,
     valueEth,
     data,
+    feeToken,
   }: {
     sessionName: string;
     to: string;
     valueEth?: string;
     data?: string;
+    feeToken?: string | string[];
   }) => {
     const stored = await getSession(sessionName);
     const key = await getSessionKey(sessionName);
@@ -920,6 +1024,7 @@ tool(
         value: parseEther(valueEth ?? "0"),
         data: dataHex,
       },
+      ...(feeToken !== undefined ? { feeToken: assertFeeToken(feeToken) } : {}),
     });
 
     return {
@@ -934,6 +1039,8 @@ tool(
               ...(result.statusCode !== undefined ? { statusCode: result.statusCode } : {}),
               transactionHash: result.transactionHash,
               callsId: result.callsId,
+              // The token the relay charged its fee in (zero address: native).
+              ...(result.feeToken ? { feeToken: result.feeToken } : {}),
             },
             null,
             2,

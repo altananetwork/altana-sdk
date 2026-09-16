@@ -28,7 +28,8 @@
     "fork:celo-cache": "bun run fork-celo-cache.ts",
     "fork:celo-x402-server": "bun run fork-celo-x402-server.ts",
     "smoke:celo-sepolia": "bun run smoke-celo-sepolia.ts",
-    "smoke:celo-passkey": "bun run smoke-celo-passkey.ts"
+    "smoke:celo-passkey": "bun run smoke-celo-passkey.ts",
+    "smoke:celo-fee-currency": "bun run smoke-celo-fee-currency.ts"
   },
   "dependencies": {
     "@altananetwork/sdk": "workspace:*",

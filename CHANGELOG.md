@@ -17,6 +17,34 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Added
 
+- **Relay fees in the token the wallet holds.** The SDK no longer names the
+  native token on every call. With no `feeToken`, a wallet (admin) key sends
+  none and the relay charges whichever of its accepted tokens the wallet
+  holds (on Celo: CELO, USDC, USDT, USDm, EURm or KESm, priced from Celo's
+  own oracle), so a wallet funded with a stablecoin transacts without CELO.
+  A session key pays from its spend caps: the SDK keeps the capped tokens the
+  relay accepts on the chain and names the one the wallet holds the most of,
+  failing before anything is sent when the wallet holds none of them.
+  `feeToken` now also takes a list: pay with the first listed token the relay
+  accepts and the wallet holds. `grantSession` with `feeToken` (one address
+  or a list) adds a daily spend cap for each (default one whole token,
+  `feeSpendLimit` overrides) so the session can pay fees in it.
+  `ExecuteResult` gains `feeToken`, the token the relay charged, read from
+  the intent it quoted. New `client.feeCurrencies()` (and
+  `feeCurrencies({ network })`) lists what a chain's relay accepts with each
+  token's rate and the relay's `rateTtl`; `formatFeeAmount` prints an amount
+  with its symbol; `NATIVE_TOKEN` is exported. A "fee token not supported"
+  rejection now names the tokens the relay accepts on that chain, read live.
+  MCP: `create_wallet` names the accepted fee tokens in its funding steps;
+  the new `list_fee_currencies` tool lists them (with the wallet's balance of
+  each when a wallet is named); `wallet_execute`, `session_execute` and
+  `grant_session` take `feeToken` as one address or a list, and the two
+  execute tools report the token charged.
+
+  Behaviour change: on Celo a wallet holding both CELO and a stablecoin used
+  to pay every fee in CELO and now pays in whichever of the two the relay
+  values higher. Pass `feeToken: NATIVE_TOKEN` to keep paying in CELO. On
+  every other chain the relay accepts native only, so nothing changes.
 - **L2 execution networks, with Celo and Celo Sepolia.** A network can now
   keep its KeyStore on its L1 and mirror it into a KeyStoreCache on the L2:
   `NetworkConfig` gains an optional `registry` field naming the L1 and the

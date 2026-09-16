@@ -26,6 +26,7 @@ import {
 import { createPasskeyWallet as createPasskeyWalletImpl } from "./createPasskeyWallet.js";
 import { recoverFromPasskey as recoverFromPasskeyImpl } from "./recoverFromPasskey.js";
 import { execute as executeImpl } from "./execute.js";
+import { feeCurrencies as feeCurrenciesImpl, type FeeCurrenciesResult } from "./feeCurrencies.js";
 import { grantSession as grantSessionImpl } from "./grantSession.js";
 import { revokeSession as revokeSessionImpl } from "./revokeSession.js";
 import { registerSessionKey as registerSessionKeyImpl } from "./registerSessionKey.js";
@@ -89,20 +90,26 @@ export type ClientExecuteOptions =
       wallet: Wallet;
       signer: Signer;
       calls: Call | readonly Call[];
-      feeToken?: Address;
+      /** One token to force, or a list to pay with the first accepted and held. */
+      feeToken?: Address | readonly Address[];
       noWait?: boolean;
     } & ChainSelector)
   | ({
       session: Session;
       calls: Call | readonly Call[];
-      feeToken?: Address;
+      feeToken?: Address | readonly Address[];
       noWait?: boolean;
     } & ChainSelector);
 
 export type ClientGrantSessionOptions = {
   wallet: Wallet;
   signer: Signer;
-  feeToken?: Address;
+  /**
+   * The fee token(s) for the grant itself, and the tokens the session may pay
+   * fees in: each gets a daily spend cap added to the session's permissions
+   * (see `feeSpendLimit`). One address or a list.
+   */
+  feeToken?: Address | readonly Address[];
 } & GrantSessionOptions &
   ChainSelector;
 
@@ -142,6 +149,8 @@ export type ClientHoldingsOptions = {
   /** Keep tokens the relay lists but whose live balance is zero. Default false. */
   includeZero?: boolean;
 } & ChainSelector;
+
+export type ClientFeeCurrenciesOptions = ChainSelector;
 
 export type ClientApproveSignatureCheckerOptions = {
   wallet: Wallet;
@@ -203,6 +212,12 @@ export type Client = {
    * for the wallet's assets, then reads each one live (BEP-677 aware).
    */
   holdings(opts: ClientHoldingsOptions): Promise<HoldingsResult>;
+  /**
+   * The tokens the relay accepts as payment for its fee on a chain, read
+   * live, with the rate each is priced at. Omit `feeToken` on any call and
+   * the relay charges whichever of these the wallet holds.
+   */
+  feeCurrencies(opts?: ClientFeeCurrenciesOptions): Promise<FeeCurrenciesResult>;
 
   /** Sign a protocol digest with a session key (offline, chain-independent). */
   signOrder(opts: { session: Session; appDigest: Hex }): Promise<Hex>;
@@ -318,6 +333,7 @@ export function createClient(opts: CreateClientOptions): Client {
           ...(o.register !== undefined ? { register: o.register } : {}),
           ...(o.populateCache !== undefined ? { populateCache: o.populateCache } : {}),
           ...(o.onStatus ? { onStatus: o.onStatus } : {}),
+          ...(o.feeSpendLimit !== undefined ? { feeSpendLimit: o.feeSpendLimit } : {}),
         },
         {
           network: resolve(o.chainId),
@@ -360,6 +376,10 @@ export function createClient(opts: CreateClientOptions): Client {
         network: resolve(o.chainId),
         ...(o.includeZero !== undefined ? { includeZero: o.includeZero } : {}),
       });
+    },
+
+    feeCurrencies(o = {}) {
+      return feeCurrenciesImpl({ network: resolve(o.chainId) });
     },
 
     signOrder(o) {

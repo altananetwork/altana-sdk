@@ -26,7 +26,8 @@ On an L1 the Keystore is on the chain itself and every tool works on that one ch
 | `create_wallet` | Generates a new private key, stores it in the OS keychain under the given name, returns the address. |
 | `list_wallets` | Lists wallet names available on this machine (across keychain, file, env). |
 | `wallet_balance` | Reads native + optional ERC-20 balances for a stored wallet. Pass `tokens` for specific ERC-20s, or `discover: true` to list every token the wallet holds (discovered through the Altana relay, zero balances omitted, result flagged `discovered: true`). [BEP-677](https://github.com/bnb-chain/BEPs/blob/master/BEPs/BEP-677.md) scaled-UI-amount tokens are detected via ERC-165 and their `display` value is scaled automatically; `raw` stays the on-chain amount. |
-| `wallet_execute` | Submits one or more calls signed by the wallet's admin key. |
+| `wallet_execute` | Submits one or more calls signed by the wallet's admin key. The relay takes its fee in whichever accepted token the wallet holds; `feeToken` forces one address, or with a list pays with the first the relay accepts and the wallet holds. The result names the token charged (`feeToken`). |
+| `list_fee_currencies` | Lists the tokens the relay accepts as fee payment on the selected chain, with the rate each is priced at, read live. Pass a wallet `name` to see its balance of each. |
 
 ## Verification
 
@@ -39,9 +40,9 @@ On an L1 the Keystore is on the chain itself and every tool works on that one ch
 
 | Tool | Purpose |
 |---|---|
-| `grant_session` | Generates a session key, registers it in Keystore, authorizes it with the given permissions. Returns the session details, keyId, and the grant's transaction hash. |
+| `grant_session` | Generates a session key, registers it in Keystore, authorizes it with the given permissions. `feeToken` (one address or a list) names the tokens the session may pay relay fees in; each gets a daily spend cap added (`feeSpendLimit`, in the token's smallest unit, overrides the one-whole-token default). Returns the session details, keyId, and the grant's transaction hash. |
 | `list_sessions` | Lists local session metadata (those granted from this machine). |
-| `session_execute` | Submits calls signed by a stored session key. |
+| `session_execute` | Submits calls signed by a stored session key. The fee comes out of the session's spend caps: the capped token the relay accepts that the wallet holds the most of; `feeToken` forces one address, or with a list pays with the first that qualifies. The result names the token charged (`feeToken`). |
 | `revoke_session` | Deactivates the session in Keystore and pulls onchain authority. |
 
 ## Agent commerce
