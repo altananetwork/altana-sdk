@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { ActivityLogPanel } from "./components/ActivityLogPanel";
+import { FeeTokensPanel } from "./components/FeeTokensPanel";
+import { SendPanel } from "./components/SendPanel";
 import { WalletPanel } from "./components/WalletPanel";
 import type { LogEntry } from "./lib/log";
 import { useApp } from "./state/AppState";
@@ -46,7 +48,9 @@ export function App({ attachLog }: { attachLog?: (fn: (e: LogEntry) => void) => 
       <main className="main">
         <section aria-label={TABS.find((t) => t.id === tab)?.label}>
           {tab === "wallet" && <WalletPanel />}
-          {tab !== "wallet" && (
+          {tab === "fees" && <FeeTokensPanel />}
+          {tab === "send" && <SendPanel />}
+          {(tab === "sessions" || tab === "crosschain") && (
             <div className="panel">
               <h2>{TABS.find((t) => t.id === tab)?.label}</h2>
               <p className="lead">Coming in a later phase.</p>
