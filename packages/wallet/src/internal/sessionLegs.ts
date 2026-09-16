@@ -32,6 +32,10 @@ import { proveIntoCache } from "../syncSessionToCache.js";
 export type IntentOutcome = {
   status: "CONFIRMED" | "FAILED";
   transactionHash?: Hex;
+  /** Registry writes: the L2 whose balance paid for the write, when the relay funded it. */
+  fundedFromChainId?: number;
+  /** Registry writes: the source-chain transaction that locked the funds. */
+  sourceTransactionHash?: Hex;
   /** Block the intent landed in; read when asked for (`needBlockNumber`). */
   blockNumber?: bigint;
   /** Set when a block number was asked for, the intent confirmed, and the block stayed unknown. */
@@ -151,6 +155,8 @@ export const realSessionLegDeps: SessionLegDeps = {
         ...(written.transactionHash ? { transactionHash: written.transactionHash } : {}),
         ...(written.blockNumber !== undefined ? { blockNumber: written.blockNumber } : {}),
         ...(written.blockNumberError ? { blockNumberError: written.blockNumberError } : {}),
+        ...(written.fundedFromChainId !== undefined ? { fundedFromChainId: written.fundedFromChainId } : {}),
+        ...(written.sourceTransactionHash ? { sourceTransactionHash: written.sourceTransactionHash } : {}),
         ...(written.status !== "CONFIRMED" ? { reason: `registry write status ${written.status}` } : {}),
       };
     } catch (err) {
@@ -221,6 +227,8 @@ export function legFromOutcome(
     ...(via ? { via } : {}),
     ...(outcome.transactionHash ? { transactionHash: outcome.transactionHash } : {}),
     ...(outcome.blockNumber !== undefined ? { blockNumber: outcome.blockNumber } : {}),
+    ...(outcome.fundedFromChainId !== undefined ? { fundedFromChainId: outcome.fundedFromChainId } : {}),
+    ...(outcome.sourceTransactionHash ? { sourceTransactionHash: outcome.sourceTransactionHash } : {}),
     ...(outcome.reason ? { reason: outcome.reason } : {}),
   };
 }

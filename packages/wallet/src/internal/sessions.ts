@@ -77,6 +77,10 @@ export type SessionLeg = {
   transactionHash?: Hex;
   /** Registry legs: the block the write landed in. */
   blockNumber?: bigint;
+  /** Registry legs: the L2 whose balance paid for the write, when the relay funded it from there. */
+  fundedFromChainId?: number;
+  /** Registry legs: the source-chain transaction that locked the funds. */
+  sourceTransactionHash?: Hex;
   /** Cache legs: the cache the proof went to. */
   keyStoreCache?: Address;
   /** Cache legs: the registry-chain block the accepted proof was built against. */
@@ -123,6 +127,10 @@ export type RegistryWriteReport = {
   transactionHash?: Hex;
   /** Block the write landed in; proofs into the cache are anchored at or past it. */
   blockNumber?: bigint;
+  /** The L2 whose balance paid for the write, when the relay funded it from there. */
+  fundedFromChainId?: number;
+  /** The source-chain transaction that locked the funds. */
+  sourceTransactionHash?: Hex;
   /** Why the write was skipped or failed, when it was. */
   reason?: string;
 };

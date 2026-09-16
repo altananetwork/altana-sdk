@@ -8,10 +8,11 @@
  * balances the picker uses are the relay's; no public RPC is contacted.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { numberToHex, type Address, type Hex } from "viem";
-import { BNB, CELO_SEPOLIA, NATIVE_TOKEN, type NetworkConfig } from "../config.js";
+import { encodeAbiParameters, numberToHex, type Address, type Hex } from "viem";
+import { BNB, CELO_SEPOLIA, NATIVE_TOKEN, SEPOLIA, type NetworkConfig } from "../config.js";
 import { createPrivateKeySigner } from "./signer.js";
 import { buildRelayClient, submitCallsDetailed, type KeyDescriptor } from "./relay.js";
+import { submitRegistryWrite } from "./cachedRegistry.js";
 import capabilities from "./fixtures/celo-sepolia-capabilities.json" with { type: "json" };
 import prepared from "./fixtures/celo-sepolia-prepare-calls.json" with { type: "json" };
 
@@ -260,5 +261,85 @@ describe("fee token on the wire", () => {
     });
     expect(wire.wireFeeToken()?.toLowerCase()).toBe(NATIVE_TOKEN);
     expect(wire.methods()).toEqual(["wallet_getCapabilities", "wallet_prepareCalls", "wallet_sendPreparedCalls"]);
+  });
+});
+
+describe("registry write funded from the L2, on the wire", () => {
+  const SEPOLIA_TX = ("0x" + "ee".repeat(32)) as Hex;
+  const CELO_TX = ("0x" + "cc".repeat(32)) as Hex;
+  const FEE = 200_000_000_000_000n;
+
+  /** Plays the Sepolia relay and the Sepolia public RPC (KeyStore reads, balance). */
+  function mockRegistryWire(o: { balance: bigint; activeKeys: Hex[] }) {
+    const requests: Recorded[] = [];
+    const same = (a: string, b: string | undefined) => b !== undefined && a.replace(/\/$/, "") === b.replace(/\/$/, "");
+    globalThis.fetch = (async (url: any, init?: RequestInit) => {
+      const u = String(url);
+      const body = JSON.parse(String(init?.body));
+      const reqs = Array.isArray(body) ? body : [body];
+      const answers = reqs.map((req: { id: number; method: string; params: any }) => {
+        requests.push({ url: u, method: req.method, params: req.params });
+        const ok = (result: unknown) => ({ jsonrpc: "2.0", id: req.id, result });
+        if (same(u, SEPOLIA.publicRpcUrl)) {
+          if (req.method === "eth_chainId") return ok(numberToHex(SEPOLIA.chainId));
+          if (req.method === "eth_getBalance") return ok(numberToHex(o.balance));
+          if (req.method === "eth_call") {
+            const to = String(req.params[0].to).toLowerCase();
+            if (to === SEPOLIA.keyStore.toLowerCase()) return ok(encodeAbiParameters([{ type: "bytes32[]" }], [o.activeKeys]));
+            if (to === SEPOLIA.keyStoreController.toLowerCase()) return ok(encodeAbiParameters([{ type: "uint256" }], [FEE]));
+          }
+          throw new Error(`public rpc got ${req.method}`);
+        }
+        if (!same(u, SEPOLIA.relayUrl)) throw new Error(`unexpected request to ${u}: ${req.method}`);
+        if (req.method === "wallet_getCapabilities") return ok(chainCapabilities(SEPOLIA.chainId, []));
+        if (req.method === "wallet_prepareCalls") return ok(prepared);
+        if (req.method === "wallet_sendPreparedCalls") return ok({ id: "0xabc" });
+        if (req.method === "wallet_getCallsStatus")
+          return ok({
+            id: "0xabc",
+            status: 200,
+            receipts: [
+              { chainId: numberToHex(CELO_SEPOLIA.chainId), blockNumber: "0x10", blockHash: "0x" + "11".repeat(32), gasUsed: "0x5208", status: "0x1", transactionHash: CELO_TX, logs: [] },
+              { chainId: numberToHex(SEPOLIA.chainId), blockNumber: "0xb2944d", blockHash: "0x" + "22".repeat(32), gasUsed: "0x5208", status: "0x1", transactionHash: SEPOLIA_TX, logs: [] },
+            ],
+          });
+        throw new Error(`relay got ${req.method}`);
+      });
+      return new Response(JSON.stringify(Array.isArray(body) ? answers : answers[0]), { status: 200 });
+    }) as typeof fetch;
+    return {
+      prepare: () => requests.find((c) => c.method === "wallet_prepareCalls")?.params[0],
+    };
+  }
+
+  test("a wallet with no ETH on Sepolia asks the relay to front both registration fees, paid in native", async () => {
+    const signer = createPrivateKeySigner();
+    const wire = mockRegistryWire({ balance: 0n, activeKeys: [] });
+    const written = await submitRegistryWrite(SEPOLIA, {
+      walletAddress: signer.address,
+      adminSigner: signer,
+      calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+    });
+    const p = wire.prepare();
+    expect(p.capabilities.requiredFunds).toEqual([{ address: NATIVE_TOKEN, value: numberToHex(FEE * 2n) }]);
+    expect(String(p.capabilities.meta.feeToken).toLowerCase()).toBe(NATIVE_TOKEN);
+    expect(written.status).toBe("CONFIRMED");
+    expect(written.transactionHash).toBe(SEPOLIA_TX);
+    expect(written.blockNumber).toBe(11703373n);
+    expect(written.fundedFromChainId).toBe(CELO_SEPOLIA.chainId);
+    expect(written.sourceTransactionHash).toBe(CELO_TX);
+  });
+
+  test("a wallet holding ETH on Sepolia sends today's request, with no funds requested", async () => {
+    const signer = createPrivateKeySigner();
+    const wire = mockRegistryWire({ balance: 10n ** 18n, activeKeys: [("0x" + "01".repeat(32)) as Hex] });
+    const written = await submitRegistryWrite(SEPOLIA, {
+      walletAddress: signer.address,
+      adminSigner: signer,
+      calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+    });
+    expect(wire.prepare().capabilities.requiredFunds).toBeUndefined();
+    expect(written.fundedFromChainId).toBeUndefined();
+    expect(written.transactionHash).toBe(SEPOLIA_TX);
   });
 });

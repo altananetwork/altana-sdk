@@ -92,8 +92,7 @@ async function main() {
   const funding: [NetworkConfig, bigint, bigint][] = [
     [celoSepolia, parseEther("1"), parseEther("0.5")],
     [baseSepolia, parseEther("0.01"), parseEther("0.003")],
-    // Relayed registry writes on Sepolia: two registration fees plus the relay fee (about 0.006 ETH).
-    [sepolia, parseEther("0.02"), parseEther("0.012")],
+    // Nothing on Sepolia: the relay funds the registry writes from the wallet's L2 balance.
   ];
   for (const [n, min] of funding) {
     const bal = await publicOf(n).getBalance({ address: funder.address });
@@ -145,6 +144,9 @@ async function run(
   const session = await client.grantSession({ wallet, signer: admin, sessionSigner, permissions, expiry, onStatus: status });
   printLegs(session.legs);
   assertStatus(session, "granted", "grantSession");
+  const grantRegistry = legOf(session.legs, "registry", sepolia.chainId);
+  if (![celoSepolia.chainId, baseSepolia.chainId].includes(grantRegistry.fundedFromChainId ?? -1)) throw new Error("Sepolia registry write was not funded from an L2");
+  console.log(`    registry write funded from chain ${grantRegistry.fundedFromChainId}, source tx ${grantRegistry.sourceTransactionHash}`);
   if (session.legs.filter((l) => l.kind === "registry").length !== 1) throw new Error("expected exactly one registry leg");
   console.log(`    granted, ${signatureCount(session.legs)} signatures [${ms()}]`);
 
@@ -174,7 +176,10 @@ async function run(
     legOf(revoked.legs, "cache", n.chainId);
   }
   if (revoked.legs.filter((l) => l.kind === "registry").length !== 1) throw new Error("expected exactly one registry leg");
-  if (legOf(revoked.legs, "registry", sepolia.chainId).status !== "CONFIRMED") throw new Error("Sepolia registry revoke did not confirm");
+  const revokeRegistry = legOf(revoked.legs, "registry", sepolia.chainId);
+  if (revokeRegistry.status !== "CONFIRMED") throw new Error("Sepolia registry revoke did not confirm");
+  if (![celoSepolia.chainId, baseSepolia.chainId].includes(revokeRegistry.fundedFromChainId ?? -1)) throw new Error("Sepolia registry revoke was not funded from an L2");
+  console.log(`    registry revoke funded from chain ${revokeRegistry.fundedFromChainId}, source tx ${revokeRegistry.sourceTransactionHash}`);
   console.log(`    final status: ${revoked.status}, ${signatureCount(revoked.legs)} signatures [${ms()}]`);
 
   console.log("\n[6] reads after revoke");

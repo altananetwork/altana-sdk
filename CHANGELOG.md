@@ -31,6 +31,14 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Added
 
+- **Keystore writes funded from the L2.** `grantSession`, `revokeSession` and
+  `registerSessionKey` no longer need ETH on the Keystore chain: when the wallet
+  holds none there, the SDK asks the relay to fund the Sepolia write from the
+  wallet's balance on the L2 (Celo Sepolia, Base Sepolia) under the same single
+  signature. Registry legs and quote lines carry `fundedFromChainId` and
+  `sourceTransactionHash`; quotes charge such a line to the L2 balance. A wallet
+  that holds ETH on the Keystore chain pays there as before.
+
 - **Relay fees in the token the wallet holds.** The SDK no longer names the
   native token on every call. With no `feeToken`, a wallet (admin) key sends
   none and the relay charges whichever of its accepted tokens the wallet

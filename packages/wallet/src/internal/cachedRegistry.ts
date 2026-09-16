@@ -43,6 +43,7 @@ import {
   submitCalls,
   waitForCalls,
   type Call,
+  type RequiredFund,
 } from "./relay.js";
 
 import { NATIVE_TOKEN } from "../config.js";
@@ -156,6 +157,10 @@ export type RegistryWriteResult = {
   via: "relay" | "eoa";
   chainId: number;
   status: "CONFIRMED" | "FAILED" | "PENDING";
+  /** Set when the wallet's balance on this L2 paid for the write. */
+  fundedFromChainId?: number;
+  /** The source-chain transaction that locked the funds, when funded from an L2. */
+  sourceTransactionHash?: Hex;
   /** The transaction that carried the write (the last one on the EOA path). */
   transactionHash?: Hex;
   /** Block the write landed in. Proofs must be anchored at or past it. */
@@ -183,6 +188,13 @@ export type SubmitRegistryCallsArgs = {
   feeToken?: Address;
   /** Public client for the registry chain. Built from the config when omitted. */
   registryClient?: PublicClient;
+  /**
+   * Relay path only. Whether the relay funds the write from the wallet's
+   * balance on an L2. Undefined decides from the wallet's balance on the
+   * registry chain: fund when it cannot cover the calls' value plus a fee
+   * allowance.
+   */
+  fundFromL2?: boolean;
 };
 
 /**
@@ -224,12 +236,21 @@ export async function submitRegistryWrite(
     // submitCalls prepends the admin registration itself on a local-registry
     // network, which the registry chain is.
     const relayClient = buildRelayClient(registry);
+    const funding = await planRegistryFunding({
+      registryClient,
+      registry,
+      walletAddress,
+      adminPublicKey: adminSigner.publicKey,
+      calls,
+      ...(args.fundFromL2 !== undefined ? { override: args.fundFromL2 } : {}),
+    });
     const callsId = await submitCalls(relayClient, walletAddress, adminSigner, calls, {
-      feeToken: args.feeToken ?? NATIVE_TOKEN,
+      feeToken: funding.fundFromL2 ? NATIVE_TOKEN : (args.feeToken ?? NATIVE_TOKEN),
+      ...(funding.requiredFunds ? { requiredFunds: funding.requiredFunds } : {}),
       submittingKey: { type: "secp256k1", publicKey: adminSigner.publicKey, role: "admin" },
       network: registry,
     });
-    const result = await waitForCalls(relayClient, callsId);
+    const result = await waitForCalls(relayClient, callsId, undefined, undefined, { chainId: registry.chainId });
     const block =
       result.status === "CONFIRMED"
         ? await blockNumberOfWrite({
@@ -238,6 +259,7 @@ export async function submitRegistryWrite(
             publicClient: registryClient,
           })
         : undefined;
+    const source = result.sourceReceipts?.[0];
     return {
       via: "relay",
       chainId: registry.chainId,
@@ -246,6 +268,8 @@ export async function submitRegistryWrite(
       ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
       ...(block?.blockNumber !== undefined ? { blockNumber: block.blockNumber } : {}),
       ...(block && "blockNumberError" in block ? { blockNumberError: block.blockNumberError } : {}),
+      ...(funding.fundFromL2 && source?.chainId !== undefined ? { fundedFromChainId: Number(source.chainId) } : {}),
+      ...(funding.fundFromL2 && source?.transactionHash ? { sourceTransactionHash: source.transactionHash } : {}),
     };
   }
 
@@ -294,7 +318,54 @@ export async function submitRegistryWrite(
 }
 
 /** Rough gas allowance for one direct registry transaction (registerKey is ~150k gas at a few gwei). */
-const REGISTRY_GAS_ALLOWANCE_WEI = 1_000_000_000_000_000n; // 0.001 ETH
+/** Headroom over the calls' value for the write's gas or relay fee. */
+export const REGISTRY_FEE_ALLOWANCE_WEI = 1_000_000_000_000_000n; // 0.001 ETH
+
+export type RegistryFunding = {
+  fundFromL2: boolean;
+  /** The request to the relay when funding from an L2: the native value it must front. */
+  requiredFunds?: readonly RequiredFund[];
+};
+
+/**
+ * Whether a relayed registry write must be funded from the wallet's balance on
+ * an L2: when its balance on the registry chain cannot cover the calls' value
+ * plus the fee allowance. The requested value is at least one wei above the
+ * balance so the relay always sources it (and its own fee) from another chain.
+ */
+export function decideRegistryFunding(args: {
+  balance: bigint;
+  valueNeeded: bigint;
+  allowance?: bigint;
+  override?: boolean;
+}): RegistryFunding {
+  const allowance = args.allowance ?? REGISTRY_FEE_ALLOWANCE_WEI;
+  const fundFromL2 = args.override ?? args.balance < args.valueNeeded + allowance;
+  if (!fundFromL2) return { fundFromL2: false };
+  const value = args.valueNeeded > args.balance ? args.valueNeeded : args.balance + 1n;
+  return { fundFromL2: true, requiredFunds: [{ address: NATIVE_TOKEN, value }] };
+}
+
+/** Reads what the write costs in value and what the wallet holds, then decides. */
+export async function planRegistryFunding(args: {
+  registryClient: PublicClient;
+  registry: NetworkConfig;
+  walletAddress: Address;
+  adminPublicKey: Hex;
+  calls: readonly Call[];
+  override?: boolean;
+}): Promise<RegistryFunding> {
+  // The admin's first registration is prepended inside the relay request; its fee counts here.
+  const prepend = await buildFirstActionPrepend({
+    publicClient: args.registryClient,
+    network: args.registry,
+    walletAddress: args.walletAddress,
+    adminPublicKey: args.adminPublicKey,
+  });
+  const valueNeeded = [...prepend, ...args.calls].reduce((sum, c) => sum + (c.value ?? 0n), 0n);
+  const balance = await args.registryClient.getBalance({ address: args.walletAddress });
+  return decideRegistryFunding({ balance, valueNeeded, ...(args.override !== undefined ? { override: args.override } : {}) });
+}
 
 /**
  * Throws when `address` cannot pay the direct registry write on the registry
@@ -307,7 +378,7 @@ export async function assertRegistryFunding(
   address: Address,
   requiredValue: bigint,
 ): Promise<void> {
-  const needed = requiredValue + REGISTRY_GAS_ALLOWANCE_WEI;
+  const needed = requiredValue + REGISTRY_FEE_ALLOWANCE_WEI;
   const balance = await registryClient.getBalance({ address });
   if (balance >= needed) return;
   const symbol = registry.chain.nativeCurrency.symbol;

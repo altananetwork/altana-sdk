@@ -95,3 +95,33 @@ describe("blockNumberOfWrite", () => {
     expect(lookups).toBe(4);
   });
 });
+
+describe("waitForCalls on a multichain bundle", () => {
+  const SOURCE_TX = ("0x" + "cd".repeat(32)) as Hex;
+  const receipt = (o: { blockNumber: string; chainId?: string; transactionHash: Hex }) => ({
+    blockHash: ("0x" + "11".repeat(32)) as Hex,
+    gasUsed: "0x5208",
+    logs: [],
+    status: "0x1",
+    ...o,
+  });
+  const twoReceipts = [
+    receipt({ blockNumber: "0x10", chainId: "0xaa044c", transactionHash: SOURCE_TX }),
+    receipt({ blockNumber: "0xb2944d", chainId: "0xaa36a7", transactionHash: TX }),
+  ];
+  test("reports the receipt on the requested chain and the others as source receipts", async () => {
+    const client = { request: async () => ({ id: "0x01", status: 200, receipts: twoReceipts }), chain: { id: 11155111 } } as any;
+    const result = await waitForCalls(client, "0x01", 5_000, 1, { chainId: 11155111 });
+    expect(result.transactionHash).toBe(TX);
+    expect(result.blockNumber).toBe(REGISTRATION_BLOCK);
+    expect(result.sourceReceipts?.map((r) => r.transactionHash)).toEqual([SOURCE_TX]);
+  });
+  test("falls back to the first receipt when none is on the requested chain", async () => {
+    const client = {
+      request: async () => ({ id: "0x01", status: 200, receipts: [receipt({ blockNumber: "0x10", chainId: "0xaa044c", transactionHash: SOURCE_TX })] }),
+    } as any;
+    const result = await waitForCalls(client, "0x01", 5_000, 1, { chainId: 11155111 });
+    expect(result.transactionHash).toBe(SOURCE_TX);
+    expect(result.sourceReceipts).toBeUndefined();
+  });
+});

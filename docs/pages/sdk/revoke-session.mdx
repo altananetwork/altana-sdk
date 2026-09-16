@@ -63,6 +63,8 @@ type SessionLeg = {
   via?: "relay" | "eoa" | "bundled";   // registry legs
   transactionHash?: Hex;
   blockNumber?: bigint;                // registry legs
+  fundedFromChainId?: number;          // registry legs the relay funded from an L2 balance
+  sourceTransactionHash?: Hex;         // the L2 transaction that locked those funds
   keyStoreCache?: Address;             // cache legs
   l1BlockNumber?: bigint;              // cache legs
   cachedKey?: CachedKey;               // cache legs
@@ -75,6 +77,8 @@ type SessionLeg = {
 `revokeSession` never throws for a failed leg. Check `status`.
 
 ## What it costs
+
+A registry leg for a wallet with no ETH on the Keystore chain is funded by the relay from the wallet's balance on the L2 and carries `fundedFromChainId`; its cost shows on that chain in `quoteRevokeSession`.
 
 `client.quoteRevokeSession` takes the same options and returns one line per leg (fee and native value, who pays) plus the payers' balances, without signing or sending anything. Each line's `needed`, and each balance's sum of them, is the native amount the leg needs: the fee plus the value it carries, such as a registration fee. When the wallet is short, the relay's own figure is used and `neededFromRelay` is `true`:
 

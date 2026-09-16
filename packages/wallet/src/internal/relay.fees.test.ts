@@ -87,3 +87,17 @@ describe("feeTokenHint", () => {
     expect(hint).not.toContain(`${CELO_SEPOLIA.chain.name}:`);
   });
 });
+
+describe("buildPrepareParams: requiredFunds", () => {
+  const CALLS2 = [{ to: "0x1111111111111111111111111111111111111111" as Address, value: 0n, data: "0x" as const }];
+  test("forwards the funds the relay must front, and omits the key when there are none", () => {
+    const funds = [{ address: NATIVE_TOKEN, value: 5n }];
+    expect(buildPrepareParams({ account: "0xabc", calls: CALLS2, feeToken: NATIVE_TOKEN, requiredFunds: funds })).toEqual({
+      account: "0xabc",
+      calls: CALLS2,
+      feeToken: NATIVE_TOKEN,
+      requiredFunds: funds,
+    });
+    expect(buildPrepareParams({ account: "0xabc", calls: CALLS2, requiredFunds: [] })).toEqual({ account: "0xabc", calls: CALLS2 });
+  });
+});

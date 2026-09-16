@@ -163,8 +163,9 @@ What to fund, and where:
 ## Sepolia: `SEPOLIA`
 
 Hosts the testnet KeyStore behind Celo Sepolia and Base Sepolia. The Altana
-testnet relay serves it, so KeyStore writes are relayed wallet calls paid in
-Sepolia ETH; the SDK reaches it as `registryNetwork(CELO_SEPOLIA)`.
+testnet relay serves it, so KeyStore writes are relayed wallet calls: paid in
+Sepolia ETH when the wallet holds some, otherwise funded by the relay from the
+wallet's balance on the L2. The SDK reaches it as `registryNetwork(CELO_SEPOLIA)`.
 
 - **Relay:** `https://testnet-relay.altana.network`
 

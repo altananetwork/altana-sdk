@@ -33,15 +33,16 @@ console.log(wallet.address);
 | `ETHEREUM` | Ethereum | 1 | ETH |
 | `CELO` | Celo | 42220 | CELO, or USDC, USDT, USDm, EURm or KESm (the relay takes its fee in whichever the wallet holds), plus ETH on Ethereum for Keystore writes |
 | `BNB_TESTNET` | BNB Smart Chain Testnet | 97 | test BNB: [faucet](https://testnet.bnbchain.org/faucet-smart) |
-| `CELO_SEPOLIA` | Celo Sepolia | 11142220 | test CELO: [faucet](https://faucet.celo.org/celo-sepolia), or test USDC, USDm, EURm or KESm; plus Sepolia ETH: [faucet](https://cloud.google.com/application/web3/faucet/ethereum/sepolia) |
-| `BASE_SEPOLIA` | Base Sepolia | 84532 | Base Sepolia ETH, plus Sepolia ETH: [faucet](https://cloud.google.com/application/web3/faucet/ethereum/sepolia) |
+| `CELO_SEPOLIA` | Celo Sepolia | 11142220 | test CELO: [faucet](https://faucet.celo.org/celo-sepolia), or test USDC, USDm, EURm or KESm. No Sepolia ETH needed: Keystore writes on Sepolia are funded from this balance |
+| `BASE_SEPOLIA` | Base Sepolia | 84532 | Base Sepolia ETH. No Sepolia ETH needed: Keystore writes on Sepolia are funded from this balance |
 
 BNB Smart Chain and Ethereum are L1s: the [Keystore](/concepts/keystore) is
 on the chain itself. Celo and Base Sepolia are L2s: the Keystore is on Ethereum (Sepolia on
-testnet) and a KeyStoreCache on the L2 mirrors it, which is why the wallet also
-holds a little of the L1's native token. The SDK handles the L1 write and the
+testnet) and a KeyStoreCache on the L2 mirrors it. The SDK handles the L1 write and the
 proof into the cache inside [`grantSession`](/sdk/grant-session) and
-[`revokeSession`](/sdk/revoke-session). `BASE` is also exported, for the L2
+[`revokeSession`](/sdk/revoke-session). A wallet that holds no ETH on the L1 still
+gets its L1 write: the relay funds it from the wallet's balance on the L2 (on testnet,
+one CELO counts as one ETH). A wallet that does hold ETH on the L1 pays there directly. `BASE` is also exported, for the L2
 Keystore cache used by [`ensureKeyCached`](/sdk/sync-to-l2).
 
 ## Multiple chains
