@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ActivityLogPanel } from "./components/ActivityLogPanel";
+import { CrossChainPanel } from "./components/CrossChainPanel";
 import { FeeTokensPanel } from "./components/FeeTokensPanel";
 import { SendPanel } from "./components/SendPanel";
 import { SessionsPanel } from "./components/SessionsPanel";
@@ -52,12 +53,7 @@ export function App({ attachLog }: { attachLog?: (fn: (e: LogEntry) => void) => 
           {tab === "fees" && <FeeTokensPanel />}
           {tab === "send" && <SendPanel />}
           {tab === "sessions" && <SessionsPanel />}
-          {tab === "crosschain" && (
-            <div className="panel">
-              <h2>{TABS.find((t) => t.id === tab)?.label}</h2>
-              <p className="lead">Coming in a later phase.</p>
-            </div>
-          )}
+          {tab === "crosschain" && <CrossChainPanel />}
         </section>
         <aside aria-label="Activity log">
           <ActivityLogPanel />
