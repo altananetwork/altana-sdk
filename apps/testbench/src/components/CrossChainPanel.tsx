@@ -4,6 +4,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import type { Hex } from "viem";
 import { DESTINATION_CHAIN_ID, STEPS, keyIdOf, runCrossChain, type CrossChainDeps, type CrossChainResult, type StepState } from "../lib/crossChain";
 import { txUrl } from "../lib/explorer";
+import { nativeLabel } from "../lib/fees";
 import { formatAmount } from "../lib/format";
 import { entry } from "../lib/log";
 import { useApp } from "../state/AppState";
@@ -29,6 +30,7 @@ export function CrossChainPanel({ makeDeps = liveFactory }: { makeDeps?: DepsFac
   const source = sources.find((c) => c.chainId === sourceId);
   const destination = networkByChainId(DESTINATION_CHAIN_ID);
   const publicKey = wallet ? privateKeyToAccount(wallet.key).publicKey : undefined;
+  const sourceSymbol = source ? nativeLabel(source.chainId, state.feeCurrenciesChainId === source.chainId ? state.feeCurrencies : undefined, client.chains) : "CELO";
 
   const start = async () => {
     if (!wallet || !source || !publicKey) return;
@@ -60,7 +62,7 @@ export function CrossChainPanel({ makeDeps = liveFactory }: { makeDeps?: DepsFac
         the source chain, pays the registration in ETH on Sepolia, and is repaid when the escrow settles. One signature.
       </p>
       <div className="banner" role="note">
-        Demo pricing: the testnet relay counts 1 {source?.chain.nativeCurrency.symbol ?? "CELO"} as 1 ETH. The amount locked on the source chain is not a market
+        Demo pricing: the testnet relay counts 1 {sourceSymbol} as 1 ETH. The amount locked on the source chain is not a market
         price. Real conversion at an oracle rate is a separate relay change.
       </div>
       {!wallet && <div className="banner info">Create a wallet first.</div>}
@@ -80,7 +82,7 @@ export function CrossChainPanel({ makeDeps = liveFactory }: { makeDeps?: DepsFac
               <span>
                 Wallet <Address value={wallet.address} /> registers key <Address value={publicKey ? keyIdOf(publicKey) : ""} /> on {destination?.chain.name}.
               </span>
-              <span className="muted">The wallet should hold {source?.chain.nativeCurrency.symbol} on {source?.chain.name} and nothing on Sepolia; this key must not be registered yet.</span>
+              <span className="muted">The wallet should hold {sourceSymbol} on {source?.chain.name} and nothing on Sepolia; this key must not be registered yet.</span>
             </div>
             <div className="row">
               <Button variant="primary" onClick={start} disabled={busy || !source}>
@@ -122,13 +124,13 @@ export function CrossChainPanel({ makeDeps = liveFactory }: { makeDeps?: DepsFac
                   <tr>
                     <td>Locked on {source?.chain.name}</td>
                     <td className="num">
-                      {formatAmount(result.escrowed, 18)} {source?.chain.nativeCurrency.symbol} <span className="muted small">(demo pricing)</span>
+                      {formatAmount(result.escrowed, 18)} {sourceSymbol} <span className="muted small">(demo pricing)</span>
                     </td>
                   </tr>
                   <tr>
                     <td>Source fee, at most</td>
                     <td className="num">
-                      {formatAmount(result.sourceFeeMax, 18)} {source?.chain.nativeCurrency.symbol}
+                      {formatAmount(result.sourceFeeMax, 18)} {sourceSymbol}
                     </td>
                   </tr>
                   <tr>
