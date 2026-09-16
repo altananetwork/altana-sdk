@@ -77,6 +77,9 @@ async function main() {
     },
     expiry: Math.floor(Date.now() / 1000) + 3600,
   });
+  if (session.status !== "granted") {
+    throw new Error(`grantSession failed: ${JSON.stringify(session.legs, (_k, v) => (typeof v === "bigint" ? v.toString() : v))}`);
+  }
   log("Session granted", { sessionPubKey: session.signer.publicKey });
 
   // 4. Verify on-chain state.
@@ -127,7 +130,7 @@ async function main() {
   });
   log("Revoke result", {
     status: revoke.status,
-    txHash: revoke.transactionHash,
+    legs: revoke.legs.map((l) => `${l.chainId} ${l.kind} ${l.status} ${l.transactionHash ?? l.reason ?? ""}`),
   });
 
   // 7. Final state check.

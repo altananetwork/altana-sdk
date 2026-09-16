@@ -146,8 +146,12 @@ async function main() {
       feeToken: [currency.address],
     });
     const capped = session.permissions.spend?.map((s) => s.token ?? "native").join(", ");
-    console.log(`    granted, caps on: ${capped}, tx ${session.transactionHash} [${ms(t0)}]`);
-    if (!session.transactionHash) throw new Error("grant reported no transaction");
+    const accountLeg = session.legs.find((l) => l.kind === "account");
+    console.log(`    granted, caps on: ${capped}, tx ${accountLeg?.transactionHash} [${ms(t0)}]`);
+    if (session.status !== "granted") {
+      const why = session.legs.map((l) => `${l.kind}@${l.chainId} ${l.status}${l.reason ? ` (${l.reason})` : ""}`).join("; ");
+      throw new Error(`grant failed: ${why}`);
+    }
     const sessionBefore = await balanceOf(currency.address, wallet.address);
     const sessionExec = await client.execute({ session, calls: { to: wallet.address, value: 0n, data: "0x" } });
     console.log(`    status: ${sessionExec.status} feeToken: ${sessionExec.feeToken} tx: ${sessionExec.transactionHash} [${ms(t0)}]`);

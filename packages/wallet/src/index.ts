@@ -8,6 +8,8 @@ export type {
   ClientExecuteOptions,
   ClientGrantSessionOptions,
   ClientRevokeSessionOptions,
+  ClientQuoteGrantSessionOptions,
+  ClientQuoteRevokeSessionOptions,
   ClientRegisterSessionKeyOptions,
   ClientSyncSessionToCacheOptions,
   ClientBalancesOptions,
@@ -54,12 +56,35 @@ export type {
   GrantSessionOptions,
   GrantSessionResult,
   GrantSessionStatus,
+  RevokeSessionStatus,
+  SessionStatusDetail,
+  SessionLeg,
+  GrantLeg,
+  RevokeLeg,
   RegistryWriteReport,
   CacheSyncReport,
   SerializedSession,
   SerializedCallPermission,
 } from "./internal/sessions.js";
-export type { RevokeSessionResult } from "./revokeSession.js";
+// Grant and revoke on every chain, and what they cost beforehand.
+export { grantSession } from "./grantSession.js";
+export type { GrantSessionConfig } from "./grantSession.js";
+export { revokeSession } from "./revokeSession.js";
+export type { RevokeSessionResult, RevokeSessionOptions } from "./revokeSession.js";
+export { quoteGrantSession, quoteRevokeSession, formatQuoteLine } from "./quoteSession.js";
+export type { SessionQuote, QuoteLine, QuoteBalance } from "./quoteSession.js";
+export { quoteCalls } from "./internal/relay.js";
+export type { CallsQuote } from "./internal/relay.js";
+
+// Reads against the Altana account on a chain: where a key lives.
+export {
+  getKeys,
+  getKey,
+  accountHasKey,
+  keyHashForSessionOrKey,
+  keyIdForSessionOrKey,
+} from "./internal/account.js";
+export type { AccountKey } from "./internal/account.js";
 // The safe persistence path for sessions: serializeSession stores everything
 // but the secret; deserializeSession rebuilds a signing Session from the
 // stored half plus the key the caller kept.
@@ -77,7 +102,10 @@ export {
   BNB_TESTNET,
   SEPOLIA,
   CELO_SEPOLIA,
+  BASE_SEPOLIA,
   CELO,
+  NETWORKS,
+  networkByChainId,
   registryNetwork,
   RELAY_URL,
   TESTNET_RELAY_URL,

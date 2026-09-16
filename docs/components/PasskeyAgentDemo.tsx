@@ -88,6 +88,9 @@ export function PasskeyAgentDemo() {
         },
         expiry: Math.floor(Date.now() / 1000) + 60 * 60, // 1 hour
       })
+      if (s.status !== 'granted') {
+        throw new Error(s.legs.filter((l) => l.status === 'FAILED').map((l) => l.reason).join('; '))
+      }
       setSession(s)
       setGrantStatus('done')
     } catch (e: any) {
@@ -123,7 +126,10 @@ export function PasskeyAgentDemo() {
         signer: walletState.wallet.signer,
         session,
       })
-      setRevokeHash(result.transactionHash ?? result.callsId)
+      if (result.status !== 'revoked') {
+        throw new Error(result.legs.filter((l) => l.status === 'FAILED').map((l) => l.reason).join('; '))
+      }
+      setRevokeHash(result.legs.find((l) => l.transactionHash)?.transactionHash ?? result.keyId)
       setRevokeStatus('done')
     } catch (e: any) {
       setRevokeError(e?.message ?? String(e))

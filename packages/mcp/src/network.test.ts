@@ -6,12 +6,14 @@ import {
   CELO_SEPOLIA,
   ETHEREUM,
   SEPOLIA,
+  BASE_SEPOLIA,
 } from "@altananetwork/sdk";
 import {
   NETWORKS,
   SUPPORTED_CHAINS,
   describeNetwork,
   fundingSteps,
+  networkGroup,
   resolveNetwork,
 } from "./network.js";
 
@@ -81,13 +83,21 @@ describe("fundingSteps", () => {
     expect(fundingSteps(BNB_TESTNET, addr)[0]).toContain("https://testnet.bnbchain.org/faucet-smart");
   });
 
-  test("celo-sepolia: CELO faucet plus Sepolia ETH for the registry writes", () => {
+  test("celo-sepolia: the Sepolia registry is relayed now, so one step only (like celo mainnet)", () => {
     const steps = fundingSteps(CELO_SEPOLIA, addr);
-    expect(steps).toHaveLength(2);
+    expect(steps).toHaveLength(1);
     expect(steps[0]).toContain(`Send some ${CELO_SEPOLIA.chain.nativeCurrency.symbol} to`);
     expect(steps[0]).toContain("https://faucet.celo.org/celo-sepolia");
+  });
+
+  test("a relay-less registry chain adds the direct-write funding step", () => {
+    const relayless = {
+      ...CELO_SEPOLIA,
+      registry: { kind: "cached" as const, l1: { ...SEPOLIA, relayUrl: undefined }, keyStoreCache: CELO_SEPOLIA.registry!.kind === "cached" ? CELO_SEPOLIA.registry!.keyStoreCache : "0x0000000000000000000000000000000000000000" as const },
+    };
+    const steps = fundingSteps(relayless, addr);
+    expect(steps).toHaveLength(2);
     expect(steps[1]).toContain("registry on Sepolia");
-    expect(steps[1]).toContain("ETH");
     expect(steps[1]).toContain("cloud.google.com/application/web3/faucet/ethereum/sepolia");
   });
 
@@ -106,5 +116,20 @@ describe("fundingSteps", () => {
   test("a relay that only takes the native token changes nothing", () => {
     const native = BNB.chain.nativeCurrency.symbol;
     expect(fundingSteps(BNB, addr, { feeSymbols: [native] })).toEqual(fundingSteps(BNB, addr));
+  });
+});
+
+describe("networkGroup", () => {
+  test("a testnet chain revokes across the whole testnet group", () => {
+    expect(networkGroup(CELO_SEPOLIA).map((n) => n.chainId)).toEqual([97, 11142220, 84532]);
+    expect(networkGroup(BNB_TESTNET)).toContain(BASE_SEPOLIA);
+  });
+
+  test("a mainnet chain revokes across the mainnet group", () => {
+    expect(networkGroup(BNB).map((n) => n.chainId)).toEqual([56, 1, 42220]);
+  });
+
+  test("a chain outside both groups stands alone", () => {
+    expect(networkGroup(SEPOLIA)).toEqual([SEPOLIA]);
   });
 });

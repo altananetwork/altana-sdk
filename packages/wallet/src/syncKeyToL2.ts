@@ -429,6 +429,12 @@ export type PopulateKeyCall = {
   /** The L1 block the proof was built against. The cache only accepts it while the L2 still anchors this block. */
   l1BlockNumber: bigint;
   l1BlockHash: Hex;
+  /**
+   * The proven value of the key's packed KeyStore slot at that block. Zero means the key did not
+   * exist there yet (a registered or revoked key always has a non-zero slot), so the cache would
+   * reject a proof that is meant to carry a registration or a revocation.
+   */
+  provenKeySlot: bigint;
 };
 
 /**
@@ -495,6 +501,7 @@ export async function buildPopulateKeyCall(
     data,
     l1BlockNumber: l1Block.number,
     l1BlockHash: l1Block.hash,
+    provenKeySlot: BigInt(proof.storageProof[0]!.value ?? 0n),
   };
 }
 

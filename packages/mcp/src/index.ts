@@ -70,7 +70,7 @@ import {
   type SessionPermissions,
 } from "./sessions.js";
 import { searchSkills, getSkill } from "./skills.js";
-import { SUPPORTED_CHAINS, describeNetwork, fundingSteps, resolveNetwork } from "./network.js";
+import { SUPPORTED_CHAINS, describeNetwork, fundingSteps, networkGroup, resolveNetwork } from "./network.js";
 import { acceptedFeeSymbols, feeCurrenciesPayload } from "./feeCurrencies.js";
 import {
   assertErc8004Permissions,
@@ -86,8 +86,8 @@ import {
 // for the map). Defaults to BNB Chain. All selectable chains execute through
 // an Altana relay (mainnet relay for mainnets, testnet relay for bnb-testnet
 // and celo-sepolia). One MCP process serves one chain; restart with a
-// different ALTANA_CHAIN to switch. Sepolia/Base Sepolia are keystore-only
-// (no relay) and so are not selectable here.
+// different ALTANA_CHAIN to switch. Sepolia and Base Sepolia are not in the
+// ALTANA_CHAIN map, so they are not selectable here.
 //
 // Celo and Celo Sepolia keep their KeyStore registry on another chain
 // (Ethereum / Sepolia) behind a local cache, so KeyStore reads go to the
@@ -105,6 +105,9 @@ if (!resolved.recognized) {
 console.error(`[altana-mcp] network: ${describeNetwork(NETWORK)}`);
 
 const client = createClient({ chains: [NETWORK] });
+// Revocation reaches every chain of this environment, not only NETWORK: a key
+// granted on another chain of the group is revoked there too.
+const revokeClient = createClient({ chains: [...networkGroup(NETWORK)] });
 const publicClient = createPublicClient({
   chain: NETWORK.chain,
   transport: http(NETWORK.publicRpcUrl),
@@ -877,15 +880,12 @@ tool(
               // (or sessionName) to verify_authorization to confirm the
               // session is recognized in the public registry.
               keyId,
-              // The grant pays a KeyStore registration fee, twice on a
-              // wallet's very first admin action. Surface the receipt so the
-              // host can record what the user was actually charged for.
-              transactionHash: session.transactionHash,
-              // Cached networks (Celo Sepolia, Celo): the registry write on
-              // the registry chain and the proof into the local cache are
-              // separate steps; a failed proof is reported here, not thrown.
-              ...(session.registry ? { registry: jsonSafe(session.registry) } : {}),
-              ...(session.cache ? { cache: jsonSafe(session.cache) } : {}),
+              // `granted` only when every leg confirmed. The legs carry each
+              // step's transaction hash (the grant pays a KeyStore
+              // registration fee) and, on cached networks, the registry
+              // write and the cache proof as legs of their own.
+              status: session.status,
+              legs: jsonSafe(session.legs),
               permissions: {
                 calls: [{ to: recipientAddr }],
                 // The native cap in ETH terms, plus any fee token caps the
@@ -920,9 +920,16 @@ tool(
       "from that key. Local artifacts are also deleted.",
     inputSchema: {
       sessionName: z.string(),
+      feeToken: z
+        .union([z.string(), z.array(z.string())])
+        .optional()
+        .describe(
+          "Token the relay fee is paid in: one address to force, or a list to pay " +
+            "with the first the relay accepts and the wallet holds. Omit to let the relay pick.",
+        ),
     },
   },
-  async ({ sessionName }: { sessionName: string }) => {
+  async ({ sessionName, feeToken }: { sessionName: string; feeToken?: string | string[] }) => {
     const stored = await getSession(sessionName);
     const admin = await getWalletKey(stored.walletName);
     const adminSigner = signerFromPrivateKey(admin.privateKey);
@@ -932,10 +939,13 @@ tool(
     };
 
     // SDK revokeSession accepts a public key (hex) to identify the session.
-    const result = await client.revokeSession({
+    // It revokes on every chain of this network's environment, wherever the
+    // account holds the key.
+    const result = await revokeClient.revokeSession({
       wallet,
       signer: adminSigner,
       session: stored.publicKey,
+      ...(feeToken !== undefined ? { feeToken: assertFeeToken(feeToken) } : {}),
     });
 
     // Clean up local artifacts regardless of on-chain status — if the
@@ -952,10 +962,8 @@ tool(
             {
               sessionName,
               status: result.status,
-              ...(result.statusCode !== undefined ? { statusCode: result.statusCode } : {}),
-              ...(result.registry ? { registry: jsonSafe(result.registry) } : {}),
-              ...(result.cache ? { cache: jsonSafe(result.cache) } : {}),
-              transactionHash: result.transactionHash,
+              keyId: result.keyId,
+              legs: jsonSafe(result.legs),
             },
             null,
             2,

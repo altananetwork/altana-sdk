@@ -197,7 +197,7 @@ await client.revokeSession({ wallet, signer: adminSigner, session });
 await client.revokeSession({ wallet, signer: adminSigner, session: sessionPublicKey });
 ```
 
-Revocation revokes the key in Keystore **and** pulls the session's on-chain authority in the same userOp. The session's next signed call reverts at validation. Revocation is monotonic in Keystore v1.0.0, so to restore access, grant a fresh session.
+Revocation acts on every chain the client was configured with: it finds the chains whose account holds the key, pulls the session's authority on each, revokes the key in Keystore, and proves the revocation into every L2 cache. Check `result.status` (`"revoked"` or `"failed"`); `result.legs` names the chain and step of any failure, and calling it again only redoes what is pending. The session's next signed call reverts at validation. Revocation is monotonic in Keystore v1.0.0, so to restore access, grant a fresh session.
 
 ### Recover a passkey wallet
 
@@ -220,14 +220,14 @@ The MCP server is a thin wrapper around this SDK. Anything the MCP does, you can
 
 ## Notes
 
-- **Funding.** Fund `wallet.address` with a token the relay takes its fee in before the first `execute`. On Ethereum, send ETH from your own wallet or an exchange. On BNB, send BNB from your own wallet or an exchange. On Celo, send CELO or a stablecoin (USDC, USDT, USDm, EURm, KESm) plus ETH on Ethereum for KeyStore writes. On Celo Sepolia, send CELO (https://faucet.celo.org/celo-sepolia) or one of those stablecoins, plus Sepolia ETH for KeyStore writes to the same address.
+- **Funding.** Fund `wallet.address` with a token the relay takes its fee in before the first `execute`. On Ethereum, send ETH from your own wallet or an exchange. On BNB, send BNB from your own wallet or an exchange. On Celo, send CELO or a stablecoin (USDC, USDT, USDm, EURm, KESm) plus ETH on Ethereum for KeyStore writes. On Celo Sepolia, send CELO (https://faucet.celo.org/celo-sepolia) or one of those stablecoins, plus Sepolia ETH for KeyStore writes to the same address. On Base Sepolia, send Base Sepolia ETH plus Sepolia ETH.
 - **Fee token.** Omit `feeToken` on every call: the relay charges whichever accepted token the wallet holds, and `ExecuteResult.feeToken` says which. `client.feeCurrencies()` lists a chain's accepted tokens with their rates. Set `feeToken` only to force one.
-- **L2 networks (CELO, CELO_SEPOLIA).** The KeyStore is on the L1 and a KeyStoreCache on the L2 mirrors it. `grantSession` is three steps (L1 KeyStore write, account authorization through the L2 relay, proof into the L2 cache); the result carries `registry` and `cache` reports (`client.syncSessionToCache` runs the proof on its own). `revokeSession` returns the same two reports. On testnet the L1 (Sepolia) has no relay, so passkey wallets grant with `register: false`.
+- **L2 networks (CELO, CELO_SEPOLIA, BASE_SEPOLIA).** The KeyStore is on the L1 and a KeyStoreCache on the L2 mirrors it. `grantSession` is up to three legs per chain (L1 KeyStore write, shared by L2s on the same L1; account authorization through the L2 relay; proof into the L2 cache), reported in `result.legs` with a binary `result.status` (`client.syncSessionToCache` runs a proof on its own). `revokeSession` reports the same way. On testnet the Sepolia KeyStore is reached through the testnet relay, so passkey wallets register normally.
 - **First execute registers the admin.** The Keystore `initialRegisterKey` is auto-prepended on the wallet's first admin-signed action. Don't pre-call it. The wallet is "live" but not on-chain until that first tx.
 - **Sessions must match the grant on execute.** The session's `permissions + expiry + publicKey` values must equal what was committed at grant time; a lossy round trip (bigints → number, re-cased hex) breaks the match. Persist with `serializeSession` and restore with `deserializeSession(stored, signer)` — never raw `JSON.stringify` on a `Session`.
 - **Empty calls means no calls.** `client.execute({ wallet, signer, calls: [] })` is rejected. Pass at least one call.
 - **`permissions.calls` omitted = unrestricted.** If you don't pass `calls`, the session can call any contract within its spend cap. Set both unless that's truly what you want.
-- **Pick chains at the client.** `createClient({ chains })` takes one or more chains; the same wallet address works on all of them. Select per operation with `chainId`.
+- **Pick chains at the client.** `createClient({ chains })` takes one or more chains; the same wallet address works on all of them. Select per operation with `chainId`; `grantSession` takes `chainIds` (default: all chains) and `revokeSession` always acts on all of them.
 
 ## Networks
 

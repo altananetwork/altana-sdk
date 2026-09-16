@@ -141,9 +141,9 @@ describe("submitCalls on a cached network", () => {
 });
 
 describe("relay prose", () => {
-  test("buildRelayClient names both testnet chains when a network has no relay", () => {
-    expect(() => buildRelayClient(SEPOLIA)).toThrow(
-      /testnet relay serves BSC testnet \(97\) and Celo Sepolia \(11142220\)/,
+  test("buildRelayClient names the testnet relay's chains when a network has no relay", () => {
+    expect(() => buildRelayClient({ ...SEPOLIA, relayUrl: undefined })).toThrow(
+      /testnet relay serves BSC testnet \(97\), Sepolia \(11155111\), Celo Sepolia \(11142220\) and Base Sepolia \(84532\)/,
     );
   });
 });

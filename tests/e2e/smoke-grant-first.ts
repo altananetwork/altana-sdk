@@ -64,6 +64,9 @@ async function main() {
     },
     expiry: Math.floor(Date.now() / 1000) + 3600,
   });
+  if (session.status !== "granted") {
+    throw new Error(`grantSession failed: ${JSON.stringify(session.legs, (_k, v) => (typeof v === "bigint" ? v.toString() : v))}`);
+  }
   console.log("session granted:", session.signer.publicKey.slice(0, 20) + "…");
 
   const after = await readActiveKeys(publicClient, BNB_TESTNET, wallet.address);

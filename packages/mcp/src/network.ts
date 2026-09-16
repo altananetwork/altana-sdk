@@ -4,7 +4,7 @@
  * One server process serves one chain, picked at startup through the
  * ALTANA_CHAIN env var. Every chain listed here executes through an Altana
  * relay (mainnet relay for mainnets, testnet relay for bnb-testnet and
- * celo-sepolia). Sepolia and Base Sepolia are keystore-only (no relay) and
+ * celo-sepolia). Sepolia and Base Sepolia are not in the map below and
  * are therefore not selectable.
  *
  * Celo and Celo Sepolia are cached-registry networks: their KeyStore lives
@@ -18,6 +18,7 @@ import {
   CELO,
   CELO_SEPOLIA,
   ETHEREUM,
+  NETWORKS as SDK_NETWORKS,
   faucetHint,
   isCachedRegistry,
   registryNetwork,
@@ -59,6 +60,19 @@ export function resolveNetwork(raw: string | undefined): ResolvedNetwork {
     return { network: BNB, registry: BNB, requested, recognized: false };
   }
   return { network, registry: registryNetwork(network), requested, recognized: true };
+}
+
+/**
+ * Every execution network in the same environment as `network` (the SDK's
+ * mainnet or testnet group). A session revoke acts on all of them: the SDK
+ * finds the chains whose account holds the key. A network outside both
+ * groups is returned alone.
+ */
+export function networkGroup(network: NetworkConfig): readonly NetworkConfig[] {
+  for (const group of [SDK_NETWORKS.mainnet, SDK_NETWORKS.testnet]) {
+    if (group.some((n) => n.chainId === network.chainId)) return group;
+  }
+  return [network];
 }
 
 /** One-line description for the startup log: the chain, and the registry chain when it differs. */

@@ -6,14 +6,15 @@
  *
  *   1. createWallet (admin signer)
  *   2. fund the wallet on Celo Sepolia (CELO, relay fees) and on Sepolia
- *      (ETH: registry writes are direct transactions from the admin key,
- *      which is the wallet address itself)
+ *      (ETH: registry writes are relayed wallet calls there, paying the
+ *      relay fee and the registration fee)
  *   3. execute(wallet, admin, ...) on Celo Sepolia (no registry prepend here)
  *   4. grantSession: registry write on Sepolia, account authorization on
  *      Celo Sepolia, proof into the cache; all three reported
  *   5. execute(session, ...) as the agent
  *   6. registry + cache reads: Sepolia isValidKey true, cache getCachedKey set
- *   7. revokeSession: account revoke, registry revoke, post-revocation proof
+ *   7. revokeSession: discovery, account revoke, registry revoke,
+ *      post-revocation proof; one leg each
  *   8. execute(session, ...) after revoke: rejected
  *
  * Needs, and fails loudly without:
@@ -40,6 +41,7 @@ import {
   SEPOLIA,
   type NetworkConfig,
 } from "@altananetwork/sdk";
+import { assertStatus, legOf, printLegs } from "./session-legs.js";
 import { createPublicClient, createWalletClient, formatEther, http, keccak256, parseEther, type Address, type Hex, type PublicClient } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
@@ -129,13 +131,12 @@ async function main() {
     signer: adminSigner,
     permissions: { calls: [{ to: funder.address }], spend: [{ limit: parseEther("1"), period: "day" }] },
     expiry: Math.floor(Date.now() / 1000) + 3600,
-    onStatus: (s) => console.log(`    status: ${s} [${ms(t0)}]`),
+    onStatus: (s, d) => console.log(`    status: ${s}${d ? ` (chain ${d.chainId})` : ""} [${ms(t0)}]`),
   });
-  console.log("    account tx (Celo Sepolia):", session.transactionHash);
-  console.log("    registry (Sepolia):       ", show(session.registry));
-  console.log("    cache (Celo Sepolia):     ", show(session.cache));
-  if (session.registry?.status !== "CONFIRMED") throw new Error("registry write did not confirm");
-  if (session.cache?.status !== "CONFIRMED") throw new Error(`cache proof did not confirm: ${session.cache?.reason}`);
+  printLegs(session.legs);
+  assertStatus(session, "granted", "grantSession");
+  if (legOf(session.legs, "registry", sepolia.chainId).status !== "CONFIRMED") throw new Error("registry write did not confirm");
+  if (legOf(session.legs, "cache", celoSepolia.chainId).status !== "CONFIRMED") throw new Error("cache proof did not confirm");
   console.log(`    granted [${ms(t0)}]`);
 
   // 5. Execute as the session
@@ -157,15 +158,20 @@ async function main() {
   if (!registryValid) throw new Error("session key not valid on the Sepolia registry");
   if (cached.publicKey.toLowerCase() !== session.publicKey.toLowerCase() || cached.revoked) throw new Error("cache does not hold the live session key");
 
-  // 7. Revoke: account first, then registry, then the post-revocation proof
+  // 7. Revoke: account and registry in parallel, then the post-revocation proof
   console.log("\n[7] revokeSession");
-  const revokeRes = await client.revokeSession({ wallet, signer: adminSigner, session });
-  console.log("    account (Celo Sepolia):", revokeRes.status, revokeRes.transactionHash, `[${ms(t0)}]`);
-  console.log("    registry (Sepolia):    ", show(revokeRes.registry));
-  console.log("    cache (Celo Sepolia):  ", show(revokeRes.cache));
-  if (revokeRes.status !== "CONFIRMED") throw new Error("account revoke failed");
-  if (revokeRes.registry?.status !== "CONFIRMED") throw new Error("registry revoke did not confirm");
-  if (revokeRes.cache?.status !== "CONFIRMED") throw new Error(`post-revocation proof did not confirm: ${revokeRes.cache?.reason}`);
+  const revokeRes = await client.revokeSession({
+    wallet,
+    signer: adminSigner,
+    session,
+    onStatus: (s, d) => console.log(`    status: ${s}${d ? ` (chain ${d.chainId})` : ""} [${ms(t0)}]`),
+  });
+  console.log("    status:", revokeRes.status, `[${ms(t0)}]`);
+  printLegs(revokeRes.legs);
+  assertStatus(revokeRes, "revoked", "revokeSession");
+  if (legOf(revokeRes.legs, "account", celoSepolia.chainId).status !== "CONFIRMED") throw new Error("account revoke failed");
+  if (legOf(revokeRes.legs, "registry", sepolia.chainId).status !== "CONFIRMED") throw new Error("registry revoke did not confirm");
+  if (legOf(revokeRes.legs, "cache", celoSepolia.chainId).status !== "CONFIRMED") throw new Error("post-revocation proof did not confirm");
   // Public RPCs can lag the relay's confirmation; poll until the entry shows the
   // post-revocation proof (up to 60s).
   let afterCache = await readCachedKey(celoPublic, CACHE, wallet.address, keyId);

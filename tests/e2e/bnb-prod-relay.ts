@@ -77,6 +77,9 @@ async function main() {
     },
     expiry: Math.floor(Date.now() / 1000) + 3600,
   });
+  if (session.status !== "granted") {
+    throw new Error(`grantSession failed: ${JSON.stringify(session.legs, (_k, v) => (typeof v === "bigint" ? v.toString() : v))}`);
+  }
   log("Session granted via hosted relay", { sessionPubKey: session.signer.publicKey });
 
   const code = await publicClient.getCode({ address: wallet.address });
@@ -91,7 +94,10 @@ async function main() {
 
   // 5. revoke.
   const revoke = await client.revokeSession({ wallet, signer: adminSigner, session });
-  log("Revoke result", { status: revoke.status, txHash: revoke.transactionHash });
+  log("Revoke result", {
+    status: revoke.status,
+    legs: revoke.legs.map((l) => `${l.chainId} ${l.kind} ${l.status} ${l.transactionHash ?? l.reason ?? ""}`),
+  });
 
   // 6. Fee recipient delta — proves the relay collected fees (gas + 30%).
   const feeAfter = await publicClient.getBalance({ address: FEE_RECIPIENT });

@@ -154,24 +154,24 @@ function makeSession(): Session {
 // ============================ grantSession `register` ========================
 
 async function runGrant(register?: boolean) {
-  // Fail-fast after submit: waitForCalls FAILED makes grantSession throw
-  // before its multi-second RPC-visibility wait; the bundle is captured.
+  // Fail-fast after submit: a FAILED intent skips grantSession's multi-second
+  // RPC-visibility wait; the bundle is captured and the result reports it.
   confirmStatus = "FAILED";
   const admin = createPrivateKeySigner();
   const sessionSigner = createPrivateKeySigner();
-  await expect(
-    grantSession(
-      WALLET as any,
-      admin,
-      {
-        permissions: {},
-        expiry: 1_800_000_000,
-        sessionSigner,
-        ...(register === undefined ? {} : { register }),
-      } as any,
-      { network: BNB },
-    ),
-  ).rejects.toThrow("did not confirm");
+  const result = await grantSession(
+    WALLET as any,
+    admin,
+    {
+      permissions: {},
+      expiry: 1_800_000_000,
+      sessionSigner,
+      ...(register === undefined ? {} : { register }),
+    } as any,
+    { networks: [BNB] },
+  );
+  expect(result.status).toBe("failed");
+  expect(result.legs.find((l) => l.kind === "account")!.status).toBe("FAILED");
   return sessionSigner;
 }
 
@@ -232,7 +232,7 @@ test("grant with a feeToken list adds a daily cap per fee token and returns the 
         sessionSigner,
         register: false,
       },
-      { network: BNB, feeToken: [USDT, "0x0000000000000000000000000000000000000000"] },
+      { networks: [BNB], feeToken: [USDT, "0x0000000000000000000000000000000000000000"] },
     );
   } finally {
     globalThis.setTimeout = realSetTimeout;
@@ -267,12 +267,25 @@ test("register: false grants an account-only session — no KeyStore call, no fe
 
 // ============================ revokeSession gating ===========================
 
+// Discovery reads the account's getKey; answering it means the key is held.
+function accountHoldsKey() {
+  buildPublicClientImpl = () => ({
+    readContract: async () => ({ expiry: 0, keyType: 2, isSuperAdmin: false, publicKey: "0x" }),
+  });
+}
+
 test("revoke of a registered session: bundle revokes in KeyStore AND on the account", async () => {
   keyIsRegistered = true;
+  accountHoldsKey();
   const admin = createPrivateKeySigner();
   const session = createPrivateKeySigner();
 
-  await revokeSession(WALLET as any, admin, session.publicKey, { network: BNB });
+  const result = await revokeSession(WALLET as any, admin, session.publicKey, { networks: [BNB] });
+  expect(result.status).toBe("revoked");
+  expect(result.legs.map((l) => [l.kind, l.via ?? null])).toEqual([
+    ["account", null],
+    ["registry", "bundled"],
+  ]);
 
   expect(submitted!.calls.length).toBe(1);
   const { functionName, args } = decodeFunctionData({
@@ -286,10 +299,11 @@ test("revoke of a registered session: bundle revokes in KeyStore AND on the acco
 
 test("revoke of an unregistered session: KeyStore call omitted so the account revoke cannot be reverted away", async () => {
   keyIsRegistered = false;
+  accountHoldsKey();
   const admin = createPrivateKeySigner();
   const session = createPrivateKeySigner();
 
-  await revokeSession(WALLET as any, admin, session.publicKey, { network: BNB });
+  await revokeSession(WALLET as any, admin, session.publicKey, { networks: [BNB] });
 
   expect(submitted!.calls.length).toBe(0);
   expect(submitted!.opts.revokeKeys.length).toBe(1);
@@ -342,24 +356,18 @@ test("registerSessionKey is idempotent: an already-registered key submits nothin
 // ======================= grantSession transaction hash =======================
 //
 // Granting is the one call that charges the user: a KeyStore registration fee,
-// paid twice on a wallet's very first admin action. Dropping the hash left
-// integrators unable to record a receipt for it. execute, revokeSession and
-// registerSessionKey all forward it; this is the regression guard for the entry
-// point that used to be the exception.
+// paid twice on a wallet's very first admin action. The hash of every intent
+// rides on its leg so integrators can record a receipt for it.
 
 const GRANT_TX_HASH =
   "0xfeed0000000000000000000000000000000000000000000000000000000000ff" as Hex;
 
 /**
- * Run grantSession all the way to its return value.
- *
- * Every test above short-circuits on a FAILED status so grantSession throws
- * before its post-confirm waits. Reading the RETURN value means getting through
- * them, and they are slow on purpose: a getKeys visibility poll, then a relay
- * catch-up sleep of up to 12s (grantSession.ts). So report the session key as
- * already visible on chain, and hand the call a zero-delay setTimeout for its
- * duration, which collapses both waits. Tests in this file run sequentially and
- * the call is awaited, so nothing else observes the swapped timer.
+ * Run grantSession all the way to its return value. Report the session key
+ * as already visible on chain, and hand the call a zero-delay setTimeout for
+ * its duration, which collapses the visibility poll and the relay catch-up
+ * sleep. Tests in this file run sequentially and the call is awaited, so
+ * nothing else observes the swapped timer.
  */
 async function runGrantToCompletion(sessionSigner: Signer) {
   buildPublicClientImpl = () => ({
@@ -377,33 +385,34 @@ async function runGrantToCompletion(sessionSigner: Signer) {
         sessionSigner,
         register: false, // account-only: the fee path is covered above
       } as any,
-      { network: BNB },
+      { networks: [BNB] },
     );
   } finally {
     globalThis.setTimeout = realSetTimeout;
   }
 }
 
-test("grant forwards the transaction hash the relay reported", async () => {
+test("grant puts the transaction hash the relay reported on the account leg", async () => {
   confirmTxHash = GRANT_TX_HASH;
   const sessionSigner = createPrivateKeySigner();
 
   const session = await runGrantToCompletion(sessionSigner);
 
-  expect(session.transactionHash).toBe(GRANT_TX_HASH);
-  // Still a usable Session: the hash is additive, not a replacement.
+  expect(session.status).toBe("granted");
+  expect(session.legs).toEqual([{ chainId: 56, kind: "account", status: "CONFIRMED", transactionHash: GRANT_TX_HASH }]);
+  // Still a usable Session.
   expect(session.publicKey).toBe(sessionSigner.publicKey);
   expect(session.walletAddress).toBe(WALLET.address);
 });
 
-test("grant omits transactionHash entirely when the relay reports none", async () => {
+test("grant omits transactionHash on the leg when the relay reports none", async () => {
   confirmTxHash = undefined;
   const sessionSigner = createPrivateKeySigner();
 
   const session = await runGrantToCompletion(sessionSigner);
 
-  // Absent, not present-and-undefined. toBeUndefined() would pass for both, and
-  // the key must not show up in a JSON round-trip of a persisted Session.
+  // Absent, not present-and-undefined.
+  expect("transactionHash" in session.legs[0]!).toBe(false);
   expect("transactionHash" in session).toBe(false);
 });
 

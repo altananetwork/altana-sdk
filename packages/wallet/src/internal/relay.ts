@@ -67,8 +67,8 @@ export function buildRelayClient(network: NetworkConfig) {
   if (!network.relayUrl) {
     throw new Error(
       `No Altana relay serves chain ${network.chainId} (${network.chain.name}). ` +
-        `The testnet relay serves BSC testnet (97) and Celo Sepolia (11142220); ` +
-        `Sepolia and other keystore-only networks cannot execute through a relay.`,
+        `The testnet relay serves BSC testnet (97), Sepolia (11155111), Celo Sepolia (11142220) ` +
+        `and Base Sepolia (84532); keystore-only networks cannot execute through a relay.`,
     );
   }
   return createClient({
@@ -388,6 +388,161 @@ export async function submitCallsDetailed(
   calls: readonly Call[],
   opts: SubmitCallsOptions,
 ): Promise<SubmitCallsResult> {
+  const { prepared, signingKeyForPorto, isAdmin } = await prepareIntent(
+    client,
+    walletAddress,
+    signer,
+    calls,
+    opts,
+  );
+  const feeToken = paymentTokenFromPrepared(prepared);
+
+  // Porto's signCalls dispatches by `key`: for secp256k1 / webauthn-p256
+  // keys with embedded signing material, it calls Key.sign which produces
+  // the correctly-wrapped signature. We only need to hand it the key —
+  // except when the signer carries custom WebAuthn functions (React Native
+  // etc.), which signCalls cannot forward; signPreparedCalls handles that.
+  const customWebAuthn =
+    isPasskeySigner(signer) && signer.webAuthn?.getFn
+      ? { getFn: signer.webAuthn.getFn }
+      : undefined;
+  const signature = customWebAuthn
+    ? await signPreparedCalls(prepared, signingKeyForPorto, customWebAuthn)
+    : await signCalls(prepared, {
+        key: signingKeyForPorto,
+      } as any);
+
+  // For non-EOA paths (sessions, passkey admin), the relay needs to know
+  // which key authority signed so it can verify with the right scheme.
+  // The privateKey admin path can omit this — Porto infers from the EOA.
+  const sendKey =
+    !isAdmin || isPasskeySigner(signer) ? signingKeyForPorto : undefined;
+
+  const sent: any = await withRelayReason(
+    () =>
+      sendPreparedCalls(client as any, {
+        context: prepared.context,
+        capabilities: prepared.capabilities,
+        signature,
+        ...(sendKey ? { key: sendKey } : {}),
+      } as any),
+    "submit the call",
+    { client, network: opts.network },
+  );
+
+  return { callsId: (sent?.id ?? sent) as Hex, ...(feeToken ? { feeToken } : {}) };
+}
+
+/** What the relay would charge for an intent, without signing or sending it. */
+export type CallsQuote = {
+  /** Maximum fee the intent pays, in `feeToken` base units, summed over the relay's quotes. */
+  fee: bigint;
+  /** The token the relay is charging its fee in (the zero address is native). */
+  feeToken: Address;
+  /** Native value the intent's calls carry (registration fees), first-action prepend included. */
+  value: bigint;
+  /** How much fee token the payer is missing, as the relay reports it. 0 when funded. */
+  feeTokenDeficit: bigint;
+  /**
+   * Native wei the wallet needs for this intent: the fee (when paid in the native token) plus the
+   * value the calls carry, such as a registration fee. When the wallet is short, the relay's own
+   * figure for the native token (its asset deficit `required`) is used instead.
+   */
+  nativeNeeded: bigint;
+  /** True when `nativeNeeded` is the relay's own figure rather than fee plus value. */
+  nativeNeededFromRelay: boolean;
+};
+
+/**
+ * Quotes an intent: the same preparation as submitCalls (first-action
+ * prepend, key descriptors, registry-target guard), then the relay's quote,
+ * with nothing signed or sent. For a passkey admin this does not prompt.
+ */
+export async function quoteCalls(
+  client: ReturnType<typeof buildRelayClient>,
+  walletAddress: Address,
+  signer: Signer,
+  calls: readonly Call[],
+  opts: SubmitCallsOptions,
+): Promise<CallsQuote> {
+  const { prepared, effectiveCalls, feeToken: named } = await prepareIntent(client, walletAddress, signer, calls, opts);
+  const { fee, feeTokenDeficit } = feeFromPrepared(prepared);
+  const value = effectiveCalls.reduce((sum, c) => sum + (c.value ?? 0n), 0n);
+  // The token the relay quoted in; the one the rule named when the quote does not say.
+  const feeToken = paymentTokenFromPrepared(prepared) ?? named ?? NATIVE_TOKEN;
+  return {
+    fee,
+    feeTokenDeficit,
+    feeToken,
+    value,
+    ...nativeNeededFromPrepared(prepared, { fee, value, feeToken }),
+  };
+}
+
+/**
+ * Native wei an intent needs from the wallet. The relay only states a balance figure when the
+ * wallet is short: then each quote carries an asset deficit for the native token whose
+ * `required` covers the fee and everything the intent spends. Otherwise the need is the fee (if
+ * paid natively) plus the value the calls carry.
+ */
+export function nativeNeededFromPrepared(
+  prepared: any,
+  args: { fee: bigint; value: bigint; feeToken: Address },
+): { nativeNeeded: bigint; nativeNeededFromRelay: boolean } {
+  const estimate = args.value + (args.feeToken.toLowerCase() === NATIVE_TOKEN ? args.fee : 0n);
+  const quotes: any[] = prepared?.context?.quote?.quotes ?? [];
+  let fromRelay = 0n;
+  let reported = false;
+  for (const q of quotes) {
+    for (const d of (q?.assetDeficits ?? []) as any[]) {
+      const native = d?.address === null || d?.address === undefined || String(d.address).toLowerCase() === NATIVE_TOKEN;
+      if (!native) continue;
+      fromRelay += toBigInt(d.required);
+      reported = true;
+    }
+  }
+  if (reported && fromRelay >= estimate) return { nativeNeeded: fromRelay, nativeNeededFromRelay: true };
+  return { nativeNeeded: estimate, nativeNeededFromRelay: false };
+}
+
+/** Reads the fee out of a prepareCalls response (porto decodes the quote's hex amounts). */
+export function feeFromPrepared(prepared: any): { fee: bigint; feeTokenDeficit: bigint } {
+  const quotes: any[] = prepared?.context?.quote?.quotes ?? [];
+  if (quotes.length === 0) {
+    throw new Error("The relay's prepareCalls response carried no quote to read a fee from.");
+  }
+  let fee = 0n;
+  let feeTokenDeficit = 0n;
+  for (const q of quotes) {
+    // The relay's intent comes in two shapes: the current one names the fee
+    // `paymentMaxAmount`, the newer one `totalPaymentMaxAmount`.
+    fee += toBigInt(q?.intent?.totalPaymentMaxAmount ?? q?.intent?.paymentMaxAmount);
+    feeTokenDeficit += toBigInt(q?.feeTokenDeficit);
+  }
+  return { fee, feeTokenDeficit };
+}
+
+function toBigInt(x: unknown): bigint {
+  if (typeof x === "bigint") return x;
+  if (typeof x === "number") return BigInt(x);
+  if (typeof x === "string" && x.length > 0) return BigInt(x);
+  return 0n;
+}
+
+async function prepareIntent(
+  client: ReturnType<typeof buildRelayClient>,
+  walletAddress: Address,
+  signer: Signer,
+  calls: readonly Call[],
+  opts: SubmitCallsOptions,
+): Promise<{
+  prepared: any;
+  signingKeyForPorto: any;
+  isAdmin: boolean;
+  effectiveCalls: readonly Call[];
+  /** The fee token named in the request, if the fee token rule named one. */
+  feeToken: Address | undefined;
+}> {
   const isAdmin = opts.submittingKey.role === "admin";
 
   // On a cached network (Celo Sepolia, Celo) the KeyStore contracts do not
@@ -494,42 +649,8 @@ export async function submitCallsDetailed(
     "prepare the call",
     { client, network: opts.network },
   );
-  const feeToken = paymentTokenFromPrepared(prepared);
 
-  // Porto's signCalls dispatches by `key`: for secp256k1 / webauthn-p256
-  // keys with embedded signing material, it calls Key.sign which produces
-  // the correctly-wrapped signature. We only need to hand it the key —
-  // except when the signer carries custom WebAuthn functions (React Native
-  // etc.), which signCalls cannot forward; signPreparedCalls handles that.
-  const customWebAuthn =
-    isPasskeySigner(signer) && signer.webAuthn?.getFn
-      ? { getFn: signer.webAuthn.getFn }
-      : undefined;
-  const signature = customWebAuthn
-    ? await signPreparedCalls(prepared, signingKeyForPorto, customWebAuthn)
-    : await signCalls(prepared, {
-        key: signingKeyForPorto,
-      } as any);
-
-  // For non-EOA paths (sessions, passkey admin), the relay needs to know
-  // which key authority signed so it can verify with the right scheme.
-  // The privateKey admin path can omit this — Porto infers from the EOA.
-  const sendKey =
-    !isAdmin || isPasskeySigner(signer) ? signingKeyForPorto : undefined;
-
-  const sent: any = await withRelayReason(
-    () =>
-      sendPreparedCalls(client as any, {
-        context: prepared.context,
-        capabilities: prepared.capabilities,
-        signature,
-        ...(sendKey ? { key: sendKey } : {}),
-      } as any),
-    "submit the call",
-    { client, network: opts.network },
-  );
-
-  return { callsId: (sent?.id ?? sent) as Hex, ...(feeToken ? { feeToken } : {}) };
+  return { prepared, signingKeyForPorto, isAdmin, effectiveCalls, feeToken: chosenFeeToken };
 }
 
 /**
@@ -706,8 +827,60 @@ export type RelayLog = {
 export type RelayReceipt = {
   transactionHash?: Hex;
   status?: Hex | number;
+  /** Block the transaction was mined in. porto decodes it to a number; hex is accepted too. */
+  blockNumber?: Hex | number | bigint;
   logs?: readonly RelayLog[];
 };
+
+/** A receipt's block number as a bigint, or undefined when the relay did not include one. */
+export function receiptBlockNumber(receipt: RelayReceipt | undefined): bigint | undefined {
+  const raw = receipt?.blockNumber;
+  if (raw === undefined || raw === null) return undefined;
+  try {
+    return BigInt(raw);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The block a confirmed relay write landed in. The relay's own receipt is used first. Only when
+ * it did not carry a block number is a public RPC asked for the receipt, retried a few times
+ * because a public node can take a while to index a transaction the relay already saw mined.
+ * Never throws: an unknown block comes back with the reason, so callers can refuse to build a
+ * proof against it.
+ */
+export async function blockNumberOfWrite(args: {
+  relayBlockNumber: bigint | undefined;
+  transactionHash: Hex | undefined;
+  publicClient: Pick<PublicClient, "getTransactionReceipt">;
+  attempts?: number;
+  retryDelayMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+}): Promise<{ blockNumber: bigint } | { blockNumber?: undefined; blockNumberError: string }> {
+  if (args.relayBlockNumber !== undefined) return { blockNumber: args.relayBlockNumber };
+  if (!args.transactionHash) {
+    return { blockNumberError: "the relay reported no transaction hash and no block number" };
+  }
+  const attempts = Math.max(1, args.attempts ?? 5);
+  const retryDelayMs = args.retryDelayMs ?? 3_000;
+  const sleep = args.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  let lastError = "";
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const receipt = await args.publicClient.getTransactionReceipt({ hash: args.transactionHash });
+      return { blockNumber: receipt.blockNumber };
+    } catch (err) {
+      lastError = err instanceof Error ? err.message.split("\n")[0]! : String(err);
+      if (attempt < attempts) await sleep(retryDelayMs);
+    }
+  }
+  return {
+    blockNumberError:
+      `the relay receipt had no block number and the public RPC receipt lookup for ` +
+      `${args.transactionHash} failed ${attempts} times (${lastError})`,
+  };
+}
 
 /**
  * Polls the relay for the status of a submitted calls bundle.
@@ -739,6 +912,8 @@ export async function waitForCalls(
   status: string;
   statusCode?: number;
   transactionHash?: Hex;
+  /** Block of the first receipt, as the relay reported it. */
+  blockNumber?: bigint;
   receipts?: readonly RelayReceipt[];
 }> {
   const deadline = Date.now() + timeoutMs;
@@ -749,10 +924,12 @@ export async function waitForCalls(
       const code = status?.status;
       if (typeof code === "number") lastCode = code;
       if ((typeof code === "number" && code >= 200 && code < 300) || code === "CONFIRMED") {
+        const blockNumber = receiptBlockNumber(status?.receipts?.[0]);
         return {
           status: "CONFIRMED",
           ...(typeof code === "number" ? { statusCode: code } : {}),
           transactionHash: status?.receipts?.[0]?.transactionHash,
+          ...(blockNumber !== undefined ? { blockNumber } : {}),
           ...(status?.receipts ? { receipts: status.receipts as readonly RelayReceipt[] } : {}),
         };
       }
