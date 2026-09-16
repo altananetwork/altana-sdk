@@ -920,9 +920,16 @@ tool(
       "from that key. Local artifacts are also deleted.",
     inputSchema: {
       sessionName: z.string(),
+      feeToken: z
+        .union([z.string(), z.array(z.string())])
+        .optional()
+        .describe(
+          "Token the relay fee is paid in: one address to force, or a list to pay " +
+            "with the first the relay accepts and the wallet holds. Omit to let the relay pick.",
+        ),
     },
   },
-  async ({ sessionName }: { sessionName: string }) => {
+  async ({ sessionName, feeToken }: { sessionName: string; feeToken?: string | string[] }) => {
     const stored = await getSession(sessionName);
     const admin = await getWalletKey(stored.walletName);
     const adminSigner = signerFromPrivateKey(admin.privateKey);
@@ -938,6 +945,7 @@ tool(
       wallet,
       signer: adminSigner,
       session: stored.publicKey,
+      ...(feeToken !== undefined ? { feeToken: assertFeeToken(feeToken) } : {}),
     });
 
     // Clean up local artifacts regardless of on-chain status — if the

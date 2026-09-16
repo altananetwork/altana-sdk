@@ -128,7 +128,8 @@ export type ClientRevokeSessionOptions = {
   wallet: Wallet;
   signer: Signer;
   session: Session | Hex;
-  feeToken?: Address;
+  /** One token to force, or a list to pay with the first accepted and held. */
+  feeToken?: Address | readonly Address[];
   onStatus?: RevokeSessionOptions["onStatus"];
   chainId?: never;
 };
@@ -140,7 +141,8 @@ export type ClientRegisterSessionKeyOptions = {
   wallet: Wallet;
   signer: Signer;
   session: Session;
-  feeToken?: Address;
+  /** One token to force, or a list to pay with the first accepted and held. */
+  feeToken?: Address | readonly Address[];
 } & ChainSelector;
 
 /**

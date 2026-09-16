@@ -52,7 +52,7 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
   MCP: `create_wallet` names the accepted fee tokens in its funding steps;
   the new `list_fee_currencies` tool lists them (with the wallet's balance of
   each when a wallet is named); `wallet_execute`, `session_execute` and
-  `grant_session` take `feeToken` as one address or a list, and the two
+  `grant_session` and `revoke_session` take `feeToken` as one address or a list, and the two
   execute tools report the token charged.
 
   Behaviour change: on Celo a wallet holding both CELO and a stablecoin used

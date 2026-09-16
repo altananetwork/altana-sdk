@@ -58,7 +58,7 @@ export async function registerSessionKey(
   wallet: Wallet,
   adminSigner: Signer,
   session: Session,
-  config: { network: NetworkConfig; feeToken?: Address },
+  config: { network: NetworkConfig; feeToken?: Address | readonly Address[] },
 ): Promise<RegisterSessionKeyResult> {
   const network = config.network;
   // Undefined lets the relay charge whichever accepted token the wallet holds.

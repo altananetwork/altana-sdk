@@ -54,10 +54,11 @@ export type RevokeSessionOptions = {
   /** Every network to revoke on. Only the ones whose account holds the key get an account leg. */
   networks: readonly NetworkConfig[];
   /**
-   * Relay fee token on the account legs and cache proofs. Omitted, the relay
-   * charges whichever accepted token the wallet holds.
+   * Relay fee token on the account legs and cache proofs: one address to force,
+   * or a list to pay with the first the relay accepts and the wallet holds.
+   * Omitted, the relay charges whichever accepted token the wallet holds.
    */
-  feeToken?: Address;
+  feeToken?: Address | readonly Address[];
   onStatus?: (status: RevokeSessionStatus, detail?: SessionStatusDetail) => void;
 };
 

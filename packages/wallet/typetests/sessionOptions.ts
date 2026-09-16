@@ -21,6 +21,12 @@ const session = "0x04" as `0x${string}`;
 
 // Revoke acts on every chain the client has: no per-chain selector.
 void client.revokeSession({ wallet, signer, session });
+void client.revokeSession({
+  wallet,
+  signer,
+  session,
+  feeToken: ["0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000001"],
+});
 // @ts-expect-error chainId was removed from revoke options
 void client.revokeSession({ wallet, signer, session, chainId: 56 });
 
