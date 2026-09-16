@@ -8,6 +8,9 @@ describe("chains", () => {
     expect(n.relayUrl).toBe("http://127.0.0.1:19131");
     expect(n.publicRpcUrl).toBe("http://rpc");
     expect(applyEnv(SEPOLIA, {}).publicRpcUrl).toBe(SEPOLIA.publicRpcUrl);
+    // The registry chain nested inside an L2 config follows the same override, or its writes go to the wrong relay.
+    const reg = n.registry?.kind === "cached" ? n.registry.l1 : undefined;
+    expect(reg?.relayUrl).toBe("http://127.0.0.1:19131");
   });
   test("default order is Celo Sepolia first", () => {
     expect(chainsFromEnv({}).map((c) => c.chainId)).toEqual([11142220, 84532, 11155111]);
