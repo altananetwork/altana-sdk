@@ -1,0 +1,95 @@
+/* Component classes for the test bench. Follows the brand rules in tokens.css. */
+
+.app { min-height: 100vh; display: flex; flex-direction: column; }
+
+.topbar {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-lg);
+  padding: var(--space-md) var(--space-xl);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-overlay);
+}
+.topbar .brand { display: flex; align-items: center; gap: var(--space-md); }
+.topbar .brand img { height: 24px; width: auto; display: block; }
+.topbar .brand .logo-dark { display: block; }
+.topbar .brand .logo-white { display: none; }
+@media (prefers-color-scheme: dark) {
+  .topbar .brand .logo-dark { display: none; }
+  .topbar .brand .logo-white { display: block; }
+}
+.topbar .brand h1 { font-size: 16px; color: var(--text-secondary); font-weight: 500; }
+
+.tabs { display: flex; gap: var(--space-xs); flex-wrap: wrap; }
+.tab {
+  background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm);
+  padding: 6px 12px; color: var(--text-secondary); font-weight: 500;
+}
+.tab:hover { background: var(--bg-surface); color: var(--text-primary); }
+.tab.active { background: var(--accent-subtle); color: var(--accent); border-color: var(--accent-border); }
+
+.main { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: var(--space-xl); padding: var(--space-xl); max-width: 1400px; width: 100%; margin: 0 auto; }
+@media (max-width: 960px) { .main { grid-template-columns: minmax(0, 1fr); } }
+
+.panel { display: flex; flex-direction: column; gap: var(--space-lg); min-width: 0; }
+.panel > h2 { margin-bottom: var(--space-xs); }
+.panel .lead { color: var(--text-secondary); max-width: 64ch; }
+
+.card { background: var(--bg-overlay); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-lg); display: flex; flex-direction: column; gap: var(--space-md); }
+.card h3 { color: var(--text-primary); }
+.card .hint { color: var(--text-secondary); }
+
+.row { display: flex; gap: var(--space-sm); align-items: center; flex-wrap: wrap; }
+.row.between { justify-content: space-between; }
+.stack { display: flex; flex-direction: column; gap: var(--space-sm); }
+
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.field label { font-weight: 500; color: var(--text-secondary); font-size: 13px; }
+.field input, .field select, .field textarea {
+  background: var(--bg-inset); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 8px 10px; color: var(--text-primary); min-width: 0; width: 100%;
+}
+.field input:focus, .field select:focus, .field textarea:focus { outline: 2px solid var(--accent-border); border-color: var(--accent); }
+.field .help { color: var(--text-tertiary); font-size: 12px; }
+.field .error { color: var(--error-ink); font-size: 12px; }
+
+/* Buttons. One filled blue primary per view. Danger is outline only, never a fill. */
+.btn { display: inline-flex; align-items: center; gap: 6px; border-radius: var(--radius-sm); padding: 8px 14px; font-weight: 500; border: 1px solid transparent; line-height: 1.2; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-primary { background: var(--accent); color: var(--text-on-accent); }
+.btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+.btn-secondary { background: transparent; border-color: var(--border-active); color: var(--text-primary); }
+.btn-secondary:hover:not(:disabled) { background: var(--bg-surface); }
+.btn-ghost { background: transparent; color: var(--text-secondary); padding: 6px 10px; }
+.btn-ghost:hover:not(:disabled) { color: var(--text-primary); background: var(--bg-surface); }
+.btn-danger { background: transparent; border-color: var(--error); color: var(--error-ink); padding: 6px 10px; font-size: 13px; }
+.btn-danger:hover:not(:disabled) { background: var(--error-subtle); }
+
+/* Badges are squared, never pills. */
+.badge { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: var(--radius-badge); font-size: 12px; font-weight: 500; line-height: 1.4; background: var(--bg-inset); color: var(--text-secondary); }
+.badge.success { background: var(--success-subtle); color: var(--success-ink); }
+.badge.warning { background: var(--warning-subtle); color: var(--warning-ink); }
+.badge.accent  { background: var(--accent-subtle); color: var(--accent); }
+.badge.error   { background: transparent; color: var(--error-ink); box-shadow: inset 0 0 0 1px var(--error); }
+
+/* Addresses and hashes: Inter Tight, tabular numbers, inset surface. Never a monospace face. */
+.addr { font-variant-numeric: tabular-nums; font-weight: 500; color: var(--text-secondary); background: var(--bg-inset); border-radius: var(--radius-badge); padding: 2px 6px; word-break: break-all; }
+.num { font-variant-numeric: tabular-nums; }
+
+.table { width: 100%; border-collapse: collapse; }
+.table th, .table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.table th { color: var(--text-secondary); font-weight: 500; font-size: 13px; }
+.table tr:last-child td { border-bottom: none; }
+
+.banner { border-radius: var(--radius-md); padding: var(--space-md) var(--space-lg); border: 1px solid var(--warning); background: var(--warning-subtle); color: var(--warning-ink); }
+.banner.info { border-color: var(--accent-border); background: var(--accent-surface); color: var(--text-secondary); }
+.banner.error { border-color: var(--error); background: transparent; color: var(--error-ink); }
+
+.log { display: flex; flex-direction: column; gap: var(--space-sm); max-height: calc(100vh - 160px); overflow: auto; }
+.log-entry { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--space-sm) var(--space-md); background: var(--bg-overlay); }
+.log-entry.error { border-color: var(--error); }
+.log-entry .head { display: flex; justify-content: space-between; gap: var(--space-sm); font-weight: 500; }
+.log-entry .time { color: var(--text-tertiary); font-weight: 400; font-size: 12px; }
+.log-entry .body { white-space: pre-wrap; word-break: break-word; color: var(--text-secondary); font-size: 12px; margin-top: 4px; }
+.log-entry.error .body { color: var(--error-ink); }
+
+.muted { color: var(--text-tertiary); }
+.small { font-size: 12px; }
