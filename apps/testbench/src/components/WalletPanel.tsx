@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
+import { encodeFunctionData, erc20Abi, parseEther, type Address as Addr, type Hex } from "viem";
 import { generatePrivateKey } from "viem/accounts";
 import { NATIVE_FAUCETS, STABLECOINS, chainName } from "../lib/chains";
 import { nativeLabel } from "../lib/fees";
-import { addressUrl, tokenUrl } from "../lib/explorer";
-import { formatAmount } from "../lib/format";
+import { addressUrl, tokenUrl, txUrl } from "../lib/explorer";
+import { formatAmount, isAddress } from "../lib/format";
 import { isPrivateKey } from "../lib/storage";
 import { useApp, useRun } from "../state/AppState";
 import { Address } from "./shared/Address";
@@ -19,6 +20,9 @@ export function WalletPanel() {
   const [pasteError, setPasteError] = useState<string>();
   const [revealed, setRevealed] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [moveTo, setMoveTo] = useState("");
+  const [moveError, setMoveError] = useState<string>();
+  const [moved, setMoved] = useState<{ asset: string; status: string; hash?: Hex }[]>();
   const wallet = state.wallet;
   const chains = client.chains;
 
@@ -53,6 +57,48 @@ export function WalletPanel() {
 
   const native = nativeLabel(state.chainId, state.feeCurrenciesChainId === state.chainId ? state.feeCurrencies : undefined, chains);
   const holdings = state.holdingsChainId === state.chainId ? state.holdings : undefined;
+
+  /** Sends every held token in full, then the native balance minus a reserve for the last fee. */
+  const moveAll = () =>
+    run("move all funds", async () => {
+      setMoveError(undefined);
+      if (!wallet || !holdings) return;
+      if (!isAddress(moveTo)) {
+        setMoveError("Destination must be an address.");
+        return;
+      }
+      const to = moveTo.trim() as Addr;
+      setBusy(true);
+      const results: { asset: string; status: string; hash?: Hex }[] = [];
+      try {
+        for (const t of holdings.tokens) {
+          if (!t.ok || t.raw === 0n) continue;
+          const r = await client.execute({
+            wallet: { address: wallet.address },
+            signer: wallet.signer,
+            chainId: state.chainId,
+            calls: [{ to: t.address, value: 0n, data: encodeFunctionData({ abi: erc20Abi, functionName: "transfer", args: [to, t.raw] }) }],
+          });
+          results.push({ asset: t.symbol, status: r.status, hash: r.transactionHash });
+          setMoved([...results]);
+        }
+        const reserve = parseEther(state.chainId === 11155111 ? "0.002" : "0.05");
+        const current = await client.holdings(wallet.address, state.chainId);
+        if (current.native > reserve) {
+          const r = await client.execute({
+            wallet: { address: wallet.address },
+            signer: wallet.signer,
+            chainId: state.chainId,
+            calls: [{ to, value: current.native - reserve, data: "0x" }],
+          });
+          results.push({ asset: native, status: r.status, hash: r.transactionHash });
+          setMoved([...results]);
+        }
+        dispatch({ type: "holdings/set", chainId: state.chainId, holdings: await client.holdings(wallet.address, state.chainId) });
+      } finally {
+        setBusy(false);
+      }
+    });
 
   return (
     <div className="panel">
@@ -197,6 +243,26 @@ export function WalletPanel() {
                   )}
                 </tbody>
               </table>
+            )}
+          </Card>
+
+          <Card title="Move all funds" hint="Sends every held token, then the native balance minus a small reserve for the fee, to another address on this chain. The fee is taken automatically.">
+            <Field label="Destination address" htmlFor="move-to" error={moveError}>
+              <div className="row">
+                <input id="move-to" value={moveTo} placeholder="0x…" onChange={(e) => setMoveTo(e.target.value)} />
+                <Button onClick={moveAll} disabled={busy || !holdings}>
+                  {busy ? "Working…" : "Move everything"}
+                </Button>
+              </div>
+            </Field>
+            {moved && (
+              <ul className="stack small" style={{ margin: 0, paddingLeft: 18 }}>
+                {moved.map((m, i) => (
+                  <li key={i}>
+                    {m.asset}: {m.status} {m.hash && <Address value={m.hash} href={txUrl(state.chainId, m.hash)} />}
+                  </li>
+                ))}
+              </ul>
             )}
           </Card>
 

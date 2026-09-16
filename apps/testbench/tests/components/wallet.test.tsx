@@ -60,3 +60,20 @@ describe("WalletPanel", () => {
     expect(within(table).getAllByText("Mento app").length).toBeGreaterThan(0);
   });
 });
+
+describe("Move all funds", () => {
+  test("sends each held token in full, then native minus the reserve, fee automatic", async () => {
+    const client = fakeClient({
+      holdings: vi.fn(async () => ({ native: 10n ** 18n, tokens: [{ address: "0x01C5C0122039549AD1493B8220cABEdD739BC44E" as const, ok: true as const, raw: 3_000_000n, decimals: 6, symbol: "USDC", display: "3" }] })),
+    });
+    renderWith(client, <WalletPanel />, { v: 1, walletKey: TEST_KEY, sessions: [] });
+    await userEvent.type(await screen.findByLabelText("Destination address"), "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC");
+    await userEvent.click(screen.getByRole("button", { name: "Move everything" }));
+    await waitFor(() => expect(client.execute).toHaveBeenCalledTimes(2));
+    const calls = (client.execute as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0] as Record<string, unknown>);
+    expect(calls[0]).not.toHaveProperty("feeToken");
+    expect((calls[0]!.calls as { to: string }[])[0]!.to).toBe("0x01C5C0122039549AD1493B8220cABEdD739BC44E");
+    expect((calls[1]!.calls as { value: bigint }[])[0]!.value).toBe(10n ** 18n - 50_000_000_000_000_000n);
+    expect(await screen.findByText(/USDC: CONFIRMED/)).toBeInTheDocument();
+  });
+});
