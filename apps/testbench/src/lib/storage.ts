@@ -17,6 +17,8 @@ export type StoredSession = {
 export type StoredState = {
   v: 1;
   walletKey?: Hex;
+  /** Set once the key was registered with the relay the page is pointed at. */
+  registered?: boolean;
   chainId?: number;
   sessions: StoredSession[];
 };
@@ -34,7 +36,8 @@ export function migrate(raw: unknown): StoredState {
   const sessions = Array.isArray(r.sessions)
     ? (r.sessions.filter(isStoredSession) as StoredSession[])
     : [];
-  return { v: 1, ...(walletKey ? { walletKey } : {}), ...(chainId ? { chainId } : {}), sessions };
+  const registered = r.registered === true;
+  return { v: 1, ...(walletKey ? { walletKey } : {}), ...(registered ? { registered } : {}), ...(chainId ? { chainId } : {}), sessions };
 }
 
 function isStoredSession(s: unknown): s is StoredSession {

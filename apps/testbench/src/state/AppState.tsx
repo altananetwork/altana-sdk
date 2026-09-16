@@ -33,9 +33,9 @@ export type Action =
   | { type: "log/add"; entry: LogEntry }
   | { type: "log/clear" };
 
-export function walletFromKey(key: Hex): WalletState {
+export function walletFromKey(key: Hex, registered = false): WalletState {
   const account = privateKeyToAccount(key);
-  return { key, address: account.address, signer: signerFromPrivateKey(key), registered: false };
+  return { key, address: account.address, signer: signerFromPrivateKey(key), registered };
 }
 
 export function reducer(state: AppState, action: Action): AppState {
@@ -67,7 +67,7 @@ export function reducer(state: AppState, action: Action): AppState {
 
 export function initialState(stored: StoredState): AppState {
   return {
-    wallet: stored.walletKey ? walletFromKey(stored.walletKey) : undefined,
+    wallet: stored.walletKey ? walletFromKey(stored.walletKey, stored.registered === true) : undefined,
     chainId: stored.chainId ?? DEFAULT_CHAIN_ID,
     sessions: stored.sessions,
     log: [],
@@ -77,7 +77,7 @@ export function initialState(stored: StoredState): AppState {
 export function toStored(state: AppState): StoredState {
   return {
     v: 1,
-    ...(state.wallet ? { walletKey: state.wallet.key } : {}),
+    ...(state.wallet ? { walletKey: state.wallet.key, registered: state.wallet.registered } : {}),
     chainId: state.chainId,
     sessions: state.sessions,
   };
@@ -98,7 +98,7 @@ export function AppProvider({
   const [state, dispatch] = useReducer(reducer, storage, (s) => initialState(load(s)));
   useEffect(() => {
     save(storage, toStored(state));
-  }, [state.wallet?.key, state.chainId, state.sessions, storage]);
+  }, [state.wallet?.key, state.wallet?.registered, state.chainId, state.sessions, storage]);
   const value = useMemo(() => ({ state, dispatch, client }), [state, client]);
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }
@@ -107,6 +107,20 @@ export function useApp(): Ctx {
   const ctx = useContext(AppContext);
   if (!ctx) throw new Error("useApp outside AppProvider");
   return ctx;
+}
+
+/**
+ * Registers the wallet with the relay before its first relay action, so a
+ * fresh key never hits "quotes for unknown accounts are not accepted".
+ */
+export function useEnsureRegistered() {
+  const { state, dispatch, client } = useApp();
+  return useCallback(async () => {
+    const w = state.wallet;
+    if (!w || w.registered) return;
+    await client.createWallet(w.signer);
+    dispatch({ type: "wallet/registered" });
+  }, [state.wallet, client, dispatch]);
 }
 
 /** Runs an async action and records a failure in the log without throwing to React. */
