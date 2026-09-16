@@ -38,6 +38,8 @@ function fakeChains(script: {
   readErrorAccount?: number[];
   /** Registry chains whose confirmed write comes back without a block number. */
   unknownBlock?: number[];
+  /** Registry chains whose write the relay funds from an L2: registry chain id to source chain id. */
+  fundFrom?: Record<number, number>;
 } = {}) {
   const log = {
     account: [] as Submitted[],
@@ -85,7 +87,13 @@ function fakeChains(script: {
       if (has(script.unknownBlock, r.chainId)) {
         return { via, status: "CONFIRMED", blockNumberError: "public RPC receipt lookup failed 5 times" };
       }
-      return { via, status: "CONFIRMED", blockNumber: ++block };
+      const source = script.fundFrom?.[r.chainId];
+      return {
+        via,
+        status: "CONFIRMED",
+        blockNumber: ++block,
+        ...(source !== undefined ? { fundedFromChainId: source, sourceTransactionHash: `0x${"cc".repeat(32)}` as Hex } : {}),
+      };
     },
     async proveIntoCache(_w, _a, _pk, n, afterL1Block): Promise<CacheSyncReport> {
       log.cache.push({ chainId: n.chainId, afterL1Block });
@@ -502,3 +510,17 @@ function legOfKind(result: { legs: { kind: string; blockNumber?: bigint; status:
   if (!leg) throw new Error(`no ${kind} leg`);
   return leg;
 }
+
+describe("registry write funded from the L2", () => {
+  test("the registry leg names the source chain and the cache proof still anchors on its block", async () => {
+    const { deps, log } = fakeChains({ fundFrom: { [SEPOLIA.chainId]: CELO_SEPOLIA.chainId } });
+    const result = await grant([CELO_SEPOLIA], deps);
+    expect(result.status).toBe("granted");
+    const registry = result.legs.find((l) => l.kind === "registry")!;
+    expect(registry.fundedFromChainId).toBe(CELO_SEPOLIA.chainId);
+    expect(registry.sourceTransactionHash).toBe(`0x${"cc".repeat(32)}`);
+    expect(registry.blockNumber).toBeDefined();
+    expect(log.cache[0]?.afterL1Block).toBe(registry.blockNumber);
+    expect(result.legs.find((l) => l.kind === "account")?.fundedFromChainId).toBeUndefined();
+  });
+});

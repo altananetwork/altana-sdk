@@ -8,8 +8,8 @@
  */
 
 import { formatUnits, type Address, type Hex } from "viem";
-import { NATIVE_TOKEN, type NetworkConfig } from "./config.js";
-import { planRegistryWrite, keyStoreCacheOf } from "./internal/cachedRegistry.js";
+import { NATIVE_TOKEN, networkByChainId, type NetworkConfig } from "./config.js";
+import { planRegistryFunding, planRegistryWrite, keyStoreCacheOf } from "./internal/cachedRegistry.js";
 import { buildFirstActionPrepend } from "./internal/keystore.js";
 import { buildPublicClient, buildRelayClient, quoteCalls, type Call, type CallsQuote } from "./internal/relay.js";
 import { errorMessage, realSessionLegDeps, type SessionLegDeps } from "./internal/sessionLegs.js";
@@ -40,6 +40,11 @@ export type QuoteLine = {
   needed: bigint;
   /** True when `needed` is the relay's own figure. */
   neededFromRelay: boolean;
+  /**
+   * Registry legs the relay funds from an L2: that chain. `needed` is then
+   * charged to the payer's balance there, not on `chainId`.
+   */
+  fundedFromChainId?: number;
   /** Why the fee could not be quoted. */
   reason?: string;
 };
@@ -139,8 +144,16 @@ export function quotingDeps(base: SessionLegDeps = realSessionLegDeps): {
       };
       try {
         if (via === "relay") {
+          const funding = await planRegistryFunding({
+            registryClient: buildPublicClient(registry),
+            registry,
+            walletAddress: args.wallet.address,
+            adminPublicKey: args.adminSigner.publicKey,
+            calls: args.calls,
+          });
           const q = await quoteCalls(buildRelayClient(registry), args.wallet.address, args.adminSigner, args.calls, {
             feeToken: NATIVE_TOKEN,
+            ...(funding.requiredFunds ? { requiredFunds: funding.requiredFunds } : {}),
             submittingKey: { type: "secp256k1", publicKey: args.adminSigner.publicKey, role: "admin" },
             network: registry,
           });
@@ -225,7 +238,8 @@ export function quotingDeps(base: SessionLegDeps = realSessionLegDeps): {
   return { deps, lines };
 }
 
-async function withBalances(
+/** Balances per payer and chain against what the lines need. Exported for tests. */
+export async function withBalances(
   lines: QuoteLine[],
   networks: readonly NetworkConfig[],
 ): Promise<SessionQuote> {
@@ -236,14 +250,17 @@ async function withBalances(
   }
   const needs = new Map<string, { chainId: number; address: Address; wei: bigint }>();
   for (const line of lines) {
-    const key = `${line.chainId}:${line.payer.toLowerCase()}`;
-    const entry = needs.get(key) ?? { chainId: line.chainId, address: line.payer, wei: 0n };
+    // A leg the relay funds from an L2 costs the payer on that chain.
+    const chainId = line.fundedFromChainId ?? line.chainId;
+    const key = `${chainId}:${line.payer.toLowerCase()}`;
+    const entry = needs.get(key) ?? { chainId, address: line.payer, wei: 0n };
     entry.wei += line.needed;
     needs.set(key, entry);
   }
   const balances = await Promise.all(
     [...needs.values()].map(async ({ chainId, address, wei }): Promise<QuoteBalance> => {
-      const network = byChain.get(chainId)!;
+      const network = byChain.get(chainId) ?? networkByChainId(chainId);
+      if (!network) throw new Error(`quote: no network config for chain ${chainId}`);
       const balance = await buildPublicClient(network).getBalance({ address });
       return {
         chainId,
@@ -259,13 +276,14 @@ async function withBalances(
 }
 
 /** The quote fields a line keeps: fee, value, and the native amount needed. */
-function pickQuote(q: CallsQuote): Pick<QuoteLine, "fee" | "feeToken" | "value" | "needed" | "neededFromRelay"> {
+function pickQuote(q: CallsQuote): Pick<QuoteLine, "fee" | "feeToken" | "value" | "needed" | "neededFromRelay" | "fundedFromChainId"> {
   return {
     fee: q.fee,
     feeToken: q.feeToken,
     value: q.value,
     needed: q.nativeNeeded,
     neededFromRelay: q.nativeNeededFromRelay,
+    ...(q.fundedFromChainId !== undefined ? { fundedFromChainId: q.fundedFromChainId } : {}),
   };
 }
 
@@ -279,5 +297,9 @@ export function formatQuoteLine(line: QuoteLine, network: NetworkConfig): string
         ? `fee ${formatUnits(line.fee, network.chain.nativeCurrency.decimals)} ${symbol}`
         : `fee ${line.fee} of token ${line.feeToken}`;
   const value = line.value > 0n ? `, value ${formatUnits(line.value, network.chain.nativeCurrency.decimals)} ${symbol}` : "";
-  return `chain ${line.chainId} ${line.kind}${line.via ? ` via ${line.via}` : ""}: ${fee}${value}`;
+  const funded =
+    line.fundedFromChainId !== undefined
+      ? `, funded from ${networkByChainId(line.fundedFromChainId)?.chain.name ?? `chain ${line.fundedFromChainId}`}`
+      : "";
+  return `chain ${line.chainId} ${line.kind}${line.via ? ` via ${line.via}` : ""}: ${fee}${value}${funded}`;
 }
