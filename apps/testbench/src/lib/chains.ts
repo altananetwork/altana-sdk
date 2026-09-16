@@ -15,10 +15,15 @@ export type Env = Record<string, string | undefined>;
 export function applyEnv(network: NetworkConfig, env: Env): NetworkConfig {
   const relayUrl = env.VITE_RELAY_URL?.trim();
   const publicRpcUrl = env[`VITE_RPC_${network.chainId}`]?.trim();
+  const registry =
+    network.registry?.kind === "cached"
+      ? { registry: { ...network.registry, l1: applyEnv(network.registry.l1, env) } }
+      : {};
   return {
     ...network,
     ...(relayUrl && network.relayUrl ? { relayUrl } : {}),
     ...(publicRpcUrl ? { publicRpcUrl } : {}),
+    ...registry,
   };
 }
 
