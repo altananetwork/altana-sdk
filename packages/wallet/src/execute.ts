@@ -16,17 +16,15 @@ export type ExecuteOptions = {
   /** Which chain to run on. Resolved by the client from a chainId. */
   network: NetworkConfig;
   /**
-   * Force the token the relay fee is paid in. Omitted, the relay charges
-   * whichever of its accepted tokens the wallet holds; `feeCurrencies()`
-   * lists them. The token charged comes back as `ExecuteResult.feeToken`.
+   * The token the relay fee is paid in. One address forces it. A list pays
+   * with the first token the relay accepts on the chain and the wallet
+   * holds, failing before anything is sent when none qualifies. Omitted, a
+   * wallet key lets the relay charge whichever accepted token the wallet
+   * holds, and a session key pays from its spend caps. `feeCurrencies()`
+   * lists the accepted tokens; the token charged comes back as
+   * `ExecuteResult.feeToken`.
    */
-  feeToken?: Address;
-  /**
-   * Pay the relay fee with the first of these tokens that the relay accepts
-   * on the chain and the wallet holds. Fails before anything is sent when
-   * none qualifies. Ignored when `feeToken` is set.
-   */
-  feeTokens?: readonly Address[];
+  feeToken?: Address | readonly Address[];
   noWait?: boolean;
 };
 
@@ -127,7 +125,6 @@ export async function executeWithReceipts(
     userCalls,
     {
       ...(opts.feeToken ? { feeToken: opts.feeToken } : {}),
-      ...(opts.feeTokens ? { feeTokens: opts.feeTokens } : {}),
       submittingKey,
       network,
     },

@@ -182,7 +182,7 @@ describe("fee token on the wire", () => {
     expect(wire.wireFeeToken()?.toLowerCase()).toBe(USDM.toLowerCase());
   });
 
-  test("feeTokens: the first accepted and held token of the list is named", async () => {
+  test("feeToken list: the first accepted and held token of the list is named", async () => {
     const signer = createPrivateKeySigner();
     const wire = mockWire({
       network: CELO_SEPOLIA,
@@ -190,7 +190,7 @@ describe("fee token on the wire", () => {
       assets: assetsAnswer(CELO_SEPOLIA.chainId, 0n, { [USDM]: 0n, [USDC]: 10n ** 12n }),
     });
     await submitCallsDetailed(buildRelayClient(CELO_SEPOLIA), WALLET, signer, CALLS, {
-      feeTokens: [USDT_BNB, USDM, USDC],
+      feeToken: [USDT_BNB, USDM, USDC],
       submittingKey: adminKey(signer),
       network: CELO_SEPOLIA,
     });
@@ -198,7 +198,7 @@ describe("fee token on the wire", () => {
     expect(wire.publicRpcRequests()).toEqual([]);
   });
 
-  test("feeTokens with nothing that qualifies: throws before the relay is asked to prepare", async () => {
+  test("feeToken list with nothing that qualifies: throws before the relay is asked to prepare", async () => {
     const signer = createPrivateKeySigner();
     const wire = mockWire({
       network: CELO_SEPOLIA,
@@ -207,15 +207,15 @@ describe("fee token on the wire", () => {
     });
     await expect(
       submitCallsDetailed(buildRelayClient(CELO_SEPOLIA), WALLET, signer, CALLS, {
-        feeTokens: [USDT_BNB],
+        feeToken: [USDT_BNB],
         submittingKey: adminKey(signer),
         network: CELO_SEPOLIA,
       }),
-    ).rejects.toThrow(/named in `feeTokens` .* is a fee token the relay accepts/);
+    ).rejects.toThrow(/named in `feeToken` .* is a fee token the relay accepts/);
     expect(wire.methods()).toEqual(["wallet_getCapabilities"]);
   });
 
-  test("feeTokens: [] names nothing, so the session rule applies", async () => {
+  test("feeToken: [] names nothing, so the session rule applies", async () => {
     const signer = createPrivateKeySigner();
     const wire = mockWire({
       network: CELO_SEPOLIA,
@@ -223,7 +223,7 @@ describe("fee token on the wire", () => {
       assets: assetsAnswer(CELO_SEPOLIA.chainId, 0n, { [USDC]: 3_000_000n }),
     });
     await submitCallsDetailed(buildRelayClient(CELO_SEPOLIA), WALLET, signer, CALLS, {
-      feeTokens: [],
+      feeToken: [],
       submittingKey: sessionKey(signer, [{ token: USDC }]),
       network: CELO_SEPOLIA,
     });

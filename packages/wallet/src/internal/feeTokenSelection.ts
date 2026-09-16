@@ -7,9 +7,9 @@
  * token of the session's spend permission before the relay sees the request,
  * so the SDK decides for sessions. The rule, in order:
  *
- *   1. `feeToken` named: use it, any key.
- *   2. `feeTokens` named: the first of the list that the relay accepts on the
- *      chain and the wallet holds.
+ *   1. `feeToken` is one address: use it, any key.
+ *   2. `feeToken` is a list: the first of the list that the relay accepts on
+ *      the chain and the wallet holds. An empty list names nothing.
  *   3. Nothing named, wallet key: send none; the relay picks.
  *   4. Nothing named, session key: among the tokens of the session's spend
  *      permission (native included when the cap is native), those the relay
@@ -26,7 +26,16 @@ import { fetchFeeCurrencies, type FeeCurrency } from "./feeCurrencies.js";
 import type { SessionPermissions, SpendPermission } from "./sessions.js";
 
 /** Where the candidate tokens came from; it shapes the error messages. */
-export type FeeTokenSource = "feeTokens" | "session";
+export type FeeTokenSource = "feeToken" | "session";
+
+/** What a caller may pass as `feeToken`: one token to force, or a list to choose from. */
+export type FeeTokenOption = Address | readonly Address[];
+
+/** The tokens a `feeToken` option names, as a list (empty when it names nothing). */
+export function feeTokenList(feeToken: FeeTokenOption | undefined): readonly Address[] {
+  if (feeToken === undefined) return [];
+  return typeof feeToken === "string" ? [feeToken] : feeToken;
+}
 
 /** Raw balances keyed by lowercase address; `NATIVE_TOKEN` for the native token. */
 export type HeldBalances = ReadonlyMap<string, bigint>;
@@ -76,9 +85,9 @@ export function rankFeeCandidates(
 }
 
 /**
- * Picks the fee token, or throws with what would have worked. `feeTokens`
- * takes the first held candidate in caller order; `session` the one with the
- * largest balance in relay terms.
+ * Picks the fee token, or throws with what would have worked. A `feeToken`
+ * list takes the first held candidate in caller order; `session` the one with
+ * the largest balance in relay terms.
  */
 export function chooseFeeToken(args: {
   candidates: readonly Address[];
@@ -91,16 +100,16 @@ export function chooseFeeToken(args: {
   const { network, walletAddress, source } = args;
   const acceptedList = args.accepted.map((c) => c.symbol).join(", ");
   const origin =
-    source === "feeTokens" ? "named in `feeTokens`" : "in the session's spend permission";
+    source === "feeToken" ? "named in `feeToken`" : "in the session's spend permission";
   const ranked = rankFeeCandidates(args.candidates, args.accepted, args.held);
   if (ranked.length === 0) {
     throw new Error(
       `None of the tokens ${origin} (${args.candidates.join(", ")}) is a fee token the relay ` +
         `accepts on ${network.chain.name} (chainId ${network.chainId}). It accepts: ${acceptedList}. ` +
-        (source === "feeTokens"
-          ? "Pass one of those in `feeTokens`, or pass `feeToken` to force one."
-          : "Grant the session a spend cap on one of those (grantSession's `feeToken` / " +
-            "`feeTokens` adds it), or pass `feeToken` to force one."),
+        (source === "feeToken"
+          ? "Name one of those in `feeToken`."
+          : "Grant the session a spend cap on one of those (grantSession's `feeToken` adds " +
+            "it), or pass `feeToken` to force one."),
     );
   }
   const heldOnes = ranked.filter((r) => r.raw > 0n);
@@ -112,7 +121,7 @@ export function chooseFeeToken(args: {
         `the relay accepts ${acceptedList}.`,
     );
   }
-  if (source === "feeTokens") return heldOnes[0]!.currency.address;
+  if (source === "feeToken") return heldOnes[0]!.currency.address;
   let best = heldOnes[0]!;
   for (const r of heldOnes) if (r.value > best.value) best = r;
   return best.currency.address;
@@ -200,17 +209,16 @@ export async function resolveFeeToken(args: {
   relay: Client;
   network: NetworkConfig;
   walletAddress: Address;
-  feeToken?: Address;
-  feeTokens?: readonly Address[];
+  feeToken?: FeeTokenOption;
   submittingKey: { role: "admin" | "session"; permissions?: SpendCapTokens };
 }): Promise<Address | undefined> {
-  if (args.feeToken) return args.feeToken;
+  if (typeof args.feeToken === "string") return args.feeToken;
   let candidates: readonly Address[];
   let source: FeeTokenSource;
   // An empty list names nothing: the key's own rule applies.
-  if (args.feeTokens && args.feeTokens.length > 0) {
-    candidates = args.feeTokens.map((t) => getAddress(t));
-    source = "feeTokens";
+  if (args.feeToken && args.feeToken.length > 0) {
+    candidates = args.feeToken.map((t) => getAddress(t));
+    source = "feeToken";
   } else if (args.submittingKey.role === "session") {
     candidates = feeTokenCandidatesOf(args.submittingKey.permissions);
     source = "session";

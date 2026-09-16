@@ -90,15 +90,14 @@ export type ClientExecuteOptions =
       wallet: Wallet;
       signer: Signer;
       calls: Call | readonly Call[];
-      feeToken?: Address;
-      feeTokens?: readonly Address[];
+      /** One token to force, or a list to pay with the first accepted and held. */
+      feeToken?: Address | readonly Address[];
       noWait?: boolean;
     } & ChainSelector)
   | ({
       session: Session;
       calls: Call | readonly Call[];
-      feeToken?: Address;
-      feeTokens?: readonly Address[];
+      feeToken?: Address | readonly Address[];
       noWait?: boolean;
     } & ChainSelector);
 
@@ -106,12 +105,11 @@ export type ClientGrantSessionOptions = {
   wallet: Wallet;
   signer: Signer;
   /**
-   * Fee token(s) for the grant itself, and the tokens the session may pay
+   * The fee token(s) for the grant itself, and the tokens the session may pay
    * fees in: each gets a daily spend cap added to the session's permissions
-   * (see `feeSpendLimit`).
+   * (see `feeSpendLimit`). One address or a list.
    */
-  feeToken?: Address;
-  feeTokens?: readonly Address[];
+  feeToken?: Address | readonly Address[];
 } & GrantSessionOptions &
   ChainSelector;
 
@@ -316,7 +314,6 @@ export function createClient(opts: CreateClientOptions): Client {
       const execOpts = {
         network: resolve(o.chainId),
         ...(o.feeToken ? { feeToken: o.feeToken } : {}),
-        ...(o.feeTokens ? { feeTokens: o.feeTokens } : {}),
         ...(o.noWait ? { noWait: o.noWait } : {}),
       };
       if ("session" in o) {
@@ -341,7 +338,6 @@ export function createClient(opts: CreateClientOptions): Client {
         {
           network: resolve(o.chainId),
           ...(o.feeToken ? { feeToken: o.feeToken } : {}),
-          ...(o.feeTokens ? { feeTokens: o.feeTokens } : {}),
         },
       );
     },

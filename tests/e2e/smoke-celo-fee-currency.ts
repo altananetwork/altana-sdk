@@ -8,7 +8,7 @@
  *   3. execute(wallet, admin, ...) with no feeToken: CONFIRMED, result.feeToken
  *      is the token, the wallet still holds no CELO, and the wallet's token
  *      balance dropped by at most the relay's quoted maximum
- *   4. grantSession with `feeTokens: [token]` (register: false), then
+ *   4. grantSession with `feeToken: [token]` (register: false), then
  *      execute(session) with nothing named: the session pays its fee in the
  *      token from the cap the grant added, CELO still 0
  *   5. sweep: the leftover tokens go back to the funder through the relay,
@@ -143,7 +143,7 @@ async function main() {
       permissions: { calls: [{ to: wallet.address }], spend: [{ limit: 1n, period: "day" }] },
       expiry: Math.floor(Date.now() / 1000) + 3600,
       register: false,
-      feeTokens: [currency.address],
+      feeToken: [currency.address],
     });
     const capped = session.permissions.spend?.map((s) => s.token ?? "native").join(", ");
     console.log(`    granted, caps on: ${capped}, tx ${session.transactionHash} [${ms(t0)}]`);

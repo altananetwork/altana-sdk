@@ -61,16 +61,14 @@ type ClientExecuteOptions =
       wallet: Wallet;
       signer: Signer;
       calls: Call | readonly Call[];
-      feeToken?: Address;              // force a fee token
-      feeTokens?: readonly Address[];  // pay with the first of these the relay accepts and the wallet holds
-      noWait?: boolean;                // return as soon as submitted, don't wait for confirmation
-      chainId?: number;                // defaults to the client's default chain
+      feeToken?: Address | readonly Address[];  // one token to force, or a list to choose from
+      noWait?: boolean;                         // return as soon as submitted, don't wait for confirmation
+      chainId?: number;                         // defaults to the client's default chain
     }
   | {
       session: Session;
       calls: Call | readonly Call[];
-      feeToken?: Address;
-      feeTokens?: readonly Address[];
+      feeToken?: Address | readonly Address[];
       noWait?: boolean;
       chainId?: number;
     };
@@ -104,8 +102,8 @@ A failed execute **returns** `status: "FAILED"`; it does not throw. Check the st
 - **`chainId` selects the chain.** Omit it to use the client's default chain; pass one of the client's configured chains to target another.
 - With `noWait: true`, you get `status: "PENDING"` and a `callsId` to poll later.
 - **The relay fee is paid in a token the wallet holds.** Every chain's relay accepts its native token (BNB, ETH, CELO), and some accept more: on Celo the relay also takes USDC, USDT, USDm, EURm and KESm, priced from Celo's own oracle, so a wallet holding any of them transacts without CELO. `client.feeCurrencies()` lists what a chain's relay accepts, with the rate for each; the token charged comes back as `feeToken` on the result. Which token is used:
-  - `feeToken` set: that token, for any key.
-  - `feeTokens` set: the first token of the list that the relay accepts on the chain and the wallet holds. If none qualifies the call fails before anything is sent, naming the accepted tokens and what the wallet holds.
+  - `feeToken` is one address: that token, for any key.
+  - `feeToken` is a list: the first token of the list that the relay accepts on the chain and the wallet holds. If none qualifies the call fails before anything is sent, naming the accepted tokens and what the wallet holds. An empty list names nothing.
   - Nothing set, wallet key: the request names no token and the relay charges whichever accepted token the wallet holds (the most valuable one when it holds several).
   - Nothing set, session key: the SDK picks among the tokens of the session's spend caps (native counts when the cap is native), keeps those the relay accepts, and names the one the wallet holds the most of. A session whose wallet holds none of its capped tokens fails before anything is sent. A session pays fees only from its caps, so a session meant to run on a stablecoin needs a cap on it: see [grantSession](/sdk/grant-session).
 

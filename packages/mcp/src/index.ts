@@ -194,6 +194,10 @@ function assertAddress(value: string): Address {
   }
   return value as Address;
 }
+/** A `feeToken` tool input: one address, or a list to choose from. */
+function assertFeeToken(value: string | string[]): Address | Address[] {
+  return Array.isArray(value) ? value.map(assertAddress) : assertAddress(value);
+}
 function assertBytes32(value: string): Hex {
   if (!/^0x[0-9a-fA-F]{64}$/.test(value)) {
     throw new Error(`Not a valid 0x-prefixed 32-byte hex: ${value}`);
@@ -630,14 +634,14 @@ tool(
       to: z.string(),
       valueEth: z.string().optional(),
       data: z.string().optional(),
-      feeTokens: z
-        .array(z.string())
+      feeToken: z
+        .union([z.string(), z.array(z.string())])
         .optional()
         .describe(
-          "Pay the relay fee with the first of these token addresses the relay " +
-            "accepts and the wallet holds (list_fee_currencies shows what is " +
-            "accepted). Omitted, the relay charges whichever accepted token the " +
-            "wallet holds.",
+          "The token to pay the relay fee in: one address to force it, or a " +
+            "list to pay with the first the relay accepts and the wallet holds " +
+            "(list_fee_currencies shows what is accepted). Omitted, the relay " +
+            "charges whichever accepted token the wallet holds.",
         ),
     },
   },
@@ -646,13 +650,13 @@ tool(
     to,
     valueEth,
     data,
-    feeTokens,
+    feeToken,
   }: {
     name: string;
     to: string;
     valueEth?: string;
     data?: string;
-    feeTokens?: string[];
+    feeToken?: string | string[];
   }) => {
     const key = await getWalletKey(name);
     const recipient = assertAddress(to);
@@ -670,7 +674,7 @@ tool(
         value: parseEther(valueEth ?? "0"),
         data: dataHex,
       },
-      ...(feeTokens ? { feeTokens: feeTokens.map(assertAddress) } : {}),
+      ...(feeToken !== undefined ? { feeToken: assertFeeToken(feeToken) } : {}),
     });
     return {
       content: [
@@ -755,15 +759,15 @@ tool(
             "false, verify_authorization reports the key as not authorized " +
             "even though the session works.",
         ),
-      feeTokens: z
-        .array(z.string())
+      feeToken: z
+        .union([z.string(), z.array(z.string())])
         .optional()
         .describe(
-          "Token addresses the session may pay relay fees in (list_fee_currencies " +
-            "shows what the relay accepts). Each gets a daily spend cap of one " +
-            "whole token added to the session, so a wallet holding only a " +
-            "stablecoin can run the session. The grant itself pays its fee with " +
-            "the first of them the wallet holds.",
+          "The token(s) the session may pay relay fees in, one address or a list " +
+            "(list_fee_currencies shows what the relay accepts). Each gets a daily " +
+            "spend cap of one whole token added to the session, so a wallet holding " +
+            "only a stablecoin can run the session. The grant itself pays its fee " +
+            "with the first of them the wallet holds.",
         ),
       feeSpendLimit: z
         .string()
@@ -782,7 +786,7 @@ tool(
     dailyCapEth,
     lifetimeSeconds,
     register,
-    feeTokens,
+    feeToken,
     feeSpendLimit,
   }: {
     walletName: string;
@@ -791,7 +795,7 @@ tool(
     dailyCapEth?: string;
     lifetimeSeconds?: number;
     register?: boolean;
-    feeTokens?: string[];
+    feeToken?: string | string[];
     feeSpendLimit?: string;
   }) => {
     // Refuse to overwrite an existing session entry. Sessions live in their
@@ -831,7 +835,7 @@ tool(
       },
       expiry,
       ...(register !== undefined ? { register } : {}),
-      ...(feeTokens ? { feeTokens: feeTokens.map(assertAddress) } : {}),
+      ...(feeToken !== undefined ? { feeToken: assertFeeToken(feeToken) } : {}),
       ...(feeSpendLimit !== undefined ? { feeSpendLimit: BigInt(feeSpendLimit) } : {}),
     });
 
@@ -979,14 +983,14 @@ tool(
       to: z.string(),
       valueEth: z.string().optional(),
       data: z.string().optional(),
-      feeTokens: z
-        .array(z.string())
+      feeToken: z
+        .union([z.string(), z.array(z.string())])
         .optional()
         .describe(
-          "Pay the relay fee with the first of these token addresses the relay " +
-            "accepts and the wallet holds. Omitted, the SDK pays from the " +
-            "session's spend caps: the capped token the relay accepts that the " +
-            "wallet holds the most of.",
+          "The token to pay the relay fee in: one address to force it, or a " +
+            "list to pay with the first the relay accepts and the wallet holds. " +
+            "Omitted, the SDK pays from the session's spend caps: the capped " +
+            "token the relay accepts that the wallet holds the most of.",
         ),
     },
   },
@@ -995,13 +999,13 @@ tool(
     to,
     valueEth,
     data,
-    feeTokens,
+    feeToken,
   }: {
     sessionName: string;
     to: string;
     valueEth?: string;
     data?: string;
-    feeTokens?: string[];
+    feeToken?: string | string[];
   }) => {
     const stored = await getSession(sessionName);
     const key = await getSessionKey(sessionName);
@@ -1020,7 +1024,7 @@ tool(
         value: parseEther(valueEth ?? "0"),
         data: dataHex,
       },
-      ...(feeTokens ? { feeTokens: feeTokens.map(assertAddress) } : {}),
+      ...(feeToken !== undefined ? { feeToken: assertFeeToken(feeToken) } : {}),
     });
 
     return {

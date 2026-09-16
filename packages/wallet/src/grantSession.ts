@@ -17,7 +17,7 @@ import {
   readRegistrationFee,
 } from "./internal/keystore.js";
 import { isCachedRegistry, submitRegistryCalls } from "./internal/cachedRegistry.js";
-import { withFeeSpendCaps } from "./internal/feeTokenSelection.js";
+import { feeTokenList, withFeeSpendCaps } from "./internal/feeTokenSelection.js";
 import type {
   CacheSyncReport,
   GrantSessionOptions,
@@ -69,12 +69,11 @@ export async function grantSession(
   wallet: Wallet,
   adminSigner: Signer,
   opts: GrantSessionOptions,
-  config: { network: NetworkConfig; feeToken?: Address; feeTokens?: readonly Address[] },
+  config: { network: NetworkConfig; feeToken?: Address | readonly Address[] },
 ): Promise<GrantSessionResult> {
   const network = config.network;
   // Undefined lets the relay charge whichever accepted token the wallet holds.
   const feeToken = config.feeToken;
-  const feeTokens = config.feeTokens;
 
   const sessionSigner = opts.sessionSigner ?? ephemeralSessionSigner();
 
@@ -86,7 +85,7 @@ export async function grantSession(
     buildRelayClient(network),
     network,
     opts.permissions,
-    feeToken ? [feeToken] : (feeTokens ?? []),
+    feeTokenList(feeToken),
     opts.feeSpendLimit,
   );
 
@@ -205,7 +204,6 @@ export async function grantSession(
     registerCalls,
     {
       ...(feeToken ? { feeToken } : {}),
-      ...(feeTokens ? { feeTokens } : {}),
       submittingKey: adminKeyDesc,
       authorizeKeys: [sessionKeyDesc],
       network,

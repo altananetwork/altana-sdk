@@ -192,7 +192,7 @@ test("default grant bundles the KeyStore registerKey call and reads the fee", as
   expect(submitted!.opts.authorizeKeys.length).toBe(1);
 });
 
-test("grant with feeTokens adds a daily cap per fee token and returns the effective caps on the session", async () => {
+test("grant with a feeToken list adds a daily cap per fee token and returns the effective caps on the session", async () => {
   const USDT: Address = "0x55d398326f99059fF775485246999027B3197955";
   // The relay client the grant asks for accepted fee tokens: BNB plus a 18-dp USDT.
   buildRelayClientImpl = () =>
@@ -232,7 +232,7 @@ test("grant with feeTokens adds a daily cap per fee token and returns the effect
         sessionSigner,
         register: false,
       },
-      { network: BNB, feeTokens: [USDT, "0x0000000000000000000000000000000000000000"] },
+      { network: BNB, feeToken: [USDT, "0x0000000000000000000000000000000000000000"] },
     );
   } finally {
     globalThis.setTimeout = realSetTimeout;
@@ -245,7 +245,7 @@ test("grant with feeTokens adds a daily cap per fee token and returns the effect
   // The key authorized on the account carries the same caps, and the grant's
   // own fee goes through the same list.
   expect(submitted!.opts.authorizeKeys[0].permissions.spend).toEqual(session.permissions.spend);
-  expect(submitted!.opts.feeTokens).toEqual([USDT, "0x0000000000000000000000000000000000000000"]);
+  expect(submitted!.opts.feeToken).toEqual([USDT, "0x0000000000000000000000000000000000000000"]);
 });
 
 test("register: true behaves like the default", async () => {

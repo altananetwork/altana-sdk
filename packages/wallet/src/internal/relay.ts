@@ -25,7 +25,7 @@ import {
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { NATIVE_TOKEN, type NetworkConfig } from "../config.js";
 import { feeTokenHint } from "./feeCurrencies.js";
-import { resolveFeeToken } from "./feeTokenSelection.js";
+import { resolveFeeToken, type FeeTokenOption } from "./feeTokenSelection.js";
 import { hasRawPrivateKey, type Signer } from "./signer.js";
 import {
   isPasskeySigner,
@@ -324,14 +324,13 @@ export async function submitCalls(
 
 export type SubmitCallsOptions = {
   /**
-   * The token to pay the relay fee in. Omitted (and no `feeTokens`), a wallet
-   * key names none and the relay charges whichever accepted token the wallet
-   * holds; a session key names the token of its spend cap the wallet holds
-   * the most of. See `resolveFeeToken`.
+   * The token to pay the relay fee in: one address to force it, or a list to
+   * pay with the first the relay accepts and the wallet holds. Omitted, a
+   * wallet key names none and the relay charges whichever accepted token the
+   * wallet holds; a session key names the token of its spend cap the wallet
+   * holds the most of. See `resolveFeeToken`.
    */
-  feeToken?: Address;
-  /** Pay with the first of these the relay accepts and the wallet holds. */
-  feeTokens?: readonly Address[];
+  feeToken?: FeeTokenOption;
   submittingKey: KeyDescriptor;
   authorizeKeys?: readonly KeyDescriptor[];
   revokeKeys?: readonly KeyDescriptor[];
@@ -467,7 +466,6 @@ export async function submitCallsDetailed(
     network: opts.network,
     walletAddress,
     ...(opts.feeToken ? { feeToken: opts.feeToken } : {}),
-    ...(opts.feeTokens ? { feeTokens: opts.feeTokens } : {}),
     submittingKey: {
       role: opts.submittingKey.role,
       ...(opts.submittingKey.permissions ? { permissions: opts.submittingKey.permissions } : {}),

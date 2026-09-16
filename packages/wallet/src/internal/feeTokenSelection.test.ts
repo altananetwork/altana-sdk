@@ -90,7 +90,7 @@ describe("chooseFeeToken", () => {
     expect(token).toBe(USDC);
   });
 
-  test("feeTokens: the first accepted and held token in the caller's order", () => {
+  test("feeToken list: the first accepted and held token in the caller's order", () => {
     const token = chooseFeeToken({
       candidates: [USDT_BNB, USDM, USDC],
       accepted: CELO_ACCEPTED,
@@ -98,7 +98,7 @@ describe("chooseFeeToken", () => {
         [USDM, 1n],
         [USDC, 10n ** 12n],
       ]),
-      source: "feeTokens",
+      source: "feeToken",
       network: CELO_SEPOLIA,
       walletAddress: WALLET,
     });
@@ -124,7 +124,7 @@ describe("chooseFeeToken", () => {
         candidates: [USDC, NATIVE_TOKEN],
         accepted: CELO_ACCEPTED,
         held: held([]),
-        source: "feeTokens",
+        source: "feeToken",
         network: CELO_SEPOLIA,
         walletAddress: WALLET,
       }),
