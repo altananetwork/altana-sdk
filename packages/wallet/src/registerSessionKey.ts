@@ -98,6 +98,8 @@ export async function registerSessionKey(
       status: written.status,
       ...(written.transactionHash ? { transactionHash: written.transactionHash } : {}),
       ...(written.blockNumber !== undefined ? { blockNumber: written.blockNumber } : {}),
+      ...(written.fundedFromChainId !== undefined ? { fundedFromChainId: written.fundedFromChainId } : {}),
+      ...(written.sourceTransactionHash ? { sourceTransactionHash: written.sourceTransactionHash } : {}),
     };
     const cacheReport: CacheSyncReport =
       written.status === "CONFIRMED" && written.blockNumber === undefined

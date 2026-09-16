@@ -56,10 +56,13 @@ if (!TEST_FUNDER_KEY) {
 const CACHE = ((process.env.CELO_SEPOLIA_CACHE as Address | undefined) ?? keyStoreCacheOf(CELO_SEPOLIA)) as Address;
 
 const SEPOLIA_RPC = process.env.SEPOLIA_RPC_URL || SEPOLIA.publicRpcUrl;
-const sepolia: NetworkConfig = { ...SEPOLIA, publicRpcUrl: SEPOLIA_RPC };
+// RELAY_URL points both chains at another relay (a local build, for instance).
+const relayOverride = process.env.RELAY_URL ? { relayUrl: process.env.RELAY_URL } : {};
+const sepolia: NetworkConfig = { ...SEPOLIA, publicRpcUrl: SEPOLIA_RPC, ...relayOverride };
 const celoSepolia: NetworkConfig = {
   ...CELO_SEPOLIA,
   ...(process.env.CELO_SEPOLIA_RPC_URL ? { publicRpcUrl: process.env.CELO_SEPOLIA_RPC_URL } : {}),
+  ...relayOverride,
   registry: { kind: "cached", l1: sepolia, keyStoreCache: CACHE },
 };
 
@@ -83,7 +86,6 @@ async function main() {
   const celoPublic: PublicClient = createPublicClient({ chain: celoSepolia.chain, transport: http(celoSepolia.publicRpcUrl) });
   const sepoliaPublic: PublicClient = createPublicClient({ chain: sepolia.chain, transport: http(sepolia.publicRpcUrl) });
   const celoFunder = createWalletClient({ account: funder, chain: celoSepolia.chain, transport: http(celoSepolia.publicRpcUrl) });
-  const sepoliaFunder = createWalletClient({ account: funder, chain: sepolia.chain, transport: http(sepolia.publicRpcUrl) });
 
   const [celoBal, sepoliaBal] = await Promise.all([
     celoPublic.getBalance({ address: funder.address }),
@@ -93,9 +95,7 @@ async function main() {
   if (celoBal < parseEther("1")) {
     throw new Error(`Fund ${funder.address} with at least 0.2 CELO on Celo Sepolia: https://faucet.celo.org/celo-sepolia`);
   }
-  if (sepoliaBal < parseEther("0.01")) {
-    throw new Error(`Fund ${funder.address} with at least 0.01 ETH on Sepolia: https://cloud.google.com/application/web3/faucet/ethereum/sepolia`);
-  }
+  // No Sepolia ETH is needed: the registry writes are funded from the wallet's CELO by the relay.
   console.log(`cache: ${CACHE}\n`);
 
   // 1. Create wallet with admin signer
@@ -106,14 +106,11 @@ async function main() {
   console.log("    wallet.address:    ", wallet.address);
   console.log(`    done [${ms(t0)}]`);
 
-  // 2. Fund on both chains
-  console.log("\n[2] Fund the wallet: 0.5 CELO on Celo Sepolia, 0.003 ETH on Sepolia (registry writes)");
+  // 2. Fund on Celo Sepolia only: the registry writes on Sepolia are funded from this balance.
+  console.log("\n[2] Fund the wallet: 0.5 CELO on Celo Sepolia, nothing on Sepolia");
   const celoFund = await celoFunder.sendTransaction({ to: wallet.address, value: parseEther("0.5") });
-  const sepoliaFund = await sepoliaFunder.sendTransaction({ to: wallet.address, value: parseEther("0.003") });
-  await Promise.all([
-    celoPublic.waitForTransactionReceipt({ hash: celoFund }),
-    sepoliaPublic.waitForTransactionReceipt({ hash: sepoliaFund }),
-  ]);
+  await celoPublic.waitForTransactionReceipt({ hash: celoFund });
+  if ((await sepoliaPublic.getBalance({ address: wallet.address })) !== 0n) throw new Error("the wallet must hold no ETH on Sepolia for this test");
   console.log(`    funded [${ms(t0)}]`);
 
   // 3. First execute on Celo Sepolia: gasless through the relay, fee in CELO,
@@ -135,7 +132,10 @@ async function main() {
   });
   printLegs(session.legs);
   assertStatus(session, "granted", "grantSession");
-  if (legOf(session.legs, "registry", sepolia.chainId).status !== "CONFIRMED") throw new Error("registry write did not confirm");
+  const grantRegistry = legOf(session.legs, "registry", sepolia.chainId);
+  if (grantRegistry.status !== "CONFIRMED") throw new Error("registry write did not confirm");
+  if (grantRegistry.fundedFromChainId !== celoSepolia.chainId) throw new Error("registry write was not funded from Celo Sepolia");
+  console.log("    registry write funded from Celo Sepolia, source tx:", grantRegistry.sourceTransactionHash);
   if (legOf(session.legs, "cache", celoSepolia.chainId).status !== "CONFIRMED") throw new Error("cache proof did not confirm");
   console.log(`    granted [${ms(t0)}]`);
 
@@ -170,7 +170,10 @@ async function main() {
   printLegs(revokeRes.legs);
   assertStatus(revokeRes, "revoked", "revokeSession");
   if (legOf(revokeRes.legs, "account", celoSepolia.chainId).status !== "CONFIRMED") throw new Error("account revoke failed");
-  if (legOf(revokeRes.legs, "registry", sepolia.chainId).status !== "CONFIRMED") throw new Error("registry revoke did not confirm");
+  const revokeRegistry = legOf(revokeRes.legs, "registry", sepolia.chainId);
+  if (revokeRegistry.status !== "CONFIRMED") throw new Error("registry revoke did not confirm");
+  if (revokeRegistry.fundedFromChainId !== celoSepolia.chainId) throw new Error("registry revoke was not funded from Celo Sepolia");
+  console.log("    registry revoke funded from Celo Sepolia, source tx:", revokeRegistry.sourceTransactionHash);
   if (legOf(revokeRes.legs, "cache", celoSepolia.chainId).status !== "CONFIRMED") throw new Error("post-revocation proof did not confirm");
   // Public RPCs can lag the relay's confirmation; poll until the entry shows the
   // post-revocation proof (up to 60s).

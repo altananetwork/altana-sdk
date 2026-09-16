@@ -331,6 +331,13 @@ export type SubmitCallsOptions = {
    * holds the most of. See `resolveFeeToken`.
    */
   feeToken?: FeeTokenOption;
+  /**
+   * Funds the intent must have on this chain that the wallet lacks. The relay
+   * locks the same asset on another chain the wallet holds it on, fronts it
+   * here, and settles, under one signature. Used for registry writes funded
+   * from an L2 balance.
+   */
+  requiredFunds?: readonly RequiredFund[];
   submittingKey: KeyDescriptor;
   authorizeKeys?: readonly KeyDescriptor[];
   revokeKeys?: readonly KeyDescriptor[];
@@ -357,13 +364,18 @@ export function buildPrepareParams(args: {
   account: unknown;
   calls: readonly Call[];
   feeToken?: Address;
-}): { account: unknown; calls: readonly Call[]; feeToken?: Address } {
+  requiredFunds?: readonly RequiredFund[];
+}): { account: unknown; calls: readonly Call[]; feeToken?: Address; requiredFunds?: readonly RequiredFund[] } {
   return {
     account: args.account,
     calls: args.calls,
     ...(args.feeToken ? { feeToken: args.feeToken } : {}),
+    ...(args.requiredFunds?.length ? { requiredFunds: args.requiredFunds } : {}),
   };
 }
+
+/** An asset the relay must make available on the intent's chain (zero address = native). */
+export type RequiredFund = { address: Address; value: bigint };
 
 /**
  * The fee token of a prepared intent, read from the quote the relay signed:
@@ -435,6 +447,8 @@ export async function submitCallsDetailed(
 
 /** What the relay would charge for an intent, without signing or sending it. */
 export type CallsQuote = {
+  /** Set when the relay quoted a second chain to fund this intent from: that chain. */
+  fundedFromChainId?: number;
   /** Maximum fee the intent pays, in `feeToken` base units, summed over the relay's quotes. */
   fee: bigint;
   /** The token the relay is charging its fee in (the zero address is native). */
@@ -470,13 +484,32 @@ export async function quoteCalls(
   const value = effectiveCalls.reduce((sum, c) => sum + (c.value ?? 0n), 0n);
   // The token the relay quoted in; the one the rule named when the quote does not say.
   const feeToken = paymentTokenFromPrepared(prepared) ?? named ?? NATIVE_TOKEN;
+  const fundedFromChainId = fundedFromChainIdOf(prepared, client.chain?.id);
   return {
+    ...(fundedFromChainId !== undefined ? { fundedFromChainId } : {}),
     fee,
     feeTokenDeficit,
     feeToken,
     value,
     ...nativeNeededFromPrepared(prepared, { fee, value, feeToken }),
   };
+}
+
+/**
+ * The chain a multichain quote sources funds from: the quote whose chain is
+ * not the intent's own, present only when the relay signed a multichain root.
+ */
+export function fundedFromChainIdOf(prepared: any, ownChainId: number | undefined): number | undefined {
+  const quote = prepared?.context?.quote;
+  if (!quote?.multiChainRoot) return undefined;
+  const other = (quote.quotes ?? []).map((q: any) => Number(q?.chainId)).find((id: number) => Number.isFinite(id) && id !== ownChainId);
+  return other;
+}
+
+/** The receipt on `chainId`, when the relay tagged receipts with chains. */
+export function receiptOnChain(receipts: readonly RelayReceipt[], chainId: number | undefined): RelayReceipt | undefined {
+  if (chainId === undefined) return undefined;
+  return receipts.find((r) => r.chainId !== undefined && Number(r.chainId) === chainId);
 }
 
 /**
@@ -630,6 +663,7 @@ async function prepareIntent(
     account: accountForPrepare,
     calls: effectiveCalls,
     ...(chosenFeeToken ? { feeToken: chosenFeeToken } : {}),
+    ...(opts.requiredFunds?.length ? { requiredFunds: opts.requiredFunds } : {}),
   });
   // Tell Porto which key will sign whenever it's not the implicit admin EOA
   // (i.e. session path always, and passkey path always — there's no EOA for
@@ -825,6 +859,8 @@ export type RelayLog = {
 
 /** One transaction receipt from `wallet_getCallsStatus`. */
 export type RelayReceipt = {
+  /** Chain the receipt is from; set by the relay on multichain bundles. */
+  chainId?: Hex | number;
   transactionHash?: Hex;
   status?: Hex | number;
   /** Block the transaction was mined in. porto decodes it to a number; hex is accepted too. */
@@ -908,29 +944,37 @@ export async function waitForCalls(
   callsId: Hex,
   timeoutMs = 240_000,
   pollIntervalMs = 2_000,
+  opts: { chainId?: number } = {},
 ): Promise<{
   status: string;
   statusCode?: number;
   transactionHash?: Hex;
-  /** Block of the first receipt, as the relay reported it. */
+  /** Block of the receipt on the intent's chain, as the relay reported it. */
   blockNumber?: bigint;
   receipts?: readonly RelayReceipt[];
+  /** Receipts on other chains: the source legs of a multichain bundle. */
+  sourceReceipts?: readonly RelayReceipt[];
 }> {
   const deadline = Date.now() + timeoutMs;
   let lastCode: number | undefined;
+  const wantChain = opts.chainId ?? client.chain?.id;
   while (Date.now() < deadline) {
     try {
       const status: any = await getCallsStatus(client as any, { id: callsId });
       const code = status?.status;
       if (typeof code === "number") lastCode = code;
       if ((typeof code === "number" && code >= 200 && code < 300) || code === "CONFIRMED") {
-        const blockNumber = receiptBlockNumber(status?.receipts?.[0]);
+        const receipts = (status?.receipts ?? []) as readonly RelayReceipt[];
+        const own = receiptOnChain(receipts, wantChain) ?? receipts[0];
+        const sourceReceipts = receipts.filter((r) => r !== own && r.chainId !== undefined && Number(r.chainId) !== wantChain);
+        const blockNumber = receiptBlockNumber(own);
         return {
           status: "CONFIRMED",
           ...(typeof code === "number" ? { statusCode: code } : {}),
-          transactionHash: status?.receipts?.[0]?.transactionHash,
+          transactionHash: own?.transactionHash,
           ...(blockNumber !== undefined ? { blockNumber } : {}),
-          ...(status?.receipts ? { receipts: status.receipts as readonly RelayReceipt[] } : {}),
+          ...(status?.receipts ? { receipts } : {}),
+          ...(sourceReceipts.length ? { sourceReceipts } : {}),
         };
       }
       if ((typeof code === "number" && code >= 300 && code < 700) || code === "FAILED") {

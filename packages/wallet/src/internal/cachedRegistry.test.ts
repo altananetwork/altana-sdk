@@ -5,6 +5,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { parseEther, type Address } from "viem";
+import type { Hex, PublicClient } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import {
   BNB,
@@ -16,15 +17,10 @@ import {
   SEPOLIA,
   type NetworkConfig,
 } from "../config.js";
+import { NATIVE_TOKEN } from "../config.js";
 import { createHeadlessPasskey } from "./passkey.js";
 import { createPrivateKeySigner, signerFromPrivateKey } from "./signer.js";
-import {
-  assertRegistryFunding,
-  isCachedRegistry,
-  keyStoreCacheOf,
-  planRegistryWrite,
-  provisioningNetworks,
-} from "./cachedRegistry.js";
+import { assertRegistryFunding, isCachedRegistry, keyStoreCacheOf, planRegistryWrite, provisioningNetworks, decideRegistryFunding, planRegistryFunding } from "./cachedRegistry.js";
 
 const DEPLOYED_CACHE: Address = "0x37ebf8F17c3705568a03fB3A1629AcE7B3D95FFf";
 
@@ -171,5 +167,74 @@ describe("assertRegistryFunding", () => {
     }
     expect(message).toContain("Ethereum (chainId 1)");
     expect(message).not.toContain("faucet");
+  });
+});
+
+describe("decideRegistryFunding", () => {
+  const fee = parseEther("0.0002");
+  test("a wallet that can pay on the registry chain is not funded from an L2", () => {
+    expect(decideRegistryFunding({ balance: parseEther("0.01"), valueNeeded: fee })).toEqual({ fundFromL2: false });
+  });
+  test("a wallet short of value plus allowance requests the value from the relay", () => {
+    expect(decideRegistryFunding({ balance: 0n, valueNeeded: fee * 2n })).toEqual({
+      fundFromL2: true,
+      requiredFunds: [{ address: NATIVE_TOKEN, value: fee * 2n }],
+    });
+  });
+  test("a zero-value write from an empty wallet still asks for one wei so the relay sources the fee", () => {
+    expect(decideRegistryFunding({ balance: 0n, valueNeeded: 0n })).toEqual({
+      fundFromL2: true,
+      requiredFunds: [{ address: NATIVE_TOKEN, value: 1n }],
+    });
+    expect(decideRegistryFunding({ balance: 5n, valueNeeded: 0n }).requiredFunds).toEqual([{ address: NATIVE_TOKEN, value: 6n }]);
+  });
+  test("override forces either way", () => {
+    expect(decideRegistryFunding({ balance: 0n, valueNeeded: fee, override: false })).toEqual({ fundFromL2: false });
+    expect(decideRegistryFunding({ balance: parseEther("1"), valueNeeded: 0n, override: true }).fundFromL2).toBe(true);
+  });
+});
+
+describe("planRegistryFunding", () => {
+  const fee = parseEther("0.0002");
+  const fakeRegistryClient = (o: { balance: bigint; activeKeys: Hex[] }) =>
+    ({
+      getBalance: async () => o.balance,
+      readContract: async ({ functionName }: { functionName: string }) => {
+        if (functionName === "getKeys") return o.activeKeys;
+        if (functionName === "getRegistrationFeeInWei") return fee;
+        throw new Error(`unexpected read ${functionName}`);
+      },
+    }) as unknown as PublicClient;
+  const call = { to: SEPOLIA.keyStoreController, value: fee, data: "0x" as Hex };
+  const wallet = "0x1111111111111111111111111111111111111111" as Address;
+
+  test("counts the admin's first registration in the value the relay must front", async () => {
+    const funding = await planRegistryFunding({
+      registryClient: fakeRegistryClient({ balance: 0n, activeKeys: [] }),
+      registry: SEPOLIA,
+      walletAddress: wallet,
+      adminPublicKey: ("0x04" + "aa".repeat(64)) as Hex,
+      calls: [call],
+    });
+    expect(funding).toEqual({ fundFromL2: true, requiredFunds: [{ address: NATIVE_TOKEN, value: fee * 2n }] });
+  });
+
+  test("no prepend once the wallet has keys, and no funding once it holds ETH", async () => {
+    const short = await planRegistryFunding({
+      registryClient: fakeRegistryClient({ balance: 0n, activeKeys: ["0x01"] }),
+      registry: SEPOLIA,
+      walletAddress: wallet,
+      adminPublicKey: "0x04",
+      calls: [call],
+    });
+    expect(short.requiredFunds).toEqual([{ address: NATIVE_TOKEN, value: fee }]);
+    const rich = await planRegistryFunding({
+      registryClient: fakeRegistryClient({ balance: parseEther("0.05"), activeKeys: ["0x01"] }),
+      registry: SEPOLIA,
+      walletAddress: wallet,
+      adminPublicKey: "0x04",
+      calls: [call],
+    });
+    expect(rich).toEqual({ fundFromL2: false });
   });
 });
