@@ -4,7 +4,7 @@
  * digs it back out so the SDK can lead the thrown error with it.
  */
 import { describe, expect, test } from "bun:test";
-import { deepestRelayReason } from "./relay.js";
+import { deepestRelayReason, relayRejectionHint } from "./relay.js";
 
 // The exact shape seen live on BSC testnet when feeToken is set to $U:
 // InvalidParamsRpcError → RpcRequestError → the real relay message.
@@ -50,5 +50,14 @@ describe("deepestRelayReason", () => {
     a.cause = a;
     expect(() => deepestRelayReason(a)).not.toThrow();
     expect(deepestRelayReason(a)).toBeUndefined();
+  });
+});
+
+describe("relayRejectionHint", () => {
+  test("tells a developer to create the wallet when the relay does not know the account", () => {
+    expect(relayRejectionHint("quotes for unknown accounts are not accepted")).toContain("client.createWallet({ signer })");
+  });
+  test("adds nothing for other rejections", () => {
+    expect(relayRejectionHint("insufficient liquidity")).toBe("");
   });
 });

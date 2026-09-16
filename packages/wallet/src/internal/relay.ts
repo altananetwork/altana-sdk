@@ -752,9 +752,20 @@ async function withRelayReason<T>(
     if (!reason) throw err;
     // A fee token rejection names the tokens this relay does accept, read live.
     const hint =
-      /fee token/i.test(reason) && relay ? await feeTokenHint(relay.client, relay.network) : "";
+      /fee token/i.test(reason) && relay ? await feeTokenHint(relay.client, relay.network) : relayRejectionHint(reason);
     throw new Error(`The relay rejected the request to ${doing}: ${reason}${hint}`, { cause: err });
   }
+}
+
+/** Plain advice appended to relay rejections the SDK knows the cause of. */
+export function relayRejectionHint(reason: string): string {
+  if (/unknown account/i.test(reason)) {
+    return (
+      " The relay only serves accounts it has registered: create the wallet with " +
+      "`client.createWallet({ signer })` (or `createPasskeyWallet`) before sending from this key."
+    );
+  }
+  return "";
 }
 
 /** Generic wrapper strings viem/porto layer on top of the real relay message. */
