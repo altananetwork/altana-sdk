@@ -65,24 +65,6 @@ export function SessionsPanel() {
     };
   };
 
-  const doQuote = () =>
-    run("quoteGrantSession", async () => {
-      setError(undefined);
-      let args;
-      try {
-        args = grantArgs();
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
-        return;
-      }
-      setBusy("quote");
-      try {
-        setQuote(await client.quoteGrantSession(args));
-      } finally {
-        setBusy(undefined);
-      }
-    });
-
   const doGrant = () =>
     run("grantSession", async () => {
       setError(undefined);
@@ -96,6 +78,12 @@ export function SessionsPanel() {
       const sessionKey = generatePrivateKey();
       setBusy("grant");
       try {
+        // The cost, shown while the grant runs; a failed quote does not block the grant.
+        try {
+          setQuote(await client.quoteGrantSession(args));
+        } catch (e) {
+          log("quote", { error: e instanceof Error ? e.message : String(e) });
+        }
         const result = await client.grantSession({
           ...args,
           sessionSigner: signerFromPrivateKey(sessionKey),
@@ -255,14 +243,11 @@ export function SessionsPanel() {
               <Button variant="primary" onClick={doGrant} disabled={busy !== undefined}>
                 {busy === "grant" ? "Granting…" : "Grant session"}
               </Button>
-              <Button onClick={doQuote} disabled={busy !== undefined}>
-                {busy === "quote" ? "Quoting…" : "Quote first"}
-              </Button>
             </div>
           </Card>
 
           {quote && (
-            <Card title="Quote" hint={quote.complete ? "Every leg could be quoted." : "Some legs could not be quoted; the real cost is higher than shown."}>
+            <Card title="What this grant costs" hint={quote.complete ? "Every leg could be quoted." : "Some legs could not be quoted; the real cost is higher than shown."}>
               <ul className="stack" style={{ margin: 0, paddingLeft: 18 }}>
                 {quote.lines.map((l, i) => {
                   const n = networkByChainId(l.chainId);

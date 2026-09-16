@@ -51,7 +51,7 @@ Each scenario names what to do on the page and what a pass looks like. The Activ
 
 1. Sessions: name "agent one", cap 2.5 USDC per day, lifetime 7 days, chain Celo Sepolia, tick USDC under fee tokens. Quote first.
 2. Pass on quote: one line per leg, balances table shows Enough on the wallet's chain.
-3. Grant session. Pass: legs table shows the registry write on Sepolia and the account leg on Celo Sepolia as CONFIRMED (the cache leg may be SKIPPED or take a while); the session appears under Stored sessions as Active with "2.5 USDC per day".
+3. Grant session. No Sepolia ETH is needed: the registry write on Sepolia shows "funded from Celo Sepolia" with the source transaction. Pass: registry and account legs CONFIRMED (the cache leg may take a while); the session appears under Stored sessions as Active with "2.5 USDC per day".
 4. Execute on that session. Pass: CONFIRMED, "Charged in USDC", the wallet's USDC dropped by the fee; CELO unchanged.
 5. Revoke. Pass: legs CONFIRMED, badge turns Revoked, Execute is disabled.
 
