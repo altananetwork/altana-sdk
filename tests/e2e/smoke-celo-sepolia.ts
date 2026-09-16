@@ -160,6 +160,10 @@ async function main() {
 
   // 7. Revoke: account and registry in parallel, then the post-revocation proof
   console.log("\n[7] revokeSession");
+  // The funded grant may leave the unspent part of the fee allowance on Sepolia; a wallet that can
+  // pay there does, so the revoke is funded from Celo only when it cannot.
+  const sepoliaBeforeRevoke = await sepoliaPublic.getBalance({ address: wallet.address });
+  console.log(`    wallet holds ${formatEther(sepoliaBeforeRevoke)} ETH on Sepolia before the revoke`);
   const revokeRes = await client.revokeSession({
     wallet,
     signer: adminSigner,
@@ -172,8 +176,13 @@ async function main() {
   if (legOf(revokeRes.legs, "account", celoSepolia.chainId).status !== "CONFIRMED") throw new Error("account revoke failed");
   const revokeRegistry = legOf(revokeRes.legs, "registry", sepolia.chainId);
   if (revokeRegistry.status !== "CONFIRMED") throw new Error("registry revoke did not confirm");
-  if (revokeRegistry.fundedFromChainId !== celoSepolia.chainId) throw new Error("registry revoke was not funded from Celo Sepolia");
-  console.log("    registry revoke funded from Celo Sepolia, source tx:", revokeRegistry.sourceTransactionHash);
+  if (sepoliaBeforeRevoke < parseEther("0.001")) {
+    if (revokeRegistry.fundedFromChainId !== celoSepolia.chainId) throw new Error("registry revoke was not funded from Celo Sepolia");
+    console.log("    registry revoke funded from Celo Sepolia, source tx:", revokeRegistry.sourceTransactionHash);
+  } else {
+    if (revokeRegistry.fundedFromChainId !== undefined) throw new Error("registry revoke was funded from an L2 although the wallet could pay on Sepolia");
+    console.log("    registry revoke paid from the wallet's own ETH on Sepolia");
+  }
   if (legOf(revokeRes.legs, "cache", celoSepolia.chainId).status !== "CONFIRMED") throw new Error("post-revocation proof did not confirm");
   // Public RPCs can lag the relay's confirmation; poll until the entry shows the
   // post-revocation proof (up to 60s).

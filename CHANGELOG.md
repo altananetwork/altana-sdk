@@ -158,6 +158,7 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
   of tokens does not burst-fire calls at a public RPC. (#78)
 
 ### Changed
+- Relay rejections for an account the relay has not registered now say to create the wallet with `client.createWallet` first.
 
 - **Hire expiry is documented and pinned, and the MCP deadline option is
   described.** `hireErc8183Agent` sets `expiredAt = now + disputeWindow +
