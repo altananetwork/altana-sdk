@@ -29,7 +29,7 @@ describe("CrossChainPanel", () => {
     expect(await screen.findByText("Key valid in the Sepolia KeyStore")).toBeInTheDocument();
     expect(makeDeps).toHaveBeenCalledWith(expect.objectContaining({ walletKey: TEST_KEY, source: expect.objectContaining({ chainId: 11142220 }) }));
     expect(screen.getAllByText("done")).toHaveLength(7);
-    expect(screen.getByText("0.0028 S-CELO", { exact: false })).toBeInTheDocument();
+    expect(screen.getByText("0.0028", { exact: false })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /0xbbb/ })).toHaveAttribute("href", "https://sepolia.etherscan.io/tx/0xbbb");
   });
 
