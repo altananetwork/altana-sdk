@@ -43,6 +43,11 @@ jobs:
       - name: Typecheck e2e (fork + demo harness)
         run: bun run --filter '@altananetwork/e2e' typecheck
 
+      - name: Test bench (typecheck + vitest)
+        run: |
+          bun run --filter '@altananetwork/testbench' typecheck
+          bun run --filter '@altananetwork/testbench' test
+
       - name: Unit tests
         # The sdk test files run one process per file: a bun loader bug (still
         # present in bun 1.3.14) deadlocks multi-file runs on GitHub runners

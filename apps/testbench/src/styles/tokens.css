@@ -1,0 +1,134 @@
+/* Altana design tokens, Altana Network Brand Kit v2.0 (altana-design-system).
+   Values copied from altana-explorer/app/globals.css. Do not hand-tune colours
+   here; the page inherits the brand. Hard rules: no eyebrows, no monospace,
+   no em dashes, body never bold, critical red is outline and text only. */
+
+@font-face {
+  font-family: "Inter Tight";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/inter-tight-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Inter Tight";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/inter-tight-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+:root {
+  color-scheme: light dark;
+
+  --bg-primary:  oklch(0.992 0.002 250);
+  --bg-surface:  oklch(0.972 0.003 250);
+  --bg-elevated: oklch(0.955 0.004 250);
+  --bg-overlay:  oklch(1 0 0);
+  --bg-inset:    oklch(0.963 0.003 250);
+
+  --text-primary:   oklch(0.20 0.005 265);
+  --text-secondary: oklch(0.46 0.008 265);
+  --text-tertiary:  oklch(0.64 0.006 265);
+  --text-on-accent: oklch(1 0 0);
+
+  --accent:         oklch(0.55 0.20 264);
+  --accent-hover:   oklch(0.47 0.18 264);
+  --accent-subtle:  oklch(0.55 0.20 264 / 0.08);
+  --accent-surface: oklch(0.55 0.20 264 / 0.05);
+  --accent-border:  oklch(0.55 0.20 264 / 0.25);
+
+  --success:        oklch(0.65 0.18 155);
+  --success-ink:    oklch(0.45 0.15 155);
+  --success-subtle: oklch(0.65 0.18 155 / 0.10);
+
+  --warning:        oklch(0.75 0.16 80);
+  --warning-ink:    oklch(0.50 0.14 70);
+  --warning-subtle: oklch(0.75 0.16 80 / 0.10);
+
+  --error:          oklch(0.58 0.20 25);
+  --error-ink:      oklch(0.48 0.18 25);
+  --error-subtle:   oklch(0.58 0.20 25 / 0.10);
+
+  --border:         oklch(0.92 0.004 250);
+  --border-active:  oklch(0.86 0.006 250);
+
+  --chain-celo:     #fcff52;
+  --chain-ethereum: #627eea;
+  --chain-base:     #0052ff;
+
+  /* The brand has no monospace face. The mono alias keeps any legacy usage in Inter Tight. */
+  --font-sans: "Inter Tight", system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-sans);
+
+  --radius-sm:   8px;
+  --radius-md:   12px;
+  --radius-lg:   16px;
+  --radius-badge: 6px;
+
+  --space-xs:  4px;
+  --space-sm:  8px;
+  --space-md:  12px;
+  --space-lg:  16px;
+  --space-xl:  24px;
+  --space-2xl: 32px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-primary:  oklch(0.17 0.006 265);
+    --bg-surface:  oklch(0.21 0.006 265);
+    --bg-elevated: oklch(0.25 0.007 265);
+    --bg-overlay:  oklch(0.20 0.006 265);
+    --bg-inset:    oklch(0.24 0.006 265);
+    --text-primary:   oklch(0.96 0.003 250);
+    --text-secondary: oklch(0.76 0.006 250);
+    --text-tertiary:  oklch(0.60 0.006 250);
+    --accent:         oklch(0.68 0.17 264);
+    --accent-hover:   oklch(0.76 0.15 264);
+    --accent-subtle:  oklch(0.68 0.17 264 / 0.14);
+    --accent-surface: oklch(0.68 0.17 264 / 0.08);
+    --accent-border:  oklch(0.68 0.17 264 / 0.35);
+    --success-ink:    oklch(0.78 0.16 155);
+    --warning-ink:    oklch(0.82 0.14 80);
+    --error-ink:      oklch(0.75 0.16 25);
+    --border:         oklch(0.30 0.006 265);
+    --border-active:  oklch(0.40 0.008 265);
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { color: var(--accent-hover); }
+
+button, input, select, textarea { font-family: inherit; font-size: inherit; color: inherit; }
+button { cursor: pointer; }
+
+h1, h2, h3 { margin: 0; font-weight: 600; letter-spacing: -0.01em; }
+h1 { font-size: 20px; }
+h2 { font-size: 18px; }
+h3 { font-size: 15px; }
+p { margin: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+}
