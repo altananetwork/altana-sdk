@@ -765,6 +765,14 @@ tool(
             "stablecoin can run the session. The grant itself pays its fee with " +
             "the first of them the wallet holds.",
         ),
+      feeSpendLimit: z
+        .string()
+        .regex(/^\d+$/)
+        .optional()
+        .describe(
+          "The daily cap added for each fee token, in the token's smallest unit " +
+            "(for example 5000000 for 5 USDC). Default one whole token.",
+        ),
     },
   },
   async ({
@@ -775,6 +783,7 @@ tool(
     lifetimeSeconds,
     register,
     feeTokens,
+    feeSpendLimit,
   }: {
     walletName: string;
     sessionName: string;
@@ -783,6 +792,7 @@ tool(
     lifetimeSeconds?: number;
     register?: boolean;
     feeTokens?: string[];
+    feeSpendLimit?: string;
   }) => {
     // Refuse to overwrite an existing session entry. Sessions live in their
     // own keychain namespace (altana-session), so this only collides with
@@ -822,6 +832,7 @@ tool(
       expiry,
       ...(register !== undefined ? { register } : {}),
       ...(feeTokens ? { feeTokens: feeTokens.map(assertAddress) } : {}),
+      ...(feeSpendLimit !== undefined ? { feeSpendLimit: BigInt(feeSpendLimit) } : {}),
     });
 
     // Persist:

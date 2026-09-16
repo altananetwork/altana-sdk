@@ -17,13 +17,13 @@
  *      terms. Sent explicitly so porto cannot guess.
  *
  * A choice that finds nothing to pay with fails before anything reaches the
- * relay, naming the accepted tokens and what the wallet holds.
+ * relay, naming the accepted tokens and what the wallet holds. Balances come
+ * from the relay's own `wallet_getAssets`, never from a public RPC.
  */
-import { createPublicClient, formatUnits, getAddress, http, type Address, type Client } from "viem";
+import { getAddress, hexToBigInt, numberToHex, type Address, type Client, type Hex } from "viem";
 import { NATIVE_TOKEN, type NetworkConfig } from "../config.js";
 import { fetchFeeCurrencies, type FeeCurrency } from "./feeCurrencies.js";
 import type { SessionPermissions, SpendPermission } from "./sessions.js";
-import { readTokenBalances } from "./tokenBalances.js";
 
 /** Where the candidate tokens came from; it shapes the error messages. */
 export type FeeTokenSource = "feeTokens" | "session";
@@ -118,26 +118,78 @@ export function chooseFeeToken(args: {
   return best.currency.address;
 }
 
-/** Reads the wallet's balance of each token on the chain's public RPC. */
+/** One entry of the relay's ERC-7811 `wallet_getAssets` answer. */
+type RelayAsset = { address?: unknown; balance?: unknown; type?: unknown };
+
+/**
+ * The wallet's balance of each token as the relay sees it: one
+ * `wallet_getAssets` call (the same the relay uses to pick a fee token and
+ * `holdings()` uses), filtered to `tokens`. No public RPC is involved, so a
+ * session send depends on the relay alone. A token the relay does not list is
+ * held at zero.
+ */
 export async function readHeldBalances(
+  relay: Client,
   network: NetworkConfig,
   walletAddress: Address,
   tokens: readonly Address[],
 ): Promise<HeldBalances> {
-  const publicClient = createPublicClient({
-    chain: network.chain,
-    transport: http(network.publicRpcUrl),
-  });
-  const erc20s = tokens.filter((t) => !isNativeAddress(t));
-  const wantsNative = tokens.some(isNativeAddress);
-  const [native, balances] = await Promise.all([
-    wantsNative ? publicClient.getBalance({ address: walletAddress }) : Promise.resolve(0n),
-    readTokenBalances(publicClient, walletAddress, erc20s),
-  ]);
+  const chainIdHex = numberToHex(network.chainId);
+  const response = (await relay.request({
+    method: "wallet_getAssets" as never,
+    params: [
+      { account: walletAddress, assetTypeFilter: ["native", "erc20"], chainFilter: [chainIdHex] },
+    ] as never,
+  })) as Record<string, unknown> | null;
+
+  const wanted = new Set(tokens.map((t) => t.toLowerCase()));
   const held = new Map<string, bigint>();
-  if (wantsNative) held.set(NATIVE_TOKEN, native);
-  for (const b of balances) held.set(b.address.toLowerCase(), b.ok ? b.raw : 0n);
+  for (const key of wanted) held.set(key, 0n);
+
+  const assets = assetsForChain(response, network.chainId);
+  for (const asset of assets) {
+    if (typeof asset !== "object" || asset === null) {
+      throw malformedAssets(walletAddress, network.chainId, "an entry is not an object");
+    }
+    const { address, balance, type } = asset as RelayAsset;
+    if (typeof balance !== "string" || !/^0x[0-9a-fA-F]+$/.test(balance)) {
+      throw malformedAssets(walletAddress, network.chainId, "a balance is not a hex quantity");
+    }
+    const isNative = type === "native" || address === "native";
+    const key =
+      isNative
+        ? NATIVE_TOKEN
+        : typeof address === "string" && /^0x[0-9a-fA-F]{40}$/.test(address)
+          ? address.toLowerCase()
+          : undefined;
+    if (!key) throw malformedAssets(walletAddress, network.chainId, "an address is not an address");
+    // The relay may list the same token more than once; the first entry wins.
+    if (wanted.has(key) && held.get(key) === 0n) held.set(key, hexToBigInt(balance as Hex));
+  }
   return held;
+}
+
+/** The chain's list out of the ERC-7811 map (hex chain id keys; decimal tolerated). */
+function assetsForChain(response: Record<string, unknown> | null, chainId: number): unknown[] {
+  if (!response || typeof response !== "object") return [];
+  for (const [key, value] of Object.entries(response)) {
+    const id = key.startsWith("0x") ? parseInt(key, 16) : Number(key);
+    if (id !== chainId) continue;
+    if (!Array.isArray(value)) {
+      throw new Error(
+        `The relay returned a malformed wallet_getAssets response for chain ${chainId}: ` +
+          `the chain's entry is not a list`,
+      );
+    }
+    return value;
+  }
+  return [];
+}
+
+function malformedAssets(address: Address, chainId: number, what: string): Error {
+  return new Error(
+    `The relay returned a malformed wallet_getAssets response for ${address} on chain ${chainId}: ${what}`,
+  );
 }
 
 /**
@@ -155,7 +207,8 @@ export async function resolveFeeToken(args: {
   if (args.feeToken) return args.feeToken;
   let candidates: readonly Address[];
   let source: FeeTokenSource;
-  if (args.feeTokens) {
+  // An empty list names nothing: the key's own rule applies.
+  if (args.feeTokens && args.feeTokens.length > 0) {
     candidates = args.feeTokens.map((t) => getAddress(t));
     source = "feeTokens";
   } else if (args.submittingKey.role === "session") {
@@ -170,7 +223,9 @@ export async function resolveFeeToken(args: {
   const { currencies: accepted } = await fetchFeeCurrencies(args.relay, args.network);
   const eligible = rankFeeCandidates(candidates, accepted, new Map()).map((r) => r.currency.address);
   const held =
-    eligible.length > 0 ? await readHeldBalances(args.network, args.walletAddress, eligible) : new Map();
+    eligible.length > 0
+      ? await readHeldBalances(args.relay, args.network, args.walletAddress, eligible)
+      : new Map();
   return chooseFeeToken({
     candidates,
     accepted,
@@ -226,9 +281,4 @@ export async function withFeeSpendCaps(
   if (feeTokens.length === 0) return permissions;
   const { currencies } = await fetchFeeCurrencies(relay, network);
   return addFeeSpendCaps(permissions, feeTokens, currencies, network, limit);
-}
-
-/** `1.5 USDC`-style rendering of a ranked candidate, for logs and errors. */
-export function describeHeld(candidate: RankedFeeCandidate): string {
-  return `${formatUnits(candidate.raw, candidate.currency.decimals)} ${candidate.currency.symbol}`;
 }
