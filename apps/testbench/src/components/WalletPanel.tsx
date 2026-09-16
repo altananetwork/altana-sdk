@@ -6,7 +6,7 @@ import { nativeLabel } from "../lib/fees";
 import { addressUrl, tokenUrl, txUrl } from "../lib/explorer";
 import { formatAmount, isAddress } from "../lib/format";
 import { isPrivateKey } from "../lib/storage";
-import { useApp, useRun } from "../state/AppState";
+import { useApp, useEnsureRegistered, useRun } from "../state/AppState";
 import { Address } from "./shared/Address";
 import { Badge } from "./shared/Badge";
 import { Button } from "./shared/Button";
@@ -16,6 +16,7 @@ import { Field } from "./shared/Field";
 export function WalletPanel() {
   const { state, dispatch, client } = useApp();
   const run = useRun();
+  const ensureRegistered = useEnsureRegistered();
   const [pasted, setPasted] = useState("");
   const [pasteError, setPasteError] = useState<string>();
   const [revealed, setRevealed] = useState(false);
@@ -71,6 +72,7 @@ export function WalletPanel() {
       setBusy(true);
       const results: { asset: string; status: string; hash?: Hex }[] = [];
       try {
+        await ensureRegistered();
         for (const t of holdings.tokens) {
           if (!t.ok || t.raw === 0n) continue;
           const r = await client.execute({

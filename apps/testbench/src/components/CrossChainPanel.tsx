@@ -7,7 +7,7 @@ import { txUrl } from "../lib/explorer";
 import { nativeLabel } from "../lib/fees";
 import { formatAmount } from "../lib/format";
 import { entry } from "../lib/log";
-import { useApp } from "../state/AppState";
+import { useApp, useEnsureRegistered } from "../state/AppState";
 import { Address } from "./shared/Address";
 import { Badge } from "./shared/Badge";
 import { Button } from "./shared/Button";
@@ -20,6 +20,7 @@ const liveFactory: DepsFactory = async (args) => (await import("../lib/crossChai
 
 export function CrossChainPanel({ makeDeps = liveFactory }: { makeDeps?: DepsFactory }) {
   const { state, dispatch, client } = useApp();
+  const ensureRegistered = useEnsureRegistered();
   const wallet = state.wallet;
   const sources = client.chains.filter((c) => c.chainId !== DESTINATION_CHAIN_ID);
   const [sourceId, setSourceId] = useState<number>(sources[0]?.chainId ?? 0);
@@ -43,6 +44,7 @@ export function CrossChainPanel({ makeDeps = liveFactory }: { makeDeps?: DepsFac
       dispatch({ type: "log/add", entry: entry(`cross-chain ${s.step}`, s.state === "failed" ? { error: s.detail, level: "error" } : { result: s.detail ?? s.state }) });
     };
     try {
+      await ensureRegistered();
       const deps = await makeDeps({ walletKey: wallet.key, source });
       const r = await runCrossChain(deps, { wallet: wallet.address, publicKey, onStep });
       setResult(r);
