@@ -5,7 +5,7 @@ import { chainName } from "../lib/chains";
 import { txUrl } from "../lib/explorer";
 import { feeTokenOption, nativeLabel, symbolFor, type FeeMode } from "../lib/fees";
 import { formatAmount, isAddress, parseAmount, sameAddress } from "../lib/format";
-import { useApp, useRun } from "../state/AppState";
+import { useApp, useEnsureRegistered, useRun } from "../state/AppState";
 import { Badge } from "./shared/Badge";
 import { Button } from "./shared/Button";
 import { Card } from "./shared/Card";
@@ -16,6 +16,7 @@ type Outcome = { result: ExecuteResult; before: HoldingsResult; after?: Holdings
 export function SendPanel() {
   const { state, dispatch, client } = useApp();
   const run = useRun();
+  const ensureRegistered = useEnsureRegistered();
   const chains = client.chains;
   const wallet = state.wallet;
   const currencies = state.feeCurrenciesChainId === state.chainId ? (state.feeCurrencies ?? []) : [];
@@ -74,6 +75,7 @@ export function SendPanel() {
       const feeToken = feeTokenOption(mode, one, list);
       setBusy(true);
       try {
+        await ensureRegistered();
         const before = holdings ?? (await client.holdings(wallet.address, state.chainId));
         const result = await client.execute({
           wallet: { address: wallet.address },

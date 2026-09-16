@@ -17,7 +17,7 @@ import { formatAmount, sameAddress } from "../lib/format";
 import { entry } from "../lib/log";
 import { PERIODS, buildGrant, defaultForm, describeCaps, type SessionForm } from "../lib/sessions";
 import type { StoredSession } from "../lib/storage";
-import { useApp, useRun } from "../state/AppState";
+import { useApp, useEnsureRegistered, useRun } from "../state/AppState";
 import { Address as Addr } from "./shared/Address";
 import { Badge } from "./shared/Badge";
 import { Button } from "./shared/Button";
@@ -28,6 +28,7 @@ import { LegsTable } from "./shared/LegsTable";
 export function SessionsPanel() {
   const { state, dispatch, client } = useApp();
   const run = useRun();
+  const ensureRegistered = useEnsureRegistered();
   const chains = client.chains;
   const wallet = state.wallet;
   const currencies = state.feeCurrenciesChainId === state.chainId ? (state.feeCurrencies ?? []) : [];
@@ -78,6 +79,7 @@ export function SessionsPanel() {
       const sessionKey = generatePrivateKey();
       setBusy("grant");
       try {
+        await ensureRegistered();
         // The cost, shown while the grant runs; a failed quote does not block the grant.
         try {
           setQuote(await client.quoteGrantSession(args));
@@ -112,6 +114,7 @@ export function SessionsPanel() {
       if (!wallet) return;
       setBusy(`exec-${s.id}`);
       try {
+        await ensureRegistered();
         const session = deserializeSession(s.serialized, signerFromPrivateKey(s.sessionKey));
         const result = await client.execute({
           session,
@@ -131,6 +134,7 @@ export function SessionsPanel() {
       if (!wallet) return;
       setBusy(`revoke-${s.id}`);
       try {
+        await ensureRegistered();
         const session = deserializeSession(s.serialized, signerFromPrivateKey(s.sessionKey));
         const q = await client.quoteRevokeSession({ wallet: { address: wallet.address }, signer: wallet.signer, session });
         log("revoke quote", q);
