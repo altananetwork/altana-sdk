@@ -26,8 +26,20 @@ export function LegsTable({ legs }: { legs: readonly SessionLeg[] }) {
               <Badge tone={l.status === "CONFIRMED" ? "success" : l.status === "FAILED" ? "error" : undefined}>{l.status}</Badge>
               {l.reason && <div className="muted small">{l.reason}</div>}
             </td>
-            <td className="muted">{l.via ?? ""}</td>
-            <td>{l.transactionHash ? <Address value={l.transactionHash} href={txUrl(l.chainId, l.transactionHash)} /> : <span className="muted">none</span>}</td>
+            <td className="muted">
+              {l.via ?? ""}
+              {l.fundedFromChainId !== undefined && (
+                <div className="small">funded from {networkByChainId(l.fundedFromChainId)?.chain.name ?? l.fundedFromChainId}</div>
+              )}
+            </td>
+            <td>
+              {l.transactionHash ? <Address value={l.transactionHash} href={txUrl(l.chainId, l.transactionHash)} /> : <span className="muted">none</span>}
+              {l.fundedFromChainId !== undefined && l.sourceTransactionHash && (
+                <div className="small muted">
+                  source <Address value={l.sourceTransactionHash} href={txUrl(l.fundedFromChainId, l.sourceTransactionHash)} />
+                </div>
+              )}
+            </td>
           </tr>
         ))}
       </tbody>

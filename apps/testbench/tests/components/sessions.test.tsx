@@ -12,7 +12,7 @@ const KEY_ID = "0x11111111111111111111111111111111111111111111111111111111111111
 const SESSION_KEY = "0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba" as const;
 
 const legs: SessionLeg[] = [
-  { chainId: 11155111, kind: "registry", status: "CONFIRMED", via: "relay", transactionHash: "0xreg" },
+  { chainId: 11155111, kind: "registry", status: "CONFIRMED", via: "relay", transactionHash: "0xreg", fundedFromChainId: 11142220, sourceTransactionHash: "0xsrc" },
   { chainId: 11142220, kind: "account", status: "CONFIRMED", via: "relay", transactionHash: "0xacc" },
   { chainId: 11142220, kind: "cache", status: "FAILED", reason: "anchor not ready" },
 ];
@@ -59,6 +59,8 @@ describe("SessionsPanel", () => {
     const legsTable = await screen.findByRole("table", { name: "Legs" });
     expect(within(legsTable).getAllByText("CONFIRMED")).toHaveLength(2);
     expect(within(legsTable).getByText("anchor not ready")).toBeInTheDocument();
+    expect(within(legsTable).getByText("funded from Celo Sepolia Testnet")).toBeInTheDocument();
+    expect(within(legsTable).getByRole("link", { name: /0xsrc/ })).toHaveAttribute("href", "https://sepolia.celoscan.io/tx/0xsrc");
     await waitFor(() => expect(storage.dump()?.sessions).toHaveLength(1));
     const stored = storage.dump()!.sessions[0]!;
     expect(stored.name).toBe("agent one");
@@ -78,7 +80,7 @@ describe("SessionsPanel", () => {
     expect(client.grantSession).not.toHaveBeenCalled();
   });
 
-  test("quote renders lines and balance sufficiency", async () => {
+  test("the cost is fetched and shown when granting", async () => {
     const client = fakeClient({
       quoteGrantSession: vi.fn(async () => ({
         lines: [{ chainId: 11142220, kind: "account" as const, payer: TEST_ADDRESS, fee: 10n ** 15n, feeToken: USDC, value: 0n, needed: 0n, neededFromRelay: false }],
@@ -86,8 +88,10 @@ describe("SessionsPanel", () => {
         complete: false,
       })),
     });
+    (client.grantSession as ReturnType<typeof vi.fn>).mockImplementation(async (o: Parameters<typeof client.grantSession>[0]) => grantResult(o as never));
     setup(client);
-    await userEvent.click(await screen.findByRole("button", { name: "Quote first" }));
+    await screen.findByLabelText("Cap 1 token");
+    await userEvent.click(screen.getByRole("button", { name: "Grant session" }));
     const table = await screen.findByRole("table", { name: "Quote balances" });
     expect(within(table).getByText("Short")).toBeInTheDocument();
     expect(screen.getByText(/could not be quoted/)).toBeInTheDocument();
