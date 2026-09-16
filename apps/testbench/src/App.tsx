@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ActivityLogPanel } from "./components/ActivityLogPanel";
 import { FeeTokensPanel } from "./components/FeeTokensPanel";
 import { SendPanel } from "./components/SendPanel";
+import { SessionsPanel } from "./components/SessionsPanel";
 import { WalletPanel } from "./components/WalletPanel";
 import type { LogEntry } from "./lib/log";
 import { useApp } from "./state/AppState";
@@ -50,7 +51,8 @@ export function App({ attachLog }: { attachLog?: (fn: (e: LogEntry) => void) => 
           {tab === "wallet" && <WalletPanel />}
           {tab === "fees" && <FeeTokensPanel />}
           {tab === "send" && <SendPanel />}
-          {(tab === "sessions" || tab === "crosschain") && (
+          {tab === "sessions" && <SessionsPanel />}
+          {tab === "crosschain" && (
             <div className="panel">
               <h2>{TABS.find((t) => t.id === tab)?.label}</h2>
               <p className="lead">Coming in a later phase.</p>
