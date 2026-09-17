@@ -62,3 +62,19 @@ describe("quote balances for a registry write funded from the L2", () => {
     expect(formatQuoteLine(registryLine({}), SEPOLIA)).not.toContain("funded from");
   });
 });
+
+describe("a first grant's cache legs", () => {
+  test("are priced later, not failed", () => {
+    const line: QuoteLine = {
+      chainId: CELO_SEPOLIA.chainId,
+      kind: "cache",
+      payer: WALLET,
+      feeToken: NATIVE_TOKEN,
+      value: 0n,
+      needed: 0n,
+      neededFromRelay: false,
+      deferred: true,
+    };
+    expect(formatQuoteLine(line, CELO_SEPOLIA)).toBe("chain 11142220 cache: fee priced once the registry write lands");
+  });
+});

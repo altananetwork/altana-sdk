@@ -138,7 +138,7 @@ For every chain you grant on, the SDK runs up to three legs:
 
 ## What it costs
 
-`client.quoteGrantSession` takes the same options and returns one line per leg plus the payers' balances, without signing or sending anything. A registry line the relay funds from an L2 carries `fundedFromChainId` and is charged to the wallet's balance on that chain, not on the Keystore chain. A balance's `needed` is the fee plus the registration fee, not the registration fee alone (see [revokeSession](/sdk/revoke-session#what-it-costs)). A cache proof can only be quoted once its Keystore entry exists, so on a first grant those lines come back without a fee and `complete` is `false`.
+`client.quoteGrantSession` takes the same options and returns one line per leg plus the payers' balances, without signing or sending anything. A registry line the relay funds from an L2 carries `fundedFromChainId` and is charged to the wallet's balance on that chain, not on the Keystore chain. A balance's `needed` is the fee plus the registration fee, not the registration fee alone (see [revokeSession](/sdk/revoke-session#what-it-costs)). A cache proof needs a Keystore entry to prove: after the first grant the quote proves one of the wallet's existing keys, which costs the same; on a first grant there is none yet, so those lines come back `deferred` (priced once the registry write lands) and `complete` is `false`.
 
 ## Persisting a session
 

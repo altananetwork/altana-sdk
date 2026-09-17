@@ -161,6 +161,7 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 - Relay rejections for an account the relay has not registered now say to create the wallet with `client.createWallet` first.
 - When the relay's simulation reverts without a reason, the SDK reads the wallet's balances through the relay and says which chain cannot pay for the call, and which chains it could not be funded from. Session quotes label such legs "could not be quoted" instead of "fee unknown".
 - Relay rejections carrying an `Error(string)` or `Panic` revert show the message ("Cache: bad storage proof") instead of the hex data.
+- Session quotes price the cache-proof legs with a key the wallet already has in the Keystore instead of asking the relay to simulate a proof that does not exist yet. On a first grant the leg is marked `deferred` (priced once the registry write lands), no longer reported as a failure.
 
 - **Hire expiry is documented and pinned, and the MCP deadline option is
   described.** `hireErc8183Agent` sets `expiredAt = now + disputeWindow +
