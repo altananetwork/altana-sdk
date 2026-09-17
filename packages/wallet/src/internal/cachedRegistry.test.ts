@@ -20,7 +20,7 @@ import {
 import { NATIVE_TOKEN } from "../config.js";
 import { createHeadlessPasskey } from "./passkey.js";
 import { createPrivateKeySigner, signerFromPrivateKey } from "./signer.js";
-import { assertRegistryFunding, isCachedRegistry, keyStoreCacheOf, planRegistryWrite, provisioningNetworks, decideRegistryFunding, planRegistryFunding } from "./cachedRegistry.js";
+import { assertRegistryFunding, isCachedRegistry, keyStoreCacheOf, planRegistryWrite, provisioningNetworks, registryFundsRequest, planRegistryFunding } from "./cachedRegistry.js";
 
 const DEPLOYED_CACHE: Address = "0x37ebf8F17c3705568a03fB3A1629AcE7B3D95FFf";
 
@@ -170,27 +170,19 @@ describe("assertRegistryFunding", () => {
   });
 });
 
-describe("decideRegistryFunding", () => {
+describe("registryFundsRequest", () => {
   const fee = parseEther("0.0002");
-  test("a wallet that can pay on the registry chain is not funded from an L2", () => {
-    expect(decideRegistryFunding({ balance: parseEther("0.01"), valueNeeded: fee })).toEqual({ fundFromL2: false });
+  test("asks for the calls' value when the wallet holds less than it", () => {
+    expect(registryFundsRequest({ balance: 0n, valueNeeded: fee * 2n })).toEqual([{ address: NATIVE_TOKEN, value: fee * 2n }]);
   });
-  test("a wallet short of value plus allowance requests the value from the relay", () => {
-    expect(decideRegistryFunding({ balance: 0n, valueNeeded: fee * 2n })).toEqual({
-      fundFromL2: true,
-      requiredFunds: [{ address: NATIVE_TOKEN, value: fee * 2n }],
-    });
+  test("otherwise one wei above the balance, so the relay always funds from the wallet's own chain", () => {
+    expect(registryFundsRequest({ balance: 0n, valueNeeded: 0n })).toEqual([{ address: NATIVE_TOKEN, value: 1n }]);
+    expect(registryFundsRequest({ balance: 5n, valueNeeded: 0n })).toEqual([{ address: NATIVE_TOKEN, value: 6n }]);
+    // Some ETH, less than value plus fee: the shape that used to be left to the relay.
+    expect(registryFundsRequest({ balance: fee * 20n, valueNeeded: fee * 2n })).toEqual([{ address: NATIVE_TOKEN, value: fee * 20n + 1n }]);
   });
-  test("a zero-value write from an empty wallet still asks for one wei so the relay sources the fee", () => {
-    expect(decideRegistryFunding({ balance: 0n, valueNeeded: 0n })).toEqual({
-      fundFromL2: true,
-      requiredFunds: [{ address: NATIVE_TOKEN, value: 1n }],
-    });
-    expect(decideRegistryFunding({ balance: 5n, valueNeeded: 0n }).requiredFunds).toEqual([{ address: NATIVE_TOKEN, value: 6n }]);
-  });
-  test("override forces either way", () => {
-    expect(decideRegistryFunding({ balance: 0n, valueNeeded: fee, override: false })).toEqual({ fundFromL2: false });
-    expect(decideRegistryFunding({ balance: parseEther("1"), valueNeeded: 0n, override: true }).fundFromL2).toBe(true);
+  test("a wallet rich on the registry chain is funded like any other: no threshold, no allowance", () => {
+    expect(registryFundsRequest({ balance: parseEther("1"), valueNeeded: fee })).toEqual([{ address: NATIVE_TOKEN, value: parseEther("1") + 1n }]);
   });
 });
 
@@ -216,10 +208,10 @@ describe("planRegistryFunding", () => {
       adminPublicKey: ("0x04" + "aa".repeat(64)) as Hex,
       calls: [call],
     });
-    expect(funding).toEqual({ fundFromL2: true, requiredFunds: [{ address: NATIVE_TOKEN, value: fee * 2n }] });
+    expect(funding).toEqual([{ address: NATIVE_TOKEN, value: fee * 2n }]);
   });
 
-  test("no prepend once the wallet has keys, and no funding once it holds ETH", async () => {
+  test("no prepend once the wallet has keys; ETH it holds there does not stop the funding", async () => {
     const short = await planRegistryFunding({
       registryClient: fakeRegistryClient({ balance: 0n, activeKeys: ["0x01"] }),
       registry: SEPOLIA,
@@ -227,7 +219,7 @@ describe("planRegistryFunding", () => {
       adminPublicKey: "0x04",
       calls: [call],
     });
-    expect(short.requiredFunds).toEqual([{ address: NATIVE_TOKEN, value: fee }]);
+    expect(short).toEqual([{ address: NATIVE_TOKEN, value: fee }]);
     const rich = await planRegistryFunding({
       registryClient: fakeRegistryClient({ balance: parseEther("0.05"), activeKeys: ["0x01"] }),
       registry: SEPOLIA,
@@ -235,6 +227,6 @@ describe("planRegistryFunding", () => {
       adminPublicKey: "0x04",
       calls: [call],
     });
-    expect(rich).toEqual({ fundFromL2: false });
+    expect(rich).toEqual([{ address: NATIVE_TOKEN, value: parseEther("0.05") + 1n }]);
   });
 });
