@@ -16,14 +16,16 @@ import * as Key from "porto/viem/Key";
 import {
   createClient,
   createPublicClient,
+  formatUnits,
   getAddress,
+  hexToBigInt,
   http,
   type Address,
   type Hex,
   type PublicClient,
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { NATIVE_TOKEN, type NetworkConfig } from "../config.js";
+import { NATIVE_TOKEN, networkByChainId, type NetworkConfig } from "../config.js";
 import { feeTokenHint } from "./feeCurrencies.js";
 import { resolveFeeToken, type FeeTokenOption } from "./feeTokenSelection.js";
 import { hasRawPrivateKey, type Signer } from "./signer.js";
@@ -682,6 +684,11 @@ async function prepareIntent(
     () => prepareCalls(client, prepareParams),
     "prepare the call",
     { client, network: opts.network },
+    {
+      account: walletAddress,
+      value: effectiveCalls.reduce((sum, c) => sum + (c.value ?? 0n), 0n),
+      funded: Boolean(opts.requiredFunds?.length),
+    },
   );
 
   return { prepared, signingKeyForPorto, isAdmin, effectiveCalls, feeToken: chosenFeeToken };
@@ -744,17 +751,113 @@ async function withRelayReason<T>(
   fn: () => Promise<T>,
   doing: string,
   relay?: { client: ReturnType<typeof buildRelayClient>; network: NetworkConfig },
+  intent?: IntentContext,
 ): Promise<T> {
   try {
     return await fn();
   } catch (err) {
     const reason = deepestRelayReason(err);
     if (!reason) throw err;
+    // An empty revert is what an unpaid intent looks like: say so with the wallet's balances.
+    if (EMPTY_REVERT.test(reason) && relay && intent) {
+      const shortfall = await describeShortfall(relay.client, relay.network, intent);
+      if (shortfall) {
+        throw new Error(`The relay rejected the request to ${doing} because ${shortfall} (relay: ${reason})`, {
+          cause: err,
+        });
+      }
+    }
     // A fee token rejection names the tokens this relay does accept, read live.
     const hint =
       /fee token/i.test(reason) && relay ? await feeTokenHint(relay.client, relay.network) : relayRejectionHint(reason);
     throw new Error(`The relay rejected the request to ${doing}: ${reason}${hint}`, { cause: err });
   }
+}
+
+/** The relay's simulation reverted with no reason bytes ("intent reverted: 0x" or a bare "0x"). */
+const EMPTY_REVERT = /(^|\s)0x$/;
+
+/** What the SDK asked the relay to simulate, for explaining an empty revert. */
+export type IntentContext = {
+  account: Address;
+  /** Native wei the calls send. */
+  value: bigint;
+  /** Whether the request asked the relay to fund the intent from another chain. */
+  funded: boolean;
+};
+
+/** A wallet's native balance on one chain, as the relay reports it. */
+export type NativeHolding = { chainId: number; chain: string; symbol: string; decimals: number; balance: bigint };
+
+const SHORTFALL_READ_TIMEOUT_MS = 3_000;
+
+/**
+ * Reads the wallet's native balances through the relay and words the
+ * shortfall. Undefined when the relay cannot be read in time: the rejection
+ * then stands on its own.
+ */
+async function describeShortfall(
+  relay: ReturnType<typeof buildRelayClient>,
+  network: NetworkConfig,
+  intent: IntentContext,
+): Promise<string | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("balance read timed out")), SHORTFALL_READ_TIMEOUT_MS);
+    });
+    const holdings = await Promise.race([readNativeHoldings(relay, intent.account), timeout]);
+    const here = holdings.find((h) => h.chainId === network.chainId) ?? {
+      chainId: network.chainId,
+      chain: network.chain.name,
+      symbol: network.chain.nativeCurrency.symbol,
+      decimals: network.chain.nativeCurrency.decimals,
+      balance: 0n,
+    };
+    const elsewhere = intent.funded ? holdings.filter((h) => h.chainId !== network.chainId) : [];
+    return shortfallMessage(here, intent.value, elsewhere);
+  } catch {
+    return undefined;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** The sentence for an unpaid intent: the balance where it runs, what it needs, and where the relay looked for funds. */
+export function shortfallMessage(here: NativeHolding, value: bigint, elsewhere: readonly NativeHolding[]): string {
+  const amount = (h: NativeHolding, wei: bigint) => `${formatUnits(wei, h.decimals)} ${h.symbol}`;
+  const needs = value > 0n ? `${amount(here, value)} the call sends plus the relay fee` : "the relay fee";
+  const lead =
+    here.balance <= value
+      ? `the wallet cannot pay for it: it holds ${amount(here, here.balance)} on ${here.chain} and needs ${needs}`
+      : `the wallet holds ${amount(here, here.balance)} on ${here.chain}, which does not cover ${needs}`;
+  if (elsewhere.length === 0) return lead;
+  const held = elsewhere.map((h) => `${amount(h, h.balance)} on ${h.chain}`).join(" and ");
+  return `${lead}; it holds ${held}, so the relay could not fund it from there either`;
+}
+
+/** The wallet's native balance on every chain the SDK knows, from the relay's `wallet_getAssets`. */
+async function readNativeHoldings(relay: ReturnType<typeof buildRelayClient>, account: Address): Promise<NativeHolding[]> {
+  const response = (await relay.request({
+    method: "wallet_getAssets" as never,
+    params: [{ account, assetTypeFilter: ["native"] }] as never,
+  })) as Record<string, unknown> | null;
+  const holdings: NativeHolding[] = [];
+  for (const [key, assets] of Object.entries(response ?? {})) {
+    const chainId = key.startsWith("0x") ? parseInt(key, 16) : Number(key);
+    const network = networkByChainId(chainId);
+    if (!network || !Array.isArray(assets)) continue;
+    const native: any = assets.find((a: any) => a && (a.type === "native" || a.address === "native"));
+    const balance = typeof native?.balance === "string" && /^0x[0-9a-fA-F]+$/.test(native.balance) ? hexToBigInt(native.balance) : 0n;
+    holdings.push({
+      chainId,
+      chain: network.chain.name,
+      symbol: typeof native?.metadata?.symbol === "string" ? native.metadata.symbol : network.chain.nativeCurrency.symbol,
+      decimals: typeof native?.metadata?.decimals === "number" ? native.metadata.decimals : network.chain.nativeCurrency.decimals,
+      balance,
+    });
+  }
+  return holdings;
 }
 
 /** Plain advice appended to relay rejections the SDK knows the cause of. */
@@ -764,6 +867,9 @@ export function relayRejectionHint(reason: string): string {
       " The relay only serves accounts it has registered: create the wallet with " +
       "`client.createWallet({ signer })` (or `createPasskeyWallet`) before sending from this key."
     );
+  }
+  if (EMPTY_REVERT.test(reason)) {
+    return " The relay's simulation reverted without a reason, which is what an intent the wallet cannot pay for looks like: check its balance covers the value the calls send plus the relay fee.";
   }
   return "";
 }

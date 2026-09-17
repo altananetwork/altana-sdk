@@ -270,7 +270,7 @@ describe("registry write funded from the L2, on the wire", () => {
   const FEE = 200_000_000_000_000n;
 
   /** Plays the Sepolia relay and the Sepolia public RPC (KeyStore reads, balance). */
-  function mockRegistryWire(o: { balance: bigint; activeKeys: Hex[] }) {
+  function mockRegistryWire(o: { balance: bigint; activeKeys: Hex[]; prepareError?: string; assets?: unknown }) {
     const requests: Recorded[] = [];
     const same = (a: string, b: string | undefined) => b !== undefined && a.replace(/\/$/, "") === b.replace(/\/$/, "");
     globalThis.fetch = (async (url: any, init?: RequestInit) => {
@@ -292,7 +292,9 @@ describe("registry write funded from the L2, on the wire", () => {
         }
         if (!same(u, SEPOLIA.relayUrl)) throw new Error(`unexpected request to ${u}: ${req.method}`);
         if (req.method === "wallet_getCapabilities") return ok(chainCapabilities(SEPOLIA.chainId, []));
-        if (req.method === "wallet_prepareCalls") return ok(prepared);
+        if (req.method === "wallet_prepareCalls")
+          return o.prepareError ? { jsonrpc: "2.0", id: req.id, error: { code: 3, message: o.prepareError, data: "0x" } } : ok(prepared);
+        if (req.method === "wallet_getAssets") return ok(o.assets ?? {});
         if (req.method === "wallet_sendPreparedCalls") return ok({ id: "0xabc" });
         if (req.method === "wallet_getCallsStatus")
           return ok({
@@ -311,6 +313,31 @@ describe("registry write funded from the L2, on the wire", () => {
       prepare: () => requests.find((c) => c.method === "wallet_prepareCalls")?.params[0],
     };
   }
+
+  test("an empty wallet: the relay's bare revert becomes a message naming the balances", async () => {
+    const signer = createPrivateKeySigner();
+    mockRegistryWire({
+      balance: 0n,
+      activeKeys: [],
+      prepareError: "intent reverted: 0x",
+      assets: {
+        [numberToHex(SEPOLIA.chainId)]: [{ address: "native", balance: "0x0", type: "native", metadata: { symbol: "ETH", decimals: 18 } }],
+        [numberToHex(CELO_SEPOLIA.chainId)]: [{ address: "native", balance: "0x0", type: "native", metadata: { symbol: "CELO", decimals: 18 } }],
+      },
+    });
+    // Both registration fees: the admin key is registered in the same intent.
+    await expect(
+      submitRegistryWrite(SEPOLIA, {
+        walletAddress: signer.address,
+        adminSigner: signer,
+        calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+      }),
+    ).rejects.toThrow(
+      "The relay rejected the request to prepare the call because the wallet cannot pay for it: it holds 0 ETH on Sepolia " +
+        "and needs 0.0004 ETH the call sends plus the relay fee; it holds 0 CELO on Celo Sepolia Testnet, " +
+        "so the relay could not fund it from there either (relay: intent reverted: 0x)",
+    );
+  });
 
   test("a wallet with no ETH on Sepolia asks the relay to front both registration fees, paid in native", async () => {
     const signer = createPrivateKeySigner();

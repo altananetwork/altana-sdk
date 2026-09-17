@@ -292,7 +292,7 @@ export function formatQuoteLine(line: QuoteLine, network: NetworkConfig): string
   const symbol = network.chain.nativeCurrency.symbol;
   const fee =
     line.fee === undefined
-      ? `fee unknown (${line.reason ?? "not quoted"})`
+      ? `could not be quoted: ${line.reason ?? "no quote"}`
       : line.feeToken === NATIVE_TOKEN
         ? `fee ${formatUnits(line.fee, network.chain.nativeCurrency.decimals)} ${symbol}`
         : `fee ${line.fee} of token ${line.feeToken}`;
