@@ -66,10 +66,16 @@ describe("shortfallMessage", () => {
   const eth = (chain: string, balance: bigint): NativeHolding => ({ chainId: 1, chain, symbol: "ETH", decimals: 18, balance });
   const celo = (balance: bigint): NativeHolding => ({ chainId: 2, chain: "Celo Sepolia", symbol: "CELO", decimals: 18, balance });
 
-  test("an empty wallet that must send value: cannot pay, and where the relay looked for funds", () => {
+  test("an empty wallet that must send value: cannot pay, and nothing anywhere to fund it from", () => {
     expect(shortfallMessage(eth("Sepolia", 0n), 2n * 10n ** 14n, [celo(0n)])).toBe(
       "the wallet cannot pay for it: it holds 0 ETH on Sepolia and needs 0.0002 ETH the call sends plus the relay fee; " +
-        "it holds 0 CELO on Celo Sepolia, so the relay could not fund it from there either",
+        "it holds nothing on any other chain the relay could fund it from",
+    );
+  });
+  test("funds elsewhere the relay did not use are named", () => {
+    expect(shortfallMessage(eth("Sepolia", 0n), 2n * 10n ** 14n, [celo(5n * 10n ** 17n), eth("Base Sepolia", 0n)])).toBe(
+      "the wallet cannot pay for it: it holds 0 ETH on Sepolia and needs 0.0002 ETH the call sends plus the relay fee; " +
+        "it holds 0.5 CELO on Celo Sepolia, which the relay could not use to fund it",
     );
   });
   test("value covered but the fee is not: names the balance without claiming certainty", () => {
