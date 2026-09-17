@@ -27,6 +27,8 @@ import {
   uniqueNetworks,
   type IntentOutcome,
   type SessionLegDeps,
+  launchCacheProofs,
+  type CacheGate,
 } from "./internal/sessionLegs.js";
 import type {
   GrantSessionOptions,
@@ -153,6 +155,7 @@ export async function runGrantSession(
   // registerSessionKey.
   const register = opts.register !== false;
   const populate = opts.populateCache !== false;
+  const awaitCache = opts.populateCache === "await";
   const legs: SessionLeg[] = [];
   const registerCall = (network: NetworkConfig, fee: bigint): Call =>
     buildAdditionalRegisterCall({
@@ -263,8 +266,10 @@ export async function runGrantSession(
     );
   });
 
-  // 3. Cache legs, per cached network.
-  const cacheLegs = networks.filter(isCachedRegistry).map(async (n): Promise<SessionLeg> => {
+  // 3. Cache legs, per cached network. The gate settles with the legs before
+  // it; the proof waits for the L2 to anchor the registry block and runs on
+  // after the grant returns unless the caller asked to wait.
+  const cacheGates = networks.filter(isCachedRegistry).map(async (n): Promise<CacheGate> => {
     if (!register) return skippedLeg(n.chainId, "cache", "register: false");
     if (!populate) return skippedLeg(n.chainId, "cache", "populateCache: false");
     if (!hasCache(n)) return skippedLeg(n.chainId, "cache", "no KeyStoreCache configured");
@@ -286,10 +291,15 @@ export async function runGrantSession(
         reason: unknownRegistryBlockReason(l1, written.blockNumberError),
       };
     }
-    onStatus?.("cache-sync", { chainId: n.chainId });
-    return legFromCacheReport(
-      await deps.proveIntoCache(wallet, adminSigner, sessionSigner.publicKey, n, written?.blockNumber, feeToken),
-    );
+    return {
+      chainId: n.chainId,
+      prove: async () => {
+        onStatus?.("cache-sync", { chainId: n.chainId });
+        return legFromCacheReport(
+          await deps.proveIntoCache(wallet, adminSigner, sessionSigner.publicKey, n, written?.blockNumber, feeToken),
+        );
+      },
+    };
   });
 
   const catchUp = (async () => {
@@ -297,12 +307,14 @@ export async function runGrantSession(
     if (outcomes.some((o) => o?.status === "CONFIRMED")) await deps.sleep(RELAY_CATCH_UP_MS);
   })();
 
-  const [accounts, registryWrites, caches] = await Promise.all([
+  const [accounts, registryWrites, gates] = await Promise.all([
     Promise.all(accountLegs),
     Promise.all(registryLegs),
-    Promise.all(cacheLegs),
+    Promise.all(cacheGates),
     catchUp,
   ]);
+  const proofs = launchCacheProofs(gates);
+  const caches = awaitCache ? await proofs.cacheSync : proofs.now;
   legs.push(...accounts, ...registryWrites, ...caches);
 
   onStatus?.("done");
@@ -316,6 +328,7 @@ export async function runGrantSession(
     keyId,
     status: allLegsSucceeded(ordered) ? "granted" : "failed",
     legs: ordered,
+    cacheSync: proofs.cacheSync,
   };
 }
 

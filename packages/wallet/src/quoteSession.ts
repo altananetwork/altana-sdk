@@ -85,7 +85,7 @@ export async function quoteGrantSession(
 ): Promise<SessionQuote> {
   const { deps, lines } = quotingDeps();
   const { onStatus: _ignored, ...quiet } = opts;
-  await runGrantSession(wallet, adminSigner, quiet, config, deps);
+  await runGrantSession(wallet, adminSigner, { ...quiet, ...(quiet.populateCache === false ? {} : { populateCache: "await" }) }, config, deps);
   return withBalances(lines, config.networks);
 }
 
@@ -97,7 +97,7 @@ export async function quoteRevokeSession(
   options: Omit<RevokeSessionOptions, "onStatus">,
 ): Promise<SessionQuote> {
   const { deps, lines } = quotingDeps();
-  await runRevokeSession(wallet, adminSigner, sessionOrPublicKey, options, deps);
+  await runRevokeSession(wallet, adminSigner, sessionOrPublicKey, { ...options, populateCache: "await" }, deps);
   return withBalances(lines, options.networks);
 }
 

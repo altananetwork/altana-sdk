@@ -48,18 +48,20 @@ type ClientRevokeSessionOptions = {
   feeToken?: Address | readonly Address[];  // one token to force, or a list to choose from
   onStatus?: (status: "discovery" | "registry-write" | "account-revoke" | "cache-sync" | "done",
               detail?: { chainId: number }) => void;
+  populateCache?: "await";        // return only once every cache proof is in
 };
 
 type RevokeSessionResult = {
   keyId: Hex;
   status: "revoked" | "failed";
   legs: SessionLeg[];
+  cacheSync: Promise<SessionLeg[]>;  // the cache legs once their proofs are in
 };
 
 type SessionLeg = {
   chainId: number;
   kind: "account" | "registry" | "cache";
-  status: "CONFIRMED" | "FAILED" | "SKIPPED";
+  status: "CONFIRMED" | "FAILED" | "SKIPPED" | "PENDING";  // PENDING: a cache proof still running, see cacheSync
   via?: "relay" | "eoa" | "bundled";   // registry legs
   transactionHash?: Hex;
   blockNumber?: bigint;                // registry legs
@@ -71,6 +73,8 @@ type SessionLeg = {
   reason?: string;                     // why it was skipped or failed
 };
 ```
+
+The cache proofs wait for each L2 to anchor the Sepolia block of the Keystore revoke (15 to 30 minutes on Celo Sepolia), so `revokeSession` returns before them: the account legs are what stop the key, and they are confirmed by then. The cache legs read `PENDING` and `cacheSync` resolves with them once the proofs are in; until then that L2's cache still reports the key as valid to anyone reading it. Pass `populateCache: "await"` to wait.
 
 `status` is either `revoked` or `failed`. It is `revoked` only when every leg confirmed or had nothing to do. Any failed leg makes it `failed`, and the other legs still run, so `legs` tells you exactly which chain and which step is left. Calling `revokeSession` again is safe: discovery only picks up what is still pending (an account still holding the key, a Keystore still listing it, a cache still showing it live).
 

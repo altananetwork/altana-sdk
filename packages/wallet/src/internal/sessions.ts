@@ -71,7 +71,8 @@ export type Session = {
 export type SessionLeg = {
   chainId: number;
   kind: "account" | "registry" | "cache";
-  status: "CONFIRMED" | "FAILED" | "SKIPPED";
+  /** `PENDING`: a cache proof still running after the call returned; `cacheSync` resolves with its outcome. */
+  status: "CONFIRMED" | "FAILED" | "SKIPPED" | "PENDING";
   /** Registry legs: how the write reached the registry chain. */
   via?: "relay" | "eoa" | "bundled";
   transactionHash?: Hex;
@@ -112,6 +113,13 @@ export type GrantSessionResult = Session & {
   keyId: Hex;
   status: "granted" | "failed";
   legs: GrantLeg[];
+  /**
+   * The cache legs once every proof has finished (or been skipped). Resolves
+   * at once with `populateCache: "await"` or false; never rejects: a proof
+   * that fails is a `FAILED` leg here. A process that exits first leaves the
+   * session usable; `syncSessionToCache` submits the proof later.
+   */
+  cacheSync: Promise<GrantLeg[]>;
 };
 
 /**
@@ -196,11 +204,16 @@ export type GrantSessionOptions = {
   /**
    * Cached networks only. After the L1 KeyStore write and the account
    * authorization, prove the new entry into each L2 KeyStoreCache (default
-   * true). The proof is a wallet call through the network's relay, paid in the
-   * network's native token. Pass false to skip it and call
-   * `syncSessionToCache` yourself later.
+   * true). The proof is a wallet call through the network's relay, paid from
+   * the wallet like the other legs. It waits for the L2 to anchor the
+   * Keystore write's block, up to half an hour on Celo Sepolia, so by default
+   * it keeps running after grantSession has returned: the leg reads `PENDING`
+   * and `cacheSync` resolves with the finished cache legs. The session is
+   * usable as soon as grantSession returns; nothing in `execute` reads the
+   * cache. Pass "await" to return only once the proofs are in, or false to
+   * skip them and call `syncSessionToCache` yourself later.
    */
-  populateCache?: boolean;
+  populateCache?: boolean | "await";
   /**
    * Progress callback: a registry write per registry chain, an account
    * authorization per network, a cache proof per cached network, then `done`.

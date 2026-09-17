@@ -259,6 +259,7 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Changed
 
+- `grantSession` and `revokeSession` return as soon as the Keystore write and the account legs are confirmed, which is when the session is usable (or stopped). The L2 cache proofs, which wait for the L2 to anchor the Keystore block (15 to 30 minutes on Celo Sepolia), keep running in the background: their legs read `PENDING` and the new `cacheSync` promise resolves with them once they are in. `populateCache: "await"` restores the blocking behaviour. `SessionLeg.status` gains `PENDING`.
 - **`SignerType` no longer advertises `"injected"`.** The union member
   promised browser-wallet (MetaMask) signing that was never implemented and
   is blocked by the wallets themselves: extension wallets withhold the

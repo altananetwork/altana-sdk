@@ -23,6 +23,8 @@ import {
   uniqueNetworks,
   type IntentOutcome,
   type SessionLegDeps,
+  launchCacheProofs,
+  type CacheGate,
 } from "./internal/sessionLegs.js";
 import type {
   RevokeLeg,
@@ -48,6 +50,15 @@ export type RevokeSessionResult = {
   keyId: Hex;
   status: "revoked" | "failed";
   legs: RevokeLeg[];
+  /**
+   * The cache legs once every proof has finished. A proof waits for the L2
+   * to anchor the Keystore write's block (up to half an hour on Celo
+   * Sepolia) and by default runs on after revokeSession returns, its leg
+   * reading `PENDING` meanwhile. Never rejects. Until it resolves, that L2's
+   * cache still reports the key as valid; the account itself refuses the key
+   * as soon as its leg confirmed.
+   */
+  cacheSync: Promise<RevokeLeg[]>;
 };
 
 export type RevokeSessionOptions = {
@@ -60,6 +71,8 @@ export type RevokeSessionOptions = {
    */
   feeToken?: Address | readonly Address[];
   onStatus?: (status: RevokeSessionStatus, detail?: SessionStatusDetail) => void;
+  /** "await" returns only once every cache proof is in; by default they run on in the background. */
+  populateCache?: "await";
 };
 
 /**
@@ -202,7 +215,7 @@ export async function runRevokeSession(
   }
 
   // 3. Cache proofs, per cached network.
-  const cacheLegs = networks.filter(isCachedRegistry).map(async (n): Promise<SessionLeg | undefined> => {
+  const cacheGates = networks.filter(isCachedRegistry).map(async (n): Promise<CacheGate | undefined> => {
     const l1 = registryNetwork(n).chainId;
     if (!registryValid.has(l1)) return undefined; // registry read failed; already a failed leg
 
@@ -241,21 +254,25 @@ export async function runRevokeSession(
       if (!live) return undefined;
       await ownAccount;
     }
-    onStatus?.("cache-sync", { chainId: n.chainId });
-    return legFromCacheReport(
-      await deps.proveIntoCache(wallet, adminSigner, publicKey, n, afterL1Block, feeToken),
-    );
+    return {
+      chainId: n.chainId,
+      prove: async () => {
+        onStatus?.("cache-sync", { chainId: n.chainId });
+        return legFromCacheReport(await deps.proveIntoCache(wallet, adminSigner, publicKey, n, afterL1Block, feeToken));
+      },
+    };
   });
 
   const settled = await Promise.all([
     Promise.all(accountLegs),
     Promise.all(registryLegs),
-    Promise.all(cacheLegs),
+    Promise.all(cacheGates),
   ]);
   legs.push(...settled[0], ...settled[1]);
-  for (const leg of settled[2]) if (leg) legs.push(leg);
+  const proofs = launchCacheProofs(settled[2].filter((g): g is CacheGate => g !== undefined));
+  legs.push(...(options.populateCache === "await" ? await proofs.cacheSync : proofs.now));
 
   onStatus?.("done");
   const ordered = orderLegs(legs);
-  return { keyId, status: allLegsSucceeded(ordered) ? "revoked" : "failed", legs: ordered };
+  return { keyId, status: allLegsSucceeded(ordered) ? "revoked" : "failed", legs: ordered, cacheSync: proofs.cacheSync };
 }
