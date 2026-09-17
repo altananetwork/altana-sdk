@@ -16,6 +16,7 @@ import * as Key from "porto/viem/Key";
 import {
   createClient,
   createPublicClient,
+  decodeErrorResult,
   formatUnits,
   getAddress,
   hexToBigInt,
@@ -899,8 +900,25 @@ export function deepestRelayReason(err: unknown): string | undefined {
     }
     cur = cur.cause;
   }
-  return best;
+  return best === undefined ? undefined : decodeRevertText(best);
 }
+
+/** Replaces `Error(string)` and `Panic(uint256)` revert data at the end of a reason with its meaning. */
+export function decodeRevertText(reason: string): string {
+  return reason.replace(/0x(08c379a0|4e487b71)[0-9a-fA-F]+$/, (data) => {
+    try {
+      const { errorName, args } = decodeErrorResult({ abi: SOLIDITY_REVERTS, data: data as Hex });
+      return errorName === "Error" ? `"${String(args?.[0])}"` : `panic code ${String(args?.[0])}`;
+    } catch {
+      return data;
+    }
+  });
+}
+
+const SOLIDITY_REVERTS = [
+  { type: "error", name: "Error", inputs: [{ name: "message", type: "string" }] },
+  { type: "error", name: "Panic", inputs: [{ name: "code", type: "uint256" }] },
+] as const;
 
 /**
  * Sign a prepared calls bundle with explicit WebAuthn function overrides.
