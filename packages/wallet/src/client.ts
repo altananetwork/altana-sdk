@@ -18,14 +18,14 @@ import type {
   GrantSessionOptions,
   GrantSessionResult,
 } from "./internal/sessions.js";
-import type { Call } from "./internal/relay.js";
+import type { Call, CallsQuote } from "./internal/relay.js";
 import {
   createWallet as createWalletImpl,
   type CreateWalletResult,
 } from "./createWallet.js";
 import { createPasskeyWallet as createPasskeyWalletImpl } from "./createPasskeyWallet.js";
 import { recoverFromPasskey as recoverFromPasskeyImpl } from "./recoverFromPasskey.js";
-import { execute as executeImpl } from "./execute.js";
+import { execute as executeImpl, quoteExecute as quoteExecuteImpl } from "./execute.js";
 import { feeCurrencies as feeCurrenciesImpl, type FeeCurrenciesResult } from "./feeCurrencies.js";
 import { grantSession as grantSessionImpl } from "./grantSession.js";
 import { revokeSession as revokeSessionImpl } from "./revokeSession.js";
@@ -208,6 +208,8 @@ export type Client = {
     opts?: ClientRecoverFromPasskeyOptions,
   ): Promise<CreateWalletResult & { signer: PasskeySigner }>;
   execute(opts: ClientExecuteOptions): Promise<ExecuteResult>;
+  /** What `execute` would be charged for these calls, from the relay's quote; nothing is signed or sent. */
+  quoteExecute(opts: ClientExecuteOptions): Promise<CallsQuote>;
   /** Grant a session on every chain in `chainIds` (default: all of the client's chains). */
   grantSession(opts: ClientGrantSessionOptions): Promise<GrantSessionResult>;
   /** Revoke a session everywhere it lives across the client's chains. */
@@ -360,6 +362,12 @@ export function createClient(opts: CreateClientOptions): Client {
         return executeImpl(o.session, o.calls, execOpts);
       }
       return executeImpl(o.wallet, o.signer, o.calls, execOpts);
+    },
+
+    quoteExecute(o) {
+      const quoteOpts = { network: resolve(o.chainId), ...(o.feeToken ? { feeToken: o.feeToken } : {}) };
+      if ("session" in o) return quoteExecuteImpl(o.session, o.calls, quoteOpts);
+      return quoteExecuteImpl(o.wallet, o.signer, o.calls, quoteOpts);
     },
 
     grantSession(o) {
