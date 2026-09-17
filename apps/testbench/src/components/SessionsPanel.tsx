@@ -18,6 +18,8 @@ import { entry } from "../lib/log";
 import { PERIODS, buildGrant, defaultForm, describeCaps, type SessionForm } from "../lib/sessions";
 import type { StoredSession } from "../lib/storage";
 import { useApp, useEnsureRegistered, useRun } from "../state/AppState";
+import { chainName } from "../lib/chains";
+import { describeStatus } from "../lib/sessions";
 import { Address as Addr } from "./shared/Address";
 import { Badge } from "./shared/Badge";
 import { Button } from "./shared/Button";
@@ -38,6 +40,17 @@ export function SessionsPanel() {
   const [error, setError] = useState<string>();
   const [quote, setQuote] = useState<SessionQuote>();
   const [busy, setBusy] = useState<string>();
+  const [progress, setProgress] = useState<{ status: string; chainId?: number; at: number }>();
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (!progress) return;
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [progress]);
+  const progressText = progress
+    ? describeStatus(progress.status, progress.chainId === undefined ? undefined : chainName(progress.chainId, chains), Math.floor((Date.now() - progress.at) / 1000))
+    : undefined;
+  void tick;
   const [lastLegs, setLastLegs] = useState<{ title: string; legs: SessionLeg[]; status: string }>();
   const [execResult, setExecResult] = useState<{ id: string; result: ExecuteResult }>();
 
@@ -91,7 +104,10 @@ export function SessionsPanel() {
         const result = await client.grantSession({
           ...args,
           sessionSigner: signerFromPrivateKey(sessionKey),
-          onStatus: (status, detail) => log("grant status", { status, chainId: detail?.chainId }),
+          onStatus: (status, detail) => {
+            log("grant status", { status, chainId: detail?.chainId });
+            setProgress({ status, ...(detail?.chainId !== undefined ? { chainId: detail.chainId } : {}), at: Date.now() });
+          },
         });
         setLastLegs({ title: "Grant", legs: result.legs, status: result.status });
         if (result.status === "granted") {
@@ -144,7 +160,10 @@ export function SessionsPanel() {
           wallet: { address: wallet.address },
           signer: wallet.signer,
           session,
-          onStatus: (status, detail) => log("revoke status", { status, chainId: detail?.chainId }),
+          onStatus: (status, detail) => {
+            log("revoke status", { status, chainId: detail?.chainId });
+            setProgress({ status, ...(detail?.chainId !== undefined ? { chainId: detail.chainId } : {}), at: Date.now() });
+          },
         });
         setLastLegs({ title: `Revoke ${s.name}`, legs: result.legs, status: result.status });
         if (result.status === "revoked") dispatch({ type: "sessions/update", id: s.id, patch: { revokedAt: Date.now(), legs: result.legs } });
@@ -250,6 +269,7 @@ export function SessionsPanel() {
                 {busy === "grant" ? "Granting…" : "Grant session"}
               </Button>
             </div>
+            {busy !== undefined && progressText && <div className="muted" role="status">{progressText}</div>}
           </Card>
 
           {quote && (

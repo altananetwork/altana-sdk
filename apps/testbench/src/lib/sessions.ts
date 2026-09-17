@@ -49,3 +49,28 @@ export function describeCaps(spend: readonly { limit: string | bigint; period: s
     })
     .join(", ");
 }
+
+/** A grant or revoke progress event in words, with why a step may take a while. */
+export function describeStatus(status: string, chain: string | undefined, elapsedSec: number): string {
+  const since = elapsedSec >= 60 ? ` (${Math.floor(elapsedSec / 60)} min ${elapsedSec % 60} s)` : elapsedSec > 0 ? ` (${elapsedSec} s)` : "";
+  switch (status) {
+    case "discovery":
+      return `Reading the key's current state${since}`;
+    case "registry-write":
+      return `Writing the key to the Keystore on Sepolia${since}`;
+    case "account-authorization":
+      return `Authorizing the key on the account on ${chain ?? "the chain"}${since}`;
+    case "account-revoke":
+      return `Revoking the key on the account on ${chain ?? "the chain"}${since}`;
+    case "cache-sync":
+      return (
+        `Proving the Keystore entry into the cache on ${chain ?? "the chain"}${since}. ` +
+        `This waits for the chain's L1 anchor to pass the Sepolia block of the Keystore write; ` +
+        `Celo Sepolia's anchor moves about every 20 minutes and runs 15 to 20 minutes behind Sepolia.`
+      );
+    case "done":
+      return "Done";
+    default:
+      return `${status}${since}`;
+  }
+}
