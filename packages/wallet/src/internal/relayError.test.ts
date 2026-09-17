@@ -4,7 +4,7 @@
  * digs it back out so the SDK can lead the thrown error with it.
  */
 import { describe, expect, test } from "bun:test";
-import { deepestRelayReason, relayRejectionHint, shortfallMessage, type NativeHolding } from "./relay.js";
+import { decodeRevertText, deepestRelayReason, relayRejectionHint, shortfallMessage, type NativeHolding } from "./relay.js";
 
 // The exact shape seen live on BSC testnet when feeToken is set to $U:
 // InvalidParamsRpcError → RpcRequestError → the real relay message.
@@ -95,5 +95,21 @@ describe("relayRejectionHint for an empty revert", () => {
     expect(relayRejectionHint("intent reverted: 0x")).toContain("cannot pay for");
     expect(relayRejectionHint("0x")).toContain("cannot pay for");
     expect(relayRejectionHint("intent reverted: PaymentError()")).toBe("");
+  });
+});
+
+describe("decodeRevertText", () => {
+  const badProof =
+    "0x08c379a0" +
+    "0000000000000000000000000000000000000000000000000000000000000020" +
+    "0000000000000000000000000000000000000000000000000000000000000018" +
+    "43616368653a206261642073746f726167652070726f6f660000000000000000";
+  test("an Error(string) revert reads as its message", () => {
+    expect(decodeRevertText(`intent reverted: ${badProof}`)).toBe('intent reverted: "Cache: bad storage proof"');
+    expect(deepestRelayReason(Object.assign(new Error("x"), { details: badProof }))).toBe('"Cache: bad storage proof"');
+  });
+  test("a Panic reads as its code; other data is left alone", () => {
+    expect(decodeRevertText("0x4e487b71" + "11".padStart(64, "0"))).toBe("panic code 17");
+    expect(decodeRevertText("intent reverted: 0xf3dd7004")).toBe("intent reverted: 0xf3dd7004");
   });
 });

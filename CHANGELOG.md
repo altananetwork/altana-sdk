@@ -160,6 +160,7 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 ### Changed
 - Relay rejections for an account the relay has not registered now say to create the wallet with `client.createWallet` first.
 - When the relay's simulation reverts without a reason, the SDK reads the wallet's balances through the relay and says which chain cannot pay for the call, and which chains it could not be funded from. Session quotes label such legs "could not be quoted" instead of "fee unknown".
+- Relay rejections carrying an `Error(string)` or `Panic` revert show the message ("Cache: bad storage proof") instead of the hex data.
 
 - **Hire expiry is documented and pinned, and the MCP deadline option is
   described.** `hireErc8183Agent` sets `expiredAt = now + disputeWindow +
