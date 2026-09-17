@@ -56,13 +56,15 @@ export function SessionsPanel() {
   const grantArgs = () => {
     if (!wallet) throw new Error("Create a wallet first.");
     const { permissions, expiry } = buildGrant(form, currencies);
+    // A remembered token the relay no longer lists (its price feed lapsed) is dropped.
+    const feeTokens = form.feeTokens.filter((a) => currencies.some((c) => sameAddress(c.address, a)));
     return {
       wallet: { address: wallet.address },
       signer: wallet.signer,
       permissions,
       expiry,
       chainIds: form.chainIds,
-      ...(form.feeTokens.length ? { feeToken: form.feeTokens } : {}),
+      ...(feeTokens.length ? { feeToken: feeTokens } : {}),
     };
   };
 
