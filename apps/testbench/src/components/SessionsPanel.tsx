@@ -253,7 +253,7 @@ export function SessionsPanel() {
           </Card>
 
           {quote && (
-            <Card title="What this grant costs" hint={quote.complete ? "Every leg could be quoted." : "Some legs could not be quoted; the real cost is higher than shown."}>
+            <Card title="What this grant costs" hint={quote.complete ? "Every leg is priced." : quote.lines.some((l) => l.fee === undefined && !l.deferred) ? "A leg could not be priced; the real cost is higher than shown." : "Cache proofs are priced once the Keystore write lands; the total is higher by those legs."}>
               <ul className="stack" style={{ margin: 0, paddingLeft: 18 }}>
                 {quote.lines.map((l, i) => {
                   const n = networkByChainId(l.chainId);
