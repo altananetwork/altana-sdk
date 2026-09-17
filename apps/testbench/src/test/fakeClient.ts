@@ -33,7 +33,7 @@ export function fakeClient(overrides: Partial<TestbenchClient> = {}): FakeClient
     }),
     quoteGrantSession: vi.fn(async () => ({ lines: [], balances: [], complete: true })),
     quoteRevokeSession: vi.fn(async () => ({ lines: [], balances: [], complete: true })),
-    revokeSession: vi.fn(async () => ({ keyId: "0x01" as const, status: "revoked" as const, legs: [] })),
+    revokeSession: vi.fn(async () => ({ keyId: "0x01" as const, status: "revoked" as const, legs: [], cacheSync: Promise.resolve([]) })),
     ...overrides,
   };
 }

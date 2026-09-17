@@ -27,6 +27,7 @@ function grantResult(args: { permissions: GrantSessionResult["permissions"]; exp
     keyId: KEY_ID,
     status: "granted",
     legs,
+    cacheSync: Promise.resolve(legs.filter((l) => l.kind === "cache")),
   };
 }
 
@@ -68,6 +69,38 @@ describe("SessionsPanel", () => {
     expect(stored.serialized.permissions.spend?.[0]).toEqual({ limit: "2500000", period: "day", token: USDC });
     expect(stored.sessionKey).toMatch(/^0x[0-9a-f]{64}$/);
     expect(screen.getByText("2.5 USDC per day", { exact: false })).toBeInTheDocument();
+    expect(screen.getByText("Cache failed")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Show key" }));
+    expect(screen.getByRole("note")).toHaveTextContent(stored.sessionKey);
+  });
+
+  test("the session key is saved before the grant returns, and a pending cache proof is followed", async () => {
+    let finishCache: (legs: SessionLeg[]) => void = () => {};
+    const cacheSync = new Promise<SessionLeg[]>((r) => (finishCache = r));
+    let finishGrant: () => void = () => {};
+    const client = fakeClient();
+    (client.grantSession as ReturnType<typeof vi.fn>).mockImplementation(async (o: Parameters<typeof client.grantSession>[0]) => {
+      await new Promise<void>((r) => (finishGrant = r));
+      return {
+        ...grantResult(o as never),
+        legs: [legs[0]!, legs[1]!, { chainId: 11142220, kind: "cache" as const, status: "PENDING" as const }],
+        cacheSync,
+      };
+    });
+    const { storage } = setup(client);
+    await screen.findByLabelText("Cap 1 token");
+    await userEvent.click(screen.getByRole("button", { name: "Grant session" }));
+    await waitFor(() => expect(storage.dump()?.sessions).toHaveLength(1));
+    expect(storage.dump()!.sessions[0]!.status).toBe("granting");
+    expect(storage.dump()!.sessions[0]!.sessionKey).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(screen.getByText("Granting")).toBeInTheDocument();
+    finishGrant();
+    expect(await screen.findByText("Cache syncing")).toBeInTheDocument();
+    expect(storage.dump()!.sessions[0]!.status).toBe("granted");
+    expect(screen.getByRole("button", { name: "Execute" })).toBeEnabled();
+    finishCache([{ chainId: 11142220, kind: "cache", status: "CONFIRMED", transactionHash: "0xcache" }]);
+    expect(await screen.findByText("Cache synced")).toBeInTheDocument();
+    await waitFor(() => expect(storage.dump()!.sessions[0]!.legs.find((l) => l.kind === "cache")?.status).toBe("CONFIRMED"));
   });
 
   test("shows validation errors before calling the relay", async () => {
@@ -112,7 +145,7 @@ describe("SessionsPanel", () => {
       createdAt: 1,
     };
     const client = fakeClient({
-      revokeSession: vi.fn(async () => ({ keyId: KEY_ID, status: "revoked" as const, legs: [{ chainId: 11142220, kind: "account" as const, status: "CONFIRMED" as const, transactionHash: "0xrev" as const }] })),
+      revokeSession: vi.fn(async () => ({ keyId: KEY_ID, status: "revoked" as const, legs: [{ chainId: 11142220, kind: "account" as const, status: "CONFIRMED" as const, transactionHash: "0xrev" as const }], cacheSync: Promise.resolve([]) })),
     });
     const { storage } = setup(client, [stored]);
     await userEvent.click(await screen.findByRole("button", { name: "Execute" }));
