@@ -832,8 +832,10 @@ export function shortfallMessage(here: NativeHolding, value: bigint, elsewhere: 
       ? `the wallet cannot pay for it: it holds ${amount(here, here.balance)} on ${here.chain} and needs ${needs}`
       : `the wallet holds ${amount(here, here.balance)} on ${here.chain}, which does not cover ${needs}`;
   if (elsewhere.length === 0) return lead;
-  const held = elsewhere.map((h) => `${amount(h, h.balance)} on ${h.chain}`).join(" and ");
-  return `${lead}; it holds ${held}, so the relay could not fund it from there either`;
+  const held = elsewhere.filter((h) => h.balance > 0n);
+  if (held.length === 0) return `${lead}; it holds nothing on any other chain the relay could fund it from`;
+  const list = held.map((h) => `${amount(h, h.balance)} on ${h.chain}`).join(" and ");
+  return `${lead}; it holds ${list}, which the relay could not use to fund it`;
 }
 
 /** The wallet's native balance on every chain the SDK knows, from the relay's `wallet_getAssets`. */

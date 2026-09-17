@@ -334,8 +334,8 @@ describe("registry write funded from the L2, on the wire", () => {
       }),
     ).rejects.toThrow(
       "The relay rejected the request to prepare the call because the wallet cannot pay for it: it holds 0 ETH on Sepolia " +
-        "and needs 0.0004 ETH the call sends plus the relay fee; it holds 0 CELO on Celo Sepolia Testnet, " +
-        "so the relay could not fund it from there either (relay: intent reverted: 0x)",
+        "and needs 0.0004 ETH the call sends plus the relay fee; it holds nothing on any other chain the relay " +
+        "could fund it from (relay: intent reverted: 0x)",
     );
   });
 
