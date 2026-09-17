@@ -111,8 +111,13 @@ function fakeChains(script: {
 
 const tick = () => new Promise((r) => setTimeout(r, 1));
 
-function revoke(networks: NetworkConfig[], deps: SessionLegDeps, key: Session | Hex = createPrivateKeySigner().publicKey) {
-  return runRevokeSession(WALLET, createPrivateKeySigner(), key, { networks }, deps);
+function revoke(
+  networks: NetworkConfig[],
+  deps: SessionLegDeps,
+  key: Session | Hex = createPrivateKeySigner().publicKey,
+  extra: { populateCache?: "await" } = {},
+) {
+  return runRevokeSession(WALLET, createPrivateKeySigner(), key, { networks, ...extra }, deps);
 }
 
 function grant(networks: NetworkConfig[], deps: SessionLegDeps, extra: Record<string, unknown> = {}) {
@@ -193,14 +198,16 @@ describe("revokeSession registry legs", () => {
     expect(args[1]).toBe(keccak256(key));
     // Account legs on the L2s carry no registry call.
     expect(log.account.every((s) => s.calls.length === 0)).toBe(true);
+    // The proofs run on after the call returns; the legs read PENDING until cacheSync resolves.
     expect(legKinds(result)).toEqual([
       "account:11142220:CONFIRMED",
       "account:84532:CONFIRMED",
       "registry:11155111:CONFIRMED:relay",
-      "cache:11142220:CONFIRMED",
-      "cache:84532:CONFIRMED",
+      "cache:11142220:PENDING",
+      "cache:84532:PENDING",
     ]);
     expect(result.status).toBe("revoked");
+    expect(legKinds({ legs: await result.cacheSync })).toEqual(["cache:11142220:CONFIRMED", "cache:84532:CONFIRMED"]);
   });
 
   test("no registry leg when readIsValidKey is false", async () => {
@@ -264,12 +271,23 @@ describe("revokeSession status is binary", () => {
     expect(cache.status).toBe("SKIPPED");
   });
 
-  test("a failed cache leg makes the revoke failed", async () => {
+  test("a failed cache leg makes the revoke failed when the caller waits for the proofs", async () => {
     const { deps } = fakeChains({ holds: [84532], registryValid: [11155111], failCache: [84532] });
-    const result = await revoke([BASE_SEPOLIA], deps);
+    const result = await revoke([BASE_SEPOLIA], deps, undefined, { populateCache: "await" });
 
     expect(result.status).toBe("failed");
     expect(result.legs.find((l) => l.kind === "cache")!.status).toBe("FAILED");
+  });
+
+  test("by default the revoke returns before the proof, which reports through cacheSync", async () => {
+    const { deps } = fakeChains({ holds: [84532], registryValid: [11155111], failCache: [84532] });
+    const result = await revoke([BASE_SEPOLIA], deps);
+
+    expect(result.status).toBe("revoked");
+    expect(result.legs.find((l) => l.kind === "cache")!.status).toBe("PENDING");
+    const [cache] = await result.cacheSync;
+    expect(cache!.status).toBe("FAILED");
+    expect(cache!.reason).toContain("never matched the anchor");
   });
 
   test("the result type has no partial status", () => {
@@ -336,6 +354,55 @@ describe("session key identity", () => {
     const { deps, log } = fakeChains({ holds: [11142220] });
     await revoke([CELO_SEPOLIA], deps, session);
     expect(log.account[0]!.args.revokeKeys[0].type).toBe("webauthn-p256");
+  });
+});
+
+describe("grantSession returns before the cache proofs", () => {
+  test("cache legs read PENDING at return and finish through cacheSync; the session is granted meanwhile", async () => {
+    const { deps, log } = fakeChains({});
+    const result = await grant([CELO_SEPOLIA, BASE_SEPOLIA], deps);
+
+    expect(result.status).toBe("granted");
+    expect(result.legs.filter((l) => l.kind === "cache").map((l) => l.status)).toEqual(["PENDING", "PENDING"]);
+    const caches = await result.cacheSync;
+    expect(caches.map((l) => `${l.chainId}:${l.status}`)).toEqual(["11142220:CONFIRMED", "84532:CONFIRMED"]);
+    expect(log.cache.map((c) => c.chainId).sort((a, b) => a - b)).toEqual([84532, 11142220]);
+  });
+
+  test("a proof that fails in the background is a FAILED leg in cacheSync, not a failed grant", async () => {
+    const { deps } = fakeChains({ failCache: [84532] });
+    const result = await grant([BASE_SEPOLIA], deps);
+
+    expect(result.status).toBe("granted");
+    const [cache] = await result.cacheSync;
+    expect(cache!.status).toBe("FAILED");
+  });
+
+  test("a proof that throws is caught into a FAILED leg", async () => {
+    const { deps } = fakeChains({});
+    deps.proveIntoCache = async () => {
+      throw new Error("relay down");
+    };
+    const result = await grant([BASE_SEPOLIA], deps);
+    const [cache] = await result.cacheSync;
+    expect(cache!.status).toBe("FAILED");
+    expect(cache!.reason).toBe("relay down");
+  });
+
+  test("populateCache: \"await\" returns with the proofs in, and a failed proof fails the grant", async () => {
+    const { deps } = fakeChains({ failCache: [84532] });
+    const result = await grant([CELO_SEPOLIA, BASE_SEPOLIA], deps, { populateCache: "await" });
+
+    expect(result.status).toBe("failed");
+    expect(result.legs.filter((l) => l.kind === "cache").map((l) => l.status)).toEqual(["CONFIRMED", "FAILED"]);
+    expect(await result.cacheSync).toEqual(result.legs.filter((l) => l.kind === "cache"));
+  });
+
+  test("populateCache: false skips the proofs and cacheSync resolves at once", async () => {
+    const { deps, log } = fakeChains({});
+    const result = await grant([BASE_SEPOLIA], deps, { populateCache: false });
+    expect((await result.cacheSync).map((l) => l.status)).toEqual(["SKIPPED"]);
+    expect(log.cache).toEqual([]);
   });
 });
 
