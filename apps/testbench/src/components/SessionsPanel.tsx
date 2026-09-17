@@ -10,6 +10,7 @@ import {
 } from "@altananetwork/sdk";
 import { useEffect, useState } from "react";
 import { generatePrivateKey } from "viem/accounts";
+import { keccak256 } from "viem";
 import type { Address } from "viem";
 import { txUrl } from "../lib/explorer";
 import { nativeLabel, symbolFor } from "../lib/fees";
@@ -27,6 +28,16 @@ import { Card } from "./shared/Card";
 import { Field } from "./shared/Field";
 import { LegsTable } from "./shared/LegsTable";
 
+/** The state of a session's cache proof on the chain it was granted on, when there is one. */
+function cacheBadge(legs: readonly SessionLeg[]) {
+  const cache = legs.find((l) => l.kind === "cache");
+  if (!cache) return null;
+  if (cache.status === "PENDING") return <Badge tone="warning">Cache syncing</Badge>;
+  if (cache.status === "CONFIRMED") return <Badge tone="success">Cache synced</Badge>;
+  if (cache.status === "FAILED") return <Badge tone="error">Cache failed</Badge>;
+  return null;
+}
+
 export function SessionsPanel() {
   const { state, dispatch, client } = useApp();
   const run = useRun();
@@ -40,6 +51,7 @@ export function SessionsPanel() {
   const [error, setError] = useState<string>();
   const [quote, setQuote] = useState<SessionQuote>();
   const [busy, setBusy] = useState<string>();
+  const [shownKey, setShownKey] = useState<string>();
   const [progress, setProgress] = useState<{ status: string; chainId?: number; at: number }>();
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -92,6 +104,24 @@ export function SessionsPanel() {
         return;
       }
       const sessionKey = generatePrivateKey();
+      const sessionSigner = signerFromPrivateKey(sessionKey);
+      // Saved before anything is sent: a reload or a failed leg must not lose the key
+      // once the chain may already hold its authorization.
+      const id = keccak256(sessionSigner.publicKey);
+      const name = form.name.trim() || `Session ${new Date().toLocaleString()}`;
+      dispatch({
+        type: "sessions/add",
+        session: {
+          id,
+          name,
+          serialized: serializeSession({ walletAddress: args.wallet.address, publicKey: sessionSigner.publicKey, permissions: args.permissions, expiry: args.expiry, signer: sessionSigner }),
+          sessionKey,
+          keyId: id,
+          legs: [],
+          createdAt: Date.now(),
+          status: "granting",
+        },
+      });
       setBusy("grant");
       try {
         await ensureRegistered();
@@ -103,29 +133,37 @@ export function SessionsPanel() {
         }
         const result = await client.grantSession({
           ...args,
-          sessionSigner: signerFromPrivateKey(sessionKey),
+          sessionSigner,
           onStatus: (status, detail) => {
             log("grant status", { status, chainId: detail?.chainId });
             setProgress({ status, ...(detail?.chainId !== undefined ? { chainId: detail.chainId } : {}), at: Date.now() });
           },
         });
         setLastLegs({ title: "Grant", legs: result.legs, status: result.status });
-        if (result.status === "granted") {
-          const stored: StoredSession = {
-            id: result.keyId,
-            name: form.name.trim() || `Session ${new Date().toLocaleString()}`,
-            serialized: serializeSession(result),
-            sessionKey,
-            keyId: result.keyId,
-            legs: result.legs,
-            createdAt: Date.now(),
-          };
-          dispatch({ type: "sessions/add", session: stored });
-        }
+        dispatch({
+          type: "sessions/update",
+          id,
+          patch: { serialized: serializeSession(result), keyId: result.keyId, legs: result.legs, status: result.status },
+        });
+        followCacheSync(id, "Grant", result.legs, result.cacheSync);
+      } catch (e) {
+        dispatch({ type: "sessions/update", id, patch: { status: "failed" } });
+        throw e;
       } finally {
         setBusy(undefined);
       }
     });
+
+  /** The cache proofs finish after the call returned: fold their legs in when they do. */
+  const followCacheSync = (id: string, title: string, legsNow: SessionLeg[], cacheSync: Promise<SessionLeg[]>) => {
+    if (!legsNow.some((l) => l.kind === "cache" && l.status === "PENDING")) return;
+    void cacheSync.then((cacheLegs) => {
+      const legs = [...legsNow.filter((l) => l.kind !== "cache"), ...cacheLegs];
+      log(`${title.toLowerCase()} cache sync finished`, { legs: cacheLegs.map((l) => `${l.chainId}:${l.status}${l.reason ? ` (${l.reason})` : ""}`) });
+      dispatch({ type: "sessions/update", id, patch: { legs } });
+      setLastLegs((prev) => (prev && prev.title === title ? { ...prev, legs } : prev));
+    });
+  };
 
   const doExecute = (s: StoredSession) =>
     run("execute (session)", async () => {
@@ -167,6 +205,7 @@ export function SessionsPanel() {
         });
         setLastLegs({ title: `Revoke ${s.name}`, legs: result.legs, status: result.status });
         if (result.status === "revoked") dispatch({ type: "sessions/update", id: s.id, patch: { revokedAt: Date.now(), legs: result.legs } });
+        followCacheSync(s.id, `Revoke ${s.name}`, result.legs, result.cacheSync);
       } finally {
         setBusy(undefined);
       }
@@ -318,14 +357,26 @@ export function SessionsPanel() {
                 <div className="row between">
                   <div className="row">
                     <strong style={{ fontWeight: 500 }}>{s.name}</strong>
-                    {s.revokedAt ? <Badge tone="error">Revoked</Badge> : <Badge tone="success">Active</Badge>}
+                    {s.revokedAt ? (
+                      <Badge tone="error">Revoked</Badge>
+                    ) : s.status === "granting" ? (
+                      <Badge tone="warning">Granting</Badge>
+                    ) : s.status === "failed" ? (
+                      <Badge tone="error">Grant failed</Badge>
+                    ) : (
+                      <Badge tone="success">Active</Badge>
+                    )}
+                    {cacheBadge(s.legs)}
                   </div>
                   <div className="row">
-                    <Button onClick={() => doExecute(s)} disabled={busy !== undefined || !!s.revokedAt}>
+                    <Button onClick={() => doExecute(s)} disabled={busy !== undefined || !!s.revokedAt || s.status === "granting"}>
                       {busy === `exec-${s.id}` ? "Sending…" : "Execute"}
                     </Button>
-                    <Button variant="danger" onClick={() => doRevoke(s)} disabled={busy !== undefined || !!s.revokedAt}>
+                    <Button variant="danger" onClick={() => doRevoke(s)} disabled={busy !== undefined || !!s.revokedAt || s.status === "granting"}>
                       {busy === `revoke-${s.id}` ? "Revoking…" : "Revoke"}
+                    </Button>
+                    <Button variant="ghost" onClick={() => setShownKey(shownKey === s.id ? undefined : s.id)}>
+                      {shownKey === s.id ? "Hide key" : "Show key"}
                     </Button>
                     <Button variant="ghost" onClick={() => dispatch({ type: "sessions/remove", id: s.id })}>
                       Forget
@@ -336,6 +387,14 @@ export function SessionsPanel() {
                   Key <Addr value={s.keyId} /> · caps: {describeCaps(s.serialized.permissions.spend ?? [], currencies, native)} · expires{" "}
                   {new Date(s.serialized.expiry * 1000).toLocaleString()}
                 </div>
+                {shownKey === s.id && (
+                  <div className="row small" role="note">
+                    <span style={{ wordBreak: "break-all" }}>Session private key: {s.sessionKey}</span>
+                    <Button variant="ghost" onClick={() => void navigator.clipboard?.writeText(s.sessionKey)}>
+                      Copy
+                    </Button>
+                  </div>
+                )}
                 {execResult?.id === s.id && (
                   <div className="row">
                     <Badge tone={execResult.result.status === "CONFIRMED" ? "success" : "error"}>{execResult.result.status}</Badge>
