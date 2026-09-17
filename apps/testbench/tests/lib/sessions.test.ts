@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { buildGrant, defaultForm, describeCaps } from "../../src/lib/sessions";
+import { buildGrant, defaultForm, describeCaps, describeStatus } from "../../src/lib/sessions";
 import { EURM, USDC, celoFees } from "../../src/test/fakeClient";
 
 describe("session form", () => {
@@ -30,5 +30,17 @@ describe("session form", () => {
     expect(describeCaps([{ limit: "2500000", period: "day", token: USDC }, { limit: "100000000000000000", period: "week" }], celoFees, "CELO")).toBe(
       "2.5 USDC per day, 0.1 CELO per week",
     );
+  });
+});
+
+describe("describeStatus", () => {
+  test("explains the cache sync wait with the chain and elapsed time", () => {
+    const text = describeStatus("cache-sync", "Celo Sepolia Testnet", 95);
+    expect(text).toContain("Celo Sepolia Testnet (1 min 35 s)");
+    expect(text).toContain("15 to 20 minutes behind Sepolia");
+  });
+  test("names the other steps", () => {
+    expect(describeStatus("registry-write", undefined, 0)).toBe("Writing the key to the Keystore on Sepolia");
+    expect(describeStatus("done", undefined, 3)).toBe("Done");
   });
 });
