@@ -7,10 +7,10 @@
  * estimate for direct registry transactions. Nothing is signed or sent.
  */
 
-import { formatUnits, type Address, type Hex } from "viem";
+import { formatUnits, keccak256, type Address, type Hex } from "viem";
 import { NATIVE_TOKEN, networkByChainId, type NetworkConfig } from "./config.js";
 import { planRegistryFunding, planRegistryWrite, keyStoreCacheOf } from "./internal/cachedRegistry.js";
-import { buildFirstActionPrepend } from "./internal/keystore.js";
+import { buildFirstActionPrepend, readActiveKeys, readPublicKey } from "./internal/keystore.js";
 import { buildPublicClient, buildRelayClient, quoteCalls, type Call, type CallsQuote } from "./internal/relay.js";
 import { errorMessage, realSessionLegDeps, type SessionLegDeps } from "./internal/sessionLegs.js";
 import type { GrantSessionOptions, Session, SessionLeg } from "./internal/sessions.js";
@@ -47,6 +47,11 @@ export type QuoteLine = {
   fundedFromChainId?: number;
   /** Why the fee could not be quoted. */
   reason?: string;
+  /**
+   * Cache legs on a first grant: the proof does not exist until the registry
+   * write lands, so the leg is priced then. Not a failure.
+   */
+  deferred?: true;
 };
 
 /** A payer's native balance on one chain, against what the quoted lines take from it. */
@@ -63,7 +68,11 @@ export type QuoteBalance = {
 export type SessionQuote = {
   lines: QuoteLine[];
   balances: QuoteBalance[];
-  /** False when any line could not be quoted: the real cost is then higher than the lines add up to. */
+  /**
+   * False when a line carries no fee: the real cost is then higher than the
+   * lines add up to. A first grant's cache legs are `deferred`, priced once
+   * the registry write lands; any other fee-less line failed and says why.
+   */
   complete: boolean;
 };
 
@@ -201,14 +210,29 @@ export function quotingDeps(base: SessionLegDeps = realSessionLegDeps): {
       };
       try {
         if (network.registry?.kind !== "cached") throw new Error("not a cached network");
+        const l1Client = buildPublicClient(network.registry.l1);
         const l2Client = buildPublicClient(network);
+        // The proof needs a Keystore entry. The key's own once the registry
+        // write has landed (revokes, re-grants); otherwise any key the wallet
+        // already has there, which proves at the same cost; on a first grant
+        // there is none yet and the leg is priced when the write lands.
+        const active = await readActiveKeys(l1Client, network.registry.l1, wallet.address);
+        if (active.length === 0) {
+          line.deferred = true;
+          lines.push(line);
+          return { chainId: network.chainId, status: "CONFIRMED" };
+        }
+        const own = keccak256(publicKey);
+        const provenKey = active.includes(own)
+          ? publicKey
+          : await readPublicKey(l1Client, network.registry.l1, wallet.address, active[0]!);
         const call = await buildPopulateKeyCall({
-          l1Client: buildPublicClient(network.registry.l1),
+          l1Client,
           l2Client,
           l1KeyStore: network.registry.l1.keyStore,
           l2Cache: keyStoreCacheOf(network),
           user: wallet.address,
-          publicKey,
+          publicKey: provenKey,
           anchor: await readL1Anchor(l2Client),
         });
         const q = await quoteCalls(
@@ -224,9 +248,7 @@ export function quotingDeps(base: SessionLegDeps = realSessionLegDeps): {
         );
         Object.assign(line, pickQuote(q));
       } catch (err) {
-        // The proof can only be simulated against registry state that
-        // exists; before the registry write lands the relay may refuse it.
-        line.reason = `cache proof could not be quoted ahead of the registry write: ${errorMessage(err)}`;
+        line.reason = errorMessage(err);
       }
       lines.push(line);
       return { chainId: network.chainId, status: "CONFIRMED" };
@@ -292,7 +314,9 @@ export function formatQuoteLine(line: QuoteLine, network: NetworkConfig): string
   const symbol = network.chain.nativeCurrency.symbol;
   const fee =
     line.fee === undefined
-      ? `could not be quoted: ${line.reason ?? "no quote"}`
+      ? line.deferred
+        ? "fee priced once the registry write lands"
+        : `could not be quoted: ${line.reason ?? "no quote"}`
       : line.feeToken === NATIVE_TOKEN
         ? `fee ${formatUnits(line.fee, network.chain.nativeCurrency.decimals)} ${symbol}`
         : `fee ${line.fee} of token ${line.feeToken}`;
