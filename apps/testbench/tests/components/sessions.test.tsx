@@ -83,7 +83,10 @@ describe("SessionsPanel", () => {
   test("the cost is fetched and shown when granting", async () => {
     const client = fakeClient({
       quoteGrantSession: vi.fn(async () => ({
-        lines: [{ chainId: 11142220, kind: "account" as const, payer: TEST_ADDRESS, fee: 10n ** 15n, feeToken: USDC, value: 0n, needed: 0n, neededFromRelay: false }],
+        lines: [
+          { chainId: 11142220, kind: "account" as const, payer: TEST_ADDRESS, fee: 10n ** 15n, feeToken: USDC, value: 0n, needed: 0n, neededFromRelay: false },
+          { chainId: 11142220, kind: "cache" as const, payer: TEST_ADDRESS, feeToken: USDC, value: 0n, needed: 0n, neededFromRelay: false, deferred: true as const },
+        ],
         balances: [{ chainId: 11142220, address: TEST_ADDRESS, symbol: "CELO", balance: 0n, needed: 10n ** 16n, sufficient: false }],
         complete: false,
       })),
@@ -94,7 +97,8 @@ describe("SessionsPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "Grant session" }));
     const table = await screen.findByRole("table", { name: "Quote balances" });
     expect(within(table).getByText("Short")).toBeInTheDocument();
-    expect(screen.getByText(/could not be quoted/)).toBeInTheDocument();
+    expect(screen.getByText(/priced once the registry write lands/)).toBeInTheDocument();
+    expect(screen.getByText(/Cache proofs are priced once the Keystore write lands/)).toBeInTheDocument();
   });
 
   test("executes with a stored session and revokes it", async () => {
