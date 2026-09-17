@@ -13,6 +13,7 @@ import { BNB, CELO_SEPOLIA, NATIVE_TOKEN, SEPOLIA, type NetworkConfig } from "..
 import { createPrivateKeySigner } from "./signer.js";
 import { buildRelayClient, submitCallsDetailed, type KeyDescriptor } from "./relay.js";
 import { submitRegistryWrite } from "./cachedRegistry.js";
+import { quoteExecute } from "../execute.js";
 import capabilities from "./fixtures/celo-sepolia-capabilities.json" with { type: "json" };
 import prepared from "./fixtures/celo-sepolia-prepare-calls.json" with { type: "json" };
 
@@ -261,6 +262,30 @@ describe("fee token on the wire", () => {
     });
     expect(wire.wireFeeToken()?.toLowerCase()).toBe(NATIVE_TOKEN);
     expect(wire.methods()).toEqual(["wallet_getCapabilities", "wallet_prepareCalls", "wallet_sendPreparedCalls"]);
+  });
+});
+
+describe("quoteExecute", () => {
+  test("returns the relay's fee for the exact calls without sending; the session path names its cap token", async () => {
+    const signer = createPrivateKeySigner();
+    const wire = mockWire({
+      network: CELO_SEPOLIA,
+      capabilities: chainCapabilities(CELO_SEPOLIA.chainId, [feeToken("usdc", USDC, 6, "USDC")]),
+      assets: assetsAnswer(CELO_SEPOLIA.chainId, 10n ** 18n, { [USDC]: 5_000_000n }),
+    });
+    const q = await quoteExecute({ address: WALLET }, signer, CALLS, { network: CELO_SEPOLIA });
+    expect(q.fee).toBeGreaterThan(0n);
+    expect(q.value).toBe(0n);
+    expect(wire.methods()).not.toContain("wallet_sendPreparedCalls");
+    const sessionWire = mockWire({
+      network: CELO_SEPOLIA,
+      capabilities: chainCapabilities(CELO_SEPOLIA.chainId, [feeToken("usdc", USDC, 6, "USDC")]),
+      assets: assetsAnswer(CELO_SEPOLIA.chainId, 10n ** 18n, { [USDC]: 5_000_000n }),
+    });
+    const session = { walletAddress: WALLET, signer, publicKey: signer.publicKey, expiry: 4102444800, permissions: { spend: [{ limit: 10n ** 18n, period: "day" as const, token: USDC }] } };
+    await quoteExecute(session, CALLS, { network: CELO_SEPOLIA });
+    expect(sessionWire.wireFeeToken()?.toLowerCase()).toBe(USDC.toLowerCase());
+    expect(sessionWire.methods()).not.toContain("wallet_sendPreparedCalls");
   });
 });
 
