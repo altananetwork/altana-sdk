@@ -9,7 +9,7 @@
 
 import { formatUnits, keccak256, type Address, type Hex } from "viem";
 import { NATIVE_TOKEN, networkByChainId, type NetworkConfig } from "./config.js";
-import { isSingleLeafRejection, planRegistryFunding, planRegistryWrite, keyStoreCacheOf } from "./internal/cachedRegistry.js";
+import { planRegistryFunding, planRegistryWrite, keyStoreCacheOf } from "./internal/cachedRegistry.js";
 import { buildFirstActionPrepend, readActiveKeys, readPublicKey } from "./internal/keystore.js";
 import { buildPublicClient, buildRelayClient, quoteCalls, type Call, type CallsQuote } from "./internal/relay.js";
 import { errorMessage, realSessionLegDeps, type SessionLegDeps } from "./internal/sessionLegs.js";
@@ -160,29 +160,12 @@ export function quotingDeps(base: SessionLegDeps = realSessionLegDeps): {
             adminPublicKey: args.adminSigner.publicKey,
             calls: args.calls,
           });
-          const quote = (f: typeof funding) =>
-            quoteCalls(buildRelayClient(registry), args.wallet.address, args.adminSigner, args.calls, {
-              feeToken: NATIVE_TOKEN,
-              ...(f.requiredFunds ? { requiredFunds: f.requiredFunds } : {}),
-              submittingKey: { type: "secp256k1", publicKey: args.adminSigner.publicKey, role: "admin" },
-              network: registry,
-            });
-          let q: CallsQuote;
-          try {
-            q = await quote(funding);
-          } catch (err) {
-            if (funding.fundFromL2 || !isSingleLeafRejection(err)) throw err;
-            q = await quote(
-              await planRegistryFunding({
-                registryClient: buildPublicClient(registry),
-                registry,
-                walletAddress: args.wallet.address,
-                adminPublicKey: args.adminSigner.publicKey,
-                calls: args.calls,
-                override: true,
-              }),
-            );
-          }
+          const q = await quoteCalls(buildRelayClient(registry), args.wallet.address, args.adminSigner, args.calls, {
+            feeToken: NATIVE_TOKEN,
+            ...(funding.requiredFunds ? { requiredFunds: funding.requiredFunds } : {}),
+            submittingKey: { type: "secp256k1", publicKey: args.adminSigner.publicKey, role: "admin" },
+            network: registry,
+          });
           Object.assign(line, pickQuote(q));
         } else {
           const plan = planRegistryWrite(registry, args.adminSigner, args.wallet.address);
