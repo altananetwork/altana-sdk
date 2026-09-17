@@ -234,6 +234,30 @@ export function legFromOutcome(
 }
 
 /** A cache leg from a CacheSyncReport. */
+/**
+ * What a cache leg's gate decided: a leg with nothing more to do (skipped,
+ * failed early), or the proof to run.
+ */
+export type CacheGate = SessionLeg | { chainId: number; prove: () => Promise<SessionLeg> };
+
+/**
+ * Starts every proof the gates let through. `now` is what to report at once
+ * (`PENDING` for a running proof); `cacheSync` resolves with the finished
+ * cache legs and never rejects.
+ */
+export function launchCacheProofs(gates: readonly CacheGate[]): { now: SessionLeg[]; cacheSync: Promise<SessionLeg[]> } {
+  const running = gates.map((g) =>
+    "prove" in g
+      ? g.prove().catch((err): SessionLeg => ({ chainId: g.chainId, kind: "cache", status: "FAILED", reason: errorMessage(err) }))
+      : Promise.resolve(g),
+  );
+  const cacheSync = Promise.all(running);
+  return {
+    now: gates.map((g) => ("prove" in g ? { chainId: g.chainId, kind: "cache", status: "PENDING" } : g)),
+    cacheSync,
+  };
+}
+
 export function legFromCacheReport(report: CacheSyncReport): SessionLeg {
   return {
     chainId: report.chainId,

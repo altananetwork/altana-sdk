@@ -76,8 +76,11 @@ type ClientGrantSessionOptions = {
   sessionSigner?: Signer;
   /** Register the key in Keystore (default true). */
   register?: boolean;
-  /** L2s only: prove the Keystore entry into each L2 cache after the grant (default true). */
-  populateCache?: boolean;
+  /**
+   * L2s only: prove the Keystore entry into each L2 cache (default true). The proof runs on
+   * after grantSession returns; "await" waits for it; false skips it.
+   */
+  populateCache?: boolean | "await";
   /** Progress, per chain where it applies. */
   onStatus?: (status: "registry-write" | "account-authorization" | "cache-sync" | "done",
               detail?: { chainId: number }) => void;
@@ -113,6 +116,7 @@ type GrantSessionResult = Session & {
   keyId: Hex;
   status: "granted" | "failed";
   legs: SessionLeg[];       // one per step per chain; see revokeSession for the shape
+  cacheSync: Promise<SessionLeg[]>;  // the cache legs once their proofs are in
 };
 
 type Session = {
@@ -135,6 +139,8 @@ For every chain you grant on, the SDK runs up to three legs:
 1. **Registry.** One Keystore write per Keystore chain: `registerKey(session)`, preceded by `initialRegisterKey(admin)` on the wallet's first write, skipped when the key is already valid there. When the wallet holds no ETH on the Keystore chain, the relay funds the write from the wallet's balance on the L2 being granted on; the leg then carries `fundedFromChainId` and `sourceTransactionHash`. On a chain with its own Keystore (BNB, Ethereum) it rides in that chain's account leg, in the same userOp, so the registration and the authorization land atomically. For an [L2](/concepts/keystore#reaching-other-chains) it is a separate write on the L1, through the L1 relay (the testnet relay serves Sepolia). Two L2s behind the same L1 share one write.
 2. **Account.** The session authorized on the wallet's smart account on that chain, through its relay, the fee paid in an accepted token the wallet holds there (or the `feeToken` you name). The chains run in parallel; an L2 waits for its L1 write and is skipped if that write failed.
 3. **Cache.** On an L2, the proof of the Keystore entry into its KeyStoreCache, as a wallet call through the same relay (see [`syncSessionToCache`](/sdk/sync-to-l2#syncsessiontocache)). Skipped with `register: false` or `populateCache: false`.
+
+The proof can only be built once the L2 has anchored the Sepolia block of the Keystore write, which on Celo Sepolia takes 15 to 30 minutes. `grantSession` does not make the user wait for that: it returns as soon as the registry write and the account authorizations are confirmed, which is when the session is usable (nothing in `execute` reads the cache). The cache legs then read `PENDING`, the proofs keep running, and `cacheSync` resolves with the finished cache legs. It never rejects; a proof that fails is a `FAILED` leg there. If your process exits first, the session still works and [`syncSessionToCache`](/sdk/sync-to-l2#syncsessiontocache) submits the proof later. Pass `populateCache: "await"` to get the old behaviour and return only once every proof is in.
 
 ## What it costs
 
