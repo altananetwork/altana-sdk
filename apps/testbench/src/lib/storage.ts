@@ -12,6 +12,8 @@ export type StoredSession = {
   legs: SessionLeg[];
   createdAt: number;
   revokedAt?: number;
+  /** Absent on entries saved before this field existed: granted. */
+  status?: "granting" | "granted" | "failed";
 };
 
 export type StoredState = {

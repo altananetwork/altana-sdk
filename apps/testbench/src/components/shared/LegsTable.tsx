@@ -23,7 +23,7 @@ export function LegsTable({ legs }: { legs: readonly SessionLeg[] }) {
             <td>{networkByChainId(l.chainId)?.chain.name ?? l.chainId}</td>
             <td>{l.kind}</td>
             <td>
-              <Badge tone={l.status === "CONFIRMED" ? "success" : l.status === "FAILED" ? "error" : undefined}>{l.status}</Badge>
+              <Badge tone={l.status === "CONFIRMED" ? "success" : l.status === "FAILED" ? "error" : l.status === "PENDING" ? "warning" : undefined}>{l.status}</Badge>
               {l.reason && <div className="muted small">{l.reason}</div>}
             </td>
             <td className="muted">
