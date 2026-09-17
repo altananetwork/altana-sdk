@@ -4,7 +4,7 @@
  * digs it back out so the SDK can lead the thrown error with it.
  */
 import { describe, expect, test } from "bun:test";
-import { deepestRelayReason, relayRejectionHint } from "./relay.js";
+import { deepestRelayReason, relayRejectionHint, shortfallMessage, type NativeHolding } from "./relay.js";
 
 // The exact shape seen live on BSC testnet when feeToken is set to $U:
 // InvalidParamsRpcError → RpcRequestError → the real relay message.
@@ -59,5 +59,35 @@ describe("relayRejectionHint", () => {
   });
   test("adds nothing for other rejections", () => {
     expect(relayRejectionHint("insufficient liquidity")).toBe("");
+  });
+});
+
+describe("shortfallMessage", () => {
+  const eth = (chain: string, balance: bigint): NativeHolding => ({ chainId: 1, chain, symbol: "ETH", decimals: 18, balance });
+  const celo = (balance: bigint): NativeHolding => ({ chainId: 2, chain: "Celo Sepolia", symbol: "CELO", decimals: 18, balance });
+
+  test("an empty wallet that must send value: cannot pay, and where the relay looked for funds", () => {
+    expect(shortfallMessage(eth("Sepolia", 0n), 2n * 10n ** 14n, [celo(0n)])).toBe(
+      "the wallet cannot pay for it: it holds 0 ETH on Sepolia and needs 0.0002 ETH the call sends plus the relay fee; " +
+        "it holds 0 CELO on Celo Sepolia, so the relay could not fund it from there either",
+    );
+  });
+  test("value covered but the fee is not: names the balance without claiming certainty", () => {
+    expect(shortfallMessage(eth("Sepolia", 10n ** 15n), 2n * 10n ** 14n, [])).toBe(
+      "the wallet holds 0.001 ETH on Sepolia, which does not cover 0.0002 ETH the call sends plus the relay fee",
+    );
+  });
+  test("no value: only the relay fee is named", () => {
+    expect(shortfallMessage(eth("BNB Smart Chain", 0n), 0n, [])).toBe(
+      "the wallet cannot pay for it: it holds 0 ETH on BNB Smart Chain and needs the relay fee",
+    );
+  });
+});
+
+describe("relayRejectionHint for an empty revert", () => {
+  test("names the usual cause", () => {
+    expect(relayRejectionHint("intent reverted: 0x")).toContain("cannot pay for");
+    expect(relayRejectionHint("0x")).toContain("cannot pay for");
+    expect(relayRejectionHint("intent reverted: PaymentError()")).toBe("");
   });
 });
