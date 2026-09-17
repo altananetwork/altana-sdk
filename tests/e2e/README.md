@@ -99,7 +99,7 @@ Self-contained anvil mainnet forks; no env vars or funded keys needed (requires 
 
 `smoke-celo-sepolia.ts` (private-key admin: create, fund on both chains, execute, grant with registry write on Sepolia and proof into the cache, session execute, reads, revoke with post-revocation proof, post-revoke rejection) and `smoke-celo-passkey.ts` (headless passkey admin: create, execute through the P256 canary, account-only grant with `register: false`, session execute, revoke; also asserts a registered grant is refused with the documented message).
 
-They need `TEST_FUNDER_KEY` funded with CELO on Celo Sepolia (https://faucet.celo.org/celo-sepolia) and, for the session smoke, with ETH on Sepolia (https://cloud.google.com/application/web3/faucet/ethereum/sepolia); the session smoke also needs the cache address (`CELO_SEPOLIA_CACHE`, or the SDK config once filled) and a Sepolia RPC with historical `eth_getProof` (`SEPOLIA_RPC_URL`, default Tenderly). Both fail loudly, naming what to fund, instead of skipping.
+They need `TEST_FUNDER_KEY` funded with CELO on Celo Sepolia (https://faucet.celo.org/celo-sepolia) and nothing on Sepolia (the Keystore writes there are paid from the wallet's CELO by the relay); the session smoke also needs the cache address (`CELO_SEPOLIA_CACHE`, or the SDK config once filled) and a Sepolia RPC with historical `eth_getProof` (`SEPOLIA_RPC_URL`, default Tenderly). Both fail loudly, naming what to fund, instead of skipping.
 
 ```bash
 bun run --filter '@altananetwork/e2e' smoke:celo-sepolia

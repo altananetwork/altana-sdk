@@ -3,8 +3,8 @@
  * cached networks behind the Sepolia KeyStore.
  *
  *   1. createWallet on both chains (same address)
- *   2. fund the wallet: CELO on Celo Sepolia, ETH on Base Sepolia and ETH on
- *      Sepolia (relay fees on each chain, plus the Sepolia registration fee)
+ *   2. fund the wallet: CELO on Celo Sepolia and ETH on Base Sepolia; the
+ *      Sepolia registry writes are paid from those balances by the relay
  *   3. quoteGrantSession, then grantSession on both chains: one registry
  *      write on Sepolia, one account leg and one cache proof per chain
  *   4. reads: both accounts hold the key, Sepolia lists it as valid
@@ -16,8 +16,8 @@
  *
  * Needs, and fails loudly without:
  *   TEST_FUNDER_KEY  funded with CELO on Celo Sepolia (>= 1 CELO,
- *                    https://faucet.celo.org/celo-sepolia), ETH on Base
- *                    Sepolia (>= 0.01 ETH) and ETH on Sepolia (>= 0.01 ETH)
+ *                    https://faucet.celo.org/celo-sepolia) and ETH on Base
+ *                    Sepolia (>= 0.01 ETH); nothing on Sepolia
  *   SEPOLIA_RPC_URL, BASE_SEPOLIA_RPC_URL, CELO_SEPOLIA_RPC_URL  optional RPC
  *                    overrides (Sepolia's must serve eth_getProof ~100 blocks behind head)
  *
@@ -53,7 +53,7 @@ import { assertStatus, legOf, printLegs, signatureCount } from "./session-legs.j
 const TEST_FUNDER_KEY = process.env.TEST_FUNDER_KEY as Hex;
 if (!TEST_FUNDER_KEY) {
   throw new Error(
-    "Set TEST_FUNDER_KEY: a key funded with CELO on Celo Sepolia, ETH on Base Sepolia and ETH on Sepolia.",
+    "Set TEST_FUNDER_KEY: a key funded with CELO on Celo Sepolia and ETH on Base Sepolia.",
   );
 }
 
@@ -123,7 +123,7 @@ async function run(
   publicOf: (n: NetworkConfig) => PublicClient,
   funding: [NetworkConfig, bigint, bigint][],
 ) {
-  console.log("\n[2] fund the wallet on Celo Sepolia, Base Sepolia and Sepolia");
+  console.log("\n[2] fund the wallet on Celo Sepolia and Base Sepolia (nothing on Sepolia)");
   // One chain at a time: the shared funder can be used by other sessions, so a dropped or
   // replaced transaction is detected by the wallet's balance and sent again.
   for (const [n, , amount] of funding) {
