@@ -236,7 +236,7 @@ export async function submitRegistryWrite(
     // submitCalls prepends the admin registration itself on a local-registry
     // network, which the registry chain is.
     const relayClient = buildRelayClient(registry);
-    const funding = await planRegistryFunding({
+    let funding = await planRegistryFunding({
       registryClient,
       registry,
       walletAddress,
@@ -244,12 +244,30 @@ export async function submitRegistryWrite(
       calls,
       ...(args.fundFromL2 !== undefined ? { override: args.fundFromL2 } : {}),
     });
-    const callsId = await submitCalls(relayClient, walletAddress, adminSigner, calls, {
-      feeToken: funding.fundFromL2 ? NATIVE_TOKEN : (args.feeToken ?? NATIVE_TOKEN),
-      ...(funding.requiredFunds ? { requiredFunds: funding.requiredFunds } : {}),
-      submittingKey: { type: "secp256k1", publicKey: adminSigner.publicKey, role: "admin" },
-      network: registry,
-    });
+    const submit = (f: RegistryFunding) =>
+      submitCalls(relayClient, walletAddress, adminSigner, calls, {
+        feeToken: f.fundFromL2 ? NATIVE_TOKEN : (args.feeToken ?? NATIVE_TOKEN),
+        ...(f.requiredFunds ? { requiredFunds: f.requiredFunds } : {}),
+        submittingKey: { type: "secp256k1", publicKey: adminSigner.publicKey, role: "admin" },
+        network: registry,
+      });
+    let callsId: Hex;
+    try {
+      callsId = await submit(funding);
+    } catch (err) {
+      if (funding.fundFromL2 || !isSingleLeafRejection(err)) throw err;
+      // The relay went cross-chain on its own for the fee and built a one-leaf
+      // tree. Asking for the funding explicitly takes its working path.
+      funding = await planRegistryFunding({
+        registryClient,
+        registry,
+        walletAddress,
+        adminPublicKey: adminSigner.publicKey,
+        calls,
+        override: true,
+      });
+      callsId = await submit(funding);
+    }
     const result = await waitForCalls(relayClient, callsId, undefined, undefined, { chainId: registry.chainId });
     const block =
       result.status === "CONFIRMED"
@@ -333,6 +351,11 @@ export type RegistryFunding = {
  * plus the fee allowance. The requested value is at least one wei above the
  * balance so the relay always sources it (and its own fee) from another chain.
  */
+/** The relay's "Cannot generate proof for single leaf tree": it sourced the fee cross-chain by itself and failed. */
+export function isSingleLeafRejection(err: unknown): boolean {
+  return /single leaf tree/i.test(err instanceof Error ? err.message : String(err));
+}
+
 export function decideRegistryFunding(args: {
   balance: bigint;
   valueNeeded: bigint;

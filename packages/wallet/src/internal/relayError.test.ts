@@ -4,7 +4,7 @@
  * digs it back out so the SDK can lead the thrown error with it.
  */
 import { describe, expect, test } from "bun:test";
-import { deepestRelayReason } from "./relay.js";
+import { decodeRevertText, deepestRelayReason, relayRejectionHint, shortfallMessage, type NativeHolding } from "./relay.js";
 
 // The exact shape seen live on BSC testnet when feeToken is set to $U:
 // InvalidParamsRpcError → RpcRequestError → the real relay message.
@@ -50,5 +50,66 @@ describe("deepestRelayReason", () => {
     a.cause = a;
     expect(() => deepestRelayReason(a)).not.toThrow();
     expect(deepestRelayReason(a)).toBeUndefined();
+  });
+});
+
+describe("relayRejectionHint", () => {
+  test("tells a developer to create the wallet when the relay does not know the account", () => {
+    expect(relayRejectionHint("quotes for unknown accounts are not accepted")).toContain("client.createWallet({ signer })");
+  });
+  test("adds nothing for other rejections", () => {
+    expect(relayRejectionHint("insufficient liquidity")).toBe("");
+  });
+});
+
+describe("shortfallMessage", () => {
+  const eth = (chain: string, balance: bigint): NativeHolding => ({ chainId: 1, chain, symbol: "ETH", decimals: 18, balance });
+  const celo = (balance: bigint): NativeHolding => ({ chainId: 2, chain: "Celo Sepolia", symbol: "CELO", decimals: 18, balance });
+
+  test("an empty wallet that must send value: cannot pay, and nothing anywhere to fund it from", () => {
+    expect(shortfallMessage(eth("Sepolia", 0n), 2n * 10n ** 14n, [celo(0n)])).toBe(
+      "the wallet cannot pay for it: it holds 0 ETH on Sepolia and needs 0.0002 ETH the call sends plus the relay fee; " +
+        "it holds nothing on any other chain the relay could fund it from",
+    );
+  });
+  test("funds elsewhere the relay did not use are named", () => {
+    expect(shortfallMessage(eth("Sepolia", 0n), 2n * 10n ** 14n, [celo(5n * 10n ** 17n), eth("Base Sepolia", 0n)])).toBe(
+      "the wallet cannot pay for it: it holds 0 ETH on Sepolia and needs 0.0002 ETH the call sends plus the relay fee; " +
+        "it holds 0.5 CELO on Celo Sepolia, which the relay could not use to fund it",
+    );
+  });
+  test("value covered but the fee is not: names the balance without claiming certainty", () => {
+    expect(shortfallMessage(eth("Sepolia", 10n ** 15n), 2n * 10n ** 14n, [])).toBe(
+      "the wallet holds 0.001 ETH on Sepolia, which does not cover 0.0002 ETH the call sends plus the relay fee",
+    );
+  });
+  test("no value: only the relay fee is named", () => {
+    expect(shortfallMessage(eth("BNB Smart Chain", 0n), 0n, [])).toBe(
+      "the wallet cannot pay for it: it holds 0 ETH on BNB Smart Chain and needs the relay fee",
+    );
+  });
+});
+
+describe("relayRejectionHint for an empty revert", () => {
+  test("names the usual cause", () => {
+    expect(relayRejectionHint("intent reverted: 0x")).toContain("cannot pay for");
+    expect(relayRejectionHint("0x")).toContain("cannot pay for");
+    expect(relayRejectionHint("intent reverted: PaymentError()")).toBe("");
+  });
+});
+
+describe("decodeRevertText", () => {
+  const badProof =
+    "0x08c379a0" +
+    "0000000000000000000000000000000000000000000000000000000000000020" +
+    "0000000000000000000000000000000000000000000000000000000000000018" +
+    "43616368653a206261642073746f726167652070726f6f660000000000000000";
+  test("an Error(string) revert reads as its message", () => {
+    expect(decodeRevertText(`intent reverted: ${badProof}`)).toBe('intent reverted: "Cache: bad storage proof"');
+    expect(deepestRelayReason(Object.assign(new Error("RPC Request failed"), { details: badProof }))).toBe('"Cache: bad storage proof"');
+  });
+  test("a Panic reads as its code; other data is left alone", () => {
+    expect(decodeRevertText("0x4e487b71" + "11".padStart(64, "0"))).toBe("panic code 17");
+    expect(decodeRevertText("intent reverted: 0xf3dd7004")).toBe("intent reverted: 0xf3dd7004");
   });
 });
