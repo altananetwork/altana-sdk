@@ -106,7 +106,7 @@ describe("decodeRevertText", () => {
     "43616368653a206261642073746f726167652070726f6f660000000000000000";
   test("an Error(string) revert reads as its message", () => {
     expect(decodeRevertText(`intent reverted: ${badProof}`)).toBe('intent reverted: "Cache: bad storage proof"');
-    expect(deepestRelayReason(Object.assign(new Error("x"), { details: badProof }))).toBe('"Cache: bad storage proof"');
+    expect(deepestRelayReason(Object.assign(new Error("RPC Request failed"), { details: badProof }))).toBe('"Cache: bad storage proof"');
   });
   test("a Panic reads as its code; other data is left alone", () => {
     expect(decodeRevertText("0x4e487b71" + "11".padStart(64, "0"))).toBe("panic code 17");
