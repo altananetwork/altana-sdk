@@ -84,17 +84,26 @@ export function WalletPanel() {
           results.push({ asset: t.symbol, status: r.status, hash: r.transactionHash });
           setMoved([...results]);
         }
-        const reserve = parseEther(state.chainId === 11155111 ? "0.002" : "0.05");
+        // The relay's fee is only known from its quote, and it moves with gas. Start from a
+        // small reserve and, when the relay says the send would leave the wallet short, keep
+        // more back and try again.
         const current = await client.holdings(wallet.address, state.chainId);
-        if (current.native > reserve) {
-          const r = await client.execute({
-            wallet: { address: wallet.address },
-            signer: wallet.signer,
-            chainId: state.chainId,
-            calls: [{ to, value: current.native - reserve, data: "0x" }],
-          });
-          results.push({ asset: native, status: r.status, hash: r.transactionHash });
-          setMoved([...results]);
+        let reserve = parseEther(state.chainId === 11155111 ? "0.002" : "0.05");
+        for (let attempt = 0; attempt < 4 && current.native > reserve; attempt++) {
+          try {
+            const r = await client.execute({
+              wallet: { address: wallet.address },
+              signer: wallet.signer,
+              chainId: state.chainId,
+              calls: [{ to, value: current.native - reserve, data: "0x" }],
+            });
+            results.push({ asset: native, status: r.status, hash: r.transactionHash });
+            setMoved([...results]);
+            break;
+          } catch (e) {
+            if (!/asset deficits|cannot pay|insufficient/i.test(e instanceof Error ? e.message : String(e))) throw e;
+            reserve *= 2n;
+          }
         }
         dispatch({ type: "holdings/set", chainId: state.chainId, holdings: await client.holdings(wallet.address, state.chainId) });
       } finally {
