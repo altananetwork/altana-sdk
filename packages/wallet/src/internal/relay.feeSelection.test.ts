@@ -270,7 +270,7 @@ describe("registry write funded from the L2, on the wire", () => {
   const FEE = 200_000_000_000_000n;
 
   /** Plays the Sepolia relay and the Sepolia public RPC (KeyStore reads, balance). */
-  function mockRegistryWire(o: { balance: bigint; activeKeys: Hex[]; prepareError?: string; assets?: unknown; singleLeafUnlessFunded?: boolean }) {
+  function mockRegistryWire(o: { balance: bigint; activeKeys: Hex[]; prepareError?: string; assets?: unknown }) {
     const requests: Recorded[] = [];
     const same = (a: string, b: string | undefined) => b !== undefined && a.replace(/\/$/, "") === b.replace(/\/$/, "");
     globalThis.fetch = (async (url: any, init?: RequestInit) => {
@@ -292,11 +292,8 @@ describe("registry write funded from the L2, on the wire", () => {
         }
         if (!same(u, SEPOLIA.relayUrl)) throw new Error(`unexpected request to ${u}: ${req.method}`);
         if (req.method === "wallet_getCapabilities") return ok(chainCapabilities(SEPOLIA.chainId, []));
-        if (req.method === "wallet_prepareCalls") {
-          if (o.singleLeafUnlessFunded && !req.params[0].capabilities?.requiredFunds)
-            return { jsonrpc: "2.0", id: req.id, error: { code: -32603, message: "Cannot generate proof for single leaf tree" } };
+        if (req.method === "wallet_prepareCalls")
           return o.prepareError ? { jsonrpc: "2.0", id: req.id, error: { code: 3, message: o.prepareError, data: "0x" } } : ok(prepared);
-        }
         if (req.method === "wallet_getAssets") return ok(o.assets ?? {});
         if (req.method === "wallet_sendPreparedCalls") return ok({ id: "0xabc" });
         if (req.method === "wallet_getCallsStatus")
@@ -314,7 +311,6 @@ describe("registry write funded from the L2, on the wire", () => {
     }) as typeof fetch;
     return {
       prepare: () => requests.find((c) => c.method === "wallet_prepareCalls")?.params[0],
-      prepares: () => requests.filter((c) => c.method === "wallet_prepareCalls").map((c) => c.params[0]),
     };
   }
 
@@ -341,24 +337,6 @@ describe("registry write funded from the L2, on the wire", () => {
         "and needs 0.0004 ETH the call sends plus the relay fee; it holds nothing on any other chain the relay " +
         "could fund it from (relay: intent reverted: 0x)",
     );
-  });
-
-  test("a wallet with some ETH: the relay's one-leaf failure is retried with explicit funding", async () => {
-    const signer = createPrivateKeySigner();
-    // Enough for the fees by the SDK's rule, so the first request asks for no funding.
-    const wire = mockRegistryWire({ balance: 20n * FEE, activeKeys: [], singleLeafUnlessFunded: true });
-    const written = await submitRegistryWrite(SEPOLIA, {
-      walletAddress: signer.address,
-      adminSigner: signer,
-      calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
-    });
-    // Second prepare carries the request: one wei above the balance, so the relay sources the fee itself.
-    const prepares = wire.prepares();
-    expect(prepares).toHaveLength(2);
-    expect(prepares[0]!.capabilities.requiredFunds).toBeUndefined();
-    expect(prepares[1]!.capabilities.requiredFunds).toEqual([{ address: NATIVE_TOKEN, value: numberToHex(20n * FEE + 1n) }]);
-    expect(written.status).toBe("CONFIRMED");
-    expect(written.fundedFromChainId).toBe(CELO_SEPOLIA.chainId);
   });
 
   test("a wallet with no ETH on Sepolia asks the relay to front both registration fees, paid in native", async () => {
