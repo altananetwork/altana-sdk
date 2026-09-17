@@ -50,7 +50,7 @@ describe("quote balances for a registry write funded from the L2", () => {
     expect(asked.some((a) => a.startsWith(SEPOLIA.publicRpcUrl.replace(/\/$/, "")))).toBe(false);
   });
 
-  test("an unfunded registry line is still charged to the registry chain", async () => {
+  test("a line without a source chain (a direct EOA write) is charged to the registry chain", async () => {
     mockBalances({ [SEPOLIA.publicRpcUrl.replace(/\/$/, "")]: 1n });
     const quote = await withBalances([registryLine({})], [CELO_SEPOLIA]);
     expect(quote.balances[0]?.chainId).toBe(SEPOLIA.chainId);
