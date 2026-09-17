@@ -153,7 +153,7 @@ export function quotingDeps(base: SessionLegDeps = realSessionLegDeps): {
       };
       try {
         if (via === "relay") {
-          const funding = await planRegistryFunding({
+          const requiredFunds = await planRegistryFunding({
             registryClient: buildPublicClient(registry),
             registry,
             walletAddress: args.wallet.address,
@@ -162,7 +162,7 @@ export function quotingDeps(base: SessionLegDeps = realSessionLegDeps): {
           });
           const q = await quoteCalls(buildRelayClient(registry), args.wallet.address, args.adminSigner, args.calls, {
             feeToken: NATIVE_TOKEN,
-            ...(funding.requiredFunds ? { requiredFunds: funding.requiredFunds } : {}),
+            requiredFunds,
             submittingKey: { type: "secp256k1", publicKey: args.adminSigner.publicKey, role: "admin" },
             network: registry,
           });
