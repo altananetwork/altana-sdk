@@ -178,6 +178,19 @@ const anvil = createTestClient({ mode: "anvil", chain: celo.chain, transport: ht
 
 const client = createClient({ chains: [celo] });
 
+/**
+ * `quoteExecute` lands with SDK PR #98. The spine uses it to show the fee
+ * before spending it, and to size the sweep, but it must not be a hard
+ * dependency: this script has to run against plain `staging` too. Returns
+ * undefined when the client does not have it, and every caller copes.
+ */
+type MaybeQuote = { fee: bigint; feeToken: Address } | undefined;
+async function quoteOrSkip(opts: Parameters<typeof client.execute>[0]): Promise<MaybeQuote> {
+  const q = (client as { quoteExecute?: (o: unknown) => Promise<{ fee: bigint; feeToken: Address }> }).quoteExecute;
+  if (typeof q !== "function") return undefined;
+  return q.call(client, opts);
+}
+
 // ---------------------------------------------------------------------------
 // Wire log (--wire)
 // ---------------------------------------------------------------------------
@@ -481,14 +494,19 @@ async function main() {
     "Execute on Celo paying CELO",
     async (ctx) => {
       const { wallet, signer } = S.wallet!;
-      const quote = await client.quoteExecute({
+      const quote = await quoteOrSkip({
         wallet,
         signer,
         calls: sendZero(funder.address),
         feeToken: NATIVE_TOKEN,
       });
-      console.log(`    quoted max fee: ${formatEther(quote.fee)} CELO`);
-      ctx.note(`quoted max fee ${formatEther(quote.fee)} CELO (quoteExecute, nothing sent)`);
+      if (quote) {
+        console.log(`    quoted max fee: ${formatEther(quote.fee)} CELO`);
+        ctx.note(`quoted max fee ${formatEther(quote.fee)} CELO (quoteExecute, nothing sent)`);
+      } else {
+        console.log("    quoteExecute not in this SDK build; skipping the quote check");
+        ctx.note("quoteExecute not available in this SDK build (it lands with #98); the fee was not quoted first");
+      }
 
       const before = await celoPublic.getBalance({ address: wallet.address });
       const res = await client.execute({
@@ -507,8 +525,13 @@ async function main() {
       const after = await celoPublic.getBalance({ address: wallet.address });
       const paid = before - after;
       console.log(`    charged ${formatEther(paid)} CELO`);
-      ctx.note(`charged ${formatEther(paid)} CELO, at or under the ${formatEther(quote.fee)} quoted`);
-      assert(paid <= quote.fee, `charged ${formatEther(paid)} CELO, more than the quoted ${formatEther(quote.fee)}`);
+      if (quote) {
+        ctx.note(`charged ${formatEther(paid)} CELO, at or under the ${formatEther(quote.fee)} quoted`);
+        assert(paid <= quote.fee, `charged ${formatEther(paid)} CELO, more than the quoted ${formatEther(quote.fee)}`);
+      } else {
+        ctx.note(`charged ${formatEther(paid)} CELO`);
+        assert(paid > 0n, "the relay charged nothing, which means the fee was not taken in CELO");
+      }
     },
     () => (S.wallet ? undefined : "S1 did not produce a wallet"),
   );
@@ -639,12 +662,15 @@ async function main() {
       const { wallet, signer } = S.wallet!;
       const session = S.session!;
       // The mirror's L1 anchor moves about every 20 minutes, so allow 30.
-      const legs = await client.syncSessionToCache({ wallet, signer, session });
-      printLegRows(legs, ctx);
-      const cacheLeg = legOf(legs, "cache", celo.chainId);
-      assert(cacheLeg.status === "CONFIRMED", `cache proof ${cacheLeg.status}: ${cacheLeg.reason ?? ""}`);
-      console.log(`    anchored at Sepolia block ${cacheLeg.l1BlockNumber}`);
-      ctx.note(`proof anchored at Sepolia (L1) block ${cacheLeg.l1BlockNumber}`);
+      // One result, not a list of legs: it carries the proof's own transaction
+      // plus the anchor it was built against and the entry it produced.
+      const proof = await client.syncSessionToCache({ wallet, signer, session });
+      console.log(`    status ${proof.status}  tx ${proof.transactionHash}  attempts ${proof.attempts}`);
+      ctx.tx("cache proof", proof.transactionHash);
+      assert(proof.status === "CONFIRMED", `cache proof ${proof.status}`);
+      console.log(`    anchored at Sepolia block ${proof.l1BlockNumber}, cache ${proof.keyStoreCache}`);
+      ctx.note(`proof anchored at Sepolia (L1) block ${proof.l1BlockNumber} after ${proof.attempts} attempt(s)`);
+      ctx.note(`cache ${proof.keyStoreCache}: revoked=${proof.cachedKey.revoked}`);
 
       const cached = await readCachedKey(celoPublic, CACHE, wallet.address, session.keyId);
       const fresh = await isCachedKeyValid(celoPublic, CACHE, wallet.address, session.keyId);
@@ -848,13 +874,17 @@ async function main() {
         if (bal === 0n) continue;
         // Leave enough for the relay's fee; send the rest, sized from a quote.
         try {
-          const quote = await client.quoteExecute({
+          const quote = await quoteOrSkip({
             wallet: { address: w.address },
             signer: w.signer,
             calls: { to: funder.address, value: 1n, data: "0x" },
             feeToken: NATIVE_TOKEN,
           });
-          const send = bal > quote.fee * 2n ? bal - quote.fee * 2n : 0n;
+          // Without a quote, keep back a flat allowance instead. It is the
+          // relay's maximum fee that matters, so over-reserving is the safe way
+          // to be wrong: the leftover is dust, a failed sweep is the balance.
+          const reserve = quote ? quote.fee * 2n : parseEther("0.05");
+          const send = bal > reserve ? bal - reserve : 0n;
           if (send === 0n) {
             ctx.note(`${w.address} holds ${formatEther(bal)} CELO, under the fee: left as dust`);
             continue;
