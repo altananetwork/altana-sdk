@@ -271,8 +271,21 @@ const rows: StepRow[] = [];
 const t0 = performance.now();
 const ms = () => `${((performance.now() - t0) / 1000).toFixed(1)}s`;
 
-function explorer(chain: "celo" | "sepolia", hash: Hex) {
+/**
+ * A fork's transactions exist only on that anvil instance. Linking them to a
+ * public explorer produces a link that 404s, which reads as fabricated
+ * evidence rather than as a fork result — so in fork mode the report shows the
+ * bare hash and says where it lives, and links only what anyone can open.
+ */
+function explorer(chain: "celo" | "sepolia", hash: Hex): string | undefined {
+  if (FORK) return undefined;
   return `${chain === "celo" ? celo.explorer : sepolia.explorer}/tx/${hash}`;
+}
+
+/** How a transaction is rendered in the report: a link live, a plain hash on a fork. */
+function txCell(chain: "celo" | "sepolia", hash: Hex): string {
+  const url = explorer(chain, hash);
+  return url ? `[\`${hash.slice(0, 18)}…\`](${url})` : `\`${hash}\` (fork-local)`;
 }
 
 /** The handle a step body uses to record what it proved. */
@@ -971,6 +984,14 @@ function report(): string {
   out.push(`- Mirror (KeyStoreCache): \`${CACHE}\``);
   out.push(`- Funder: \`${funder.address}\``);
   out.push(`- Result: **${pass} passed, ${fail} failed, ${skip} skipped** in ${ms()}`);
+  if (FORK) {
+    out.push("");
+    out.push(
+      "> Fork run. Every transaction below exists only on the anvil forks this " +
+        "run used, so the hashes are shown plain rather than linked: there is " +
+        "nothing for a public explorer to show.",
+    );
+  }
   out.push("");
   out.push("| Step | What | Result | Relay |");
   out.push("|---|---|---|---|");
@@ -998,7 +1019,7 @@ function report(): string {
       out.push("| Tx | Chain | Hash |");
       out.push("|---|---|---|");
       for (const t of r.txs) {
-        out.push(`| ${t.label} | ${t.chain === "celo" ? "Celo Sepolia" : "Sepolia"} | [\`${t.hash.slice(0, 18)}…\`](${explorer(t.chain, t.hash)}) |`);
+        out.push(`| ${t.label} | ${t.chain === "celo" ? "Celo Sepolia" : "Sepolia"} | ${txCell(t.chain, t.hash)} |`);
       }
     }
     out.push("");
@@ -1014,7 +1035,9 @@ function printTable() {
   for (const r of rows) {
     const mark = r.status === "PASS" ? "PASS   " : r.status === "FAIL" ? "FAIL   " : "SKIPPED";
     console.log(`${r.id.padEnd(10)} ${mark}  ${r.what.padEnd(w)}  ${r.status === "SKIPPED" ? "" : r.relay}`);
-    for (const t of r.txs) console.log(`${" ".repeat(10)}         ${t.label}: ${explorer(t.chain, t.hash)}`);
+    for (const t of r.txs) {
+      console.log(`${" ".repeat(10)}         ${t.label}: ${explorer(t.chain, t.hash) ?? `${t.hash} (fork-local)`}`);
+    }
     if (r.error) console.log(`${" ".repeat(10)}         ! ${r.error.split("\n")[0]!.slice(0, 200)}`);
   }
   const pass = rows.filter((r) => r.status === "PASS").length;
