@@ -43,6 +43,9 @@
  *   --tokens usdc,..  which stablecoins S2b should try (default: every one
  *                     the relay accepts AND the funder can pay for)
  *   --keep            skip S6, leaving the wallets funded for inspection
+ *   --wire            record every relay JSON-RPC call and write it next to
+ *                     the report, so a failed registration can be read as
+ *                     "requiredFunds asked X, the relay answered Y"
  *
  * Needs:
  *   TEST_FUNDER_KEY       CELO on Celo Sepolia; no Sepolia ETH is spent
@@ -174,6 +177,55 @@ const celoFunder = createWalletClient({ account: funder, chain: celo.chain, tran
 const anvil = createTestClient({ mode: "anvil", chain: celo.chain, transport: http(celo.publicRpcUrl) });
 
 const client = createClient({ chains: [celo] });
+
+// ---------------------------------------------------------------------------
+// Wire log (--wire)
+// ---------------------------------------------------------------------------
+
+/**
+ * Records every relay JSON-RPC call. The registration step is the one place
+ * where the question is not "did it fail" but "what exactly did the SDK ask
+ * the relay to fund, and what did the relay say back" — `requiredFunds` on
+ * wallet_prepareCalls against the relay's asset deficit. Off unless --wire.
+ */
+const wire: { method: string; url: string; params: unknown; result?: unknown; error?: unknown }[] = [];
+
+if (has("wire")) {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: any, init?: RequestInit) => {
+    const u = String(url);
+    let sent: any;
+    try {
+      sent = init?.body ? JSON.parse(String(init.body)) : undefined;
+    } catch {
+      /* not JSON-RPC; pass it through untouched */
+    }
+    const res = await realFetch(url as any, init);
+    if (!sent) return res;
+    const copy = res.clone();
+    let body: any;
+    try {
+      body = await copy.json();
+    } catch {
+      return res;
+    }
+    const reqs = Array.isArray(sent) ? sent : [sent];
+    const answers = Array.isArray(body) ? body : [body];
+    for (const req of reqs) {
+      const answer = answers.find((a: any) => a?.id === req?.id) ?? answers[0];
+      wire.push({
+        method: req?.method,
+        url: u,
+        params: req?.params,
+        ...(answer?.error ? { error: answer.error } : { result: answer?.result }),
+      });
+    }
+    return res;
+  }) as typeof fetch;
+}
+
+/** JSON with bigints and no surprises, for the wire log. */
+const j = (v: unknown) => JSON.stringify(v, (_k, x) => (typeof x === "bigint" ? x.toString() : x), 2);
 
 // ---------------------------------------------------------------------------
 // The step table
@@ -345,6 +397,11 @@ function printLegRows(legs: readonly SessionLeg[], ctx: Ctx) {
     console.log(`    ${describeLeg(leg)}`);
     if (leg.transactionHash) {
       ctx.tx(`${leg.kind} on ${leg.chainId}`, leg.transactionHash, leg.chainId === sepolia.chainId ? "sepolia" : "celo");
+    }
+    // describeLeg cuts the reason at 160 characters for the console. The whole
+    // reason is the diagnosis when a leg fails, so the report keeps all of it.
+    if (leg.reason && leg.status !== "CONFIRMED") {
+      ctx.note(`leg ${leg.kind} on chain ${leg.chainId} ${leg.status}: ${leg.reason}`);
     }
   }
 }
@@ -531,6 +588,15 @@ async function main() {
       printLegRows(session.legs, ctx);
       assert(session.status === "granted", `grantSession status ${session.status}`);
       S.session = session as typeof S.session;
+
+      // What the SDK actually asked the relay to fund, and what it answered.
+      // This is the whole diagnosis when the write does not land.
+      for (const w of wire.filter((x) => x.method === "wallet_prepareCalls")) {
+        const p: any = Array.isArray(w.params) ? w.params[0] : w.params;
+        if (Number(p?.chainId ?? 0) !== sepolia.chainId && p?.chainId !== numberToHexish(sepolia.chainId)) continue;
+        ctx.note(`wallet_prepareCalls -> ${w.url}, chainId ${p?.chainId}, requiredFunds ${j(p?.capabilities?.requiredFunds ?? p?.requiredFunds)}`);
+        if (w.error) ctx.note(`relay answered error: ${j(w.error)}`);
+      }
 
       const registry = legOf(session.legs, "registry", sepolia.chainId);
       assert(registry.status === "CONFIRMED", `registry write ${registry.status}: ${registry.reason ?? ""}`);
@@ -885,6 +951,11 @@ function printTable() {
   console.log(`\n${pass} passed, ${fail} failed, ${skip} skipped in ${ms()}`);
 }
 
+/** Chain ids travel as hex on the wire; compare against both spellings. */
+function numberToHexish(n: number) {
+  return `0x${n.toString(16)}`;
+}
+
 const evidenceDir =
   process.env.SPINE_EVIDENCE_DIR ??
   new URL("../../../../evidence/", import.meta.url).pathname;
@@ -896,6 +967,11 @@ async function writeReport() {
   try {
     await Bun.write(file, report());
     console.log(`\nReport: ${file}`);
+    if (wire.length) {
+      const wireFile = file.replace(/\.md$/, "-wire.json");
+      await Bun.write(wireFile, j(wire));
+      console.log(`Wire:   ${wireFile}  (${wire.length} relay calls)`);
+    }
   } catch (err) {
     console.log(`\nCould not write the report to ${file}: ${err instanceof Error ? err.message : err}`);
     console.log(report());
