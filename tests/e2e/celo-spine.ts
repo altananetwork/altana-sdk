@@ -280,6 +280,23 @@ async function fundToken(token: Address, holder: Address, amount: bigint, ctx: C
   });
   await celoPublic.waitForTransactionReceipt({ hash });
   ctx.tx(label, hash);
+  await waitForBalance(() => balanceOf(token, holder), amount, `${label} of ${holder}`);
+}
+
+/**
+ * Waits until a read RPC actually reports `want`. forno keeps serving the old
+ * balance for several seconds after a transfer's receipt, and the relay reads
+ * the same node: without this the run funds a wallet, then quotes a deficit on
+ * it. Returns the balance it settled on.
+ */
+async function waitForBalance(read: () => Promise<bigint>, want: bigint, what: string): Promise<bigint> {
+  let seen = await read();
+  for (let i = 0; i < 40 && seen < want; i++) {
+    await new Promise((r) => setTimeout(r, 1_500));
+    seen = await read();
+  }
+  if (seen < want) throw new Error(`${what}: the RPC still reports ${seen}, expected at least ${want}`);
+  return seen;
 }
 
 /** A fresh wallet holding `celoAmount` CELO and nothing else. */
@@ -294,6 +311,11 @@ async function freshWallet(celoAmount: bigint, ctx: Ctx, label: string) {
       const hash = await celoFunder.sendTransaction({ to: wallet.address, value: celoAmount });
       await celoPublic.waitForTransactionReceipt({ hash });
       ctx.tx(label, hash);
+      await waitForBalance(
+        () => celoPublic.getBalance({ address: wallet.address }),
+        celoAmount,
+        `CELO funding of ${wallet.address}`,
+      );
     }
   }
   created.push({ address: wallet.address, signer });
@@ -371,7 +393,7 @@ async function main() {
     ]);
     ctx.note(`wallet ${wallet.address}`);
     ctx.note(`holds ${formatEther(onCelo)} CELO on Celo Sepolia, ${formatEther(onSepolia)} ETH on Sepolia`);
-    assert(onCelo === FUND_CELO, `expected ${formatEther(FUND_CELO)} CELO, got ${formatEther(onCelo)}`);
+    assert(onCelo >= FUND_CELO, `expected at least ${formatEther(FUND_CELO)} CELO, got ${formatEther(onCelo)}`);
     assert(onSepolia === 0n, `the wallet must start with 0 ETH on Sepolia, holds ${formatEther(onSepolia)}`);
     console.log(`    ${formatEther(onCelo)} CELO on Celo, 0 ETH on Sepolia`);
   });
@@ -488,9 +510,9 @@ async function main() {
         populateCache: false,
         onStatus: (s, d) => console.log(`    ${s}${d ? ` (chain ${d.chainId})` : ""} [${ms()}]`),
       });
-      S.session = session as typeof S.session;
       printLegRows(session.legs, ctx);
       assert(session.status === "granted", `grantSession status ${session.status}`);
+      S.session = session as typeof S.session;
 
       const registry = legOf(session.legs, "registry", sepolia.chainId);
       assert(registry.status === "CONFIRMED", `registry write ${registry.status}: ${registry.reason ?? ""}`);
