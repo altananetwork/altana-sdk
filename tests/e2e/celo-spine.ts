@@ -902,23 +902,43 @@ async function main() {
             calls: { to: funder.address, value: 1n, data: "0x" },
             feeToken: NATIVE_TOKEN,
           });
-          // Without a quote, keep back a flat allowance instead. It is the
-          // relay's maximum fee that matters, so over-reserving is the safe way
-          // to be wrong: the leftover is dust, a failed sweep is the balance.
-          const reserve = quote ? quote.fee * 2n : parseEther("0.05");
-          const send = bal > reserve ? bal - reserve : 0n;
-          if (send === 0n) {
-            ctx.note(`${w.address} holds ${formatEther(bal)} CELO, under the fee: left as dust`);
-            continue;
+          // The reserve is ABANDONED, not returned: this wallet's key dies with
+          // the process, so whatever is held back is stranded just as surely as
+          // a failed sweep strands the lot. Reserving generously is not the
+          // safe side — it is the same loss, smaller and quieter.
+          //
+          // So start tight and widen only on failure. A rejected attempt costs
+          // nothing (the relay refuses it before anything is sent), which makes
+          // retrying strictly better than guessing high once.
+          //
+          // The first fallback is 0.06 CELO against a measured maximum-fee
+          // quote of 0.049022220000490224 on Celo Sepolia (2026-09-28, where
+          // the chain enforces a 50 gwei base-fee floor), then doubling.
+          let reserve = quote ? quote.fee * 2n : parseEther("0.06");
+          let sent = false;
+          for (let attempt = 0; attempt < 4 && !sent; attempt++, reserve *= 2n) {
+            const send = bal > reserve ? bal - reserve : 0n;
+            if (send === 0n) {
+              ctx.note(`${w.address} holds ${formatEther(bal)} CELO, under the ${formatEther(reserve)} reserve: left as dust`);
+              break;
+            }
+            try {
+              const res = await client.execute({
+                wallet: { address: w.address },
+                signer: w.signer,
+                calls: { to: funder.address, value: send, data: "0x" },
+                feeToken: NATIVE_TOKEN,
+              });
+              ctx.tx(`return ${formatEther(send)} CELO from ${w.address.slice(0, 10)}`, res.transactionHash);
+              sent = true;
+              swept++;
+            } catch (err) {
+              ctx.note(
+                `sweep of ${w.address} at a ${formatEther(reserve)} reserve failed, widening: ` +
+                  `${err instanceof Error ? err.message.slice(0, 100) : err}`,
+              );
+            }
           }
-          const res = await client.execute({
-            wallet: { address: w.address },
-            signer: w.signer,
-            calls: { to: funder.address, value: send, data: "0x" },
-            feeToken: NATIVE_TOKEN,
-          });
-          ctx.tx(`return ${formatEther(send)} CELO from ${w.address.slice(0, 10)}`, res.transactionHash);
-          swept++;
         } catch (err) {
           ctx.note(`could not sweep ${w.address}: ${err instanceof Error ? err.message.slice(0, 120) : err}`);
         }
