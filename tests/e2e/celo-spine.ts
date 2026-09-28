@@ -642,15 +642,24 @@ async function main() {
       ctx.tx("session execute before expiry", before.transactionHash);
       assert(before.status === "CONFIRMED", `the short-lived key failed before its expiry: ${before.status}`);
 
-      // Wait it out. The account compares against the block timestamp, so wait
-      // past the expiry and then until a block carries a later timestamp.
-      const waitMs = (expiry - Math.floor(Date.now() / 1000) + 15) * 1000;
-      console.log(`    waiting ${Math.round(waitMs / 1000)}s for the timebox to expire...`);
-      await new Promise((r) => setTimeout(r, Math.max(waitMs, 0)));
-      for (let i = 0; i < 30; i++) {
-        const b = await celoPublic.getBlock();
-        if (Number(b.timestamp) > expiry) break;
-        await new Promise((r) => setTimeout(r, 3_000));
+      // Wait it out. The account compares against the block timestamp, so the
+      // chain's clock is what has to pass the expiry, not this process's.
+      if (FORK) {
+        // anvil only mines on demand, so wall-clock waiting would never move
+        // block.timestamp. Push the fork's clock forward instead.
+        const jump = expiry - Math.floor(Date.now() / 1000) + 30;
+        await anvil.increaseTime({ seconds: Math.max(jump, 1) });
+        await anvil.mine({ blocks: 1 });
+        console.log(`    fork clock pushed ${Math.max(jump, 1)}s forward`);
+      } else {
+        const waitMs = (expiry - Math.floor(Date.now() / 1000) + 15) * 1000;
+        console.log(`    waiting ${Math.round(waitMs / 1000)}s for the timebox to expire...`);
+        await new Promise((r) => setTimeout(r, Math.max(waitMs, 0)));
+        for (let i = 0; i < 30; i++) {
+          const b = await celoPublic.getBlock();
+          if (Number(b.timestamp) > expiry) break;
+          await new Promise((r) => setTimeout(r, 3_000));
+        }
       }
       const chainNow = Number((await celoPublic.getBlock()).timestamp);
       console.log(`    chain time ${chainNow} is past the ${expiry} expiry by ${chainNow - expiry}s`);
