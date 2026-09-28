@@ -31,7 +31,8 @@
     "smoke:celo-passkey": "bun run smoke-celo-passkey.ts",
     "smoke:celo-fee-currency": "bun run smoke-celo-fee-currency.ts",
     "smoke:everywhere": "bun run smoke-everywhere.ts",
-    "spine": "bun run celo-spine.ts"
+    "spine": "bun run celo-spine.ts",
+    "verify:evidence": "bun run verify-evidence.ts ../../../MATRIX.md"
   },
   "dependencies": {
     "@altananetwork/sdk": "workspace:*",
