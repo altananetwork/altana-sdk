@@ -38,6 +38,17 @@
  *                     transferring them. Use when a token cannot be funded
  *                     live; the result is marked "Proven (fork)".
  *
+ *                     A fork is NOT a safe place to verify anything that
+ *                     depends on the gap between a transaction landing and the
+ *                     next request. anvil mines instantly, so it collapses
+ *                     that gap to zero: it hides bugs that need an unmined
+ *                     write (the relay hands out the same nonce to any two
+ *                     intents prepared before the first mines, which a fork
+ *                     can never show) and it creates at least one of its own
+ *                     (S5b's "key hash is unknown", fork-only and
+ *                     deterministic). Both directions, same cause. Prove that
+ *                     class of behaviour live.
+ *
  * Other flags:
  *   --steps s1,s2a    run only these steps (S6 always runs)
  *   --tokens usdc,..  which stablecoins S2b should try (default: every one
@@ -739,6 +750,17 @@ async function main() {
       if (FORK) {
         // anvil only mines on demand, so wall-clock waiting would never move
         // block.timestamp. Push the fork's clock forward instead.
+        //
+        // Read this before debugging account state after the jump. anvil
+        // evaluates `eth_call` at `latest` against the NEXT block's timestamp,
+        // so the jump has already applied to a read you make afterwards. The
+        // account filters expired keys out of `getKeys()`, so the key you just
+        // authorized reads as absent the moment you have moved the clock past
+        // its expiry — which looks exactly like "the grant silently failed"
+        // and is not. Check the authorize transaction's `Authorized` event
+        // instead, or read at the block the authorize landed in. This cost an
+        // hour on 2026-09-28; see
+        // celo-harness/evidence/2026-09-28-s5b-fork-only-failure.md.
         const jump = expiry - Math.floor(Date.now() / 1000) + 30;
         await anvil.increaseTime({ seconds: Math.max(jump, 1) });
         await anvil.mine({ blocks: 1 });
