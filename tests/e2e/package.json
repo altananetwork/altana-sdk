@@ -30,7 +30,8 @@
     "smoke:celo-sepolia": "bun run smoke-celo-sepolia.ts",
     "smoke:celo-passkey": "bun run smoke-celo-passkey.ts",
     "smoke:celo-fee-currency": "bun run smoke-celo-fee-currency.ts",
-    "smoke:everywhere": "bun run smoke-everywhere.ts"
+    "smoke:everywhere": "bun run smoke-everywhere.ts",
+    "spine": "bun run celo-spine.ts"
   },
   "dependencies": {
     "@altananetwork/sdk": "workspace:*",
