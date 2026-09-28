@@ -27,6 +27,11 @@
  *   --relay <url>     the relay for both chains (default: the SDK's testnet
  *                     relay, i.e. Railway). Use infra's local relay-staging
  *                     instance to exercise PR #25 and #26.
+ *   --l1-relay <url>  the relay for the KeyStore chain (Ethereum Sepolia).
+ *                     Defaults to the SDK's own, because infra's mode A serves
+ *                     Celo Sepolia only and pointing the registry chain at it
+ *                     fails even createWallet. Pass the same URL as --relay
+ *                     for a relay that serves both (fork mode B).
  *   --fork            fork mode: point both chains at anvil forks (see
  *                     SPINE_FORK_CELO_RPC / SPINE_FORK_SEPOLIA_RPC) and set
  *                     stablecoin balances with anvil_setStorageAt rather than
@@ -99,6 +104,14 @@ const has = (name: string) => argv.includes(`--${name}`);
 const FORK = has("fork");
 const KEEP = has("keep");
 const RELAY_URL = flag("relay") ?? process.env.RELAY_URL;
+/**
+ * The relay for the KeyStore chain (Ethereum Sepolia). Separate from --relay
+ * on purpose: infra's mode A serves Celo Sepolia only, so pointing the
+ * registry chain at it makes even createWallet fail with "does not serve chain
+ * 11155111". Defaults to the SDK's own relay, which does serve it. Pass the
+ * same URL as --relay for a relay that serves both (infra's fork mode B).
+ */
+const L1_RELAY_URL = flag("l1-relay") ?? process.env.L1_RELAY_URL;
 const ONLY = flag("steps")?.split(",").map((s) => s.trim().toLowerCase());
 const WANTED_TOKENS = flag("tokens")?.split(",").map((s) => s.trim().toLowerCase());
 
@@ -124,12 +137,15 @@ const sepoliaRpc = FORK
   ? (process.env.SPINE_FORK_SEPOLIA_RPC ?? "http://127.0.0.1:8546")
   : (process.env.SEPOLIA_RPC_URL || SEPOLIA.publicRpcUrl);
 
-const relayOverride = RELAY_URL ? { relayUrl: RELAY_URL } : {};
-const sepolia: NetworkConfig = { ...SEPOLIA, publicRpcUrl: sepoliaRpc, ...relayOverride };
+const sepolia: NetworkConfig = {
+  ...SEPOLIA,
+  publicRpcUrl: sepoliaRpc,
+  ...(L1_RELAY_URL ? { relayUrl: L1_RELAY_URL } : {}),
+};
 const celo: NetworkConfig = {
   ...CELO_SEPOLIA,
   publicRpcUrl: celoRpc,
-  ...relayOverride,
+  ...(RELAY_URL ? { relayUrl: RELAY_URL } : {}),
   registry: { kind: "cached", l1: sepolia, keyStoreCache: keyStoreCacheOf(CELO_SEPOLIA) },
 };
 
@@ -349,7 +365,9 @@ const S: {
 async function main() {
   console.log("Altana Celo spine: Celo Sepolia (11142220), KeyStore on Ethereum Sepolia (11155111)");
   console.log("===================================================================================");
-  console.log(`relay:   ${RELAY_LABEL}${FORK ? "" : ` -> ${celo.relayUrl}`}`);
+  console.log(`relay:   ${RELAY_LABEL}`);
+  console.log(`         Celo Sepolia -> ${celo.relayUrl}`);
+  console.log(`         Sepolia      -> ${sepolia.relayUrl}`);
   console.log(`celo:    ${celo.publicRpcUrl}`);
   console.log(`sepolia: ${sepolia.publicRpcUrl}`);
   console.log(`cache:   ${CACHE}`);
@@ -798,7 +816,9 @@ function report(): string {
   const out: string[] = [];
   out.push(`# Celo spine run, ${date}`);
   out.push("");
-  out.push(`- Relay: **${RELAY_LABEL}**${FORK ? "" : ` (\`${celo.relayUrl}\`)`}`);
+  out.push(`- Relay: **${RELAY_LABEL}**`);
+  out.push(`  - Celo Sepolia: \`${celo.relayUrl}\``);
+  out.push(`  - Ethereum Sepolia: \`${sepolia.relayUrl}\``);
   out.push(`- Celo Sepolia RPC: \`${celo.publicRpcUrl}\``);
   out.push(`- Sepolia RPC: \`${sepolia.publicRpcUrl}\``);
   out.push(`- Mirror (KeyStoreCache): \`${CACHE}\``);
