@@ -106,7 +106,7 @@ export function X402Panel() {
           <Field
             label="Paid URL"
             htmlFor="x402-url"
-            help="Start the seller with bun run serve:x402-celo, from tests/e2e."
+            help="Start the seller with bun run serve:x402-celo, from tests/e2e. It builds the x402-server package first, so it works from a clean checkout."
           >
             <input id="x402-url" value={url} onChange={(e) => setUrl(e.target.value)} />
           </Field>
@@ -138,7 +138,8 @@ export function X402Panel() {
           ) : (
             <div className="banner info">
               No seller answering at that address yet. Start one with bun run serve:x402-celo from tests/e2e,
-              with the shared testnet env sourced.
+              with the shared testnet env sourced. That script builds the x402-server package before it starts,
+              so a clean checkout works.
             </div>
           )}
         </div>
