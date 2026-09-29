@@ -1,6 +1,6 @@
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { SendPanel } from "../../src/components/SendPanel";
 import { WalletPanel } from "../../src/components/WalletPanel";
 import { EURM, TEST_ADDRESS, TEST_KEY, USDC, ZERO, fakeClient } from "../../src/test/fakeClient";
@@ -69,5 +69,29 @@ describe("SendPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "Send" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Recipient must be an address");
     expect(client.execute).not.toHaveBeenCalled();
+  });
+});
+
+describe("SendPanel failures", () => {
+  test("a failed send clears the previous result instead of leaving it on screen", async () => {
+    // qa's baseline pass hit this: a fresh failure rendered next to a stale
+    // CONFIRMED, with the error visible only in the activity log.
+    const client = fakeClient();
+    let calls = 0;
+    (client.execute as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      calls += 1;
+      if (calls === 1) {
+        return { callsId: "0x01" as const, status: "CONFIRMED" as const, transactionHash: "0xabc" as const, feeToken: USDC };
+      }
+      throw new Error("quote has asset deficits and is expected to fail");
+    });
+    setup(client);
+
+    await fillAndSend();
+    expect(await screen.findByText("CONFIRMED")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(screen.queryByText("CONFIRMED")).not.toBeInTheDocument());
+    expect(await screen.findByText(/asset deficits/)).toBeInTheDocument();
   });
 });

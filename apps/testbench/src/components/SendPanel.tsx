@@ -74,6 +74,10 @@ export function SendPanel() {
       }
       const feeToken = feeTokenOption(mode, one, list);
       setBusy(true);
+      // A send that fails must not leave the previous CONFIRMED result on
+      // screen next to it: qa hit exactly that, with the failure visible only
+      // in the activity log (evidence/2026-09-28-testbench-baseline.md).
+      setOutcome(undefined);
       try {
         await ensureRegistered();
         const before = holdings ?? (await client.holdings(wallet.address, state.chainId));
@@ -88,6 +92,10 @@ export function SendPanel() {
         const after = await client.holdings(wallet.address, state.chainId);
         dispatch({ type: "holdings/set", chainId: state.chainId, holdings: after });
         setOutcome({ result, before, after });
+      } catch (e) {
+        const { relayReason } = await import("../lib/errors");
+        setError(relayReason(e));
+        throw e;
       } finally {
         setBusy(false);
       }
