@@ -60,11 +60,26 @@ export function WalletPanel() {
   const native = nativeLabel(state.chainId, state.feeCurrenciesChainId === state.chainId ? state.feeCurrencies : undefined, chains);
   const holdings = state.holdingsChainId === state.chainId ? state.holdings : undefined;
 
-  /** Sends every held token in full, then the native balance minus a reserve for the last fee. */
+  /**
+   * Sends every held token in full, then the native balance minus a reserve for
+   * the last fee.
+   *
+   * The token list is re-read here rather than taken from the Balances table.
+   * It used to loop over the cached table while re-reading only for the native
+   * leg, so a token acquired since the table was last fetched was skipped: qa
+   * funded a wallet with USDC after the table loaded, swept, and the USDC
+   * stayed behind. The second attempt then failed for asset deficits, because
+   * the native balance was gone and the token transfer had no fee to pay with,
+   * leaving a wallet holding USDC it could not send.
+   *
+   * That is the worst possible failure for the one helper whose entire job is
+   * not stranding funds, and it fails hardest right after someone has used the
+   * wallet, which is exactly when they reach for it.
+   */
   const moveAll = () =>
     run("move all funds", async () => {
       setMoveError(undefined);
-      if (!wallet || !holdings) return;
+      if (!wallet) return;
       if (!isAddress(moveTo)) {
         setMoveError("Destination must be an address.");
         return;
@@ -74,7 +89,9 @@ export function WalletPanel() {
       const results: { asset: string; status: string; hash?: Hex }[] = [];
       try {
         await ensureRegistered();
-        for (const t of holdings.tokens) {
+        const held = await client.holdings(wallet.address, state.chainId);
+        dispatch({ type: "holdings/set", chainId: state.chainId, holdings: held });
+        for (const t of held.tokens) {
           if (!t.ok || t.raw === 0n) continue;
           const r = await client.execute({
             wallet: { address: wallet.address },

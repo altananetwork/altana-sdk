@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
 import { WalletPanel } from "../../src/components/WalletPanel";
 import { STORAGE_KEY } from "../../src/lib/storage";
-import { TEST_ADDRESS, TEST_KEY, fakeClient } from "../../src/test/fakeClient";
+import { TEST_ADDRESS, TEST_KEY, USDC, fakeClient } from "../../src/test/fakeClient";
 import { renderWith } from "../../src/test/render";
 
 describe("WalletPanel", () => {
@@ -76,5 +76,50 @@ describe("Move all funds", () => {
     expect(client.quoteExecute).toHaveBeenCalledTimes(1);
     expect((calls[1]!.calls as { value: bigint }[])[0]!.value).toBe(10n ** 18n - 90_000_000_000_000_000n);
     expect(await screen.findByText(/USDC: CONFIRMED/)).toBeInTheDocument();
+  });
+});
+
+describe("Move all funds re-reads what the wallet holds", () => {
+  test("a token acquired after the Balances table loaded is still swept", async () => {
+    // qa's fund-stranding bug: the loop used the cached table while only the
+    // native leg re-read, so USDC funded after the table loaded was left
+    // behind, and the second attempt failed for asset deficits because the
+    // native balance was already gone.
+    const client = fakeClient();
+    let call = 0;
+    (client.holdings as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      call += 1;
+      // The stale first read the table would have cached: native only.
+      if (call === 1) return { native: 10n ** 18n, tokens: [] };
+      // What the wallet actually holds by the time the sweep runs.
+      return {
+        native: 10n ** 18n,
+        tokens: [{ address: USDC, ok: true, raw: 90_000n, decimals: 6, symbol: "USDC", display: "0.09" }],
+      };
+    });
+
+    renderWith(client, <WalletPanel />, { v: 1, walletKey: TEST_KEY, sessions: [] });
+    await waitFor(() => expect(client.holdings).toHaveBeenCalled());
+
+    await userEvent.type(await screen.findByLabelText("Destination address"), TEST_ADDRESS);
+    await userEvent.click(screen.getByRole("button", { name: "Move everything" }));
+
+    await waitFor(() => expect(client.execute).toHaveBeenCalled());
+    const sent = vi.mocked(client.execute).mock.calls.map((c) => (c[0] as unknown as { calls: { to: string }[] }).calls[0]!.to);
+    expect(sent, "the USDC transfer must be among the calls").toContain(USDC);
+  });
+
+  test("it sweeps even when the Balances table was never loaded for this chain", async () => {
+    const client = fakeClient();
+    (client.holdings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      native: 10n ** 18n,
+      tokens: [{ address: USDC, ok: true, raw: 90_000n, decimals: 6, symbol: "USDC", display: "0.09" }],
+    });
+    renderWith(client, <WalletPanel />, { v: 1, walletKey: TEST_KEY, sessions: [] });
+    await userEvent.type(await screen.findByLabelText("Destination address"), TEST_ADDRESS);
+    await userEvent.click(screen.getByRole("button", { name: "Move everything" }));
+    await waitFor(() => expect(client.execute).toHaveBeenCalled());
+    const sent = vi.mocked(client.execute).mock.calls.map((c) => (c[0] as unknown as { calls: { to: string }[] }).calls[0]!.to);
+    expect(sent).toContain(USDC);
   });
 });
