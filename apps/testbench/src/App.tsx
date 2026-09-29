@@ -4,23 +4,43 @@ import { CrossChainPanel } from "./components/CrossChainPanel";
 import { FeeTokensPanel } from "./components/FeeTokensPanel";
 import { SendPanel } from "./components/SendPanel";
 import { SessionsPanel } from "./components/SessionsPanel";
+import { SettingsPanel } from "./components/SettingsPanel";
+import { WalkthroughPanel } from "./components/WalkthroughPanel";
 import { WalletPanel } from "./components/WalletPanel";
 import type { LogEntry } from "./lib/log";
+import { defaultSettings, type Settings } from "./lib/settings";
 import { useApp } from "./state/AppState";
 
-export type Tab = "wallet" | "fees" | "send" | "sessions" | "crosschain";
+export type Tab =
+  | "walkthrough"
+  | "wallet"
+  | "fees"
+  | "send"
+  | "sessions"
+  | "crosschain"
+  | "settings";
 
 export const TABS: { id: Tab; label: string }[] = [
+  { id: "walkthrough", label: "Walkthrough" },
   { id: "wallet", label: "Wallet" },
   { id: "fees", label: "Fee tokens" },
   { id: "send", label: "Send" },
   { id: "sessions", label: "Sessions" },
   { id: "crosschain", label: "Cross-chain" },
+  { id: "settings", label: "Settings" },
 ];
 
-export function App({ attachLog }: { attachLog?: (fn: (e: LogEntry) => void) => void }) {
+export type AppProps = {
+  attachLog?: (fn: (e: LogEntry) => void) => void;
+  settings?: Settings;
+  onSettings?: (next: Settings) => void;
+  initialTab?: Tab;
+};
+
+export function App({ attachLog, settings, onSettings, initialTab = "walkthrough" }: AppProps) {
   const { dispatch } = useApp();
-  const [tab, setTab] = useState<Tab>("wallet");
+  const [tab, setTab] = useState<Tab>(initialTab);
+  const activeSettings = settings ?? defaultSettings({});
   useEffect(() => {
     attachLog?.((e) => dispatch({ type: "log/add", entry: e }));
   }, [attachLog, dispatch]);
@@ -49,11 +69,15 @@ export function App({ attachLog }: { attachLog?: (fn: (e: LogEntry) => void) => 
       </header>
       <main className="main">
         <section aria-label={TABS.find((t) => t.id === tab)?.label}>
+          {tab === "walkthrough" && <WalkthroughPanel />}
           {tab === "wallet" && <WalletPanel />}
           {tab === "fees" && <FeeTokensPanel />}
           {tab === "send" && <SendPanel />}
           {tab === "sessions" && <SessionsPanel />}
           {tab === "crosschain" && <CrossChainPanel />}
+          {tab === "settings" && (
+            <SettingsPanel settings={activeSettings} onChange={(next) => onSettings?.(next)} />
+          )}
         </section>
         <aside aria-label="Activity log">
           <ActivityLogPanel />
