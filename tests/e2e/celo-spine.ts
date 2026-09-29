@@ -1,0 +1,1116 @@
+/**
+ * THE SPINE: the one flow Celo milestones 1 and 2 stand on, run end to end on
+ * Celo Sepolia (11142220) through public SDK calls, with the KeyStore on
+ * Ethereum Sepolia (11155111).
+ *
+ *   S1  A fresh wallet funded with CELO only. Sepolia ETH asserted 0.
+ *   S2a Execute on Celo paying CELO.
+ *   S2b Execute paying each stablecoin, from a wallet holding only that token.
+ *   S3  Register a session key in the Sepolia KeyStore paid from the Celo
+ *       balance. `isValidKey` true on Sepolia, and the write reports
+ *       `fundedFromChainId` = Celo Sepolia.
+ *   S4  The cache proof: the key is valid in the Celo mirror, with the
+ *       anchored L1 block printed.
+ *   S5a Use the session key.
+ *   S5b A second key with a short expiry, then rejection after it expires.
+ *   S5c Revoke the first key: rejection, and the mirror shows it revoked.
+ *   S6  Refund the funder.
+ *
+ * Every step is independent where it can be: a step that cannot run because
+ * an earlier one failed is reported SKIPPED with the reason, so one failure
+ * never hides the rest. The run always reaches S6 and always refunds.
+ *
+ * The script prints a step table and writes the same table, with explorer
+ * links, to `celo-harness/evidence/` (override with SPINE_EVIDENCE_DIR).
+ *
+ * Which relay:
+ *   --relay <url>     the relay for both chains (default: the SDK's testnet
+ *                     relay, i.e. Railway). Use infra's local relay-staging
+ *                     instance to exercise PR #25 and #26.
+ *   --l1-relay <url>  the relay for the KeyStore chain (Ethereum Sepolia).
+ *                     Defaults to the SDK's own, because infra's mode A serves
+ *                     Celo Sepolia only and pointing the registry chain at it
+ *                     fails even createWallet. Pass the same URL as --relay
+ *                     for a relay that serves both (fork mode B).
+ *   --fork            fork mode: point both chains at anvil forks (see
+ *                     SPINE_FORK_CELO_RPC / SPINE_FORK_SEPOLIA_RPC) and set
+ *                     stablecoin balances with anvil_setStorageAt rather than
+ *                     transferring them. Use when a token cannot be funded
+ *                     live; the result is marked "Proven (fork)".
+ *
+ *                     A fork is NOT a safe place to verify anything that
+ *                     depends on the gap between a transaction landing and the
+ *                     next request. anvil mines instantly, so it collapses
+ *                     that gap to zero: it hides bugs that need an unmined
+ *                     write (the relay hands out the same nonce to any two
+ *                     intents prepared before the first mines, which a fork
+ *                     can never show) and it creates at least one of its own
+ *                     (S5b's "key hash is unknown", fork-only and
+ *                     deterministic). Both directions, same cause. Prove that
+ *                     class of behaviour live.
+ *
+ * Other flags:
+ *   --steps s1,s2a    run only these steps (S6 always runs)
+ *   --tokens usdc,..  which stablecoins S2b should try (default: every one
+ *                     the relay accepts AND the funder can pay for)
+ *   --keep            skip S6, leaving the wallets funded for inspection
+ *
+ * Timing: S4 and S5c's mirror leg each wait for Celo Sepolia's L1 anchor to
+ * reach their write's block, which is about half an hour. The cache requires
+ * `sourceBlockNumber == IL1Block.number()` exactly, so this is a wait and not
+ * a retry. Budget an hour for a full live run and set a generous process
+ * timeout; SPINE_MIRROR_WAIT_MS overrides the 40-minute cap.
+ *   --wire            record every relay JSON-RPC call and write it next to
+ *                     the report, so a failed registration can be read as
+ *                     "requiredFunds asked X, the relay answered Y"
+ *
+ * Needs:
+ *   TEST_FUNDER_KEY       CELO on Celo Sepolia; no Sepolia ETH is spent
+ *   CELO_SEPOLIA_RPC_URL  optional read-RPC override
+ *   SEPOLIA_RPC_URL       optional; must serve eth_getProof at the block Celo
+ *                         Sepolia anchors (about 100 behind head)
+ *
+ * Run: bun run spine                    (from tests/e2e)
+ *      bun run spine -- --relay http://127.0.0.1:19129
+ */
+
+import {
+  createClient,
+  createPrivateKeySigner,
+  isCachedKeyValid,
+  readCachedKey,
+  keyStoreCacheOf,
+  CELO_SEPOLIA,
+  SEPOLIA,
+  NATIVE_TOKEN,
+  type FeeCurrency,
+  type NetworkConfig,
+  type Session,
+  type SessionLeg,
+} from "@altananetwork/sdk";
+import {
+  createPublicClient,
+  createTestClient,
+  createWalletClient,
+  encodeAbiParameters,
+  erc20Abi,
+  formatEther,
+  formatUnits,
+  http,
+  keccak256,
+  pad,
+  parseEther,
+  toHex,
+  type Address,
+  type Hex,
+  type PublicClient,
+} from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+import { describeLeg, legOf } from "./session-legs.js";
+
+// ---------------------------------------------------------------------------
+// Arguments and configuration
+// ---------------------------------------------------------------------------
+
+const argv = process.argv.slice(2);
+function flag(name: string): string | undefined {
+  const i = argv.indexOf(`--${name}`);
+  if (i >= 0 && argv[i + 1] && !argv[i + 1]!.startsWith("--")) return argv[i + 1];
+  const eq = argv.find((a) => a.startsWith(`--${name}=`));
+  return eq?.slice(name.length + 3);
+}
+const has = (name: string) => argv.includes(`--${name}`);
+
+const FORK = has("fork");
+const KEEP = has("keep");
+const RELAY_URL = flag("relay") ?? process.env.RELAY_URL;
+/**
+ * The relay for the KeyStore chain (Ethereum Sepolia). Separate from --relay
+ * on purpose: infra's mode A serves Celo Sepolia only, so pointing the
+ * registry chain at it makes even createWallet fail with "does not serve chain
+ * 11155111". Defaults to the SDK's own relay, which does serve it. Pass the
+ * same URL as --relay for a relay that serves both (infra's fork mode B).
+ */
+const L1_RELAY_URL = flag("l1-relay") ?? process.env.L1_RELAY_URL;
+const ONLY = flag("steps")?.split(",").map((s) => s.trim().toLowerCase());
+const WANTED_TOKENS = flag("tokens")?.split(",").map((s) => s.trim().toLowerCase());
+
+const TEST_FUNDER_KEY = process.env.TEST_FUNDER_KEY as Hex;
+if (!TEST_FUNDER_KEY) {
+  throw new Error(
+    "Set TEST_FUNDER_KEY: a key funded with CELO on Celo Sepolia. " +
+      "Load the shared file: set -a; source <ecosystem>/.env.testnet; set +a",
+  );
+}
+
+/** How much CELO each wallet the run creates is given. */
+const FUND_CELO = parseEther(process.env.SPINE_FUND_CELO ?? "0.5");
+/** Whole stablecoin units given to each S2b wallet. */
+const FUND_TOKEN = process.env.SPINE_FUND_TOKEN ?? "1";
+/** Seconds the short-lived key in S5b lives for. Must clear the relay's quote TTL. */
+const SHORT_EXPIRY_S = Number(process.env.SPINE_SHORT_EXPIRY ?? 150);
+
+const celoRpc = FORK
+  ? (process.env.SPINE_FORK_CELO_RPC ?? "http://127.0.0.1:8545")
+  : (process.env.CELO_SEPOLIA_RPC_URL || CELO_SEPOLIA.publicRpcUrl);
+const sepoliaRpc = FORK
+  ? (process.env.SPINE_FORK_SEPOLIA_RPC ?? "http://127.0.0.1:8546")
+  : (process.env.SEPOLIA_RPC_URL || SEPOLIA.publicRpcUrl);
+
+const sepolia: NetworkConfig = {
+  ...SEPOLIA,
+  publicRpcUrl: sepoliaRpc,
+  ...(L1_RELAY_URL ? { relayUrl: L1_RELAY_URL } : {}),
+};
+const celo: NetworkConfig = {
+  ...CELO_SEPOLIA,
+  publicRpcUrl: celoRpc,
+  ...(RELAY_URL ? { relayUrl: RELAY_URL } : {}),
+  registry: { kind: "cached", l1: sepolia, keyStoreCache: keyStoreCacheOf(CELO_SEPOLIA) },
+};
+
+/** What the report calls the relay this run used. */
+const RELAY_LABEL = FORK ? "fork" : RELAY_URL ? `local (${RELAY_URL})` : "railway";
+const CACHE = keyStoreCacheOf(celo);
+
+const KEYSTORE_ABI = [
+  {
+    name: "isValidKey",
+    type: "function",
+    stateMutability: "view",
+    inputs: [
+      { name: "user", type: "address" },
+      { name: "keyId", type: "bytes32" },
+    ],
+    outputs: [{ type: "bool" }],
+  },
+] as const;
+
+const celoPublic: PublicClient = createPublicClient({ chain: celo.chain, transport: http(celo.publicRpcUrl) });
+const sepoliaPublic: PublicClient = createPublicClient({ chain: sepolia.chain, transport: http(sepolia.publicRpcUrl) });
+const funder = privateKeyToAccount(TEST_FUNDER_KEY);
+const celoFunder = createWalletClient({ account: funder, chain: celo.chain, transport: http(celo.publicRpcUrl) });
+/** Only ever used in fork mode. */
+const anvil = createTestClient({ mode: "anvil", chain: celo.chain, transport: http(celo.publicRpcUrl) });
+
+const client = createClient({ chains: [celo] });
+
+/**
+ * `quoteExecute` lands with SDK PR #98. The spine uses it to show the fee
+ * before spending it, and to size the sweep, but it must not be a hard
+ * dependency: this script has to run against plain `staging` too. Returns
+ * undefined when the client does not have it, and every caller copes.
+ */
+type MaybeQuote = { fee: bigint; feeToken: Address } | undefined;
+async function quoteOrSkip(opts: Parameters<typeof client.execute>[0]): Promise<MaybeQuote> {
+  const q = (client as { quoteExecute?: (o: unknown) => Promise<{ fee: bigint; feeToken: Address }> }).quoteExecute;
+  if (typeof q !== "function") return undefined;
+  return q.call(client, opts);
+}
+
+// ---------------------------------------------------------------------------
+// Wire log (--wire)
+// ---------------------------------------------------------------------------
+
+/**
+ * Records every relay JSON-RPC call. The registration step is the one place
+ * where the question is not "did it fail" but "what exactly did the SDK ask
+ * the relay to fund, and what did the relay say back" — `requiredFunds` on
+ * wallet_prepareCalls against the relay's asset deficit. Off unless --wire.
+ */
+const wire: { method: string; url: string; params: unknown; result?: unknown; error?: unknown }[] = [];
+
+if (has("wire")) {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: any, init?: RequestInit) => {
+    const u = String(url);
+    let sent: any;
+    try {
+      sent = init?.body ? JSON.parse(String(init.body)) : undefined;
+    } catch {
+      /* not JSON-RPC; pass it through untouched */
+    }
+    const res = await realFetch(url as any, init);
+    if (!sent) return res;
+    const copy = res.clone();
+    let body: any;
+    try {
+      body = await copy.json();
+    } catch {
+      return res;
+    }
+    const reqs = Array.isArray(sent) ? sent : [sent];
+    const answers = Array.isArray(body) ? body : [body];
+    for (const req of reqs) {
+      const answer = answers.find((a: any) => a?.id === req?.id) ?? answers[0];
+      wire.push({
+        method: req?.method,
+        url: u,
+        params: req?.params,
+        ...(answer?.error ? { error: answer.error } : { result: answer?.result }),
+      });
+    }
+    return res;
+  }) as typeof fetch;
+}
+
+/** JSON with bigints and no surprises, for the wire log. */
+const j = (v: unknown) => JSON.stringify(v, (_k, x) => (typeof x === "bigint" ? x.toString() : x), 2);
+
+// ---------------------------------------------------------------------------
+// The step table
+// ---------------------------------------------------------------------------
+
+type StepStatus = "PASS" | "FAIL" | "SKIPPED";
+type StepRow = {
+  id: string;
+  what: string;
+  status: StepStatus;
+  relay: string;
+  txs: { label: string; hash: Hex; chain: "celo" | "sepolia" }[];
+  notes: string[];
+  error?: string;
+  seconds: number;
+};
+
+const rows: StepRow[] = [];
+const t0 = performance.now();
+const ms = () => `${((performance.now() - t0) / 1000).toFixed(1)}s`;
+
+/**
+ * A fork's transactions exist only on that anvil instance. Linking them to a
+ * public explorer produces a link that 404s, which reads as fabricated
+ * evidence rather than as a fork result — so in fork mode the report shows the
+ * bare hash and says where it lives, and links only what anyone can open.
+ */
+function explorer(chain: "celo" | "sepolia", hash: Hex): string | undefined {
+  if (FORK) return undefined;
+  return `${chain === "celo" ? celo.explorer : sepolia.explorer}/tx/${hash}`;
+}
+
+/** How a transaction is rendered in the report: a link live, a plain hash on a fork. */
+function txCell(chain: "celo" | "sepolia", hash: Hex): string {
+  const url = explorer(chain, hash);
+  return url ? `[\`${hash.slice(0, 18)}…\`](${url})` : `\`${hash}\` (fork-local)`;
+}
+
+/** The handle a step body uses to record what it proved. */
+type Ctx = {
+  tx: (label: string, hash: Hex | undefined, chain?: "celo" | "sepolia") => void;
+  note: (line: string) => void;
+};
+
+/**
+ * Runs one step, catching everything. A step that throws is FAIL and the run
+ * continues; `skipIf` returns a reason string to record SKIPPED instead.
+ */
+async function step(
+  id: string,
+  what: string,
+  body: (ctx: Ctx) => Promise<void>,
+  skipIf?: () => string | undefined,
+): Promise<boolean> {
+  const started = performance.now();
+  const row: StepRow = { id, what, status: "PASS", relay: RELAY_LABEL, txs: [], notes: [], seconds: 0 };
+  const ctx: Ctx = {
+    tx: (label, hash, chain = "celo") => {
+      if (hash) row.txs.push({ label, hash, chain });
+    },
+    note: (line) => row.notes.push(line),
+  };
+
+  const selected = !ONLY || ONLY.includes(id.toLowerCase());
+  const skip = !selected ? `not in --steps` : skipIf?.();
+  if (skip) {
+    row.status = "SKIPPED";
+    row.notes.push(skip);
+    rows.push(row);
+    console.log(`\n[${id}] ${what}\n    SKIPPED: ${skip}`);
+    return false;
+  }
+
+  console.log(`\n[${id}] ${what}`);
+  try {
+    await body(ctx);
+    row.seconds = (performance.now() - started) / 1000;
+    rows.push(row);
+    console.log(`    PASS [${ms()}]`);
+    return true;
+  } catch (err) {
+    row.status = "FAIL";
+    row.error = err instanceof Error ? err.message : String(err);
+    row.seconds = (performance.now() - started) / 1000;
+    rows.push(row);
+    console.log(`    FAIL: ${row.error.split("\n")[0]!.slice(0, 300)}`);
+    return false;
+  }
+}
+
+function assert(cond: unknown, msg: string): asserts cond {
+  if (!cond) throw new Error(`ASSERT FAILED: ${msg}`);
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Every wallet this run created, so S6 can sweep them all back. */
+const created: { address: Address; signer: ReturnType<typeof createPrivateKeySigner>; token?: FeeCurrency }[] = [];
+
+const balanceOf = (token: Address, owner: Address) =>
+  celoPublic.readContract({ address: token, abi: erc20Abi, functionName: "balanceOf", args: [owner] });
+
+/**
+ * Gives `holder` exactly `amount` of `token` on a fork by finding the
+ * balances mapping slot and writing it. Same approach as fork-celo-x402-server.
+ */
+async function dealToken(token: Address, holder: Address, amount: bigint) {
+  for (let slot = 0; slot < 60; slot++) {
+    const key = keccak256(
+      encodeAbiParameters([{ type: "address" }, { type: "uint256" }], [holder, BigInt(slot)]),
+    );
+    await anvil.setStorageAt({ address: token, index: key, value: pad(toHex(amount)) });
+    if ((await balanceOf(token, holder)) === amount) return;
+    await anvil.setStorageAt({ address: token, index: key, value: pad("0x0") });
+  }
+  throw new Error(`could not find the balances slot for ${token} on the fork`);
+}
+
+/** Puts `amount` of `token` into `holder`: a transfer live, a storage write on a fork. */
+async function fundToken(token: Address, holder: Address, amount: bigint, ctx: Ctx, label: string) {
+  if (FORK) {
+    await dealToken(token, holder, amount);
+    ctx.note(`${label}: balance set on the fork (anvil_setStorageAt)`);
+    return;
+  }
+  const hash = await celoFunder.writeContract({
+    address: token,
+    abi: erc20Abi,
+    functionName: "transfer",
+    args: [holder, amount],
+  });
+  await celoPublic.waitForTransactionReceipt({ hash });
+  ctx.tx(label, hash);
+  await waitForBalance(() => balanceOf(token, holder), amount, `${label} of ${holder}`);
+}
+
+/**
+ * Waits until a read RPC actually reports `want`. forno keeps serving the old
+ * balance for several seconds after a transfer's receipt, and the relay reads
+ * the same node: without this the run funds a wallet, then quotes a deficit on
+ * it. Returns the balance it settled on.
+ */
+async function waitForBalance(read: () => Promise<bigint>, want: bigint, what: string): Promise<bigint> {
+  let seen = await read();
+  for (let i = 0; i < 40 && seen < want; i++) {
+    await new Promise((r) => setTimeout(r, 1_500));
+    seen = await read();
+  }
+  if (seen < want) throw new Error(`${what}: the RPC still reports ${seen}, expected at least ${want}`);
+  return seen;
+}
+
+/** A fresh wallet holding `celoAmount` CELO and nothing else. */
+async function freshWallet(celoAmount: bigint, ctx: Ctx, label: string) {
+  const signer = createPrivateKeySigner();
+  const wallet = await client.createWallet({ signer });
+  if (celoAmount > 0n) {
+    if (FORK) {
+      await anvil.setBalance({ address: wallet.address, value: celoAmount });
+      ctx.note(`${label}: ${formatEther(celoAmount)} CELO set on the fork`);
+    } else {
+      const hash = await celoFunder.sendTransaction({ to: wallet.address, value: celoAmount });
+      await celoPublic.waitForTransactionReceipt({ hash });
+      ctx.tx(label, hash);
+      await waitForBalance(
+        () => celoPublic.getBalance({ address: wallet.address }),
+        celoAmount,
+        `CELO funding of ${wallet.address}`,
+      );
+    }
+  }
+  created.push({ address: wallet.address, signer });
+  return { wallet, signer };
+}
+
+const sendZero = (to: Address) => ({ to, value: 0n, data: "0x" as Hex });
+
+function printLegRows(legs: readonly SessionLeg[], ctx: Ctx) {
+  for (const leg of legs) {
+    console.log(`    ${describeLeg(leg)}`);
+    if (leg.transactionHash) {
+      ctx.tx(`${leg.kind} on ${leg.chainId}`, leg.transactionHash, leg.chainId === sepolia.chainId ? "sepolia" : "celo");
+    }
+    // describeLeg cuts the reason at 160 characters for the console. The whole
+    // reason is the diagnosis when a leg fails, so the report keeps all of it.
+    if (leg.reason && leg.status !== "CONFIRMED") {
+      ctx.note(`leg ${leg.kind} on chain ${leg.chainId} ${leg.status}: ${leg.reason}`);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The run
+// ---------------------------------------------------------------------------
+
+/** State shared between steps; each step guards on what it needs. */
+const S: {
+  wallet?: Awaited<ReturnType<typeof freshWallet>>;
+  session?: Session & { keyId: Hex; legs: SessionLeg[]; cacheSync: Promise<SessionLeg[]> };
+  registryOk?: boolean;
+  cacheOk?: boolean;
+  stablecoins: FeeCurrency[];
+} = { stablecoins: [] };
+
+async function main() {
+  console.log("Altana Celo spine: Celo Sepolia (11142220), KeyStore on Ethereum Sepolia (11155111)");
+  console.log("===================================================================================");
+  console.log(`relay:   ${RELAY_LABEL}`);
+  console.log(`         Celo Sepolia -> ${celo.relayUrl}`);
+  console.log(`         Sepolia      -> ${sepolia.relayUrl}`);
+  console.log(`celo:    ${celo.publicRpcUrl}`);
+  console.log(`sepolia: ${sepolia.publicRpcUrl}`);
+  console.log(`cache:   ${CACHE}`);
+  console.log(`funder:  ${funder.address}`);
+
+  const [funderCelo, funderSepolia] = await Promise.all([
+    celoPublic.getBalance({ address: funder.address }),
+    sepoliaPublic.getBalance({ address: funder.address }).catch(() => 0n),
+  ]);
+  console.log(`         ${formatEther(funderCelo)} CELO, ${formatEther(funderSepolia)} ETH on Sepolia`);
+  if (!FORK && funderCelo < parseEther("1")) {
+    throw new Error(`Fund ${funder.address} with at least 1 CELO: https://faucet.celo.org/celo-sepolia`);
+  }
+
+  // Which stablecoins this relay accepts, and which the funder can actually pay for.
+  const currencies = await client.feeCurrencies().catch((e) => {
+    console.log(`    feeCurrencies() failed: ${e instanceof Error ? e.message : e}`);
+    return { currencies: [] as FeeCurrency[], rateTtl: 0, chainId: celo.chainId };
+  });
+  console.log(`\nrelay fee tokens (${currencies.currencies.length}):`);
+  for (const c of currencies.currencies) {
+    console.log(
+      `    ${c.symbol.padEnd(6)} ${c.address} dp=${String(c.decimals).padEnd(2)} ` +
+        `1 ${c.symbol} = ${formatUnits(c.nativeRate, 18)} CELO${c.isNative ? "  (native)" : ""}`,
+    );
+  }
+  S.stablecoins = currencies.currencies.filter(
+    (c) => !c.isNative && (!WANTED_TOKENS || WANTED_TOKENS.includes(c.uid)),
+  );
+
+  // -------------------------------------------------------------------------
+  // S1: a wallet with CELO and no ETH anywhere
+  // -------------------------------------------------------------------------
+  await step("S1", "Fresh wallet funded with CELO only; Sepolia ETH asserted 0", async (ctx) => {
+    S.wallet = await freshWallet(FUND_CELO, ctx, "fund wallet with CELO");
+    const { wallet } = S.wallet;
+    console.log(`    wallet ${wallet.address}`);
+    const [onCelo, onSepolia] = await Promise.all([
+      celoPublic.getBalance({ address: wallet.address }),
+      sepoliaPublic.getBalance({ address: wallet.address }),
+    ]);
+    ctx.note(`wallet ${wallet.address}`);
+    ctx.note(`holds ${formatEther(onCelo)} CELO on Celo Sepolia, ${formatEther(onSepolia)} ETH on Sepolia`);
+    assert(onCelo >= FUND_CELO, `expected at least ${formatEther(FUND_CELO)} CELO, got ${formatEther(onCelo)}`);
+    assert(onSepolia === 0n, `the wallet must start with 0 ETH on Sepolia, holds ${formatEther(onSepolia)}`);
+    console.log(`    ${formatEther(onCelo)} CELO on Celo, 0 ETH on Sepolia`);
+  });
+
+  // -------------------------------------------------------------------------
+  // S2a: execute paying CELO
+  // -------------------------------------------------------------------------
+  await step(
+    "S2a",
+    "Execute on Celo paying CELO",
+    async (ctx) => {
+      const { wallet, signer } = S.wallet!;
+      const quote = await quoteOrSkip({
+        wallet,
+        signer,
+        calls: sendZero(funder.address),
+        feeToken: NATIVE_TOKEN,
+      });
+      if (quote) {
+        console.log(`    quoted max fee: ${formatEther(quote.fee)} CELO`);
+        ctx.note(`quoted max fee ${formatEther(quote.fee)} CELO (quoteExecute, nothing sent)`);
+      } else {
+        console.log("    quoteExecute not in this SDK build; skipping the quote check");
+        ctx.note("quoteExecute not available in this SDK build (it lands with #98); the fee was not quoted first");
+      }
+
+      const before = await celoPublic.getBalance({ address: wallet.address });
+      const res = await client.execute({
+        wallet,
+        signer,
+        calls: sendZero(funder.address),
+        feeToken: NATIVE_TOKEN,
+      });
+      console.log(`    status ${res.status}  tx ${res.transactionHash}`);
+      ctx.tx("execute paying CELO", res.transactionHash);
+      assert(res.status === "CONFIRMED", `execute status ${res.status}`);
+      assert(
+        res.feeToken?.toLowerCase() === NATIVE_TOKEN,
+        `expected the fee in native CELO, relay charged ${res.feeToken}`,
+      );
+      const after = await celoPublic.getBalance({ address: wallet.address });
+      const paid = before - after;
+      console.log(`    charged ${formatEther(paid)} CELO`);
+      if (quote) {
+        ctx.note(`charged ${formatEther(paid)} CELO, at or under the ${formatEther(quote.fee)} quoted`);
+        assert(paid <= quote.fee, `charged ${formatEther(paid)} CELO, more than the quoted ${formatEther(quote.fee)}`);
+      } else {
+        ctx.note(`charged ${formatEther(paid)} CELO`);
+        assert(paid > 0n, "the relay charged nothing, which means the fee was not taken in CELO");
+      }
+    },
+    () => (S.wallet ? undefined : "S1 did not produce a wallet"),
+  );
+
+  // -------------------------------------------------------------------------
+  // S2b: execute paying each stablecoin, one wallet per token
+  // -------------------------------------------------------------------------
+  for (const currency of S.stablecoins) {
+    await step(
+      `S2b-${currency.uid}`,
+      `Execute paying ${currency.symbol}, from a wallet holding only ${currency.symbol}`,
+      async (ctx) => {
+        const amount = BigInt(FUND_TOKEN) * 10n ** BigInt(currency.decimals);
+        if (!FORK) {
+          const held = await balanceOf(currency.address, funder.address);
+          assert(
+            held >= amount,
+            `the funder holds ${formatUnits(held, currency.decimals)} ${currency.symbol}, needs ${FUND_TOKEN}. ` +
+              `There is no Mento route into this token from USDC; run with --fork, or have Doris use ` +
+              `https://faucet.celo.org/celo-sepolia`,
+          );
+        }
+
+        // No CELO at all: this is the whole point of the step.
+        const { wallet, signer } = await freshWallet(0n, ctx, "create wallet");
+        await fundToken(currency.address, wallet.address, amount, ctx, `fund wallet with ${currency.symbol}`);
+        console.log(`    wallet ${wallet.address} holds ${FUND_TOKEN} ${currency.symbol}, 0 CELO`);
+        const nativeHeld = await celoPublic.getBalance({ address: wallet.address });
+        assert(nativeHeld === 0n, `the wallet must hold no CELO, holds ${formatEther(nativeHeld)}`);
+
+        const before = await balanceOf(currency.address, wallet.address);
+        // Name no feeToken: the relay must pick the only token the wallet holds.
+        const res = await client.execute({ wallet, signer, calls: sendZero(funder.address) });
+        console.log(`    status ${res.status}  tx ${res.transactionHash}  feeToken ${res.feeToken}`);
+        ctx.tx(`execute paying ${currency.symbol}`, res.transactionHash);
+        assert(res.status === "CONFIRMED", `execute status ${res.status}`);
+        assert(
+          res.feeToken?.toLowerCase() === currency.address.toLowerCase(),
+          `expected the fee in ${currency.symbol} (${currency.address}), relay charged ${res.feeToken}`,
+        );
+        const after = await balanceOf(currency.address, wallet.address);
+        console.log(`    charged ${formatUnits(before - after, currency.decimals)} ${currency.symbol}`);
+        ctx.note(
+          `charged ${formatUnits(before - after, currency.decimals)} ${currency.symbol}; ` +
+            `CELO balance still ${formatEther(await celoPublic.getBalance({ address: wallet.address }))}`,
+        );
+        created[created.length - 1]!.token = currency;
+      },
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // S3: register the session key in the Sepolia KeyStore, paid from Celo
+  // -------------------------------------------------------------------------
+  await step(
+    "S3",
+    "Register a session key in the Sepolia KeyStore, paid from the Celo balance",
+    async (ctx) => {
+      const { wallet, signer } = S.wallet!;
+      const beforeSepolia = await sepoliaPublic.getBalance({ address: wallet.address });
+      assert(beforeSepolia === 0n, `the wallet must hold 0 ETH on Sepolia before the write, holds ${formatEther(beforeSepolia)}`);
+
+      // populateCache: false here so S3 proves only the registry write; S4
+      // does the proof on its own and can fail without taking S3 with it.
+      const session = await client.grantSession({
+        wallet,
+        signer,
+        permissions: {
+          calls: [{ to: funder.address }],
+          spend: [{ limit: parseEther("1"), period: "day" }],
+        },
+        expiry: Math.floor(Date.now() / 1000) + 3600,
+        register: true,
+        populateCache: false,
+        onStatus: (s, d) => console.log(`    ${s}${d ? ` (chain ${d.chainId})` : ""} [${ms()}]`),
+      });
+      printLegRows(session.legs, ctx);
+      assert(session.status === "granted", `grantSession status ${session.status}`);
+      S.session = session as typeof S.session;
+
+      // What the SDK actually asked the relay to fund, and what it answered.
+      // This is the whole diagnosis when the write does not land.
+      for (const w of wire.filter((x) => x.method === "wallet_prepareCalls")) {
+        const p: any = Array.isArray(w.params) ? w.params[0] : w.params;
+        if (Number(p?.chainId ?? 0) !== sepolia.chainId && p?.chainId !== numberToHexish(sepolia.chainId)) continue;
+        ctx.note(`wallet_prepareCalls -> ${w.url}, chainId ${p?.chainId}, requiredFunds ${j(p?.capabilities?.requiredFunds ?? p?.requiredFunds)}`);
+        if (w.error) ctx.note(`relay answered error: ${j(w.error)}`);
+      }
+
+      const registry = legOf(session.legs, "registry", sepolia.chainId);
+      assert(registry.status === "CONFIRMED", `registry write ${registry.status}: ${registry.reason ?? ""}`);
+      assert(
+        registry.fundedFromChainId === celo.chainId,
+        `the Sepolia write was not funded from Celo Sepolia (fundedFromChainId=${registry.fundedFromChainId}). ` +
+          `This is the interop path: a relay without PR #25 cannot do it.`,
+      );
+      ctx.note(`registry write funded from chain ${registry.fundedFromChainId} (Celo Sepolia), source tx ${registry.sourceTransactionHash}`);
+      ctx.tx("registry write source (Celo)", registry.sourceTransactionHash, "celo");
+
+      const valid = await sepoliaPublic.readContract({
+        address: sepolia.keyStore,
+        abi: KEYSTORE_ABI,
+        functionName: "isValidKey",
+        args: [wallet.address, session.keyId],
+      });
+      console.log(`    Sepolia KeyStore.isValidKey = ${valid}`);
+      assert(valid, "the key is not valid on the Sepolia KeyStore");
+      ctx.note(`Sepolia KeyStore.isValidKey(${wallet.address}, ${session.keyId}) = true`);
+
+      // The wallet never SPENDS Sepolia ETH. The relay refunds the unspent part
+      // of its quoted maximum onto Sepolia, so a non-zero balance here is the
+      // change from a write Celo paid for, not ETH the wallet had to hold.
+      const afterSepolia = await sepoliaPublic.getBalance({ address: wallet.address });
+      console.log(`    Sepolia ETH: 0 before, ${formatEther(afterSepolia)} after (relay change, never a prerequisite)`);
+      ctx.note(`Sepolia ETH 0 before the write, ${formatEther(afterSepolia)} after: unspent change refunded by the relay`);
+      S.registryOk = true;
+    },
+    () => (S.wallet ? undefined : "S1 did not produce a wallet"),
+  );
+
+  // -------------------------------------------------------------------------
+  // S4: the cache proof into the Celo mirror
+  // -------------------------------------------------------------------------
+  await step(
+    "S4",
+    "Prove the key into the Celo mirror (KeyStoreCache) and read it back",
+    async (ctx) => {
+      const { wallet, signer } = S.wallet!;
+      const session = S.session!;
+      // The mirror's L1 anchor moves about every 20 minutes, so allow 30.
+      // One result, not a list of legs: it carries the proof's own transaction
+      // plus the anchor it was built against and the entry it produced.
+      const proof = await client.syncSessionToCache({ wallet, signer, session });
+      console.log(`    status ${proof.status}  tx ${proof.transactionHash}  attempts ${proof.attempts}`);
+      ctx.tx("cache proof", proof.transactionHash);
+      assert(proof.status === "CONFIRMED", `cache proof ${proof.status}`);
+      console.log(`    anchored at Sepolia block ${proof.l1BlockNumber}, cache ${proof.keyStoreCache}`);
+      ctx.note(`proof anchored at Sepolia (L1) block ${proof.l1BlockNumber} after ${proof.attempts} attempt(s)`);
+      ctx.note(`cache ${proof.keyStoreCache}: revoked=${proof.cachedKey.revoked}`);
+
+      const cached = await readCachedKey(celoPublic, CACHE, wallet.address, session.keyId);
+      const fresh = await isCachedKeyValid(celoPublic, CACHE, wallet.address, session.keyId);
+      console.log(`    cache.getCachedKey: revoked=${cached.revoked}  isCachedKeyValid=${fresh}`);
+      assert(
+        cached.publicKey.toLowerCase() === session.publicKey.toLowerCase(),
+        "the mirror does not hold this session's public key",
+      );
+      assert(!cached.revoked, "the mirror reports the key as revoked before any revocation");
+      ctx.note(`Celo mirror ${CACHE}: key present, revoked=false, isCachedKeyValid=${fresh}`);
+      S.cacheOk = true;
+    },
+    () => (S.registryOk ? undefined : "S3 did not register the key"),
+  );
+
+  // -------------------------------------------------------------------------
+  // S5a: use the session key
+  // -------------------------------------------------------------------------
+  await step(
+    "S5a",
+    "Execute as the session key",
+    async (ctx) => {
+      const res = await client.execute({ session: S.session!, calls: sendZero(funder.address) });
+      console.log(`    status ${res.status}  tx ${res.transactionHash}`);
+      ctx.tx("session execute", res.transactionHash);
+      assert(res.status === "CONFIRMED", `session execute status ${res.status}`);
+      ctx.note(`the session key transacted; fee charged in ${res.feeToken}`);
+    },
+    () => (S.session ? undefined : "S3 did not produce a session"),
+  );
+
+  // -------------------------------------------------------------------------
+  // S5b: a short-lived key is rejected once it expires
+  // -------------------------------------------------------------------------
+  await step(
+    "S5b",
+    `A key with a ${SHORT_EXPIRY_S}s timebox is rejected after it expires`,
+    async (ctx) => {
+      const { wallet, signer } = S.wallet!;
+      const expiry = Math.floor(Date.now() / 1000) + SHORT_EXPIRY_S;
+      // register: false keeps this independent of the KeyStore: the account
+      // alone enforces expiry, which is exactly what this step tests.
+      const shortLived = await client.grantSession({
+        wallet,
+        signer,
+        permissions: {
+          calls: [{ to: funder.address }],
+          spend: [{ limit: parseEther("0.1"), period: "day" }],
+        },
+        expiry,
+        register: false,
+        populateCache: false,
+      });
+      assert(shortLived.status === "granted", `short-lived grant status ${shortLived.status}`);
+      printLegRows(shortLived.legs, ctx);
+      ctx.note(`granted a key expiring at unix ${expiry}`);
+
+      // It works now.
+      const before = await client.execute({ session: shortLived, calls: sendZero(funder.address) });
+      console.log(`    before expiry: ${before.status}  tx ${before.transactionHash}`);
+      ctx.tx("session execute before expiry", before.transactionHash);
+      assert(before.status === "CONFIRMED", `the short-lived key failed before its expiry: ${before.status}`);
+
+      // Wait it out. The account compares against the block timestamp, so the
+      // chain's clock is what has to pass the expiry, not this process's.
+      if (FORK) {
+        // anvil only mines on demand, so wall-clock waiting would never move
+        // block.timestamp. Push the fork's clock forward instead.
+        //
+        // Read this before debugging account state after the jump. anvil
+        // evaluates `eth_call` at `latest` against the NEXT block's timestamp,
+        // so the jump has already applied to a read you make afterwards. The
+        // account filters expired keys out of `getKeys()`, so the key you just
+        // authorized reads as absent the moment you have moved the clock past
+        // its expiry — which looks exactly like "the grant silently failed"
+        // and is not. Check the authorize transaction's `Authorized` event
+        // instead, or read at the block the authorize landed in. This cost an
+        // hour on 2026-09-28; see
+        // celo-harness/evidence/2026-09-28-s5b-fork-only-failure.md.
+        const jump = expiry - Math.floor(Date.now() / 1000) + 30;
+        await anvil.increaseTime({ seconds: Math.max(jump, 1) });
+        await anvil.mine({ blocks: 1 });
+        console.log(`    fork clock pushed ${Math.max(jump, 1)}s forward`);
+      } else {
+        const waitMs = (expiry - Math.floor(Date.now() / 1000) + 15) * 1000;
+        console.log(`    waiting ${Math.round(waitMs / 1000)}s for the timebox to expire...`);
+        await new Promise((r) => setTimeout(r, Math.max(waitMs, 0)));
+        for (let i = 0; i < 30; i++) {
+          const b = await celoPublic.getBlock();
+          if (Number(b.timestamp) > expiry) break;
+          await new Promise((r) => setTimeout(r, 3_000));
+        }
+      }
+      const chainNow = Number((await celoPublic.getBlock()).timestamp);
+      console.log(`    chain time ${chainNow} is past the ${expiry} expiry by ${chainNow - expiry}s`);
+      ctx.note(`chain time ${chainNow}, ${chainNow - expiry}s past the expiry`);
+
+      // And now it must not.
+      let rejected = false;
+      let how = "";
+      try {
+        const after = await client.execute({ session: shortLived, calls: sendZero(funder.address) });
+        if (after.status !== "CONFIRMED") {
+          rejected = true;
+          how = `execute returned ${after.status}`;
+          ctx.tx("session execute after expiry (rejected)", after.transactionHash);
+        }
+      } catch (err) {
+        rejected = true;
+        how = err instanceof Error ? err.message.split("\n")[0]!.slice(0, 200) : String(err);
+      }
+      console.log(`    after expiry: ${rejected ? `rejected (${how})` : "STILL WORKS"}`);
+      assert(rejected, "the expired key still executed: the timebox was not enforced");
+      ctx.note(`after expiry the key was rejected: ${how}`);
+    },
+    () => (S.wallet ? undefined : "S1 did not produce a wallet"),
+  );
+
+  // -------------------------------------------------------------------------
+  // S5c: revoke, then rejection, then the mirror shows it revoked
+  // -------------------------------------------------------------------------
+  await step(
+    "S5c",
+    "Revoke the session key: execute rejected, and the mirror shows it revoked",
+    async (ctx) => {
+      const { wallet, signer } = S.wallet!;
+      const session = S.session!;
+      const res = await client.revokeSession({
+        wallet,
+        signer,
+        session,
+        onStatus: (s, d) => console.log(`    ${s}${d ? ` (chain ${d.chainId})` : ""} [${ms()}]`),
+      });
+      printLegRows(res.legs, ctx);
+      assert(res.status === "revoked", `revokeSession status ${res.status}`);
+      assert(
+        legOf(res.legs, "account", celo.chainId).status === "CONFIRMED",
+        "the account revoke did not confirm",
+      );
+
+      // The key must stop working, whatever the mirror says.
+      let rejected = false;
+      let how = "";
+      try {
+        const after = await client.execute({ session, calls: sendZero(funder.address) });
+        if (after.status !== "CONFIRMED") {
+          rejected = true;
+          how = `execute returned ${after.status}`;
+        }
+      } catch (err) {
+        rejected = true;
+        how = err instanceof Error ? err.message.split("\n")[0]!.slice(0, 200) : String(err);
+      }
+      console.log(`    after revoke: ${rejected ? `rejected (${how})` : "STILL WORKS"}`);
+      assert(rejected, "the revoked key still executed");
+      ctx.note(`after revoke the key was rejected: ${how}`);
+
+      // The mirror is the third-party-verifiable record; it may lag the relay.
+      if (!S.cacheOk) {
+        ctx.note("mirror check skipped: S4 never proved the key in, so there is nothing to see revoked");
+        return;
+      }
+      // The post-revocation proof cannot exist until the L2's anchor reaches
+      // the revoke's L1 block, which is about half an hour on Celo Sepolia:
+      // the anchor advances ~28-30 blocks every ~20 minutes and trails the
+      // Sepolia head by 70-95. Polling for a minute, as this did, asks for a
+      // proof that cannot be there yet and calls a timing window a failure.
+      // See celo-harness/evidence/2026-09-29-celo-sepolia-anchor-lag.md.
+      const mirrorWaitMs = Number(process.env.SPINE_MIRROR_WAIT_MS ?? 40 * 60 * 1000);
+      const deadline = Date.now() + mirrorWaitMs;
+      let cached = await readCachedKey(celoPublic, CACHE, wallet.address, session.keyId);
+      let waited = 0;
+      while (!cached.revoked && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 15_000));
+        waited += 15;
+        if (waited % 300 === 0) console.log(`    still waiting for the anchor, ${waited / 60}m elapsed`);
+        cached = await readCachedKey(celoPublic, CACHE, wallet.address, session.keyId);
+      }
+      console.log(`    mirror after revoke: revoked=${cached.revoked} (waited ${Math.round(waited / 60)}m)`);
+      assert(
+        cached.revoked,
+        `the mirror still reports the key as live ${Math.round(waited / 60)} minutes after the revoke. ` +
+          `The cache requires sourceBlockNumber == the current anchor, so this is only a real failure ` +
+          `once the anchor has passed the revoke's L1 block`,
+      );
+      ctx.note(`Celo mirror ${CACHE}: revoked=true, after waiting ${Math.round(waited / 60)}m for the anchor`);
+    },
+    () => (S.session ? undefined : "S3 did not produce a session"),
+  );
+
+  // -------------------------------------------------------------------------
+  // S6: refund the funder. Always runs, whatever failed above.
+  // -------------------------------------------------------------------------
+  await step(
+    "S6",
+    "Refund every wallet this run created back to the funder",
+    async (ctx) => {
+      if (FORK) {
+        ctx.note("fork mode: nothing to refund, the chain is thrown away");
+        return;
+      }
+      let swept = 0;
+      for (const w of created) {
+        // Tokens first: a token wallet holds no CELO, so the relay pays itself
+        // from the token, which is the only way the balance can come home.
+        if (w.token) {
+          const held = await balanceOf(w.token.address, w.address);
+          if (held > 0n) {
+            try {
+              const res = await client.execute({
+                wallet: { address: w.address },
+                signer: w.signer,
+                calls: {
+                  to: w.token.address,
+                  value: 0n,
+                  data: `0xa9059cbb${funder.address.slice(2).padStart(64, "0")}${held.toString(16).padStart(64, "0")}` as Hex,
+                },
+              });
+              ctx.tx(`return ${w.token.symbol} from ${w.address.slice(0, 10)}`, res.transactionHash);
+              swept++;
+            } catch (err) {
+              ctx.note(`could not return ${w.token.symbol} from ${w.address}: ${err instanceof Error ? err.message.slice(0, 120) : err}`);
+            }
+          }
+          continue;
+        }
+        const bal = await celoPublic.getBalance({ address: w.address });
+        if (bal === 0n) continue;
+        // Leave enough for the relay's fee; send the rest, sized from a quote.
+        try {
+          const quote = await quoteOrSkip({
+            wallet: { address: w.address },
+            signer: w.signer,
+            calls: { to: funder.address, value: 1n, data: "0x" },
+            feeToken: NATIVE_TOKEN,
+          });
+          // The reserve is ABANDONED, not returned: this wallet's key dies with
+          // the process, so whatever is held back is stranded just as surely as
+          // a failed sweep strands the lot. Reserving generously is not the
+          // safe side — it is the same loss, smaller and quieter.
+          //
+          // So start tight and widen only on failure. A rejected attempt costs
+          // nothing (the relay refuses it before anything is sent), which makes
+          // retrying strictly better than guessing high once.
+          //
+          // The first fallback is 0.06 CELO against a measured maximum-fee
+          // quote of 0.049022220000490224 on Celo Sepolia (2026-09-28, where
+          // the chain enforces a 50 gwei base-fee floor), then doubling.
+          let reserve = quote ? quote.fee * 2n : parseEther("0.06");
+          let sent = false;
+          for (let attempt = 0; attempt < 4 && !sent; attempt++, reserve *= 2n) {
+            const send = bal > reserve ? bal - reserve : 0n;
+            if (send === 0n) {
+              ctx.note(`${w.address} holds ${formatEther(bal)} CELO, under the ${formatEther(reserve)} reserve: left as dust`);
+              break;
+            }
+            try {
+              const res = await client.execute({
+                wallet: { address: w.address },
+                signer: w.signer,
+                calls: { to: funder.address, value: send, data: "0x" },
+                feeToken: NATIVE_TOKEN,
+              });
+              ctx.tx(`return ${formatEther(send)} CELO from ${w.address.slice(0, 10)}`, res.transactionHash);
+              sent = true;
+              swept++;
+            } catch (err) {
+              ctx.note(
+                `sweep of ${w.address} at a ${formatEther(reserve)} reserve failed, widening: ` +
+                  `${err instanceof Error ? err.message.slice(0, 100) : err}`,
+              );
+            }
+          }
+        } catch (err) {
+          ctx.note(`could not sweep ${w.address}: ${err instanceof Error ? err.message.slice(0, 120) : err}`);
+        }
+      }
+      ctx.note(`${swept} of ${created.length} wallets returned their balance`);
+      console.log(`    swept ${swept}/${created.length}`);
+    },
+    () => (KEEP ? "--keep: wallets left funded on purpose" : undefined),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The report
+// ---------------------------------------------------------------------------
+
+function report(): string {
+  const date = new Date().toISOString().slice(0, 10);
+  const pass = rows.filter((r) => r.status === "PASS").length;
+  const fail = rows.filter((r) => r.status === "FAIL").length;
+  const skip = rows.filter((r) => r.status === "SKIPPED").length;
+
+  const out: string[] = [];
+  out.push(`# Celo spine run, ${date}`);
+  out.push("");
+  out.push(`- Relay: **${RELAY_LABEL}**`);
+  out.push(`  - Celo Sepolia: \`${celo.relayUrl}\``);
+  out.push(`  - Ethereum Sepolia: \`${sepolia.relayUrl}\``);
+  out.push(`- Celo Sepolia RPC: \`${celo.publicRpcUrl}\``);
+  out.push(`- Sepolia RPC: \`${sepolia.publicRpcUrl}\``);
+  out.push(`- Mirror (KeyStoreCache): \`${CACHE}\``);
+  out.push(`- Funder: \`${funder.address}\``);
+  out.push(`- Result: **${pass} passed, ${fail} failed, ${skip} skipped** in ${ms()}`);
+  if (FORK) {
+    out.push("");
+    out.push(
+      "> Fork run. Every transaction below exists only on the anvil forks this " +
+        "run used, so the hashes are shown plain rather than linked: there is " +
+        "nothing for a public explorer to show.",
+    );
+  }
+  out.push("");
+  out.push("| Step | What | Result | Relay |");
+  out.push("|---|---|---|---|");
+  for (const r of rows) {
+    const mark = r.status === "PASS" ? "**PASS**" : r.status === "FAIL" ? "**FAIL**" : "skipped";
+    out.push(`| ${r.id} | ${r.what} | ${mark} | ${r.status === "SKIPPED" ? "-" : r.relay} |`);
+  }
+  out.push("");
+  for (const r of rows) {
+    out.push(`## ${r.id} — ${r.what}`);
+    out.push("");
+    out.push(`**${r.status}**${r.status === "SKIPPED" ? "" : ` in ${r.seconds.toFixed(1)}s on ${r.relay}`}`);
+    out.push("");
+    if (r.error) {
+      out.push("Error:");
+      out.push("");
+      out.push("```");
+      out.push(r.error.slice(0, 2000));
+      out.push("```");
+      out.push("");
+    }
+    for (const n of r.notes) out.push(`- ${n}`);
+    if (r.txs.length) {
+      out.push("");
+      out.push("| Tx | Chain | Hash |");
+      out.push("|---|---|---|");
+      for (const t of r.txs) {
+        out.push(`| ${t.label} | ${t.chain === "celo" ? "Celo Sepolia" : "Sepolia"} | ${txCell(t.chain, t.hash)} |`);
+      }
+    }
+    out.push("");
+  }
+  return out.join("\n");
+}
+
+function printTable() {
+  console.log("\n===================================================================================");
+  console.log("Spine result");
+  console.log("===================================================================================");
+  const w = Math.max(...rows.map((r) => r.what.length), 4);
+  for (const r of rows) {
+    const mark = r.status === "PASS" ? "PASS   " : r.status === "FAIL" ? "FAIL   " : "SKIPPED";
+    console.log(`${r.id.padEnd(10)} ${mark}  ${r.what.padEnd(w)}  ${r.status === "SKIPPED" ? "" : r.relay}`);
+    for (const t of r.txs) {
+      console.log(`${" ".repeat(10)}         ${t.label}: ${explorer(t.chain, t.hash) ?? `${t.hash} (fork-local)`}`);
+    }
+    if (r.error) console.log(`${" ".repeat(10)}         ! ${r.error.split("\n")[0]!.slice(0, 200)}`);
+  }
+  const pass = rows.filter((r) => r.status === "PASS").length;
+  const fail = rows.filter((r) => r.status === "FAIL").length;
+  const skip = rows.filter((r) => r.status === "SKIPPED").length;
+  console.log(`\n${pass} passed, ${fail} failed, ${skip} skipped in ${ms()}`);
+}
+
+/** Chain ids travel as hex on the wire; compare against both spellings. */
+function numberToHexish(n: number) {
+  return `0x${n.toString(16)}`;
+}
+
+const evidenceDir =
+  process.env.SPINE_EVIDENCE_DIR ??
+  new URL("../../../../evidence/", import.meta.url).pathname;
+
+async function writeReport() {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const tag = FORK ? "fork" : RELAY_URL ? "local" : "railway";
+  const file = `${evidenceDir.replace(/\/$/, "")}/${new Date().toISOString().slice(0, 10)}-spine-${tag}-${stamp.slice(11)}.md`;
+  try {
+    await Bun.write(file, report());
+    console.log(`\nReport: ${file}`);
+    if (wire.length) {
+      const wireFile = file.replace(/\.md$/, "-wire.json");
+      await Bun.write(wireFile, j(wire));
+      console.log(`Wire:   ${wireFile}  (${wire.length} relay calls)`);
+    }
+  } catch (err) {
+    console.log(`\nCould not write the report to ${file}: ${err instanceof Error ? err.message : err}`);
+    console.log(report());
+  }
+}
+
+main()
+  .catch((err) => {
+    console.error("\nThe spine run could not start:", err);
+    rows.push({
+      id: "setup",
+      what: "Start the run",
+      status: "FAIL",
+      relay: RELAY_LABEL,
+      txs: [],
+      notes: [],
+      error: err instanceof Error ? err.message : String(err),
+      seconds: 0,
+    });
+  })
+  .then(async () => {
+    printTable();
+    await writeReport();
+    process.exit(rows.some((r) => r.status === "FAIL") ? 1 : 0);
+  });
