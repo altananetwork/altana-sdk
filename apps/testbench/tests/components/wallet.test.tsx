@@ -62,7 +62,7 @@ describe("WalletPanel", () => {
 });
 
 describe("Move all funds", () => {
-  test("sends each held token in full, then native minus the reserve, fee automatic", async () => {
+  test("sends each held token in full, then native minus the fee the relay quoted", async () => {
     const client = fakeClient({
       holdings: vi.fn(async () => ({ native: 10n ** 18n, tokens: [{ address: "0x01C5C0122039549AD1493B8220cABEdD739BC44E" as const, ok: true as const, raw: 3_000_000n, decimals: 6, symbol: "USDC", display: "3" }] })),
     });
@@ -73,7 +73,8 @@ describe("Move all funds", () => {
     const calls = (client.execute as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0] as Record<string, unknown>);
     expect(calls[0]).not.toHaveProperty("feeToken");
     expect((calls[0]!.calls as { to: string }[])[0]!.to).toBe("0x01C5C0122039549AD1493B8220cABEdD739BC44E");
-    expect((calls[1]!.calls as { value: bigint }[])[0]!.value).toBe(10n ** 18n - 50_000_000_000_000_000n);
+    expect(client.quoteExecute).toHaveBeenCalledTimes(1);
+    expect((calls[1]!.calls as { value: bigint }[])[0]!.value).toBe(10n ** 18n - 90_000_000_000_000_000n);
     expect(await screen.findByText(/USDC: CONFIRMED/)).toBeInTheDocument();
   });
 });

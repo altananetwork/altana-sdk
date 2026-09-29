@@ -28,6 +28,8 @@ export function fakeClient(overrides: Partial<TestbenchClient> = {}): FakeClient
     holdings: vi.fn(async () => holdingsWithUsdc),
     feeCurrencies: vi.fn(async (chainId) => ({ chainId, currencies: celoFees, rateTtl: 300 })),
     execute: vi.fn(async () => ({ callsId: "0x01" as const, status: "CONFIRMED" as const, transactionHash: "0xabc" as const, feeToken: USDC })),
+    // The relay's fee for a native send, in CELO: 0.09, as seen on Celo Sepolia on 2026-09-17.
+    quoteExecute: vi.fn(async () => ({ fee: 90_000_000_000_000_000n, feeToken: ZERO, value: 0n, feeTokenDeficit: 0n, nativeNeeded: 90_000_000_000_000_000n, nativeNeededFromRelay: false })),
     grantSession: vi.fn(async () => {
       throw new Error("grantSession not configured in this test");
     }),

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { encodeFunctionData, erc20Abi, parseEther, type Address as Addr, type Hex } from "viem";
+import { NATIVE_TOKEN } from "@altananetwork/sdk";
+import { encodeFunctionData, erc20Abi, type Address as Addr, type Hex } from "viem";
 import { generatePrivateKey } from "viem/accounts";
 import { NATIVE_FAUCETS, STABLECOINS, chainName } from "../lib/chains";
 import { nativeLabel } from "../lib/fees";
@@ -84,26 +85,18 @@ export function WalletPanel() {
           results.push({ asset: t.symbol, status: r.status, hash: r.transactionHash });
           setMoved([...results]);
         }
-        // The relay's fee is only known from its quote, and it moves with gas. Start from a
-        // small reserve and, when the relay says the send would leave the wallet short, keep
-        // more back and try again.
+        // The fee comes from the relay's quote for this exact send, never from a guess: send
+        // everything minus that fee when the relay charges in the native token, everything
+        // when it charges in a token the wallet no longer holds nothing of.
         const current = await client.holdings(wallet.address, state.chainId);
-        let reserve = parseEther(state.chainId === 11155111 ? "0.002" : "0.05");
-        for (let attempt = 0; attempt < 4 && current.native > reserve; attempt++) {
-          try {
-            const r = await client.execute({
-              wallet: { address: wallet.address },
-              signer: wallet.signer,
-              chainId: state.chainId,
-              calls: [{ to, value: current.native - reserve, data: "0x" }],
-            });
-            results.push({ asset: native, status: r.status, hash: r.transactionHash });
-            setMoved([...results]);
-            break;
-          } catch (e) {
-            if (!/asset deficits|cannot pay|insufficient/i.test(e instanceof Error ? e.message : String(e))) throw e;
-            reserve *= 2n;
-          }
+        if (current.native > 0n) {
+          const quoteArgs = { wallet: { address: wallet.address }, signer: wallet.signer, chainId: state.chainId };
+          const q = await client.quoteExecute({ ...quoteArgs, calls: [{ to, value: current.native, data: "0x" }] });
+          const value = q.feeToken.toLowerCase() === NATIVE_TOKEN ? current.native - q.fee : current.native;
+          if (value <= 0n) throw new Error(`The relay's fee (${formatAmount(q.fee, 18)} ${native}) exceeds the wallet's ${native} balance.`);
+          const r = await client.execute({ ...quoteArgs, calls: [{ to, value, data: "0x" }] });
+          results.push({ asset: native, status: r.status, hash: r.transactionHash });
+          setMoved([...results]);
         }
         dispatch({ type: "holdings/set", chainId: state.chainId, holdings: await client.holdings(wallet.address, state.chainId) });
       } finally {
@@ -257,7 +250,7 @@ export function WalletPanel() {
             )}
           </Card>
 
-          <Card title="Move all funds" hint="Sends every held token, then the native balance minus a small reserve for the fee, to another address on this chain. The fee is taken automatically.">
+          <Card title="Move all funds" hint="Sends every held token, then the native balance minus the relay's quoted fee, to another address on this chain.">
             <Field label="Destination address" htmlFor="move-to" error={moveError}>
               <div className="row">
                 <input id="move-to" value={moveTo} placeholder="0x…" onChange={(e) => setMoveTo(e.target.value)} />
