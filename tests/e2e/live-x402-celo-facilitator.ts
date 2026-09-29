@@ -148,15 +148,22 @@ async function main() {
   // ── 4. Buyer B: an Altana smart account. Whether the facilitator's verifier
   // is ERC-1271-aware decides whether an agent wallet can use it at all. ──
   console.log(`\n[4] buyer B, an Altana smart account: /verify`);
-  const smart = await smartAccountPayment(requirement, funderWallet);
+  // Signed for v2 explicitly: a v2 accepts[] entry carries no version, and a
+  // v1 envelope is refused for its format before the signature is looked at.
+  const smart = await smartAccountPayment({ ...requirement, x402Version: 2 }, funderWallet);
   const verifyB = await post("verify", smart.header, requirement);
   console.log(`    wallet ${smart.wallet}`);
   console.log(`    ${verifyB.status} ${JSON.stringify(verifyB.body)}`);
   if (verifyB.body.isValid === true) {
-    console.log("    the facilitator verifies ERC-1271: an Altana wallet can pay through it");
+    console.log("    the facilitator verifies ERC-1271: an Altana wallet can pay it over EIP-3009");
   } else {
-    console.log(`    the facilitator does NOT accept a smart-account signature: ${verifyB.body.invalidReason ?? "no reason"}`);
-    console.log("    Altana wallets then pay through local settlement on this route, not the facilitator");
+    // Measured 2026-09-29: `FiatTokenV2: invalid signature`. Celo Sepolia's
+    // USDC checks the EIP-3009 signature with ecrecover and knows nothing about
+    // ERC-1271, so the rejection is the token's, not the facilitator's, and no
+    // facilitator can settle it. An Altana wallet pays this route over Permit2
+    // instead, which settles locally.
+    console.log(`    rejected: ${verifyB.body.invalidReason} ${verifyB.body.invalidReasonDetails ?? ""}`);
+    console.log("    an Altana smart account cannot pay this token over EIP-3009; use the Permit2 rail");
   }
 
   // ── 5. Settle, if we have a key. ──
