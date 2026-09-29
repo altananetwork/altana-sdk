@@ -2,8 +2,10 @@
  * KeyStore core: ABIs, chain config, encode helpers, and read helpers.
  *
  * This is the single source of truth reused by the MCP server (./index.ts),
- * the demo gating endpoint, the demo runner, and every test. It is
- * SDK-independent (no @altananetwork/* dependency) — only viem.
+ * the demo gating endpoint, the demo runner, and every test. The KeyStore
+ * itself needs nothing but viem; the L2 cache proof is the one exception and
+ * lives in ./cache.ts, which borrows the SDK's proof builder rather than
+ * keeping a second copy of the KeyStore's storage layout (see that file).
  *
  * The KeyStore is a NON-custodial authorization registry. It stores which
  * keys are authorized for an account and their liveness (revoked / expired).
@@ -17,7 +19,7 @@ import {
   encodeFunctionData,
   keccak256,
 } from "viem";
-import { bsc, bscTestnet, mainnet, sepolia } from "viem/chains";
+import { bsc, bscTestnet, celo, celoSepolia, mainnet, sepolia } from "viem/chains";
 
 export const ZERO_ADDRESS =
   "0x0000000000000000000000000000000000000000" as Address;
@@ -137,6 +139,26 @@ export type ChainConfig = {
   rpcUrl: string;
   explorerUrl: string;
   currencySymbol: string;
+  /**
+   * The L2 whose cache mirrors this registry, when the chain was named by an L2
+   * alias. `ALTANA_CHAIN=celo-sepolia` resolves to the Sepolia registry *and*
+   * carries Celo Sepolia here, so the cache tools know which mirror is meant;
+   * `ALTANA_CHAIN=sepolia` resolves to the same registry with no L2, because
+   * several L2s are rooted in it and nothing says which.
+   */
+  l2?: L2CacheConfig;
+};
+
+/** An L2 that reads this registry through a KeyStoreCache. */
+export type L2CacheConfig = {
+  key: string;
+  chainId: number;
+  chain: Chain;
+  /** KeyStoreCacheOPStack, which accepts the proof and answers `isValidKey` locally. */
+  cache: Address;
+  rpcUrl: string;
+  explorerUrl: string;
+  currencySymbol: string;
 };
 
 export const CHAINS: Record<string, ChainConfig> = {
@@ -210,9 +232,52 @@ const ALIASES: Record<string, string> = {
   "11142220": "sepolia",
 };
 
+/**
+ * The L2 caches, keyed by the alias that names them. Only an L2 alias carries
+ * one: `celo` and `42220` mean Celo, `celo-sepolia` and `11142220` mean Celo
+ * Sepolia. Naming the registry chain directly (`ethereum`, `sepolia`) leaves
+ * `l2` unset, because more than one L2 is rooted in each and the server would
+ * be guessing.
+ *
+ * Addresses from the Altana KeyStore deployment manifests.
+ */
+export const L2_CACHES: Record<string, L2CacheConfig> = {
+  celo: {
+    key: "celo",
+    chainId: 42220,
+    chain: celo,
+    // Celo mainnet has no cache deployed yet; the entry exists so the tools can
+    // say that rather than resolving to a codeless address.
+    cache: ZERO_ADDRESS,
+    rpcUrl: "https://celo-rpc.publicnode.com",
+    explorerUrl: "https://celoscan.io",
+    currencySymbol: "CELO",
+  },
+  "celo-sepolia": {
+    key: "celo-sepolia",
+    chainId: 11142220,
+    chain: celoSepolia,
+    // KeyStoreCacheOPStack 1.1.1, deploy block 35678512.
+    cache: "0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD",
+    rpcUrl: "https://forno.celo-sepolia.celo-testnet.org",
+    explorerUrl: "https://sepolia.celoscan.io",
+    currencySymbol: "CELO",
+  },
+};
+
+/** Which L2 cache an alias names, if any. */
+const L2_ALIASES: Record<string, string> = {
+  celo: "celo",
+  "42220": "celo",
+  "celo-sepolia": "celo-sepolia",
+  "11142220": "celo-sepolia",
+};
+
 export function resolveChain(name?: string): ChainConfig {
   const k = (name ?? "bnb").toLowerCase();
-  return CHAINS[k] ?? CHAINS[ALIASES[k] ?? ""] ?? CHAINS["bnb"];
+  const l1 = CHAINS[k] ?? CHAINS[ALIASES[k] ?? ""] ?? CHAINS["bnb"];
+  const l2 = L2_CACHES[L2_ALIASES[k] ?? ""];
+  return l2 ? { ...l1, l2 } : l1;
 }
 
 /** v0 convention: keyId = keccak256(SEC1-uncompressed publicKey bytes). */

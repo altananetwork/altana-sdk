@@ -5,7 +5,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { getAddress } from "viem";
-import { CHAINS, buildRegisterCall, buildRevokeCall, resolveChain } from "./keystore.js";
+import { CHAINS, L2_CACHES, buildRegisterCall, buildRevokeCall, resolveChain } from "./keystore.js";
 
 const PUBKEY = ("0x04" + "11".repeat(32) + "22".repeat(32)) as `0x${string}`;
 
@@ -22,14 +22,41 @@ describe("resolveChain", () => {
   });
 
   test("celo-sepolia and 11142220 resolve to the Sepolia registry", () => {
-    expect(resolveChain("celo-sepolia")).toBe(CHAINS["sepolia"]!);
-    expect(resolveChain("11142220")).toBe(CHAINS["sepolia"]!);
-    expect(resolveChain("Celo-Sepolia")).toBe(CHAINS["sepolia"]!);
+    for (const name of ["celo-sepolia", "11142220", "Celo-Sepolia"]) {
+      const c = resolveChain(name);
+      expect(c.key).toBe("sepolia");
+      expect(c.keyStore).toBe(CHAINS["sepolia"]!.keyStore);
+      expect(c.controller).toBe(CHAINS["sepolia"]!.controller);
+    }
   });
 
   test("celo and 42220 resolve to the Ethereum registry", () => {
-    expect(resolveChain("celo")).toBe(CHAINS["ethereum"]!);
-    expect(resolveChain("42220")).toBe(CHAINS["ethereum"]!);
+    for (const name of ["celo", "42220"]) {
+      const c = resolveChain(name);
+      expect(c.key).toBe("ethereum");
+      expect(c.keyStore).toBe(CHAINS["ethereum"]!.keyStore);
+    }
+  });
+
+  // An L2 alias also names the mirror, because that is the whole difference
+  // between it and naming the registry chain: several L2s are rooted in each
+  // registry, so "sepolia" cannot say which cache a proof is meant for.
+  test("an L2 alias carries its cache; the registry chain's own name does not", () => {
+    expect(resolveChain("celo-sepolia").l2).toEqual(L2_CACHES["celo-sepolia"]!);
+    expect(resolveChain("11142220").l2?.chainId).toBe(11142220);
+    expect(resolveChain("celo").l2).toEqual(L2_CACHES["celo"]!);
+    expect(resolveChain("42220").l2?.chainId).toBe(42220);
+
+    expect(resolveChain("sepolia").l2).toBeUndefined();
+    expect(resolveChain("ethereum").l2).toBeUndefined();
+    expect(resolveChain("bnb").l2).toBeUndefined();
+  });
+
+  test("Celo Sepolia's cache is the deployed KeyStoreCacheOPStack; Celo's is not deployed yet", () => {
+    expect(L2_CACHES["celo-sepolia"]!.cache).toBe("0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD");
+    // Zero on purpose, so requireL2 can say "no cache deployed" instead of
+    // encoding a proof to a codeless address.
+    expect(L2_CACHES["celo"]!.cache).toBe("0x0000000000000000000000000000000000000000");
   });
 
   test("existing names still resolve, unknown falls back to bnb", () => {
