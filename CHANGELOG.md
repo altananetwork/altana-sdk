@@ -68,9 +68,7 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
   An L2 alias now also names its mirror: `ALTANA_CHAIN=celo-sepolia` resolves to
   the Sepolia registry and Celo Sepolia's cache, while `ALTANA_CHAIN=sepolia`
   resolves to the same registry with no L2, because several L2s are rooted in it.
-  `L2_RPC_URL` overrides the L2 read RPC. **The revoke direction is the one that
-  matters:** until the proof is relayed, anything reading the Celo cache still
-  sees a live key.
+  `L2_RPC_URL` overrides the L2 read RPC.
 
 - **Keystore writes funded from the L2.** `grantSession`, `revokeSession` and
   `registerSessionKey` no longer need ETH on the Keystore chain: when the wallet
