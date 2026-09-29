@@ -3,9 +3,10 @@ import {
   NATIVE_TOKEN,
   SEPOLIA,
   signerFromPrivateKey,
+  type Session,
   type SessionLeg,
 } from "@altananetwork/sdk";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { keccak256, type Address, type Hex } from "viem";
 import { chainName } from "../lib/chains";
@@ -37,6 +38,10 @@ import { Card } from "./shared/Card";
 import { Field } from "./shared/Field";
 
 const CELO = CELO_SEPOLIA.chainId;
+/** The session's daily cap, 0.01 CELO: enough for the demo, small enough to be a real limit. */
+const SESSION_SPEND_LIMIT = 10n ** 16n;
+/** An hour: long enough to walk the demo, short enough that a stranded key expires. */
+const SESSION_LIFETIME_SECONDS = 3600;
 
 function statusBadge(s: StepState["status"]) {
   switch (s) {
@@ -72,6 +77,9 @@ export function WalkthroughPanel() {
   // Step 4 makes the session key; step 6 uses and revokes it. Held here rather
   // than in the step's `data`, which is persisted and displayed.
   const [sessionKey, setSessionKey] = useState<Hex>();
+  // Step 6 must present the same expiry step 4 granted, or the account rejects
+  // the key it is holding.
+  const sessionExpiry = useRef(0);
 
   const chains = client.chains;
   const celoConfigured = chains.some((c) => c.chainId === CELO);
@@ -222,6 +230,7 @@ export function WalkthroughPanel() {
       }
       const key = generatePrivateKey();
       setSessionKey(key);
+      sessionExpiry.current = Math.floor(Date.now() / 1000) + SESSION_LIFETIME_SECONDS;
       const sessionSigner = signerFromPrivateKey(key);
       const publicKey = privateKeyToAccount(key).publicKey;
       const grant = await client.grantSession({
@@ -229,8 +238,8 @@ export function WalkthroughPanel() {
         signer: wallet.signer,
         sessionSigner,
         chainIds: [CELO],
-        permissions: { spend: [{ limit: 10n ** 16n, period: "day" }] },
-        expiry: Math.floor(Date.now() / 1000) + 3600,
+        permissions: { spend: [{ limit: SESSION_SPEND_LIMIT, period: "day" }] },
+        expiry: sessionExpiry.current,
         onStatus: (status, detail) => log(`grantSession ${status}`, chainName(detail?.chainId ?? CELO, chains)),
       });
       const legs = grant.legs ?? [];
@@ -294,17 +303,20 @@ export function WalkthroughPanel() {
       const txs: { chainId: number; hash: Hex; label: string }[] = [];
 
       // Use it: a transaction signed by the session key, not the wallet key.
+      // The permissions and expiry mirror the grant in step 4; the SDK sends
+      // the key itself, and the account enforces what it was granted.
+      const session: Session = {
+        walletAddress: wallet.address,
+        signer: signerFromPrivateKey(sessionKey),
+        publicKey,
+        permissions: { spend: [{ limit: SESSION_SPEND_LIMIT, period: "day" }] },
+        expiry: sessionExpiry.current,
+      };
       const used = await client.execute({
-        session: {
-          walletAddress: wallet.address,
-          signer: signerFromPrivateKey(sessionKey),
-          publicKey,
-          permissions: { spend: [{ limit: 10n ** 16n, period: "day" }] },
-          expiry: Math.floor(Date.now() / 1000) + 3600,
-        },
+        session,
         chainId: CELO,
         calls: [{ to: wallet.address, value: 0n, data: "0x" }],
-      } as never);
+      });
       if (used.transactionHash) {
         txs.push({ chainId: CELO, hash: used.transactionHash, label: "signed by the session key" });
       }
