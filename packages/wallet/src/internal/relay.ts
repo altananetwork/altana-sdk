@@ -88,79 +88,90 @@ export function buildPublicClient(network: NetworkConfig): PublicClient {
 }
 
 /**
- * Bootstrap a smart-account wallet for the given signer and return the
- * wallet's address. Counterfactual — no on-chain action; the setCode lands
- * as a preCall on the first execute.
+ * How a wallet is provisioned, decided once and used on every chain.
  *
- *  - privateKey signers: the signer's own EOA address is the wallet address;
- *    the signer signs the EIP-7702 authorization directly.
- *  - passkey signers: EIP-7702 setCode requires a secp256k1 signature on the
- *    authorization tuple, but a passkey is P256. We generate a one-shot
- *    throwaway secp256k1, use it to sign the upgrade with the passkey listed
- *    as `authorizeKeys`, then discard the throwaway. The wallet address is
- *    the throwaway's EOA address, and the only authority on the smart
- *    account from that point forward is the passkey.
+ * A wallet is one address, so the EIP-7702 authorization on every chain is
+ * signed by the same secp256k1 key over that one address:
+ *
+ *  - privateKey signers: the signer's own EOA is the wallet address, and the
+ *    signer signs the authorization directly.
+ *  - passkey signers: setCode needs a secp256k1 signature on the
+ *    authorization tuple and a passkey is P256, so one throwaway secp256k1
+ *    stands in. It signs every chain's authorization with the passkey listed
+ *    as `authorizeKeys`, and is discarded when provisioning returns, leaving
+ *    the passkey as the account's only authority. The wallet address is the
+ *    throwaway's EOA address.
+ *
+ * The plan is built once per wallet, never per chain: a throwaway generated
+ * per chain would give the wallet a different address on each one.
  */
+export type ProvisioningPlan = {
+  /** The wallet's address, the same on every chain. */
+  walletAddress: Address;
+  /** Keys the account authorizes at creation, as porto keys. */
+  authorizeKeys: readonly unknown[];
+  /** Signs each chain's authorization digest, as the owner of `walletAddress`. */
+  signDigest: (digest: Hex) => Promise<Hex>;
+};
+
+/** The provisioning plan for a signer: its wallet address and who signs the upgrade. */
+export function planAccountProvisioning(signer: Signer): ProvisioningPlan {
+  if (hasRawPrivateKey(signer)) {
+    const account = privateKeyToAccount(signer._privateKey);
+    return {
+      walletAddress: account.address,
+      authorizeKeys: [Key.fromSecp256k1({ privateKey: signer._privateKey, role: "admin" })],
+      signDigest: (digest) => signer.signDigest(digest),
+    };
+  }
+
+  if (isPasskeySigner(signer)) {
+    const throwaway = privateKeyToAccount(generatePrivateKey());
+    return {
+      walletAddress: throwaway.address,
+      authorizeKeys: [passkeyToPortoKey(signer, { role: "admin" })],
+      signDigest: (digest) => throwaway.sign({ hash: digest }),
+    };
+  }
+
+  throw new Error(unsupportedSignerMessage(signer.type, "create a wallet"));
+}
+
+/**
+ * Registers a planned account with one chain's relay. Counterfactual: no
+ * on-chain action, the setCode lands as a preCall on that chain's first
+ * execute. Call it once per chain with the same plan.
+ */
+export async function provisionAccount(
+  client: ReturnType<typeof buildRelayClient>,
+  plan: ProvisioningPlan,
+): Promise<void> {
+  const prepared: any = await withRelayChainCheck(client, () =>
+    prepareUpgradeAccount(client, {
+      address: plan.walletAddress,
+      authorizeKeys: plan.authorizeKeys as never,
+    }),
+  );
+
+  const signatures: Record<string, Hex> = {};
+  for (const [name, digest] of Object.entries(prepared.digests ?? {})) {
+    signatures[name] = await plan.signDigest(digest as Hex);
+  }
+
+  await upgradeAccount(client as any, {
+    context: prepared.context,
+    signatures,
+  } as any);
+}
+
+/** Plan and provision on one chain, for callers that need no more than that. */
 export async function registerAccount(
   client: ReturnType<typeof buildRelayClient>,
   signer: Signer,
 ): Promise<{ walletAddress: Address }> {
-  if (hasRawPrivateKey(signer)) {
-    const adminKey = Key.fromSecp256k1({
-      privateKey: signer._privateKey,
-      role: "admin",
-    });
-    const account = privateKeyToAccount(signer._privateKey);
-
-    const prepared: any = await withRelayChainCheck(client, () =>
-      prepareUpgradeAccount(client, {
-        address: account.address,
-        authorizeKeys: [adminKey],
-      }),
-    );
-
-    const signatures: Record<string, Hex> = {};
-    for (const [name, digest] of Object.entries(prepared.digests ?? {})) {
-      signatures[name] = await signer.signDigest(digest as Hex);
-    }
-
-    await upgradeAccount(client as any, {
-      context: prepared.context,
-      signatures,
-    } as any);
-
-    return { walletAddress: account.address };
-  }
-
-  if (isPasskeySigner(signer)) {
-    // One-shot throwaway EOA. Lives only for the duration of this function;
-    // discarded when it goes out of scope. The passkey is the lasting
-    // authority via authorizeKeys.
-    const throwawayPk = generatePrivateKey();
-    const throwawayAccount = privateKeyToAccount(throwawayPk);
-    const passkeyAdminKey = passkeyToPortoKey(signer, { role: "admin" });
-
-    const prepared: any = await withRelayChainCheck(client, () =>
-      prepareUpgradeAccount(client, {
-        address: throwawayAccount.address,
-        authorizeKeys: [passkeyAdminKey],
-      }),
-    );
-
-    const signatures: Record<string, Hex> = {};
-    for (const [name, digest] of Object.entries(prepared.digests ?? {})) {
-      signatures[name] = await throwawayAccount.sign({ hash: digest as Hex });
-    }
-
-    await upgradeAccount(client as any, {
-      context: prepared.context,
-      signatures,
-    } as any);
-
-    return { walletAddress: throwawayAccount.address };
-  }
-
-  throw new Error(unsupportedSignerMessage(signer.type, "create a wallet"));
+  const plan = planAccountProvisioning(signer);
+  await provisionAccount(client, plan);
+  return { walletAddress: plan.walletAddress };
 }
 
 /**

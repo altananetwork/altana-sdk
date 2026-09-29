@@ -12,17 +12,13 @@
  * headless path runs without an OS keychain.
  */
 
-import {
-  prepareUpgradeAccount,
-  upgradeAccount,
-} from "porto/viem/RelayActions";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import type { Address, Hex } from "viem";
+import type { Address } from "viem";
 import { type NetworkConfig } from "./config.js";
 import {
   buildRelayClient,
-  isMissingRelayChainError,
-  relayDoesNotServeChainMessage,
+  provisionAccount,
+  type ProvisioningPlan,
 } from "./internal/relay.js";
 import { provisioningNetworks } from "./internal/cachedRegistry.js";
 import {
@@ -82,26 +78,13 @@ export async function createPasskeyWallet(
   //    chain is included when it has a relay (Celo on Ethereum): registry
   //    writes go through the smart account there, and there is no second
   //    chance to provision it once the throwaway is gone.
+  const plan: ProvisioningPlan = {
+    walletAddress,
+    authorizeKeys: [passkeyAdminKey],
+    signDigest: (digest) => throwawayAccount.sign({ hash: digest }),
+  };
   for (const network of provisioningNetworks(opts.networks)) {
-    const relayClient = buildRelayClient(network);
-    let prepared: any;
-    try {
-      prepared = await prepareUpgradeAccount(relayClient, {
-        address: walletAddress,
-        authorizeKeys: [passkeyAdminKey],
-      });
-    } catch (err) {
-      if (!isMissingRelayChainError(err)) throw err;
-      throw new Error(relayDoesNotServeChainMessage(network.chainId, network.relayUrl), { cause: err });
-    }
-    const signatures: Record<string, Hex> = {};
-    for (const [name, digest] of Object.entries(prepared.digests ?? {})) {
-      signatures[name] = await throwawayAccount.sign({ hash: digest as Hex });
-    }
-    await upgradeAccount(relayClient as any, {
-      context: prepared.context,
-      signatures,
-    } as any);
+    await provisionAccount(buildRelayClient(network), plan);
   }
 
   return {
