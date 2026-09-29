@@ -43,6 +43,8 @@ import {
   decodeErc8004AgentUri,
   withErc8004Registration,
   quoteCalls,
+  quoteGrantSession,
+  formatQuoteLine,
   CELO_SEPOLIA,
   type Erc8004RegistrationFile,
   type NetworkConfig,
@@ -158,6 +160,24 @@ async function run(
   // it here would only couple an identity test to Sepolia's gas price and to
   // whether the relay's interop path is live. ──
   console.log(`\n[2] grantSession scoped to ${REGISTRY} by selector`);
+  const grant = {
+    register: false as const,
+    permissions: {
+      calls: erc8004RegisterPermissions(CHAIN_ID),
+      spend: [{ limit: parseEther("0.3"), period: "day" as const }],
+    },
+    expiry: Math.floor(Date.now() / 1000) + HOUR,
+  };
+  // Price it before signing anything: the relay's own numbers, so a rejection
+  // for "asset deficits" can be read against the wallet's balance.
+  const quote = await quoteGrantSession(wallet, admin, grant, { networks: [network] });
+  for (const line of quote.lines) console.log(`    quote: ${formatQuoteLine(line, network)}`);
+  for (const b of quote.balances) {
+    console.log(
+      `    balance: ${formatEther(b.balance)} ${b.symbol} on chain ${b.chainId}, needs ` +
+        `${formatEther(b.needed)}${b.sufficient ? "" : " (SHORT)"}`,
+    );
+  }
   const session = await client.grantSession({
     wallet,
     signer: admin,
