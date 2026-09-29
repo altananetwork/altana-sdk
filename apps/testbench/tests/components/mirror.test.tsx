@@ -147,3 +147,47 @@ describe("MirrorCard", () => {
     expect(screen.queryByText(/Proof confirmed/)).not.toBeInTheDocument();
   });
 });
+
+describe("MirrorCard, proving someone else's key", () => {
+  const OTHER = "0x6A75e80B961f7d884f9D03E5Aa0808d05e47c50d" as const;
+
+  test("a key belonging to another wallet is read but not proven, and says why", async () => {
+    const client = fakeClient({
+      readMirror: vi.fn(async () => ({ ...mirrorCurrent, cachedPresent: false, cachedSourceBlock: 0n })),
+    });
+    renderWith(
+      client,
+      <MirrorCard chainId={CELO_SEPOLIA.chainId} target={{ ...withKey, user: OTHER }} />,
+      { v: 1, walletKey: TEST_KEY, sessions: [] },
+    );
+    // It still reads: anyone can.
+    await waitFor(() => expect(client.readMirror).toHaveBeenCalled());
+    expect(await screen.findByText(/belongs to another wallet/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Prove into the Celo mirror" })).toBeDisabled();
+  });
+
+  test("with no wallet at all, the read still works and the proof is off", async () => {
+    const client = fakeClient({
+      readMirror: vi.fn(async () => ({ ...mirrorCurrent, cachedPresent: false, cachedSourceBlock: 0n })),
+    });
+    renderWith(client, <MirrorCard chainId={CELO_SEPOLIA.chainId} target={withKey} />, { v: 1, sessions: [] });
+    await waitFor(() => expect(client.readMirror).toHaveBeenCalled());
+    expect(await screen.findByText(/no admin key to sign the proof with/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Prove into the Celo mirror" })).toBeDisabled();
+  });
+
+  test("the wallet's own key is provable, whatever the case of the address", async () => {
+    const client = fakeClient({
+      readMirror: vi.fn(async () => ({ ...mirrorCurrent, cachedPresent: false, cachedSourceBlock: 0n })),
+    });
+    renderWith(
+      client,
+      <MirrorCard
+        chainId={CELO_SEPOLIA.chainId}
+        target={{ ...withKey, user: TEST_ADDRESS.toLowerCase() as typeof TEST_ADDRESS }}
+      />,
+      { v: 1, walletKey: TEST_KEY, sessions: [] },
+    );
+    expect(await screen.findByRole("button", { name: "Prove into the Celo mirror" })).toBeEnabled();
+  });
+});

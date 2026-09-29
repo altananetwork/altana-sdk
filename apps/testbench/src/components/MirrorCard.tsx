@@ -13,6 +13,7 @@ import {
 } from "../lib/mirror";
 import { cachedNetworkFor, mirrorTargetsOf } from "../lib/mirrorReads";
 import { relayReason } from "../lib/errors";
+import { sameAddress } from "../lib/format";
 import { useApp, useEnsureRegistered } from "../state/AppState";
 import { Address as Addr } from "./shared/Address";
 import { Badge } from "./shared/Badge";
@@ -126,8 +127,13 @@ export function MirrorCard({ chainId, target, showTitle = true }: MirrorCardProp
   })();
 
   const state = reading ? mirrorState(reading) : undefined;
+  // The proof is a wallet call the admin signs, so the wallet in this browser
+  // has to be the one the key belongs to. Proving someone else's key would be
+  // signed by the wrong account and rejected by the relay, after the click.
+  const walletMatches =
+    app.wallet !== undefined && target !== undefined && sameAddress(app.wallet.address, target.user);
   const canProve =
-    state !== undefined && canPopulate(state) && target?.publicKey !== undefined && app.wallet !== undefined;
+    state !== undefined && canPopulate(state) && target?.publicKey !== undefined && walletMatches;
 
   async function prove() {
     if (!target?.publicKey || !app.wallet) return;
@@ -220,6 +226,14 @@ export function MirrorCard({ chainId, target, showTitle = true }: MirrorCardProp
               This key was entered as a key hash, so it can be read but not proven: populateKey takes the public
               key bytes and the cache checks that they hash to this key hash. Pick the key from the session
               history, or paste its public key, to send a proof.
+            </div>
+          )}
+
+          {target.publicKey !== undefined && state && canPopulate(state) && !walletMatches && (
+            <div className="banner info">
+              {app.wallet
+                ? "This key belongs to another wallet, so this browser cannot prove it: the proof is a call the wallet's own admin key signs. Anyone can read it."
+                : "No wallet in this browser, so there is no admin key to sign the proof with. The read above needs none."}
             </div>
           )}
 
