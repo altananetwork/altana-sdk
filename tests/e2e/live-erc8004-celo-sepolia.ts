@@ -45,6 +45,7 @@ import {
   quoteCalls,
   quoteGrantSession,
   formatQuoteLine,
+  waitForBalance,
   CELO_SEPOLIA,
   type Erc8004RegistrationFile,
   type NetworkConfig,
@@ -138,6 +139,10 @@ async function main() {
   console.log(`\n[1] wallet ${wallet.address}`);
   const fundTx = await funderWallet.sendTransaction({ to: wallet.address, value: FUNDING });
   await publicClient.waitForTransactionReceipt({ hash: fundTx });
+  // A receipt is not a visible balance: forno has answered 0 for a wallet whose
+  // funding transaction had already confirmed, and the relay then quotes the
+  // first intent as unpayable. Wait for the balance itself.
+  await waitForBalance(publicClient, wallet.address, FUNDING, 120_000);
   console.log(`    funded ${formatEther(FUNDING)} CELO`);
 
   try {
