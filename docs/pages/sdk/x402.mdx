@@ -107,10 +107,16 @@ readable by b402 merchants and by anything already integrated against Altana:
   `PAYMENT-SIGNATURE`, since some b402 merchants read only the latter.
 
 When passing a requirement to `signX402Payment` yourself, set `resource` on it
-so the envelope carries one.
+so the envelope carries one. The envelope is signed as x402 **v2** unless the
+requirement carries an `x402Version` of its own, or you pass
+`{ x402Version: 1 }` for a merchant that speaks v1 and does not say so. A v2
+`accepts[]` entry never carries a version (it belongs to the 402 body), so
+there is nothing to copy down when you hand one straight over;
+`fetchWithX402` stamps the body's version for you.
 
 ## Notes
 
 - **Pay once per call.** `fetchWithX402` signs one authorization and retries once. If the merchant answers that retry with another 402, the settlement failed on its side and the response is returned to you unchanged. Do not loop back into `fetchWithX402` blindly: a merchant that reports "failed" for a transfer it did broadcast would collect twice. Altana's own merchant package never does this (a broadcast payment is answered 200 with a pending receipt), but before re-paying a third-party merchant, check the first authorization's on-chain state.
 - **Browser limitation.** Third-party x402 endpoints often omit `X-PAYMENT` from CORS `Access-Control-Allow-Headers`, so a browser can't POST the payment. Run `fetchWithX402` server-side.
 - The signature is a 98-byte ERC-1271 envelope, not an EOA signature — see [Off-chain signatures](/concepts/off-chain-signatures). A facilitator must verify via `isValidSignature`.
+- **Which rail a smart account can use.** The settling contract does the verifying, so the rail has to know about ERC-1271. `Permit2.permitWitnessTransferFrom` does. An EIP-3009 token need not: Celo's USDC checks `transferWithAuthorization` with `ecrecover` and refuses a contract signature (`FiatTokenV2: invalid signature`), which no facilitator can change. So an Altana wallet pays over `permit2-exact` on Celo, and the `eip3009` rail there is for EOA buyers.
