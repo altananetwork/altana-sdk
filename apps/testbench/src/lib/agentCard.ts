@@ -8,9 +8,31 @@
  * the browser, and an http one is fetched.
  */
 
+/**
+ * What the registry actually stores, read off Altana's own agent 449 on Celo
+ * Sepolia: an **ERC-8004 registration-v1** record, not an A2A agent card.
+ *
+ * ```json
+ * { "name": "...", "description": "...", "image": "...",
+ *   "registrations": [{ "agentId": 449, "agentRegistry": "eip155:11142220:0x8004A818..." }],
+ *   "services": [{ "name": "MCP", "endpoint": "https://.../.well-known/agent-card.json" }],
+ *   "type": "https://eips.ethereum.org/EIPS/eip-8004#registration-v1" }
+ * ```
+ *
+ * The A2A card, with the skills, lives behind the `MCP` service endpoint. So
+ * the record names where to find the agent, and the card says what it does.
+ * Both shapes are typed here because a record written by someone else may be
+ * the card itself.
+ */
 export type AgentRecord = {
   name?: string;
   description?: string;
+  image?: string;
+  /** ERC-8004 registration record: where to reach the agent. */
+  services?: { name?: string; endpoint?: string }[];
+  /** The record's own declared type, for example the EIP-8004 registration-v1 URL. */
+  type?: string;
+  /** A2A card: what the agent can do. Absent from a registration record. */
   url?: string;
   version?: string;
   skills?: { id?: string; name?: string; description?: string }[];
@@ -18,6 +40,17 @@ export type AgentRecord = {
   /** Everything as it came, for the operator who wants the raw record. */
   raw: string;
 };
+
+/** The endpoint a registration record points its agent card at, if it names one. */
+export function agentCardUrl(record: AgentRecord): string | undefined {
+  const service = record.services?.find((s) => /agent-card|\.well-known/i.test(s.endpoint ?? ""));
+  return service?.endpoint ?? (typeof record.url === "string" ? record.url : undefined);
+}
+
+/** True when this is an ERC-8004 registration record rather than an A2A card. */
+export function isRegistrationRecord(record: AgentRecord): boolean {
+  return /eip-8004/i.test(record.type ?? "") || Array.isArray(record.services);
+}
 
 export type LoadedAgent = {
   owner: string;

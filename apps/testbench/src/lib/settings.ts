@@ -26,11 +26,17 @@ export type RelayPreset = {
   label: string;
   /** Undefined for "custom": the URL comes from the settings. */
   url?: string;
-  /** Chains this relay serves. "custom" gets all of them and the operator prunes. */
+  /** Where the chain selection starts before the relay answers for itself. */
   chainIds: number[];
   note: string;
 };
 
+/**
+ * The chain list on each preset is a **starting point only**: the panel asks
+ * the relay what it serves and uses the answer. A hardcoded list went stale
+ * within a day, and the walkthrough then skipped the milestone's headline
+ * claim because the preset said Celo only (qa, 2026-09-29).
+ */
 export const RELAY_PRESETS: readonly RelayPreset[] = [
   {
     id: "railway",
@@ -44,7 +50,7 @@ export const RELAY_PRESETS: readonly RelayPreset[] = [
     label: "Local relay staging",
     url: "http://127.0.0.1:19129",
     chainIds: [CELO_SEPOLIA.chainId],
-    note: "Relay staging against live Celo Sepolia. Celo only, so the Ethereum Sepolia steps cannot run.",
+    note: "Relay staging against live Celo Sepolia. Which chains it serves is asked of it, since infra changes them.",
   },
   {
     id: "fork",

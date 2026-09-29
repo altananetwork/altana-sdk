@@ -3,7 +3,14 @@ import { useEffect, useState } from "react";
 import { relayReason } from "../lib/errors";
 import { addressUrl, txUrl } from "../lib/explorer";
 import { entry } from "../lib/log";
-import { draftAgentRecord, loadAgentRecord, type LoadedAgent } from "../lib/agentCard";
+import {
+  agentCardUrl,
+  draftAgentRecord,
+  isRegistrationRecord,
+  loadAgentRecord,
+  type AgentRecord,
+  type LoadedAgent,
+} from "../lib/agentCard";
 import { useApp, useEnsureRegistered } from "../state/AppState";
 import { Address as Addr } from "./shared/Address";
 import { Badge } from "./shared/Badge";
@@ -150,39 +157,7 @@ export function AgentIdentityPanel() {
                 </div>
               )}
 
-              {loaded.record && (
-                <div className="stack">
-                  <div className="row between">
-                    <h3>{loaded.record.name ?? "Unnamed agent"}</h3>
-                    {loaded.record.version && <Badge>{loaded.record.version}</Badge>}
-                  </div>
-                  {loaded.record.description && <p>{loaded.record.description}</p>}
-                  {loaded.record.skills && loaded.record.skills.length > 0 && (
-                    <table className="table">
-                      <thead>
-                        <tr>
-                          <th>Skill</th>
-                          <th>What it does</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {loaded.record.skills.map((s, i) => (
-                          <tr key={s.id ?? i}>
-                            <td>{s.name ?? s.id}</td>
-                            <td>{s.description}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                  {loaded.record.registrations && loaded.record.registrations.length > 0 && (
-                    <p className="muted">
-                      The record names agent {String(loaded.record.registrations[0]?.agentId)} on this registry,
-                      so the two point at each other.
-                    </p>
-                  )}
-                </div>
-              )}
+              {loaded.record && <RecordView record={loaded.record} />}
             </div>
           )}
         </div>
@@ -221,6 +196,89 @@ export function AgentIdentityPanel() {
           </p>
         </div>
       </Card>
+    </div>
+  );
+}
+
+/**
+ * The record the registry points at. Two shapes turn up and both are rendered
+ * for what they are: the ERC-8004 registration record, which says where to
+ * reach the agent, and an A2A card, which says what it does.
+ */
+function RecordView({ record }: { record: AgentRecord }) {
+  const cardUrl = agentCardUrl(record);
+  return (
+    <div className="stack">
+      <div className="row between">
+        <h3>{record.name ?? "Unnamed agent"}</h3>
+        <div className="row" style={{ gap: 6 }}>
+          {record.version && <Badge>{record.version}</Badge>}
+          <Badge tone="accent">
+            {isRegistrationRecord(record) ? "ERC-8004 registration record" : "agent card"}
+          </Badge>
+        </div>
+      </div>
+      {record.description && <p>{record.description}</p>}
+
+      {record.services && record.services.length > 0 && (
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Service</th>
+              <th>Where</th>
+            </tr>
+          </thead>
+          <tbody>
+            {record.services.map((s, i) => (
+              <tr key={s.endpoint ?? i}>
+                <td>{s.name ?? "unnamed"}</td>
+                <td>
+                  {s.endpoint ? (
+                    <a href={s.endpoint} target="_blank" rel="noreferrer">
+                      {s.endpoint}
+                    </a>
+                  ) : (
+                    <span className="muted small">none given</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {record.skills && record.skills.length > 0 && (
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Skill</th>
+              <th>What it does</th>
+            </tr>
+          </thead>
+          <tbody>
+            {record.skills.map((s, i) => (
+              <tr key={s.id ?? i}>
+                <td>{s.name ?? s.id}</td>
+                <td>{s.description}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {isRegistrationRecord(record) && cardUrl && (
+        <p className="muted">
+          The skills live in the agent card behind that endpoint, not on chain. The record says where to reach
+          the agent; the card says what it does.
+        </p>
+      )}
+
+      {record.registrations && record.registrations.length > 0 && (
+        <p className="muted">
+          The record names agent {String(record.registrations[0]?.agentId)} on this registry, so the two point at
+          each other.
+        </p>
+      )}
     </div>
   );
 }

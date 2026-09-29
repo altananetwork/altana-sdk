@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
 import { BASE_SEPOLIA, CELO_SEPOLIA, SEPOLIA } from "@altananetwork/sdk";
@@ -7,11 +7,18 @@ import { defaultSettings, type Settings } from "../../src/lib/settings";
 import { fakeClient } from "../../src/test/fakeClient";
 import { renderWith } from "../../src/test/render";
 
-function setup(settings: Settings = defaultSettings({})) {
+/** No relay answers by default, so a test opts into a probe result. */
+function setup(settings: Settings = defaultSettings({}), probe?: ReturnType<typeof vi.fn>) {
   const onChange = vi.fn();
-  renderWith(fakeClient(), <SettingsPanel settings={settings} onChange={onChange} />);
-  return { onChange };
+  const probeFn = probe ?? vi.fn(async () => ({ status: "unreachable" as const, reason: "not asked" }));
+  renderWith(
+    fakeClient(),
+    <SettingsPanel settings={settings} onChange={onChange} probe={probeFn as never} />,
+  );
+  return { onChange, probe: probeFn };
 }
+
+const serving = (...chainIds: number[]) => vi.fn(async () => ({ status: "serving" as const, chainIds }));
 
 describe("SettingsPanel", () => {
   test("picking a relay also sets the chains that relay serves", async () => {
@@ -31,11 +38,55 @@ describe("SettingsPanel", () => {
     );
   });
 
-  test("a chain the chosen relay does not serve is marked as such", () => {
+  test("without an answer from the relay, the preset's list is shown as the preset's", async () => {
     setup({ preset: "local", customUrl: "", chainIds: [CELO_SEPOLIA.chainId] });
-    const base = screen.getByRole("checkbox", { name: /Base Sepolia/ });
-    expect(base).not.toBeChecked();
-    expect(screen.getAllByText(/not served by Local relay staging/).length).toBe(2);
+    expect(await screen.findByText("no answer")).toBeInTheDocument();
+    expect(screen.getByText(/the list below is the preset's, which can be out of date/)).toBeInTheDocument();
+    expect(screen.getAllByText(/not in the Local relay staging preset/).length).toBe(2);
+  });
+
+  test("the relay's own answer replaces the preset's list", async () => {
+    // qa hit this: infra added Ethereum Sepolia to the local relay, the preset
+    // still said Celo only, and the walkthrough skipped the milestone claim.
+    const { onChange, probe } = setup(
+      { preset: "local", customUrl: "", chainIds: [CELO_SEPOLIA.chainId] },
+      serving(CELO_SEPOLIA.chainId, SEPOLIA.chainId),
+    );
+    await waitFor(() => expect(probe).toHaveBeenCalledWith("http://127.0.0.1:19129"));
+    await waitFor(() =>
+      expect(onChange).toHaveBeenCalledWith(
+        expect.objectContaining({ chainIds: [CELO_SEPOLIA.chainId, SEPOLIA.chainId] }),
+      ),
+    );
+    expect(await screen.findByText("answered by the relay")).toBeInTheDocument();
+  });
+
+  test("a chain the relay says it does not serve is marked from the answer, not the preset", async () => {
+    setup(
+      { preset: "railway", customUrl: "", chainIds: [CELO_SEPOLIA.chainId] },
+      serving(CELO_SEPOLIA.chainId),
+    );
+    // Base Sepolia and Sepolia: two chains the bench knows and this relay does not serve.
+    expect((await screen.findAllByText(/this relay does not serve it/)).length).toBe(2);
+  });
+
+  test("chains the relay serves but the bench cannot configure are named, not silently dropped", async () => {
+    setup({ preset: "railway", customUrl: "", chainIds: [CELO_SEPOLIA.chainId] }, serving(CELO_SEPOLIA.chainId, 97));
+    expect(await screen.findByText(/also serves 97, which the bench has no configuration for/)).toBeInTheDocument();
+  });
+
+  test("a selection that disagrees with the relay offers a one-click fix", async () => {
+    const { onChange } = setup(
+      { preset: "custom", customUrl: "http://relay.example", chainIds: [CELO_SEPOLIA.chainId, BASE_SEPOLIA.chainId] },
+      serving(CELO_SEPOLIA.chainId, SEPOLIA.chainId),
+    );
+    // The first application is automatic; untick one and the banner returns.
+    await waitFor(() => expect(onChange).toHaveBeenCalled());
+    const fix = await screen.findByRole("button", { name: "Use the chains this relay serves" });
+    await userEvent.click(fix);
+    expect(onChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ chainIds: [CELO_SEPOLIA.chainId, SEPOLIA.chainId] }),
+    );
   });
 
   test("a chain can be ticked on or off by hand", async () => {

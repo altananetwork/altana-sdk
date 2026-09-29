@@ -13,7 +13,7 @@ bun run --filter '@altananetwork/testbench' dev
 
 The dev script builds the SDK first, so the page always runs the SDK from this checkout. Open http://localhost:5174.
 
-Which relay it talks to is a setting on the **Settings** tab, not a build-time variable, because a demo is walked against more than one in a sitting:
+Which relay it talks to is a setting on the **Settings** tab, not a build-time variable, because a demo is walked against more than one in a sitting. **The Settings tab asks the relay which chains it serves** and uses the answer; the table below is only where each preset starts, since a hardcoded list goes stale:
 
 | Preset | URL | Chains it serves |
 |---|---|---|
@@ -21,7 +21,7 @@ Which relay it talks to is a setting on the **Settings** tab, not a build-time v
 | Local relay staging | `http://127.0.0.1:19129` | Celo Sepolia only |
 | Local forks | `http://127.0.0.1:19139` | Celo Sepolia, Ethereum Sepolia |
 
-The chain set travels with the relay choice on purpose. Configuring a chain the relay does not serve fails on the first call with an error that names neither the chain nor the relay. `VITE_RELAY_URL` still works and selects the matching preset at first load; `VITE_RPC_11142220`, `VITE_RPC_84532` and `VITE_RPC_11155111` override the RPCs.
+The chain set travels with the relay choice on purpose. Configuring a chain the relay does not serve fails on the first call with an error that names neither the chain nor the relay, and a chain the relay *does* serve but the bench leaves off silently skips whatever needed it. `VITE_RELAY_URL` still works and selects the matching preset at first load; `VITE_RPC_11142220`, `VITE_RPC_84532` and `VITE_RPC_11155111` override the RPCs.
 
 ## Test
 
@@ -76,6 +76,8 @@ The x402 panel buys from a local merchant. Start it from `tests/e2e` with the sh
 set -a; source /path/to/.env.testnet; set +a
 cd tests/e2e && bun run serve:x402-celo
 ```
+
+That script builds `@altananetwork/x402-server` before starting, so it works from a clean checkout; without the build it fails with "Cannot find module '@altananetwork/x402-server'".
 
 It sells one paid route at 0.01 USDC on live Celo Sepolia, over Permit2 and EIP-3009, and reports its own receipt so the panel names the rail rather than inferring it. With `X402_CELO_API_KEY` set it settles the EIP-3009 rail through Celo's facilitator; Permit2 always settles from the merchant's key, because the facilitator does not take that rail.
 

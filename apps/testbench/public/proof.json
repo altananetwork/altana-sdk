@@ -1,7 +1,7 @@
 {
-  "generatedAt": "2026-09-29T13:35:10.852Z",
+  "generatedAt": "2026-09-29T14:04:05.030Z",
   "source": "celo-harness/MATRIX.md",
-  "matrixUpdated": "2026-09-28",
+  "matrixUpdated": "2026-09-29",
   "sections": [
     {
       "title": "Milestone 1",
@@ -493,10 +493,10 @@
         {
           "item": "S4",
           "title": "Cache proof: key valid in the Celo mirror, anchored L1 block",
-          "status": "Proven (fork) by fork-celo-cache.ts; live is a timed step, not a retry",
-          "state": "proven-fork",
-          "relay": "fork",
-          "note": "The deployed cache is KeyStoreCacheOPStack 1.1.1 and isValidKey requires sourceBlockNumber == IL1Block.number() — equality, not recency. So a cached key is an assertion about one anchored L1 block, true inside a window, not a durable mirror. qa measured the anchor live 2026-09-29: 11807636 against a Sepolia head of 11807722, 86 blocks / ~17 minutes behind, matching sdk's 70-95. Consequences: a KeyStore write is provable ~30 min after it lands, and a proof is good for ~20 min. My own fork-celo-cache run already showed the equality rule from the other side — moving the anchor one block made isCachedKeyValid go false. evidence/2026-09-29-celo-sepolia-anchor-lag.md",
+          "status": "Proven (live)",
+          "state": "proven-live",
+          "relay": "railway",
+          "note": "A key is now live in the Celo mirror: proved through the test bench on 2026-09-29, isValidKey true, sourceBlockNumber 11807900 equal to the anchor, and keccak(cached publicKey) == keyId verified on chain. The deployed cache is KeyStoreCacheOPStack 1.1.1 and isValidKey requires sourceBlockNumber == IL1Block.number() — equality, not recency. So a cached key is an assertion about one anchored L1 block, true inside a window, not a durable mirror. qa measured the anchor live 2026-09-29: 11807636 against a Sepolia head of 11807722, 86 blocks / ~17 minutes behind, matching sdk's 70-95. Consequences: a KeyStore write is provable ~30 min after it lands, and a proof is good for ~20 min. My own fork-celo-cache run already showed the equality rule from the other side — moving the anchor one block made isCachedKeyValid go false. evidence/2026-09-29-celo-sepolia-anchor-lag.md",
           "links": []
         },
         {
