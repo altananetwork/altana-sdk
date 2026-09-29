@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { probeX402, railNote, readPaidResponse, readSellerHealth } from "../../src/lib/x402";
+import { amountOf, probeX402, railNote, railOf, readPaidResponse, readSellerHealth } from "../../src/lib/x402";
 
 const USDC = "0x01C5C0122039549AD1493B8220cABEdD739BC44E";
 
@@ -116,5 +116,21 @@ describe("readSellerHealth", () => {
       throw new Error("fetch failed");
     });
     expect(await readSellerHealth("http://127.0.0.1:4021/paid", fetchImpl as never)).toBeUndefined();
+  });
+});
+
+describe("amountOf and railOf", () => {
+  test("reads the real B402 amount field, not only the legacy one", () => {
+    // Our own seller sends `amount`; reading only `maxAmountRequired` left the
+    // amount column blank against it.
+    expect(amountOf({ ...permit2Req, amount: "10000", maxAmountRequired: undefined } as never)).toBe("10000");
+    expect(amountOf({ ...permit2Req, maxAmountRequired: "9999", amount: undefined } as never)).toBe("9999");
+    expect(amountOf({ ...permit2Req, amount: undefined, maxAmountRequired: undefined } as never)).toBeUndefined();
+  });
+
+  test("the rail comes from the requirement's own extra, or is unstated", () => {
+    expect(railOf(permit2Req as never)).toBe("permit2-exact");
+    expect(railOf(eip3009Req as never)).toBe("eip3009");
+    expect(railOf({ ...permit2Req, extra: undefined } as never)).toBeUndefined();
   });
 });

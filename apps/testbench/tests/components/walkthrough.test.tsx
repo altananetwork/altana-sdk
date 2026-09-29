@@ -305,11 +305,11 @@ describe("the session step 4 grants and step 6 uses", () => {
     }
 
     const granted = vi.mocked(client.grantSession).mock.calls[0]![0];
-    const sessionCall = vi.mocked(client.execute).mock.calls.at(-1)![0] as {
+    const sessionCall = vi.mocked(client.execute).mock.calls.at(-1)![0] as unknown as {
       session: {
         expiry: number;
         publicKey: string;
-        permissions: { spend: { limit: bigint; period: string }[] };
+        permissions: { spend: readonly { limit: bigint; period: string }[] };
       };
     };
     expect(sessionCall.session.expiry).toBe(granted.expiry);

@@ -99,6 +99,21 @@ export async function readPaidResponse(res: Response): Promise<X402Payment> {
   }
 }
 
+/**
+ * The amount a requirement asks for. Real B402 sends `amount`; the legacy
+ * field is `maxAmountRequired`, and a seller sends one or the other. Reading
+ * only the legacy one showed a blank column against our own seller.
+ */
+export function amountOf(req: X402Requirement): string | undefined {
+  return req.amount ?? req.maxAmountRequired;
+}
+
+/** The rail a requirement settles on, as the seller declares it. */
+export function railOf(req: X402Requirement): string | undefined {
+  const extra = req.extra as { assetTransferMethod?: string } | undefined;
+  return extra?.assetTransferMethod;
+}
+
 /** One line naming the rail and what it means for this buyer. */
 export function railNote(rail: string | undefined): string {
   if (!rail) return "The seller did not say which rail carried the payment.";
