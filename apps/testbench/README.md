@@ -81,7 +81,12 @@ cd tests/e2e && bun run serve:x402-celo
 
 That script builds `@altananetwork/x402-server` before starting, so it works from a clean checkout; without the build it fails with "Cannot find module '@altananetwork/x402-server'".
 
-**Before the first payment on the Permit2 rail**, the wallet has to approve Permit2 for the token: Permit2 pulls the payment with `permitTransferFrom`, and without the approval the payment fails with an error that says nothing about approvals. The panel checks the allowance and offers the approval when it is missing.
+**The Permit2 rail needs two approvals, not one**, and missing either makes settlement revert with no reason that mentions approvals:
+
+1. the token approved to Permit2, which is how it pulls the payment;
+2. **Permit2 approved as a signature checker for that session key.** `IthacaAccount.isValidSignature` gates on `msg.sender`, so only super-admin keys pass by default and Permit2's callback to verify the session key is refused.
+
+The panel reads both and offers a single "Set up Permit2 for this session" button until both are in place, because neither is useful alone. The second approval is signed by the admin, not the session: `setSignatureCheckerApproval` is `onlyThis`.
 
 It sells one paid route at 0.01 USDC on live Celo Sepolia, over Permit2 and EIP-3009, and reports its own receipt so the panel names the rail rather than inferring it. With `X402_CELO_API_KEY` set it settles the EIP-3009 rail through Celo's facilitator; Permit2 always settles from the merchant's key, because the facilitator does not take that rail.
 

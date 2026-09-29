@@ -1,6 +1,13 @@
-import { CELO_SEPOLIA, deserializeSession, signerFromPrivateKey } from "@altananetwork/sdk";
-import { useEffect, useState } from "react";
+import { CELO_SEPOLIA, deserializeSession, PERMIT2_ADDRESS, signerFromPrivateKey } from "@altananetwork/sdk";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Address } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+import {
+  accountKeyHashForAddress,
+  missingSteps,
+  readiness,
+  type Permit2Readiness,
+} from "../lib/permit2Setup";
 import { relayReason } from "../lib/errors";
 import { txUrl } from "../lib/explorer";
 import { entry } from "../lib/log";
@@ -48,49 +55,6 @@ export function X402Panel() {
 
   const sessions = app.sessions.filter((s) => s.status !== "failed");
   const selected = sessions.find((s) => s.id === sessionId) ?? sessions[0];
-  const [allowance, setAllowance] = useState<bigint>();
-
-  // Permit2 pulls the token with permitTransferFrom, which needs the wallet to
-  // have approved it first. A fresh wallet has not, so the first payment on
-  // that rail fails with something that reads as an x402 problem and is not.
-  const payToken = health?.token as Address | undefined;
-  const wallet = app.wallet;
-  useEffect(() => {
-    if (!wallet || !payToken || rail !== "permit2") {
-      setAllowance(undefined);
-      return;
-    }
-    let cancelled = false;
-    void client
-      .permit2Allowance({ chainId: CELO, wallet: wallet.address, token: payToken })
-      .then((a) => {
-        if (!cancelled) setAllowance(a);
-      })
-      .catch(() => {
-        if (!cancelled) setAllowance(undefined);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [client, wallet, payToken, rail]);
-
-  const needsApproval = rail === "permit2" && allowance !== undefined && allowance === 0n;
-
-  const approve = () =>
-    guard("approvePermit2", async () => {
-      if (!wallet || !payToken) return;
-      const result = await client.approvePermit2({
-        chainId: CELO,
-        wallet: wallet.address,
-        signer: wallet.signer,
-        token: payToken,
-      });
-      if (result.status !== "CONFIRMED") {
-        throw new Error(`The approval returned ${result.status}.`);
-      }
-      setAllowance(await client.permit2Allowance({ chainId: CELO, wallet: wallet.address, token: payToken }));
-    });
-
   // Debounced: the field drives a fetch, and one per keystroke is a request
   // storm at a URL that is usually not a seller yet.
   const settledUrl = useDebounced(url);
@@ -134,6 +98,74 @@ export function X402Panel() {
       const answer = await readPaidResponse(res);
       setPaid(answer);
       dispatch({ type: "log/add", entry: entry("x402 pay", { result: answer }) });
+    });
+
+  const [ready, setReady] = useState<Permit2Readiness>();
+
+  // The Permit2 rail needs two approvals and the panel used to check one, so it
+  // looked ready while settlement was still going to revert. qa proved the
+  // second on chain by A/B: the only difference between a wallet that settled
+  // and one that reverted was Permit2's presence in the session key's
+  // approvedSignatureCheckers.
+  const payToken = health?.token as Address | undefined;
+  const wallet = app.wallet;
+  const sessionKeyHash = useMemo(
+    () => (selected ? accountKeyHashForAddress(privateKeyToAccount(selected.sessionKey).address) : undefined),
+    [selected],
+  );
+
+  const refreshReadiness = useCallback(async () => {
+    if (!wallet || !payToken || !sessionKeyHash || rail !== "permit2") {
+      setReady(undefined);
+      return;
+    }
+    try {
+      const read = await client.permit2Readiness({
+        chainId: CELO,
+        wallet: wallet.address,
+        token: payToken,
+        sessionKeyHash,
+      });
+      setReady(readiness({ ...read, permit2: PERMIT2_ADDRESS }));
+    } catch {
+      setReady(undefined);
+    }
+  }, [client, wallet, payToken, sessionKeyHash, rail]);
+
+  useEffect(() => {
+    void refreshReadiness();
+  }, [refreshReadiness]);
+
+  const setUpPermit2 = () =>
+    guard("setUpPermit2", async () => {
+      if (!wallet || !payToken || !selected) return;
+      const session = deserializeSession(selected.serialized, signerFromPrivateKey(selected.sessionKey));
+      // Neither approval is useful without the other, so both run behind one
+      // button and a failure in either stops before claiming success.
+      if (!ready?.tokenApproved) {
+        const approved = await client.approvePermit2Token({
+          chainId: CELO,
+          wallet: wallet.address,
+          signer: wallet.signer,
+          token: payToken,
+        });
+        if (approved.status !== "CONFIRMED") {
+          throw new Error(`Approving the token returned ${approved.status}.`);
+        }
+      }
+      if (!ready?.checkerApproved) {
+        const approved = await client.approvePermit2Checker({
+          chainId: CELO,
+          wallet: wallet.address,
+          // The admin signs it: setSignatureCheckerApproval is onlyThis.
+          signer: wallet.signer,
+          session,
+        });
+        if (approved.status !== "CONFIRMED") {
+          throw new Error(`Approving Permit2 as a signature checker returned ${approved.status}.`);
+        }
+      }
+      await refreshReadiness();
     });
 
   return (
@@ -220,21 +252,29 @@ export function X402Panel() {
             </div>
           )}
 
-          {needsApproval && (
+          {ready && !ready.ready && (
             <div className="banner info">
               <div className="stack">
-                <span>
-                  This wallet has not approved Permit2 for that token. Permit2 pulls the payment with
-                  permitTransferFrom, so without the approval the first payment on this rail fails with an error
-                  that says nothing about approvals.
-                </span>
+                <span>This session is not set up for the Permit2 rail yet:</span>
+                <ul className="stack" style={{ gap: 2 }}>
+                  {missingSteps(ready).map((m) => (
+                    <li key={m}>{m}</li>
+                  ))}
+                </ul>
                 <div className="row">
-                  <Button onClick={() => void approve()} disabled={busy !== undefined || !wallet}>
-                    {busy === "approvePermit2" ? "Approving" : "Approve Permit2 for this token"}
+                  <Button onClick={() => void setUpPermit2()} disabled={busy !== undefined || !wallet}>
+                    {busy === "setUpPermit2" ? "Setting up" : "Set up Permit2 for this session"}
                   </Button>
                 </div>
               </div>
             </div>
+          )}
+
+          {ready?.ready && (
+            <p className="muted small">
+              Permit2 is approved for the token and for this session key&apos;s signatures, which is both halves
+              of what the rail needs.
+            </p>
           )}
 
           <div className="row">
