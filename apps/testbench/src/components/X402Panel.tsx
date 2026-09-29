@@ -4,7 +4,9 @@ import { relayReason } from "../lib/errors";
 import { txUrl } from "../lib/explorer";
 import { entry } from "../lib/log";
 import {
+  amountOf,
   probeX402,
+  railOf,
   railNote,
   readPaidResponse,
   readSellerHealth,
@@ -206,6 +208,7 @@ export function X402Panel() {
                     <th>Scheme</th>
                     <th>Network</th>
                     <th>Asset</th>
+                    <th>Rail</th>
                     <th>Amount</th>
                     <th>Pays with</th>
                   </tr>
@@ -216,7 +219,8 @@ export function X402Panel() {
                       <td>{a.scheme}</td>
                       <td>{a.network}</td>
                       <td>{a.asset && <Addr value={a.asset} />}</td>
-                      <td className="num">{a.maxAmountRequired}</td>
+                      <td className="muted small">{railOf(a) ?? "unstated"}</td>
+                      <td className="num">{amountOf(a) ?? "unstated"}</td>
                       <td>{a === probe.chosen && <Badge tone="accent">Chosen</Badge>}</td>
                     </tr>
                   ))}
