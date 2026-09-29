@@ -47,6 +47,7 @@ import {
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { celoSepolia, sepolia } from "viem/chains";
+import { waitForL1Anchor } from "@altananetwork/sdk";
 import {
   buildRegisterCall,
   buildRevokeCall,
@@ -114,7 +115,12 @@ async function main() {
   // ── 2. Register. The root key is the owner's own; then the session key. ──
   console.log("\n[2] keystore_encode_register_key, signed and sent by the owner");
   await sendL1(ownerL1, l1, buildRegisterCall({ chain: CHAIN, publicKey: owner.publicKey, fee, role: "root" }), "root key");
-  await sendL1(ownerL1, l1, buildRegisterCall({ chain: CHAIN, publicKey, fee, role: "session", expiry: 0 }), "session key");
+  const registeredAt = await sendL1(
+    ownerL1,
+    l1,
+    buildRegisterCall({ chain: CHAIN, publicKey, fee, role: "session", expiry: 0 }),
+    "session key",
+  );
 
   // ── 3. The L1 registry's own verdict. ──
   const validOnL1 = await readIsValidKey(l1, CHAIN, owner.address, keyId);
@@ -132,7 +138,7 @@ async function main() {
   assert(before.absent && !before.valid, "Celo does not know the key before a proof is relayed");
 
   // ── 5 and 6. Prove it across, then ask Celo again. ──
-  await relayProof("[5] keystore_encode_cache_proof (authorization)", owner.address, publicKey, l2Funder);
+  await relayProof("[5] keystore_encode_cache_proof (authorization)", owner.address, publicKey, l2Funder, registeredAt);
   const proven = await status();
   console.log(`\n[6] keystore_cache_status: valid=${proven.valid} absent=${proven.absent} stale=${proven.stale}`);
   console.log(`    cached at L1 block ${proven.cached?.sourceBlockNumber}, L2 anchors ${proven.anchor.number}`);
@@ -141,7 +147,7 @@ async function main() {
 
   // ── 7. Revoke on the L1. ──
   console.log("\n[7] keystore_encode_revoke_key, signed and sent by the owner");
-  await sendL1(ownerL1, l1, buildRevokeCall({ chain: CHAIN, user: owner.address, keyId }), "revoke");
+  const revokedAt = await sendL1(ownerL1, l1, buildRevokeCall({ chain: CHAIN, user: owner.address, keyId }), "revoke");
   assert(!(await readIsValidKey(l1, CHAIN, owner.address, keyId)), "the L1 registry now refuses the key");
   console.log("    the L1 registry now refuses it");
 
@@ -155,7 +161,7 @@ async function main() {
   );
 
   // ── 9 and 10. Prove the revocation across. ──
-  await relayProof("[9] keystore_encode_cache_proof (revocation)", owner.address, publicKey, l2Funder);
+  await relayProof("[9] keystore_encode_cache_proof (revocation)", owner.address, publicKey, l2Funder, revokedAt);
   const revoked = await status();
   console.log(`\n[10] keystore_cache_status: valid=${revoked.valid} revoked=${revoked.cached?.revoked}`);
   console.log(`     ${revoked.advice}`);
@@ -174,7 +180,7 @@ async function sendL1(
   client: PublicClient,
   call: Call,
   label: string,
-) {
+): Promise<bigint> {
   assert(call.chainId === CHAIN.chainId, `${label} is encoded for the registry chain`);
   const hash = await wallet.sendTransaction({
     to: call.to,
@@ -185,7 +191,8 @@ async function sendL1(
   });
   const receipt = await client.waitForTransactionReceipt({ hash });
   assert(receipt.status === "success", `${label} confirmed (${hash})`);
-  console.log(`    ${label}: ${CHAIN.explorerUrl}/tx/${hash}`);
+  console.log(`    ${label}: ${CHAIN.explorerUrl}/tx/${hash} (block ${receipt.blockNumber})`);
+  return receipt.blockNumber;
 }
 
 /** Encodes a cache proof with the server's own tool and relays it on the L2. */
@@ -194,16 +201,37 @@ async function relayProof(
   user: Address,
   publicKey: Hex,
   l2Wallet: ReturnType<typeof createWalletClient>,
+  writtenAtL1Block: bigint,
 ) {
   console.log(`\n${label}`);
-  // The anchor moves, and a proof is only accepted against the block the L2
-  // anchors, so encode and send together and retry on a lost race.
+  // A proof can only carry what the anchored block already holds, and Celo
+  // Sepolia's L1Block predeploy advances about every 20 minutes and trails
+  // Sepolia by 15 to 20, so a fresh registry write takes close to half an hour
+  // to become provable. Wait for the anchor to pass the write's block first.
+  const anchor = await readCacheStatus({ chain: CHAIN, user, keyId: deriveKeyId(publicKey), client: l2 });
+  if (anchor.anchor.number < writtenAtL1Block) {
+    console.log(
+      `    L2 anchors L1 block ${anchor.anchor.number}, the write is in ${writtenAtL1Block}: waiting for the anchor (up to 40 min)`,
+    );
+  }
+  const reached = await waitForL1Anchor({
+    l1Client: l1,
+    l2Client: l2,
+    targetL1Block: writtenAtL1Block,
+    pollIntervalMs: 15_000,
+    timeoutMs: 40 * 60_000,
+    label: "celo sepolia anchor",
+  });
+  console.log(`    L2 now anchors L1 block ${reached.number}`);
+
+  // The anchor keeps moving, and the cache only takes a proof against the block
+  // it anchors right now, so encode and send together and retry on a lost race.
   for (let attempt = 1; attempt <= 5; attempt++) {
     const proof = await encodeCacheProof({ chain: CHAIN, user, publicKey, l1Client: l1, client: l2 });
     console.log(`    proof against L1 block ${proof.l1BlockNumber}, slot ${proof.provenKeySlot}`);
     if (proof.warning) {
-      console.log(`    ${proof.warning}`);
-      await new Promise((r) => setTimeout(r, 12_000));
+      console.log(`    ${proof.warning.split(".")[0]}.`);
+      await new Promise((r) => setTimeout(r, 30_000));
       continue;
     }
     assert(proof.call.chainId === L2.chainId, "the proof is encoded for the L2");
