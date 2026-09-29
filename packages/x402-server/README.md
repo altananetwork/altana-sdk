@@ -138,9 +138,10 @@ goes to the facilitator and Permit2 rails keep settling from the merchant's own
 key; verification stays local either way, because the merchant's is ERC-1271
 aware and a facilitator's need not be.
 
-An Altana smart account cannot pay Celo's USDC over EIP-3009 at all: the token
-checks that signature with `ecrecover` and refuses an ERC-1271 one
-(`FiatTokenV2: invalid signature`). That is the token's rule, so no facilitator
-changes it. Permit2 is the smart-account path.
+The rail follows from who verifies the signature.
+`Permit2.permitWitnessTransferFrom` verifies through ERC-1271, so
+`permit2-exact` carries an Altana smart account's signature; Celo's USDC
+verifies `transferWithAuthorization` with `ecrecover`, so the `eip3009` rail
+there carries EOA buyers, and that is the rail the facilitator settles.
 `tests/e2e/live-x402-celo-facilitator.ts` checks both against the live
 facilitator.

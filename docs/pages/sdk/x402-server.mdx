@@ -181,11 +181,11 @@ const merchant = createX402Merchant({
 
 The choice is **per rail**. Celo's `exact` scheme settles EIP-3009, so that rail goes to the facilitator and Permit2 rails keep settling from the merchant's own key: one route serves an EOA buyer through the facilitator and an Altana smart-account buyer locally. Set `rails` on `facilitatorService` to change which go where. Verification stays local either way, because the merchant's own is ERC-1271-aware and a facilitator's need not be.
 
-Which buyers each path takes on Celo:
+Which path each buyer takes on Celo:
 
 | Buyer | Rail | Settles |
 | --- | --- | --- |
 | Plain EOA | `eip3009` on USDC | through the facilitator, or locally |
 | Altana smart account | `permit2-exact` | locally |
 
-An Altana smart account cannot pay Celo's USDC over EIP-3009 at all: the token checks that signature with `ecrecover` and refuses an ERC-1271 one (`FiatTokenV2: invalid signature`). That is the token's rule, not the facilitator's, so no facilitator changes it. Permit2 is the smart-account path, and `Permit2.permitWitnessTransferFrom` does verify ERC-1271.
+The rail follows from who verifies the signature. `Permit2.permitWitnessTransferFrom` verifies through ERC-1271, so `permit2-exact` carries a smart account's signature; Celo's USDC verifies `transferWithAuthorization` with `ecrecover`, so the `eip3009` rail there carries EOA buyers. Since the facilitator settles the `exact` scheme over EIP-3009, that is the path it serves.
