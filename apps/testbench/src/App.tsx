@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { ActivityLogPanel } from "./components/ActivityLogPanel";
+import { AgentIdentityPanel } from "./components/AgentIdentityPanel";
 import { CrossChainPanel } from "./components/CrossChainPanel";
 import { FeeTokensPanel } from "./components/FeeTokensPanel";
 import { SendPanel } from "./components/SendPanel";
 import { PasskeyPanel } from "./components/PasskeyPanel";
 import { SessionsPanel } from "./components/SessionsPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { X402Panel } from "./components/X402Panel";
 import { WalkthroughPanel } from "./components/WalkthroughPanel";
 import { WalletPanel } from "./components/WalletPanel";
 import type { LogEntry } from "./lib/log";
@@ -20,6 +22,8 @@ export type Tab =
   | "send"
   | "sessions"
   | "crosschain"
+  | "x402"
+  | "identity"
   | "settings";
 
 export const TABS: { id: Tab; label: string }[] = [
@@ -30,6 +34,8 @@ export const TABS: { id: Tab; label: string }[] = [
   { id: "send", label: "Send" },
   { id: "sessions", label: "Sessions" },
   { id: "crosschain", label: "Cross-chain" },
+  { id: "x402", label: "x402" },
+  { id: "identity", label: "Agent identity" },
   { id: "settings", label: "Settings" },
 ];
 
@@ -79,6 +85,8 @@ export function App({ attachLog, settings, onSettings, initialTab = "walkthrough
           {tab === "send" && <SendPanel />}
           {tab === "sessions" && <SessionsPanel />}
           {tab === "crosschain" && <CrossChainPanel />}
+          {tab === "x402" && <X402Panel />}
+          {tab === "identity" && <AgentIdentityPanel />}
           {tab === "settings" && (
             <SettingsPanel settings={activeSettings} onChange={(next) => onSettings?.(next)} />
           )}

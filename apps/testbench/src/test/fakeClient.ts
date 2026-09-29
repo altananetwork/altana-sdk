@@ -69,6 +69,15 @@ export function fakeClient(overrides: Partial<TestbenchClient> = {}): FakeClient
     quoteGrantSession: vi.fn(async () => ({ lines: [], balances: [], complete: true })),
     quoteRevokeSession: vi.fn(async () => ({ lines: [], balances: [], complete: true })),
     revokeSession: vi.fn(async () => ({ keyId: "0x01" as const, status: "revoked" as const, legs: [], cacheSync: Promise.resolve([]) })),
+    getErc8004Agent: vi.fn(async () => {
+      throw new Error("getErc8004Agent not configured in this test");
+    }),
+    registerErc8004Agent: vi.fn(async () => {
+      throw new Error("registerErc8004Agent not configured in this test");
+    }),
+    fetchWithX402: vi.fn(async () => {
+      throw new Error("fetchWithX402 not configured in this test");
+    }),
     readMirror: vi.fn(async () => mirrorCurrent),
     proveIntoMirror: vi.fn(async () => {
       throw new Error("proveIntoMirror not configured in this test");
