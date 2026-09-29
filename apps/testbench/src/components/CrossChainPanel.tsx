@@ -30,11 +30,15 @@ export function CrossChainPanel({ makeDeps = liveFactory }: { makeDeps?: DepsFac
   const [busy, setBusy] = useState(false);
   const source = sources.find((c) => c.chainId === sourceId);
   const destination = networkByChainId(DESTINATION_CHAIN_ID);
-  const publicKey = wallet ? privateKeyToAccount(wallet.key).publicKey : undefined;
+  // This panel drives porto directly with the raw key, so it is offered for a
+  // private-key wallet only. A passkey wallet registers through the SDK
+  // instead, which is what the walkthrough's step 4 does.
+  const walletKey = wallet?.key;
+  const publicKey = walletKey ? privateKeyToAccount(walletKey).publicKey : undefined;
   const sourceSymbol = source ? nativeLabel(source.chainId, state.feeCurrenciesChainId === source.chainId ? state.feeCurrencies : undefined, client.chains) : "CELO";
 
   const start = async () => {
-    if (!wallet || !source || !publicKey) return;
+    if (!wallet || !source || !publicKey || !walletKey) return;
     setError(undefined);
     setResult(undefined);
     setSteps([]);
@@ -45,7 +49,7 @@ export function CrossChainPanel({ makeDeps = liveFactory }: { makeDeps?: DepsFac
     };
     try {
       await ensureRegistered();
-      const deps = await makeDeps({ walletKey: wallet.key, source });
+      const deps = await makeDeps({ walletKey, source });
       const r = await runCrossChain(deps, { wallet: wallet.address, publicKey, onStep });
       setResult(r);
       dispatch({ type: "log/add", entry: entry("cross-chain result", { result: r }) });
