@@ -6,6 +6,7 @@ import { FeeTokensPanel } from "./components/FeeTokensPanel";
 import { SendPanel } from "./components/SendPanel";
 import { PasskeyPanel } from "./components/PasskeyPanel";
 import { SessionsPanel } from "./components/SessionsPanel";
+import { ProofPanel } from "./components/ProofPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { X402Panel } from "./components/X402Panel";
 import { WalkthroughPanel } from "./components/WalkthroughPanel";
@@ -24,6 +25,7 @@ export type Tab =
   | "crosschain"
   | "x402"
   | "identity"
+  | "proof"
   | "settings";
 
 export const TABS: { id: Tab; label: string }[] = [
@@ -36,6 +38,7 @@ export const TABS: { id: Tab; label: string }[] = [
   { id: "crosschain", label: "Cross-chain" },
   { id: "x402", label: "x402" },
   { id: "identity", label: "Agent identity" },
+  { id: "proof", label: "Proof" },
   { id: "settings", label: "Settings" },
 ];
 
@@ -87,6 +90,7 @@ export function App({ attachLog, settings, onSettings, initialTab = "walkthrough
           {tab === "crosschain" && <CrossChainPanel />}
           {tab === "x402" && <X402Panel />}
           {tab === "identity" && <AgentIdentityPanel />}
+          {tab === "proof" && <ProofPanel />}
           {tab === "settings" && (
             <SettingsPanel settings={activeSettings} onChange={(next) => onSettings?.(next)} />
           )}
