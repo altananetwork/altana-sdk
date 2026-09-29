@@ -123,3 +123,24 @@ both rails; USDT on Celo has no EIP-3009 and is permit2-exact only. Both are
 6 decimals. Pass viem's `celo` / `celoSepolia` as `chain`; settlement
 transactions come out as standard EIP-1559 (no fee currency is ever set).
 Covered end to end by `tests/e2e/fork-celo-x402-server.ts`.
+
+### Celo's facilitator
+
+Celo runs a hosted facilitator that broadcasts the payment and pays the gas, so
+a merchant can take payments without an RPC or a funded key:
+`CELO_FACILITATOR_URL` (42220) and `CELO_SEPOLIA_FACILITATOR_URL` (11142220).
+Point a merchant at one with `facilitatorService: { url, apiKey }`;
+`facilitatorSupported` reads its open `GET /supported`. `POST /settle` needs an
+`X-API-Key`, issued at https://x402.celo.org against a signed message.
+
+The choice is per rail. Celo's `exact` scheme settles EIP-3009, so that rail
+goes to the facilitator and Permit2 rails keep settling from the merchant's own
+key; verification stays local either way, because the merchant's is ERC-1271
+aware and a facilitator's need not be.
+
+An Altana smart account cannot pay Celo's USDC over EIP-3009 at all: the token
+checks that signature with `ecrecover` and refuses an ERC-1271 one
+(`FiatTokenV2: invalid signature`). That is the token's rule, so no facilitator
+changes it. Permit2 is the smart-account path.
+`tests/e2e/live-x402-celo-facilitator.ts` checks both against the live
+facilitator.
