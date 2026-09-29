@@ -118,13 +118,23 @@ describe("readCacheStatus", () => {
   });
 
   // The case that reads as "not authorized" and is not.
-  test("proven at an older block: stale, and the advice says to re-prove, not to check the registry", async () => {
+  test("proven at another block: stale, and the advice says to re-prove, not to check the registry", async () => {
     const s = await status(fakeL2({ entry: liveEntry(90n), anchorNumber: 100n, valid: false }));
     expect(s.stale).toBe(true);
     expect(s.absent).toBe(false);
     expect(s.valid).toBe(false);
-    expect(s.advice).toContain("older L1 block");
+    expect(s.advice).toContain("different L1 block");
     expect(s.advice).toContain("fresh proof");
+  });
+
+  // Not "older than the anchor": the cache requires sourceBlockNumber to EQUAL
+  // L1Block.number() and reverts on anything else (1.1.1), so one anchor update
+  // ends an entry's usefulness. An entry is an assertion about one block.
+  test("one anchor update is enough to make a current entry stale", async () => {
+    const fresh = await status(fakeL2({ entry: liveEntry(100n), anchorNumber: 100n, valid: true }));
+    expect(fresh.stale).toBe(false);
+    const oneBlockOn = await status(fakeL2({ entry: liveEntry(100n), anchorNumber: 101n, valid: false }));
+    expect(oneBlockOn.stale).toBe(true);
   });
 
   // Cache v1.1.0 reverts rather than answering on a stale entry; the SDK's
