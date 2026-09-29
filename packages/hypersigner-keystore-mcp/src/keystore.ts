@@ -275,10 +275,13 @@ const L2_ALIASES: Record<string, string> = {
 
 export function resolveChain(name?: string): ChainConfig {
   const k = (name ?? "bnb").toLowerCase();
-  const l1 = CHAINS[k] ?? CHAINS[ALIASES[k] ?? ""] ?? CHAINS["bnb"];
+  const l1 = CHAINS[k] ?? CHAINS[ALIASES[k] ?? ""] ?? DEFAULT_CHAIN;
   const l2 = L2_CACHES[L2_ALIASES[k] ?? ""];
   return l2 ? { ...l1, l2 } : l1;
 }
+
+/** The fallback for an unrecognized ALTANA_CHAIN. */
+const DEFAULT_CHAIN: ChainConfig = CHAINS.bnb as ChainConfig;
 
 /** v0 convention: keyId = keccak256(SEC1-uncompressed publicKey bytes). */
 export function deriveKeyId(publicKey: Hex): Hex {
