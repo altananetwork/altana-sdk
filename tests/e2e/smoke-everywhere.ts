@@ -48,6 +48,7 @@ import {
 import { createClient as createViemClient, createPublicClient, createWalletClient, formatEther, http, keccak256, parseEther, type Hex, type PublicClient } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { appendFileSync } from "node:fs";
+import { testnetEnvFile } from "./testnet-env.js";
 import { assertStatus, legOf, printLegs, signatureCount } from "./session-legs.js";
 
 const TEST_FUNDER_KEY = process.env.TEST_FUNDER_KEY as Hex;
@@ -203,7 +204,7 @@ async function run(
 
 /** Appends the throwaway admin key to the shared testnet env file (never printed). */
 function saveThrowawayKey(address: `0x${string}`, key: Hex) {
-  const file = process.env.TESTNET_ENV_FILE ?? new URL("../../../.env.testnet", import.meta.url).pathname;
+  const file = testnetEnvFile();
   appendFileSync(
     file,
     `\n# smoke-everywhere throwaway wallet ${address}, ${new Date().toISOString()}: admin key\n` +

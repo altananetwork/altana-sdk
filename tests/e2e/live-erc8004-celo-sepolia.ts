@@ -62,6 +62,7 @@ import {
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { appendFileSync } from "node:fs";
+import { testnetEnvFile } from "./testnet-env.js";
 
 const CHAIN_ID = CELO_SEPOLIA.chainId;
 const REGISTRY = erc8004Registry(CHAIN_ID);
@@ -283,7 +284,7 @@ async function run(
 
 /** The throwaway admin key, so nothing is stranded if the run dies. */
 function saveThrowawayKey(address: Address, key: Hex) {
-  const file = process.env.TESTNET_ENV_FILE ?? new URL("../../../.env.testnet", import.meta.url).pathname;
+  const file = testnetEnvFile();
   appendFileSync(
     file,
     `\n# live-erc8004-celo-sepolia throwaway wallet ${address}, ${new Date().toISOString()}: admin key\n` +
