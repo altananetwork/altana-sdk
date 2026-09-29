@@ -5,7 +5,7 @@ import { CELO_SEPOLIA, type SerializedSession } from "@altananetwork/sdk";
 import { X402Panel } from "../../src/components/X402Panel";
 import type { StoredSession, StoredState } from "../../src/lib/storage";
 import { privateKeyToAccount } from "viem/accounts";
-import { TEST_ADDRESS, fakeClient } from "../../src/test/fakeClient";
+import { TEST_ADDRESS, TEST_KEY, fakeClient } from "../../src/test/fakeClient";
 import { renderWith } from "../../src/test/render";
 
 const USDC = "0x01C5C0122039549AD1493B8220cABEdD739BC44E";
@@ -158,5 +158,59 @@ describe("X402Panel", () => {
     await userEvent.click(screen.getByRole("button", { name: "Pay and fetch" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/insufficient allowance/);
     expect(screen.queryByText("Paid")).not.toBeInTheDocument();
+  });
+});
+
+describe("X402Panel, the Permit2 approval", () => {
+  const HEALTH = { price: "10000", token: USDC, facilitator: null };
+
+  test("a wallet that has not approved Permit2 is told, and offered the approval", async () => {
+    mockFetch(() => Response.json(HEALTH));
+    const client = fakeClient({ permit2Allowance: vi.fn(async () => 0n) });
+    renderWith(client, <X402Panel />, { ...WITH_SESSION, walletKey: TEST_KEY });
+    expect(await screen.findByText(/has not approved Permit2 for that token/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve Permit2 for this token" })).toBeEnabled();
+  });
+
+  test("a wallet that has approved is not nagged", async () => {
+    mockFetch(() => Response.json(HEALTH));
+    const client = fakeClient({ permit2Allowance: vi.fn(async () => 2n ** 256n - 1n) });
+    renderWith(client, <X402Panel />, { ...WITH_SESSION, walletKey: TEST_KEY });
+    await waitFor(() => expect(client.permit2Allowance).toHaveBeenCalled());
+    expect(screen.queryByText(/has not approved Permit2/)).not.toBeInTheDocument();
+  });
+
+  test("approving sends the call and re-reads the allowance", async () => {
+    mockFetch(() => Response.json(HEALTH));
+    const allowance = vi.fn().mockResolvedValueOnce(0n).mockResolvedValue(2n ** 256n - 1n);
+    const client = fakeClient({ permit2Allowance: allowance as never });
+    renderWith(client, <X402Panel />, { ...WITH_SESSION, walletKey: TEST_KEY });
+
+    await userEvent.click(await screen.findByRole("button", { name: "Approve Permit2 for this token" }));
+    await waitFor(() => expect(client.approvePermit2).toHaveBeenCalled());
+    expect(vi.mocked(client.approvePermit2).mock.calls[0]![0]).toMatchObject({
+      chainId: CELO_SEPOLIA.chainId,
+      token: USDC,
+    });
+    await waitFor(() => expect(screen.queryByText(/has not approved Permit2/)).not.toBeInTheDocument());
+  });
+
+  test("an approval that does not confirm is reported, not assumed", async () => {
+    mockFetch(() => Response.json(HEALTH));
+    const client = fakeClient({
+      permit2Allowance: vi.fn(async () => 0n),
+      approvePermit2: vi.fn(async () => ({ callsId: "0x01" as const, status: "FAILED" as const })),
+    });
+    renderWith(client, <X402Panel />, { ...WITH_SESSION, walletKey: TEST_KEY });
+    await userEvent.click(await screen.findByRole("button", { name: "Approve Permit2 for this token" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/approval returned FAILED/);
+  });
+
+  test("the EIP-3009 rail needs no approval, so none is asked for", async () => {
+    mockFetch(() => Response.json(HEALTH));
+    const client = fakeClient({ permit2Allowance: vi.fn(async () => 0n) });
+    renderWith(client, <X402Panel />, { ...WITH_SESSION, walletKey: TEST_KEY });
+    await userEvent.selectOptions(screen.getByLabelText(/Preferred rail/), "eip3009");
+    await waitFor(() => expect(screen.queryByText(/has not approved Permit2/)).not.toBeInTheDocument());
   });
 });

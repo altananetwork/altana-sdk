@@ -1,5 +1,6 @@
 import { CELO_SEPOLIA, deserializeSession, signerFromPrivateKey } from "@altananetwork/sdk";
 import { useEffect, useState } from "react";
+import type { Address } from "viem";
 import { relayReason } from "../lib/errors";
 import { txUrl } from "../lib/explorer";
 import { entry } from "../lib/log";
@@ -47,6 +48,48 @@ export function X402Panel() {
 
   const sessions = app.sessions.filter((s) => s.status !== "failed");
   const selected = sessions.find((s) => s.id === sessionId) ?? sessions[0];
+  const [allowance, setAllowance] = useState<bigint>();
+
+  // Permit2 pulls the token with permitTransferFrom, which needs the wallet to
+  // have approved it first. A fresh wallet has not, so the first payment on
+  // that rail fails with something that reads as an x402 problem and is not.
+  const payToken = health?.token as Address | undefined;
+  const wallet = app.wallet;
+  useEffect(() => {
+    if (!wallet || !payToken || rail !== "permit2") {
+      setAllowance(undefined);
+      return;
+    }
+    let cancelled = false;
+    void client
+      .permit2Allowance({ chainId: CELO, wallet: wallet.address, token: payToken })
+      .then((a) => {
+        if (!cancelled) setAllowance(a);
+      })
+      .catch(() => {
+        if (!cancelled) setAllowance(undefined);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, wallet, payToken, rail]);
+
+  const needsApproval = rail === "permit2" && allowance !== undefined && allowance === 0n;
+
+  const approve = () =>
+    guard("approvePermit2", async () => {
+      if (!wallet || !payToken) return;
+      const result = await client.approvePermit2({
+        chainId: CELO,
+        wallet: wallet.address,
+        signer: wallet.signer,
+        token: payToken,
+      });
+      if (result.status !== "CONFIRMED") {
+        throw new Error(`The approval returned ${result.status}.`);
+      }
+      setAllowance(await client.permit2Allowance({ chainId: CELO, wallet: wallet.address, token: payToken }));
+    });
 
   // Debounced: the field drives a fetch, and one per keystroke is a request
   // storm at a URL that is usually not a seller yet.
@@ -173,7 +216,24 @@ export function X402Panel() {
           {sessions.length === 0 && (
             <div className="banner info">
               Grant a session on the Sessions tab first. An x402 payment is signed by a session key, not by the
-              wallet key.
+              wallet key. On a live relay, untick the KeyStore write there or the grant fails.
+            </div>
+          )}
+
+          {needsApproval && (
+            <div className="banner info">
+              <div className="stack">
+                <span>
+                  This wallet has not approved Permit2 for that token. Permit2 pulls the payment with
+                  permitTransferFrom, so without the approval the first payment on this rail fails with an error
+                  that says nothing about approvals.
+                </span>
+                <div className="row">
+                  <Button onClick={() => void approve()} disabled={busy !== undefined || !wallet}>
+                    {busy === "approvePermit2" ? "Approving" : "Approve Permit2 for this token"}
+                  </Button>
+                </div>
+              </div>
             </div>
           )}
 
