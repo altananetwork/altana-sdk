@@ -2,6 +2,7 @@ import { CELO_SEPOLIA } from "@altananetwork/sdk";
 import { useMemo, useState } from "react";
 import { keccak256, type Hex } from "viem";
 import { targetFromInput, type MirrorTarget } from "../lib/mirror";
+import { useDebounced } from "../lib/useDebounced";
 import { useApp } from "../state/AppState";
 import { MirrorCard } from "./MirrorCard";
 
@@ -46,19 +47,23 @@ export function MirrorPanel() {
     };
   }, [picked, sessions]);
 
+  // Debounced, so a public key typed or pasted a character at a time does not
+  // read the chain for the wrong key on its way to the right one.
+  const settledWallet = useDebounced(walletInput);
+  const settledKey = useDebounced(keyInput);
   const typed = useMemo(
     () =>
       targetFromInput({
-        wallet: walletInput,
-        key: keyInput,
+        wallet: settledWallet,
+        key: settledKey,
         ...(wallet?.address ? { fallbackWallet: wallet.address } : {}),
       }),
-    [walletInput, keyInput, wallet?.address],
+    [settledWallet, settledKey, wallet?.address],
   );
 
   const target = picked ? fromSession : typed.target;
-  const keyProblem = picked ? undefined : keyInput.trim() ? typed.keyProblem : undefined;
-  const walletProblem = picked ? undefined : keyInput.trim() ? typed.walletProblem : undefined;
+  const keyProblem = picked ? undefined : settledKey.trim() ? typed.keyProblem : undefined;
+  const walletProblem = picked ? undefined : settledKey.trim() ? typed.walletProblem : undefined;
 
   return (
     <div className="panel">

@@ -15,6 +15,7 @@ import {
   type X402Payment,
   type X402Probe,
 } from "../lib/x402";
+import { useDebounced } from "../lib/useDebounced";
 import { useApp } from "../state/AppState";
 import { Address as Addr } from "./shared/Address";
 import { Badge } from "./shared/Badge";
@@ -47,15 +48,18 @@ export function X402Panel() {
   const sessions = app.sessions.filter((s) => s.status !== "failed");
   const selected = sessions.find((s) => s.id === sessionId) ?? sessions[0];
 
+  // Debounced: the field drives a fetch, and one per keystroke is a request
+  // storm at a URL that is usually not a seller yet.
+  const settledUrl = useDebounced(url);
   useEffect(() => {
     let cancelled = false;
-    void readSellerHealth(url).then((h) => {
+    void readSellerHealth(settledUrl).then((h) => {
       if (!cancelled) setHealth(h);
     });
     return () => {
       cancelled = true;
     };
-  }, [url]);
+  }, [settledUrl]);
 
   async function guard(label: string, fn: () => Promise<void>) {
     setBusy(label);
