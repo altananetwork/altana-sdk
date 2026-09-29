@@ -1,6 +1,7 @@
 import {
   createClient,
   type Client,
+  type CallsQuote,
   type ClientExecuteOptions,
   type ClientGrantSessionOptions,
   type ClientQuoteGrantSessionOptions,
@@ -26,6 +27,7 @@ export interface TestbenchClient {
   holdings(wallet: Address, chainId: number): Promise<HoldingsResult>;
   feeCurrencies(chainId: number): Promise<FeeCurrenciesResult>;
   execute(opts: ClientExecuteOptions): Promise<ExecuteResult>;
+  quoteExecute(opts: ClientExecuteOptions): Promise<CallsQuote>;
   grantSession(opts: ClientGrantSessionOptions): Promise<GrantSessionResult>;
   quoteGrantSession(opts: ClientQuoteGrantSessionOptions): Promise<SessionQuote>;
   quoteRevokeSession(opts: ClientQuoteRevokeSessionOptions): Promise<SessionQuote>;
@@ -60,6 +62,7 @@ export function createLiveClient(chains: NetworkConfig[], log: Logger): Testbenc
       call("holdings", { wallet, chainId }, () => client.holdings({ wallet, chainId, includeZero: false })),
     feeCurrencies: (chainId) => call("feeCurrencies", { chainId }, () => client.feeCurrencies({ chainId })),
     execute: (opts) => call("execute", opts, () => client.execute(opts)),
+    quoteExecute: (opts) => call("quoteExecute", opts, () => client.quoteExecute(opts)),
     grantSession: (opts) => call("grantSession", opts, () => client.grantSession(opts)),
     quoteGrantSession: (opts) => call("quoteGrantSession", opts, () => client.quoteGrantSession(opts)),
     quoteRevokeSession: (opts) => call("quoteRevokeSession", opts, () => client.quoteRevokeSession(opts)),
