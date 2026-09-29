@@ -182,6 +182,22 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Fixed
 
+- **A wallet's second operation no longer fails on the nonce.** The relay
+  chooses an intent's nonce by reading the account's nonce on chain at `latest`
+  and remembers nothing between requests, so an operation prepared before the
+  wallet's previous one is visible to the relay was given a nonce the account
+  rejected, and `grantSession`, `revokeSession` and `execute` came back with
+  `InvalidNonce(InvalidNonce)`. Waiting for the previous operation was not
+  enough: the relay's own read lags the receipts it hands out. A prepare
+  rejected for its nonce is now retried, up to three times over twelve seconds,
+  with nothing signed or sent in between; live on Celo Sepolia four
+  back-to-back operations on one wallet each succeeded on the attempt after the
+  rejection. Any other rejection is still the caller's answer immediately. The
+  SDK does not supply the nonce itself, although the relay would honour it: a
+  counterfactual wallet's first intent gets a random sequence key and every
+  intent after the delegation lands uses key 0, so counting up from the
+  previous nonce is wrong exactly when it matters.
+
 - **Cache proofs no longer start before the L2 has anchored the registry
   write.** A relayed KeyStore write took its block number from a public RPC
   receipt lookup; when that lookup failed (the node had not indexed the
