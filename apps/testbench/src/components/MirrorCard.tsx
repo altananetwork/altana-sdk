@@ -19,8 +19,16 @@ import { Address as Addr } from "./shared/Address";
 import { Badge } from "./shared/Badge";
 import { Button } from "./shared/Button";
 
-/** Altana's own explorer, which shows KeyStore keys and their cache proofs. */
+/**
+ * Altana's own explorer, which shows KeyStore keys and their cache proofs.
+ * The route is `/account/`, not `/address/`: the latter answers 404 (checked
+ * live, 2026-09-29).
+ */
 const ALTANA_EXPLORER = "https://testnet.altana.network";
+
+export function altanaExplorerAccountUrl(address: string): string {
+  return `${ALTANA_EXPLORER}/account/${address}`;
+}
 
 function badgeFor(state: MirrorState) {
   switch (state.kind) {
@@ -274,7 +282,7 @@ export function MirrorCard({ chainId, target, showTitle = true }: MirrorCardProp
                 The cache on Celoscan
               </a>
             )}
-            <a href={`${ALTANA_EXPLORER}/address/${target.user}`} target="_blank" rel="noreferrer">
+            <a href={altanaExplorerAccountUrl(target.user)} target="_blank" rel="noreferrer">
               The wallet on the Altana explorer
             </a>
           </div>

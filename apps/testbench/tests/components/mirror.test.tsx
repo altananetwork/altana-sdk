@@ -2,7 +2,7 @@ import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
 import { CELO_SEPOLIA, SEPOLIA } from "@altananetwork/sdk";
-import { MirrorCard } from "../../src/components/MirrorCard";
+import { MirrorCard, altanaExplorerAccountUrl } from "../../src/components/MirrorCard";
 import type { MirrorTarget } from "../../src/lib/mirror";
 import { TEST_ADDRESS, TEST_KEY, fakeClient, mirrorCurrent, packKey } from "../../src/test/fakeClient";
 import { renderWith } from "../../src/test/render";
@@ -189,5 +189,25 @@ describe("MirrorCard, proving someone else's key", () => {
       { v: 1, walletKey: TEST_KEY, sessions: [] },
     );
     expect(await screen.findByRole("button", { name: "Prove into the Celo mirror" })).toBeEnabled();
+  });
+});
+
+describe("the explorer links", () => {
+  test("the Altana explorer route is /account/, which is the one that resolves", async () => {
+    // /address/ answers 404 on testnet.altana.network (checked live 2026-09-29).
+    expect(altanaExplorerAccountUrl(TEST_ADDRESS)).toBe(
+      `https://testnet.altana.network/account/${TEST_ADDRESS}`,
+    );
+  });
+
+  test("the card links the wallet to Altana's explorer and the cache to Celoscan", async () => {
+    setup({});
+    const altana = await screen.findByRole("link", { name: /Altana explorer/ });
+    expect(altana).toHaveAttribute("href", `https://testnet.altana.network/account/${TEST_ADDRESS}`);
+    const celoscan = screen.getByRole("link", { name: /cache on Celoscan/ });
+    expect(celoscan).toHaveAttribute(
+      "href",
+      "https://sepolia.celoscan.io/address/0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD",
+    );
   });
 });
