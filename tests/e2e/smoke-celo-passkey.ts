@@ -32,6 +32,7 @@ import {
   createClient,
   createHeadlessPasskey,
   quoteCalls,
+  waitForBalance,
   CELO_SEPOLIA,
   SEPOLIA,
   type NetworkConfig,
@@ -126,6 +127,13 @@ async function main() {
   await Promise.all([
     celoPublic.waitForTransactionReceipt({ hash: fundTx }),
     sepoliaPublic.waitForTransactionReceipt({ hash: sepoliaFundTx }),
+  ]);
+  // A receipt is not a visible balance: forno has answered 0 for a wallet whose
+  // funding transaction had already confirmed, and the relay then quotes the
+  // first intent as unpayable. Wait for the balance itself.
+  await Promise.all([
+    waitForBalance(celoPublic, wallet.address, CELO_FUNDING, 120_000),
+    waitForBalance(sepoliaPublic, wallet.address, SEPOLIA_FUNDING, 120_000),
   ]);
   console.log(`    funded [${ms(t0)}]`);
 
