@@ -13,8 +13,11 @@
  *
  * Steps:
  *   1. a throwaway wallet, funded in CELO from the shared testnet funder
- *   2. a session scoped to the registry's `register` and `setAgentURI`
- *      selectors, with a CELO spend cap
+ *   2. an account-only session (`register: false`) scoped to the registry's
+ *      `register` and `setAgentURI` selectors, with a CELO spend cap. The
+ *      account enforces the scope, which is what step 6 proves; the Ethereum
+ *      KeyStore leg is proven by the spine and the passkey smoke test, so this
+ *      script stays on Celo.
  *   3. phase 1: mint, recovering the agentId from the relay's receipt
  *   4. phase 2: patch the id into the record and publish it as the tokenURI
  *   5. read it back: the wallet owns the token and the record names it
@@ -147,11 +150,18 @@ async function run(
   admin: ReturnType<typeof signerFromPrivateKey>,
   wallet: { address: Address },
 ) {
-  // ── 2. The bounded capability: two selectors on one address, nothing else. ──
+  // ── 2. The bounded capability: two selectors on one address, nothing else.
+  // `register: false` keeps this on Celo. The account enforces the selector
+  // scope and the expiry itself, which is the boundary step 6 tests; the
+  // Ethereum KeyStore entry is the third-party-verifiable record of the same
+  // grant and is proven by the spine and the passkey smoke test, so requiring
+  // it here would only couple an identity test to Sepolia's gas price and to
+  // whether the relay's interop path is live. ──
   console.log(`\n[2] grantSession scoped to ${REGISTRY} by selector`);
   const session = await client.grantSession({
     wallet,
     signer: admin,
+    register: false,
     permissions: {
       calls: erc8004RegisterPermissions(CHAIN_ID),
       spend: [{ limit: parseEther("0.3"), period: "day" }],
@@ -207,6 +217,7 @@ async function run(
   const unscoped = await client.grantSession({
     wallet,
     signer: admin,
+    register: false,
     // Deliberately the wrong target: the wallet itself, not the registry.
     permissions: { calls: [{ to: wallet.address }], spend: [{ limit: parseEther("0.1"), period: "day" }] },
     expiry: Math.floor(Date.now() / 1000) + HOUR,
