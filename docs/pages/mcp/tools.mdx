@@ -59,6 +59,8 @@ On an L1 the Keystore is on the chain itself and every tool works on that one ch
 
 On-chain [ERC-8004](/sdk/erc8004) identity, so an agent on an Altana wallet is discoverable by buyers and other agents. The session must have been granted `erc8004RegisterPermissions(chainId)`; the write tools check that client-side before spending gas.
 
+These work on Celo as well as BNB Chain: the `AgentIdentity` registry is deployed on all four networks (`ERC8004_ADDRESSES`). The ERC-8183 tools above are BNB Chain only, because that is where the job-escrow stack lives, so on Celo an agent has an identity and hires nobody.
+
 | Tool | Purpose |
 |---|---|
 | `erc8004_register` | Mints the agent's identity and publishes its registration record, running both phases (mint, then write the assigned `agentId` back into the record). If the mint lands but the write-back fails, the `agentId` is still returned with repair instructions — registering again would mint a second identity. |
