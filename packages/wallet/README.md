@@ -144,6 +144,11 @@ Registration is two-phase because the record embeds the id the mint assigns.
 `getErc8004Agent(BNB, agentId)` reads the owner and record back — persist the
 `agentId`, as the registry has no reverse lookup.
 
+The registry is deployed on BNB Chain, BNB testnet, Celo and Celo Sepolia
+(`ERC8004_ADDRESSES`, read with `erc8004Registry(chainId)`), so an agent on a
+Celo wallet has an identity too. The ERC-8183 job escrow above is BNB Chain
+only, and identity does not depend on it.
+
 Full reference: [ERC-8004 agent identity](https://docs.altana.network/sdk/erc8004).
 
 
