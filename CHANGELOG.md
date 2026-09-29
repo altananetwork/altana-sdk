@@ -31,6 +31,20 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Added
 
+- **`@altananetwork/x402-server`: settle through a hosted facilitator.**
+  `facilitatorService` points a merchant at one, which broadcasts the payment
+  and pays the gas, so a merchant can take payments without an RPC or a funded
+  key. Celo runs the one its own documentation points at:
+  `CELO_FACILITATOR_URL` (42220) and `CELO_SEPOLIA_FACILITATOR_URL`
+  (11142220); `facilitatorSupported` reads its open `GET /supported` and
+  `supportsExactOn` answers whether it serves a chain. The choice is per rail,
+  because Celo's `exact` scheme settles EIP-3009: that rail goes to the
+  facilitator and Permit2 rails keep settling locally, so one route serves an
+  EOA buyer through the facilitator and an Altana smart-account buyer from the
+  merchant's key. Verification stays local either way, since the merchant's own
+  is ERC-1271-aware and a facilitator's need not be. `POST /settle` needs an
+  `X-API-Key`, and a 401 says so rather than looking like a rejected payment.
+
 - **ERC-8004 agent identity on Celo.** The identity registry is now its own
   address record, `ERC8004_ADDRESSES`, read with `erc8004Registry(chainId)`,
   and it carries Celo (42220, `0x8004A169…`) and Celo Sepolia (11142220,
@@ -197,6 +211,7 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Fixed
 
+<<<<<<< HEAD
 - **A wallet's second operation no longer fails on the nonce.** The relay
   chooses an intent's nonce by reading the account's nonce on chain at `latest`
   and remembers nothing between requests, so an operation prepared before the
@@ -225,6 +240,18 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
   wallet therefore has one address, with the passkey as admin, on the network
   and on its registry chain, where its registry writes go through the relay
   from its own account.
+=======
+- **`signX402Payment` signs a v2 envelope when the requirement names no
+  version.** A v2 `PaymentRequirements` carries no `x402Version` of its own (it
+  lives on the 402 body), so a caller handing `signX402Payment` an `accepts[]`
+  entry straight from a challenge had nothing to copy down and got a v1
+  envelope, which real v2 facilitators refuse for its format before looking at
+  the signature. Celo's answers `invalid_format`, "data did not match any
+  variant of untagged enum FacilitatorVerifyRequest", which points nowhere near
+  the version. The default is now 2; the requirement's own version still wins,
+  and the new `opts.x402Version` overrides both for a v1 merchant that does not
+  say so. `fetchWithX402` already stamped the body's version and is unchanged.
+>>>>>>> origin/feat/x402-celo-facilitator
 
 - **Cache proofs no longer start before the L2 has anchored the registry
   write.** A relayed KeyStore write took its block number from a public RPC
