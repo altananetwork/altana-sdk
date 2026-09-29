@@ -281,3 +281,40 @@ describe("WalkthroughPanel step 6", () => {
     expect(within(card(/6\. Use the key/)).getByRole("button", { name: /Run this step/ })).toBeDisabled();
   });
 });
+
+describe("the session step 4 grants and step 6 uses", () => {
+  test("carries the same expiry and cap in both, or the account rejects the key", async () => {
+    const client = fakeClient({
+      grantSession: vi.fn(async () => grant()),
+      readMirror: vi.fn(async () => mirrorCurrent),
+    });
+    (client.execute as ReturnType<typeof vi.fn>).mockResolvedValue({
+      callsId: "0x01",
+      status: "CONFIRMED",
+      transactionHash: "0xused",
+    });
+    (client.revokeSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+      keyId: "0x02",
+      status: "revoked",
+      legs: [],
+      cacheSync: Promise.resolve([]),
+    });
+    renderWith(client, <WalkthroughPanel />, WITH_WALLET);
+    for (const t of [/1\. Create/, /2\. Balances/, /3\. Pay gas/, /4\. Register/, /5\. Show the key/, /6\. Use the key/]) {
+      await runStep(t);
+    }
+
+    const granted = vi.mocked(client.grantSession).mock.calls[0]![0];
+    const sessionCall = vi.mocked(client.execute).mock.calls.at(-1)![0] as {
+      session: {
+        expiry: number;
+        publicKey: string;
+        permissions: { spend: { limit: bigint; period: string }[] };
+      };
+    };
+    expect(sessionCall.session.expiry).toBe(granted.expiry);
+    expect(sessionCall.session.permissions.spend).toEqual(granted.permissions.spend);
+    // And the key it signs with is the one that was granted.
+    expect(sessionCall.session.publicKey).toBe(granted.sessionSigner!.publicKey);
+  });
+});
