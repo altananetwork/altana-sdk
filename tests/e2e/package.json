@@ -32,7 +32,8 @@
     "smoke:celo-fee-currency": "bun run smoke-celo-fee-currency.ts",
     "smoke:everywhere": "bun run smoke-everywhere.ts",
     "live:erc8004-celo": "bun run live-erc8004-celo-sepolia.ts",
-    "live:x402-celo-facilitator": "bun run live-x402-celo-facilitator.ts"
+    "live:x402-celo-facilitator": "bun run live-x402-celo-facilitator.ts",
+    "serve:x402-celo": "bun run serve-x402-celo.ts"
   },
   "dependencies": {
     "@altananetwork/sdk": "workspace:*",
