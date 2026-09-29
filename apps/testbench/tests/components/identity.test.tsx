@@ -6,14 +6,31 @@ import { AgentIdentityPanel } from "../../src/components/AgentIdentityPanel";
 import { TEST_ADDRESS, TEST_KEY, fakeClient } from "../../src/test/fakeClient";
 import { renderWith } from "../../src/test/render";
 
+/**
+ * The record agent 449 actually holds on Celo Sepolia, read off chain on
+ * 2026-09-29: an ERC-8004 registration record with `services`, not an A2A card
+ * with `skills`. The card, and the skills, live behind the MCP endpoint.
+ */
+const RECORD = {
+  name: "Altana Wallet Agent",
+  description: "Runs a non-custodial Altana agentic wallet on Celo",
+  image: "https://docs.altana.network/altana-icon.png",
+  registrations: [{ agentId: 449, agentRegistry: "eip155:11142220:0x8004A818BFB912233c491871b3d84c89A494BD9e" }],
+  services: [
+    { name: "MCP", endpoint: "https://docs.altana.network/.well-known/agent-card.json" },
+    { name: "docs", endpoint: "https://docs.altana.network" },
+  ],
+  type: "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
+};
+const DATA_URI = `data:application/json;base64,${btoa(JSON.stringify(RECORD))}`;
+
+/** What an A2A card looks like, for the other branch of the renderer. */
 const CARD = {
   name: "Altana Wallet Agent",
-  description: "Agentic wallets on Celo",
   version: "1.0.0",
   skills: [{ id: "pay-gas", name: "Pay gas in a chosen token", description: "CELO, USDC, USDm, EURm or KESm" }],
-  registrations: [{ agentId: 449, agentRegistry: "eip155:11142220:0x8004A818" }],
 };
-const DATA_URI = `data:application/json;base64,${btoa(JSON.stringify(CARD))}`;
+const CARD_URI = `data:application/json;base64,${btoa(JSON.stringify(CARD))}`;
 
 describe("AgentIdentityPanel", () => {
   test("reads the Altana agent on load and renders its record", async () => {
@@ -26,7 +43,11 @@ describe("AgentIdentityPanel", () => {
       expect(client.getErc8004Agent).toHaveBeenCalledWith({ chainId: CELO_SEPOLIA.chainId, agentId: 449n }),
     );
     expect(await screen.findByRole("heading", { name: "Altana Wallet Agent" })).toBeInTheDocument();
-    expect(screen.getByText("Pay gas in a chosen token")).toBeInTheDocument();
+    expect(screen.getByText("ERC-8004 registration record")).toBeInTheDocument();
+    // The services are how you reach the agent, and they are the part on chain.
+    expect(screen.getByRole("link", { name: /agent-card\.json/ })).toBeInTheDocument();
+    expect(screen.getByText("MCP")).toBeInTheDocument();
+    expect(screen.getByText(/skills live in the agent card behind that endpoint/)).toBeInTheDocument();
     expect(screen.getByText(/names agent 449 on this registry/)).toBeInTheDocument();
   });
 
@@ -105,5 +126,44 @@ describe("AgentIdentityPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "Mint an identity" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/intent reverted/);
     expect(screen.queryByText(/^Agent \d+$/)).not.toBeInTheDocument();
+  });
+});
+
+describe("AgentIdentityPanel, the two record shapes", () => {
+  test("an A2A card is rendered as a card, with its skills", async () => {
+    const client = fakeClient({
+      getErc8004Agent: vi.fn(async () => ({ owner: TEST_ADDRESS, agentUri: CARD_URI })),
+    });
+    renderWith(client, <AgentIdentityPanel />, { v: 1, sessions: [] });
+    expect(await screen.findByText("agent card")).toBeInTheDocument();
+    expect(screen.getByText("Pay gas in a chosen token")).toBeInTheDocument();
+    expect(screen.queryByText("ERC-8004 registration record")).not.toBeInTheDocument();
+  });
+
+  test("an id nobody has minted says so, rather than showing a raw revert", async () => {
+    const client = fakeClient({
+      getErc8004Agent: vi.fn(async () => {
+        throw new Error('The contract function "tokenURI" reverted with the following signature: 0x7e273289');
+      }),
+    });
+    renderWith(client, <AgentIdentityPanel />, { v: 1, sessions: [] });
+    expect(await screen.findByRole("alert")).toHaveTextContent(/No agent 449 on the Celo Sepolia registry/);
+    expect(screen.queryByText(/tokenURI/)).not.toBeInTheDocument();
+  });
+
+  test("something that is not a number is refused before the chain is asked", async () => {
+    const client = fakeClient({
+      getErc8004Agent: vi.fn(async () => ({ owner: TEST_ADDRESS, agentUri: DATA_URI })),
+    });
+    renderWith(client, <AgentIdentityPanel />, { v: 1, sessions: [] });
+    await waitFor(() => expect(client.getErc8004Agent).toHaveBeenCalledTimes(1));
+
+    const field = screen.getByLabelText("Agent id");
+    await userEvent.clear(field);
+    await userEvent.type(field, "not a number");
+    await userEvent.click(screen.getByRole("button", { name: "Read the registry" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/is not an agent id/);
+    expect(client.getErc8004Agent).toHaveBeenCalledTimes(1);
   });
 });
