@@ -1,14 +1,13 @@
-import { CELO_SEPOLIA, NATIVE_TOKEN, signerFromPrivateKey, type SessionLeg } from "@altananetwork/sdk";
+import { CELO_SEPOLIA, signerFromPrivateKey, type SessionLeg } from "@altananetwork/sdk";
 import { useState } from "react";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { keccak256, type Address, type Hex } from "viem";
+import { keccak256, type Hex } from "viem";
 import { chainName } from "../lib/chains";
 import { relayReason } from "../lib/errors";
 import { txUrl } from "../lib/explorer";
-import { nativeLabel, symbolFor } from "../lib/fees";
-import { formatAmount } from "../lib/format";
+import { symbolFor } from "../lib/fees";
 import { entry } from "../lib/log";
-import { useApp, useRun } from "../state/AppState";
+import { useApp } from "../state/AppState";
 import { Address as Addr } from "./shared/Address";
 import { Badge } from "./shared/Badge";
 import { Button } from "./shared/Button";
@@ -30,7 +29,6 @@ const CELO = CELO_SEPOLIA.chainId;
  */
 export function PasskeyPanel() {
   const { state: app, dispatch, client } = useApp();
-  const run = useRun();
   const [name, setName] = useState("Altana test bench");
   const [busy, setBusy] = useState<string>();
   const [error, setError] = useState<string>();
@@ -43,7 +41,6 @@ export function PasskeyPanel() {
   const wallet = app.wallet;
   const isPasskey = wallet?.kind === "passkey";
   const currencies = app.feeCurrenciesChainId === CELO ? (app.feeCurrencies ?? []) : [];
-  const native = nativeLabel(CELO, currencies, chains);
 
   async function guard(label: string, fn: () => Promise<void>) {
     setBusy(label);
