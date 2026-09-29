@@ -3,6 +3,7 @@ import { ActivityLogPanel } from "./components/ActivityLogPanel";
 import { CrossChainPanel } from "./components/CrossChainPanel";
 import { FeeTokensPanel } from "./components/FeeTokensPanel";
 import { SendPanel } from "./components/SendPanel";
+import { PasskeyPanel } from "./components/PasskeyPanel";
 import { SessionsPanel } from "./components/SessionsPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { WalkthroughPanel } from "./components/WalkthroughPanel";
@@ -14,6 +15,7 @@ import { useApp } from "./state/AppState";
 export type Tab =
   | "walkthrough"
   | "wallet"
+  | "passkey"
   | "fees"
   | "send"
   | "sessions"
@@ -23,6 +25,7 @@ export type Tab =
 export const TABS: { id: Tab; label: string }[] = [
   { id: "walkthrough", label: "Walkthrough" },
   { id: "wallet", label: "Wallet" },
+  { id: "passkey", label: "Passkey" },
   { id: "fees", label: "Fee tokens" },
   { id: "send", label: "Send" },
   { id: "sessions", label: "Sessions" },
@@ -71,6 +74,7 @@ export function App({ attachLog, settings, onSettings, initialTab = "walkthrough
         <section aria-label={TABS.find((t) => t.id === tab)?.label}>
           {tab === "walkthrough" && <WalkthroughPanel />}
           {tab === "wallet" && <WalletPanel />}
+          {tab === "passkey" && <PasskeyPanel />}
           {tab === "fees" && <FeeTokensPanel />}
           {tab === "send" && <SendPanel />}
           {tab === "sessions" && <SessionsPanel />}

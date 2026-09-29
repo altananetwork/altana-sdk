@@ -12,6 +12,7 @@ import {
   type GrantSessionResult,
   type HoldingsResult,
   type NetworkConfig,
+  type PasskeySigner,
   type RevokeSessionResult,
   type SessionQuote,
   type Signer,
@@ -27,6 +28,10 @@ import { cachedNetworkFor, readMirror } from "./mirrorReads";
 export interface TestbenchClient {
   readonly chains: readonly NetworkConfig[];
   createWallet(signer: Signer): Promise<{ address: Address }>;
+  /** Prompts WebAuthn for a fresh passkey and provisions one address on every configured chain. */
+  createPasskeyWallet(opts: { name: string }): Promise<{ address: Address; signer: PasskeySigner }>;
+  /** Finds the wallet from an existing passkey, with no stored state. */
+  recoverFromPasskey(): Promise<{ address: Address; signer: PasskeySigner }>;
   holdings(wallet: Address, chainId: number): Promise<HoldingsResult>;
   feeCurrencies(chainId: number): Promise<FeeCurrenciesResult>;
   execute(opts: ClientExecuteOptions): Promise<ExecuteResult>;
@@ -69,6 +74,16 @@ export function createLiveClient(chains: NetworkConfig[], log: Logger): Testbenc
       call("createWallet", { signer: signer.address }, async () => {
         const w = await client.createWallet({ signer });
         return { address: w.address };
+      }),
+    createPasskeyWallet: ({ name }) =>
+      call("createPasskeyWallet", { name }, async () => {
+        const w = await client.createPasskeyWallet({ name });
+        return { address: w.address, signer: w.signer };
+      }),
+    recoverFromPasskey: () =>
+      call("recoverFromPasskey", {}, async () => {
+        const w = await client.recoverFromPasskey();
+        return { address: w.address, signer: w.signer };
       }),
     holdings: (wallet, chainId) =>
       call("holdings", { wallet, chainId }, () => client.holdings({ wallet, chainId, includeZero: false })),
