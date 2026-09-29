@@ -74,8 +74,8 @@ Optional env vars:
 
 - `keystore_cache_status`
   - Reads the L2 KeyStoreCache: is this key valid on the L2 right now?
-  - Distinguishes never proven, proven and current, and proven against an L1 block the L2 has moved past.
-  - Needs `ALTANA_CHAIN` set to an L2 alias (`celo`, `celo-sepolia`).
+  - Says which state the entry is in (never proven, proven at the anchored block, proven at an earlier one) and which L1 block the L2 anchors.
+  - Set `ALTANA_CHAIN` to an L2 alias (`celo`, `celo-sepolia`).
 
 - `keystore_encode_cache_proof`
   - Returns unsigned calldata for the L2 cache's `populateKey`: the proof that carries the key's current L1 state to the L2.
@@ -83,40 +83,36 @@ Optional env vars:
 
 ## Reaching an L2: Celo
 
-An L2 keeps no KeyStore of its own. Celo's wallets are authorized in the
-Ethereum registry (Celo Sepolia's in the Sepolia one) and read through a
-`KeyStoreCacheOPStack` on the L2, which answers `isValidKey` with one `eth_call`
-once someone has proven the entry into it.
+An L2 keeps its KeyStore on the L1. Celo's wallets are authorized in the
+Ethereum registry, Celo Sepolia's in the Sepolia one, and read on the L2 through
+a `KeyStoreCacheOPStack`, which answers `isValidKey` with one `eth_call`.
 
-So **an authorize, a timebox or a revoke recorded on the L1 is not visible on
-the L2 until a proof of it is relayed.** That is the gap these two tools close,
-and the revoke direction is the one that matters: until the proof lands,
-anything reading the Celo cache still sees a live key.
+The cache holds what has been proven into it. A `populateKey` call carries a
+key's L1 state across — an authorization, a new expiry or a revocation alike —
+by proving the KeyStore's storage against the L1 block the L2's `L1Block`
+predeploy anchors. So the L2 follows the L1 one proof at a time, and until the
+next proof lands it answers with the state it was last given. Relaying is
+permissionless: any funded L2 account may relay a proof for any user, and the
+relayer gains nothing and can change nothing.
 
-Relaying is permissionless. Any funded L2 account may relay a proof for any
-user, and the relayer gains nothing and can change nothing, so a service can
-relay on its users' behalf.
+The L2 anchors the L1 with a lag, and a proof can only carry what the anchored
+block already holds. On Celo Sepolia the predeploy advances roughly every 20
+minutes and trails Sepolia by 15 to 20, so an L1 write becomes provable about
+half an hour after it lands. `keystore_cache_status` returns the anchored block
+as `anchor.number`; compare it with the block holding the write.
 
 Set `ALTANA_CHAIN` to the L2. It resolves to the registry that holds the
 KeyStore *and* names the mirror:
 
 | `ALTANA_CHAIN` | Registry (sign registry calls here) | Cache (sign the proof here) |
 | --- | --- | --- |
-| `celo`, `42220` | Ethereum, chain 1 | Celo, chain 42220 — no cache deployed yet |
+| `celo`, `42220` | Ethereum, chain 1 | Celo, chain 42220 |
 | `celo-sepolia`, `11142220` | Sepolia, chain 11155111 | Celo Sepolia, chain 11142220 |
 
-Naming the registry chain itself (`ethereum`, `sepolia`) leaves the cache tools
-unavailable on purpose: more than one L2 is rooted in each registry, so nothing
-would say which mirror a proof is meant for. `L2_RPC_URL` overrides the L2 read
-RPC, as `RPC_URL` does for the registry.
-
-**The anchor lag is long on Celo Sepolia.** Its `L1Block` predeploy advances
-roughly every 20 minutes and trails Sepolia by 15 to 20, so a registration made
-minutes ago takes close to half an hour to become provable. Until then a proof
-would carry the key's *absence*, and the cache refuses it;
-`keystore_encode_cache_proof` says so rather than handing over a call that
-reverts. Compare the registration's block with `anchor.number` from
-`keystore_cache_status`.
+Naming the registry chain itself (`ethereum`, `sepolia`) resolves to the same
+registry with no mirror: more than one L2 is rooted in each, so nothing would
+say which cache a proof is meant for. `L2_RPC_URL` overrides the L2 read RPC, as
+`RPC_URL` does for the registry.
 
 ## Safety Model
 
@@ -136,9 +132,9 @@ This server is intentionally not a wallet.
 4. A counterparty calls `keystore_verify_authorization` before serving the agent.
 5. The user can later call `keystore_encode_revoke_key`; once signed and sent, all readers see the key as invalid.
 
-On an L2, steps 3 and 5 each need one more call: `keystore_encode_cache_proof`,
-signed and sent on the L2, carries the new state to the cache. Until it lands,
-the L2 still answers with the state it was last given.
+On an L2, steps 3 and 5 each carry on with one more call:
+`keystore_encode_cache_proof`, signed and sent on the L2, takes the new state to
+the cache, and readers there see it from then on.
 
 ## Programmatic Helpers
 
