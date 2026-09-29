@@ -4,7 +4,9 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { CELO_SEPOLIA, type SerializedSession } from "@altananetwork/sdk";
 import { X402Panel } from "../../src/components/X402Panel";
 import type { StoredSession, StoredState } from "../../src/lib/storage";
+import { keccak256 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { accountKeyHashForAddress } from "../../src/lib/permit2Setup";
 import { TEST_ADDRESS, TEST_KEY, fakeClient } from "../../src/test/fakeClient";
 import { renderWith } from "../../src/test/render";
 
@@ -161,56 +163,108 @@ describe("X402Panel", () => {
   });
 });
 
-describe("X402Panel, the Permit2 approval", () => {
+const PERMIT2 = "0x000000000022D473030F116dDEE9F6B43aC78BA3" as const;
+
+describe("X402Panel, the two Permit2 approvals", () => {
   const HEALTH = { price: "10000", token: USDC, facilitator: null };
+  const both = { tokenAllowance: 2n ** 256n - 1n, checkers: [PERMIT2] as readonly `0x${string}`[] };
 
-  test("a wallet that has not approved Permit2 is told, and offered the approval", async () => {
-    mockFetch(() => Response.json(HEALTH));
-    const client = fakeClient({ permit2Allowance: vi.fn(async () => 0n) });
-    renderWith(client, <X402Panel />, { ...WITH_SESSION, walletKey: TEST_KEY });
-    expect(await screen.findByText(/has not approved Permit2 for that token/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Approve Permit2 for this token" })).toBeEnabled();
-  });
-
-  test("a wallet that has approved is not nagged", async () => {
-    mockFetch(() => Response.json(HEALTH));
-    const client = fakeClient({ permit2Allowance: vi.fn(async () => 2n ** 256n - 1n) });
-    renderWith(client, <X402Panel />, { ...WITH_SESSION, walletKey: TEST_KEY });
-    await waitFor(() => expect(client.permit2Allowance).toHaveBeenCalled());
-    expect(screen.queryByText(/has not approved Permit2/)).not.toBeInTheDocument();
-  });
-
-  test("approving sends the call and re-reads the allowance", async () => {
-    mockFetch(() => Response.json(HEALTH));
-    const allowance = vi.fn().mockResolvedValueOnce(0n).mockResolvedValue(2n ** 256n - 1n);
-    const client = fakeClient({ permit2Allowance: allowance as never });
-    renderWith(client, <X402Panel />, { ...WITH_SESSION, walletKey: TEST_KEY });
-
-    await userEvent.click(await screen.findByRole("button", { name: "Approve Permit2 for this token" }));
-    await waitFor(() => expect(client.approvePermit2).toHaveBeenCalled());
-    expect(vi.mocked(client.approvePermit2).mock.calls[0]![0]).toMatchObject({
-      chainId: CELO_SEPOLIA.chainId,
-      token: USDC,
-    });
-    await waitFor(() => expect(screen.queryByText(/has not approved Permit2/)).not.toBeInTheDocument());
-  });
-
-  test("an approval that does not confirm is reported, not assumed", async () => {
+  test("a session missing both approvals is told which, and offered one button", async () => {
     mockFetch(() => Response.json(HEALTH));
     const client = fakeClient({
-      permit2Allowance: vi.fn(async () => 0n),
-      approvePermit2: vi.fn(async () => ({ callsId: "0x01" as const, status: "FAILED" as const })),
+      permit2Readiness: vi.fn(async () => ({ tokenAllowance: 0n, checkers: [] })),
     });
     renderWith(client, <X402Panel />, { ...WITH_SESSION, walletKey: TEST_KEY });
-    await userEvent.click(await screen.findByRole("button", { name: "Approve Permit2 for this token" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(/approval returned FAILED/);
+    expect(await screen.findByText(/not approved to Permit2, so it cannot pull the payment/)).toBeInTheDocument();
+    expect(screen.getByText(/refuses its callback and settlement reverts/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Set up Permit2 for this session" })).toBeEnabled();
   });
 
-  test("the EIP-3009 rail needs no approval, so none is asked for", async () => {
+  test("the token approved but not the checker still blocks, which is the state that used to look ready", async () => {
+    // This is exactly the wallet qa found reverting: allowance set, checker missing.
     mockFetch(() => Response.json(HEALTH));
-    const client = fakeClient({ permit2Allowance: vi.fn(async () => 0n) });
+    const client = fakeClient({
+      permit2Readiness: vi.fn(async () => ({ tokenAllowance: 2n ** 256n - 1n, checkers: [] })),
+    });
+    renderWith(client, <X402Panel />, { ...WITH_SESSION, walletKey: TEST_KEY });
+    expect(await screen.findByText(/refuses its callback and settlement reverts/)).toBeInTheDocument();
+    expect(screen.queryByText(/cannot pull the payment/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Set up Permit2 for this session" })).toBeInTheDocument();
+  });
+
+  test("both approvals present says so, and asks for nothing", async () => {
+    mockFetch(() => Response.json(HEALTH));
+    const client = fakeClient({ permit2Readiness: vi.fn(async () => both) });
+    renderWith(client, <X402Panel />, { ...WITH_SESSION, walletKey: TEST_KEY });
+    expect(await screen.findByText(/both halves of what the rail needs/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Set up Permit2 for this session" })).not.toBeInTheDocument();
+  });
+
+  test("setting up runs both calls, and the checker one is signed by the admin", async () => {
+    mockFetch(() => Response.json(HEALTH));
+    const readiness = vi
+      .fn()
+      .mockResolvedValueOnce({ tokenAllowance: 0n, checkers: [] })
+      .mockResolvedValue(both);
+    const client = fakeClient({ permit2Readiness: readiness as never });
+    renderWith(client, <X402Panel />, { ...WITH_SESSION, walletKey: TEST_KEY });
+
+    await userEvent.click(await screen.findByRole("button", { name: "Set up Permit2 for this session" }));
+    await waitFor(() => expect(client.approvePermit2Checker).toHaveBeenCalled());
+    expect(vi.mocked(client.approvePermit2Token).mock.calls[0]![0]).toMatchObject({ token: USDC });
+    const checkerCall = vi.mocked(client.approvePermit2Checker).mock.calls[0]![0];
+    expect(checkerCall.wallet).toBe(TEST_ADDRESS);
+    // The admin signs it: setSignatureCheckerApproval is onlyThis.
+    expect(checkerCall.signer.address).toBe(TEST_ADDRESS);
+    expect(checkerCall.session.publicKey).toBe(SESSION_PUBLIC_KEY);
+    expect(await screen.findByText(/both halves of what the rail needs/)).toBeInTheDocument();
+  });
+
+  test("an approval already in place is not sent again", async () => {
+    mockFetch(() => Response.json(HEALTH));
+    const readiness = vi
+      .fn()
+      .mockResolvedValueOnce({ tokenAllowance: 2n ** 256n - 1n, checkers: [] })
+      .mockResolvedValue(both);
+    const client = fakeClient({ permit2Readiness: readiness as never });
+    renderWith(client, <X402Panel />, { ...WITH_SESSION, walletKey: TEST_KEY });
+    await userEvent.click(await screen.findByRole("button", { name: "Set up Permit2 for this session" }));
+    await waitFor(() => expect(client.approvePermit2Checker).toHaveBeenCalled());
+    expect(client.approvePermit2Token).not.toHaveBeenCalled();
+  });
+
+  test("a checker approval that does not confirm is reported, not assumed", async () => {
+    mockFetch(() => Response.json(HEALTH));
+    const client = fakeClient({
+      permit2Readiness: vi.fn(async () => ({ tokenAllowance: 2n ** 256n - 1n, checkers: [] })),
+      approvePermit2Checker: vi.fn(async () => ({ callsId: "0x02" as const, status: "FAILED" as const })),
+    });
+    renderWith(client, <X402Panel />, { ...WITH_SESSION, walletKey: TEST_KEY });
+    await userEvent.click(await screen.findByRole("button", { name: "Set up Permit2 for this session" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/signature checker returned FAILED/);
+  });
+
+  test("the EIP-3009 rail needs neither approval, so none is asked for", async () => {
+    mockFetch(() => Response.json(HEALTH));
+    const client = fakeClient({
+      permit2Readiness: vi.fn(async () => ({ tokenAllowance: 0n, checkers: [] })),
+    });
     renderWith(client, <X402Panel />, { ...WITH_SESSION, walletKey: TEST_KEY });
     await userEvent.selectOptions(screen.getByLabelText(/Preferred rail/), "eip3009");
-    await waitFor(() => expect(screen.queryByText(/has not approved Permit2/)).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Set up Permit2 for this session" })).not.toBeInTheDocument(),
+    );
+  });
+
+  test("the session key hash asked about is the account's, not the KeyStore's", async () => {
+    // The two differ and querying with the wrong one answers empty rather than
+    // erroring, so this is the mistake that would silently show "all set".
+    mockFetch(() => Response.json(HEALTH));
+    const client = fakeClient({ permit2Readiness: vi.fn(async () => both) });
+    renderWith(client, <X402Panel />, { ...WITH_SESSION, walletKey: TEST_KEY });
+    await waitFor(() => expect(client.permit2Readiness).toHaveBeenCalled());
+    const asked = vi.mocked(client.permit2Readiness).mock.calls[0]![0].sessionKeyHash;
+    expect(asked).toBe(accountKeyHashForAddress(privateKeyToAccount(SESSION_KEY).address));
+    expect(asked).not.toBe(keccak256(SESSION_PUBLIC_KEY));
   });
 });

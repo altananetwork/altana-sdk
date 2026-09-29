@@ -18,6 +18,7 @@ import {
   type Signer,
   type Session,
   type SyncSessionToCacheResult,
+  approveSignatureChecker,
   approveTokenForPermit2,
   fetchWithX402,
   getErc8004Agent,
@@ -30,6 +31,7 @@ import { relayReason } from "./errors";
 import { entry, type LogEntry } from "./log";
 import type { MirrorReading } from "./mirror";
 import { cachedNetworkFor, publicClientFor, readMirror } from "./mirrorReads";
+import { APPROVED_CHECKERS_ABI } from "./permit2Setup";
 
 const ALLOWANCE_ABI = [
   {
@@ -60,14 +62,30 @@ export interface TestbenchClient {
   quoteGrantSession(opts: ClientQuoteGrantSessionOptions): Promise<SessionQuote>;
   quoteRevokeSession(opts: ClientQuoteRevokeSessionOptions): Promise<SessionQuote>;
   revokeSession(opts: ClientRevokeSessionOptions): Promise<RevokeSessionResult>;
-  /** The wallet's ERC-20 allowance for Permit2, which the Permit2 x402 rail needs. */
-  permit2Allowance(opts: { chainId: number; wallet: Address; token: Address }): Promise<bigint>;
+  /** Both things the Permit2 rail needs: the token allowance and the session's approved checkers. */
+  permit2Readiness(opts: {
+    chainId: number;
+    wallet: Address;
+    token: Address;
+    sessionKeyHash: Hex;
+  }): Promise<{ tokenAllowance: bigint; checkers: readonly Address[] }>;
   /** Approves Permit2 to pull this token, as a wallet call through the relay. */
-  approvePermit2(opts: {
+  approvePermit2Token(opts: {
     chainId: number;
     wallet: Address;
     signer: Signer;
     token: Address;
+  }): Promise<ExecuteResult>;
+  /**
+   * Approves Permit2 to validate this session's ERC-1271 signatures. Signed by
+   * the **admin**, not the session: setSignatureCheckerApproval is onlyThis, so
+   * it runs as a self-call inside an admin-signed intent.
+   */
+  approvePermit2Checker(opts: {
+    chainId: number;
+    wallet: Address;
+    signer: Signer;
+    session: Session;
   }): Promise<ExecuteResult>;
   /** Reads an ERC-8004 identity: its owner and the record it points at. */
   getErc8004Agent(opts: { chainId: number; agentId: bigint }): Promise<{ owner: Address; agentUri: string }>;
@@ -149,20 +167,40 @@ export function createLiveClient(chains: NetworkConfig[], log: Logger): Testbenc
     quoteGrantSession: (opts) => call("quoteGrantSession", opts, () => client.quoteGrantSession(opts)),
     quoteRevokeSession: (opts) => call("quoteRevokeSession", opts, () => client.quoteRevokeSession(opts)),
     revokeSession: (opts) => call("revokeSession", opts, () => client.revokeSession(opts)),
-    permit2Allowance: ({ chainId, wallet, token }) =>
-      call("permit2Allowance", { chainId, wallet, token }, async () => {
+    permit2Readiness: ({ chainId, wallet, token, sessionKeyHash }) =>
+      call("permit2Readiness", { chainId, wallet, token, sessionKeyHash }, async () => {
         const network = networkFor(chainId, chains);
         const publicClient = publicClientFor(network);
-        return (await publicClient.readContract({
-          address: token,
-          abi: ALLOWANCE_ABI,
-          functionName: "allowance",
-          args: [wallet, PERMIT2_ADDRESS],
-        })) as bigint;
+        const [tokenAllowance, checkers] = await Promise.all([
+          publicClient.readContract({
+            address: token,
+            abi: ALLOWANCE_ABI,
+            functionName: "allowance",
+            args: [wallet, PERMIT2_ADDRESS],
+          }) as Promise<bigint>,
+          // An account that has never been deployed has no checkers to read;
+          // an empty list is the right answer, not an error.
+          publicClient
+            .readContract({
+              address: wallet,
+              abi: APPROVED_CHECKERS_ABI,
+              functionName: "approvedSignatureCheckers",
+              args: [sessionKeyHash],
+            })
+            .then((c) => c as readonly Address[])
+            .catch(() => [] as readonly Address[]),
+        ]);
+        return { tokenAllowance, checkers };
       }),
-    approvePermit2: ({ chainId, wallet, signer, token }) =>
-      call("approvePermit2", { chainId, wallet, token }, () =>
+    approvePermit2Token: ({ chainId, wallet, signer, token }) =>
+      call("approvePermit2Token", { chainId, wallet, token }, () =>
         approveTokenForPermit2({ address: wallet }, signer, token, { network: networkFor(chainId, chains) }),
+      ),
+    approvePermit2Checker: ({ chainId, wallet, signer, session }) =>
+      call("approvePermit2Checker", { chainId, wallet, checker: PERMIT2_ADDRESS }, () =>
+        approveSignatureChecker({ address: wallet }, signer, { session, checker: PERMIT2_ADDRESS }, {
+          network: networkFor(chainId, chains),
+        }),
       ),
     getErc8004Agent: ({ chainId, agentId }) =>
       call("getErc8004Agent", { chainId, agentId: agentId.toString() }, () =>
