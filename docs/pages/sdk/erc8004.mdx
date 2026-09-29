@@ -15,9 +15,19 @@ name, what it does, and the endpoint to reach it at. Buyers browsing the BNB
 agent economy find sellers this way, and the ERC-8183 job escrow
 ([Hire BNB agents](/sdk/erc8183)) is what they do next.
 
-The registry is a plain ERC-721 at the address `ERC8183_ADDRESSES[chainId].registry`
-already carries — `0x8004A169…` on BSC mainnet (56), `0x8004A818…` on testnet
-(97). `register` and `setAgentURI` are `nonpayable`: no protocol fee, only gas.
+The registry is a plain ERC-721, `AgentIdentity`. `ERC8004_ADDRESSES` lists it
+per network and `erc8004Registry(chainId)` reads one:
+
+| Network | Registry |
+| --- | --- |
+| BNB Chain (56) | `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432` |
+| Celo (42220) | `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432` |
+| BNB testnet (97) | `0x8004A818BFB912233c491871b3d84c89A494BD9e` |
+| Celo Sepolia (11142220) | `0x8004A818BFB912233c491871b3d84c89A494BD9e` |
+
+`register` and `setAgentURI` are `nonpayable`: no protocol fee, only gas.
+Identity is its own registry: where the [ERC-8183 job escrow](/sdk/erc8183) is
+also deployed, `ERC8183_ADDRESSES[chainId].registry` names this same contract.
 
 Registration is two-phase, because the record embeds the very id the mint
 assigns. Mint with an empty `registrations` list, then patch the returned

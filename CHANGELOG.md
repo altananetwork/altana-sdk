@@ -31,6 +31,17 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Added
 
+- **ERC-8004 agent identity on Celo.** The identity registry is now its own
+  address record, `ERC8004_ADDRESSES`, read with `erc8004Registry(chainId)`,
+  and it carries Celo (42220, `0x8004A169…`) and Celo Sepolia (11142220,
+  `0x8004A818…`) alongside BNB Chain and BNB testnet. Every entry point and the
+  MCP tools built on them therefore work on Celo:
+  `registerErc8004Agent`, `setErc8004AgentUri`, `getErc8004Agent`,
+  `erc8004RegisterPermissions` and the two call builders. The registry moved out
+  of `ERC8183_ADDRESSES` because Celo has the registry and none of the ERC-8183
+  job-escrow stack; `Erc8183Addresses.registry` still names the same contract
+  and now reads it from the new record, so the two cannot drift.
+
 - **`quoteExecute`.** `client.quoteExecute` (and the standalone `quoteExecute`) takes the same
   options as `execute` and returns the relay's quote for those exact calls without sending
   them: the maximum fee, the token it is charged in, the native value the calls carry and any

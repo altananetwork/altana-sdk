@@ -3,11 +3,17 @@
  * agent running on an Altana wallet.
  *
  * The ERC-8004 identity registry is a plain ERC-721 (`AgentIdentity`/`AGENT`,
- * UUPS proxy) deployed alongside the ERC-8183 stack — the same address
- * `erc8183Addresses(chainId).registry` already points at. `register` mints a
- * token to `msg.sender`; the token's `tokenURI` IS the agent's identity
- * record, and `setAgentURI` (owner-or-approved gated) updates it. Both are
- * `nonpayable` — no protocol fee, only gas.
+ * UUPS proxy) at one canonical address per network, listed in
+ * `ERC8004_ADDRESSES`. `register` mints a token to `msg.sender`; the token's
+ * `tokenURI` IS the agent's identity record, and `setAgentURI`
+ * (owner-or-approved gated) updates it. Both are `nonpayable` — no protocol
+ * fee, only gas.
+ *
+ * The registry stands on its own. On BNB Chain it is deployed alongside the
+ * ERC-8183 job-escrow stack and `Erc8183Addresses.registry` names the same
+ * contract, but nothing about identity depends on that stack: Celo has the
+ * registry and none of the rest, so the address lives here and `erc8183.ts`
+ * reads it from here.
  *
  * Why this exists: BNB Agent Studio agents on Altana wallets had to deploy
  * with `--skip-register`, because a bounded session key could not sign the
@@ -35,13 +41,42 @@
 
 import { encodeFunctionData, pad, toEventSelector, type Address, type Hex } from "viem";
 import { type NetworkConfig } from "./config.js";
-import { erc8183Addresses } from "./erc8183.js";
 import { executeWithReceipts, type ExecuteOptions } from "./execute.js";
 import { canonicalJson } from "./internal/canonicalJson.js";
 import { buildPublicClient, type Call, type RelayLog } from "./internal/relay.js";
 import type { CallPermission, Session } from "./internal/sessions.js";
 import type { Signer } from "./internal/signer.js";
 import type { ExecuteResult, Wallet } from "./internal/types.js";
+
+/**
+ * The ERC-8004 `AgentIdentity` registry on each network the SDK knows.
+ *
+ * Two canonical addresses, one for mainnets and one for testnets, the same on
+ * every chain that has the registry. Each is codeless on the other kind of
+ * network, so they are not interchangeable.
+ */
+export const ERC8004_ADDRESSES: Record<number, Address> = {
+  /** BNB Smart Chain */
+  56: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
+  /** BNB Smart Chain testnet */
+  97: "0x8004A818BFB912233c491871b3d84c89A494BD9e",
+  /** Celo */
+  42220: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
+  /** Celo Sepolia */
+  11142220: "0x8004A818BFB912233c491871b3d84c89A494BD9e",
+};
+
+/** The identity registry on a chain. */
+export function erc8004Registry(chainId: number): Address {
+  const registry = ERC8004_ADDRESSES[chainId];
+  if (!registry) {
+    throw new Error(
+      `erc8004: no identity registry registered for chainId ${chainId} ` +
+        `(known: ${Object.keys(ERC8004_ADDRESSES).join(", ")}).`,
+    );
+  }
+  return registry;
+}
 
 /** One `MetadataEntry` of the registry's 2-arg `register` overload. */
 export type Erc8004MetadataEntry = { metadataKey: string; metadataValue: Hex };
@@ -108,7 +143,7 @@ export function buildErc8004RegisterCall(
   metadata: readonly Erc8004MetadataEntry[] = [],
 ): Call {
   return {
-    to: erc8183Addresses(chainId).registry,
+    to: erc8004Registry(chainId),
     data: encodeFunctionData({
       abi: REGISTRY_ABI,
       functionName: "register",
@@ -124,7 +159,7 @@ export function buildErc8004SetAgentUriCall(
   agentUri: string,
 ): Call {
   return {
-    to: erc8183Addresses(chainId).registry,
+    to: erc8004Registry(chainId),
     data: encodeFunctionData({
       abi: REGISTRY_ABI,
       functionName: "setAgentURI",
@@ -151,7 +186,7 @@ export function buildErc8004SetAgentUriCall(
  * permissions can rewrite the URI of ANY agent the wallet owns.
  */
 export function erc8004RegisterPermissions(chainId: number): CallPermission[] {
-  const registry = erc8183Addresses(chainId).registry;
+  const registry = erc8004Registry(chainId);
   return [
     { to: registry, signature: REGISTER_SIGNATURE },
     { to: registry, signature: SET_AGENT_URI_SIGNATURE },
@@ -250,7 +285,7 @@ export async function registerErc8004Agent(
   }
 
   const chainId = opts.network.chainId;
-  const registry = erc8183Addresses(chainId).registry;
+  const registry = erc8004Registry(chainId);
   const call = buildErc8004RegisterCall(chainId, params.agentUri, params.metadata);
 
   const result = isSessionCall
@@ -357,7 +392,7 @@ export async function getErc8004Agent(
   agentId: bigint,
 ): Promise<{ owner: Address; agentUri: string }> {
   const publicClient = buildPublicClient(network);
-  const registry = erc8183Addresses(network.chainId).registry;
+  const registry = erc8004Registry(network.chainId);
   const [owner, agentUri] = await Promise.all([
     publicClient.readContract({ address: registry, abi: REGISTRY_ABI, functionName: "ownerOf", args: [agentId] }),
     publicClient.readContract({ address: registry, abi: REGISTRY_ABI, functionName: "tokenURI", args: [agentId] }),
@@ -439,7 +474,7 @@ export function withErc8004Registration(
         `registration file (the format, and @bnbagent's SDKs, use a JSON number).`,
     );
   }
-  const agentRegistry = `eip155:${chainId}:${erc8183Addresses(chainId).registry}`;
+  const agentRegistry = `eip155:${chainId}:${erc8004Registry(chainId)}`;
   const others = (file.registrations ?? []).filter(
     (r) => r.agentRegistry.toLowerCase() !== agentRegistry.toLowerCase(),
   );

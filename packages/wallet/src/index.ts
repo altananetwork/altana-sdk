@@ -235,8 +235,11 @@ export type {
 } from "./erc8183.js";
 
 // ERC-8004 agent identity — mint and maintain an agent's on-chain identity.
-// The registry address is the one already in ERC8183_ADDRESSES.registry.
+// The registry stands on its own: `ERC8004_ADDRESSES` lists it per network,
+// including Celo, which has the registry and none of the ERC-8183 stack.
 export {
+  ERC8004_ADDRESSES,
+  erc8004Registry,
   buildErc8004RegisterCall,
   buildErc8004SetAgentUriCall,
   erc8004RegisterPermissions,
