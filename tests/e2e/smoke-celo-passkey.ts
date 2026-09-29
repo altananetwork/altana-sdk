@@ -14,11 +14,15 @@
  *   6. execute(session, ...): the session-key path under a passkey admin
  *   7. revokeSession(wallet, passkey, session): account revoke; registry and
  *      cache steps are reported as skipped
+ *   8. sweep: what is left goes back to the funder on both chains, pass or
+ *      fail, signed by the passkey. The credential is appended to the shared
+ *      testnet env file before any funds move, because it is the only key that
+ *      can ever sign for this wallet.
  *
  * Needs, and fails loudly without:
  *   TEST_FUNDER_KEY   funded with CELO on Celo Sepolia (>= 1 CELO,
  *                     https://faucet.celo.org/celo-sepolia) and ETH on Sepolia
- *                     (>= 0.01 ETH, for the relayed registry write)
+ *                     (>= 0.05 ETH, for the relayed registry write)
  *   CELO_SEPOLIA_RPC_URL  optional override of the Celo Sepolia read RPC
  *
  * Run: bun run smoke:celo-passkey   (from tests/e2e)
@@ -27,12 +31,26 @@
 import {
   createClient,
   createHeadlessPasskey,
+  quoteCalls,
+  waitForBalance,
   CELO_SEPOLIA,
   SEPOLIA,
   type NetworkConfig,
 } from "@altananetwork/sdk";
-import { createPublicClient, createWalletClient, formatEther, http, parseEther, type Hex } from "viem";
+import {
+  createClient as createViemClient,
+  createPublicClient,
+  createWalletClient,
+  formatEther,
+  http,
+  parseEther,
+  type Address,
+  type Hex,
+  type PublicClient,
+} from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { appendFileSync } from "node:fs";
+import { testnetEnvFile } from "./testnet-env.js";
 import { assertStatus, legOf, printLegs } from "./session-legs.js";
 
 const TEST_FUNDER_KEY = process.env.TEST_FUNDER_KEY as Hex;
@@ -46,6 +64,11 @@ const celoSepolia: NetworkConfig = {
   ...CELO_SEPOLIA,
   ...(process.env.CELO_SEPOLIA_RPC_URL ? { publicRpcUrl: process.env.CELO_SEPOLIA_RPC_URL } : {}),
 };
+
+/** CELO for the Celo Sepolia legs: execute, two grants, two revokes. */
+const CELO_FUNDING = parseEther("0.5");
+/** ETH for the one relayed Sepolia leg, the KeyStore registry write. */
+const SEPOLIA_FUNDING = parseEther("0.03");
 
 function ms(start: number) {
   return `${((performance.now() - start) / 1000).toFixed(2)}s`;
@@ -70,8 +93,8 @@ async function main() {
   const sepoliaPublic = createPublicClient({ chain: SEPOLIA.chain, transport: http(SEPOLIA.publicRpcUrl) });
   const sepoliaFunder = createWalletClient({ account: funder, chain: SEPOLIA.chain, transport: http(SEPOLIA.publicRpcUrl) });
   const sepoliaBal = await sepoliaPublic.getBalance({ address: funder.address });
-  if (sepoliaBal < parseEther("0.01")) {
-    throw new Error(`Fund ${funder.address} with at least 0.01 ETH on Sepolia: https://cloud.google.com/application/web3/faucet/ethereum/sepolia`);
+  if (sepoliaBal < parseEther("0.05")) {
+    throw new Error(`Fund ${funder.address} with at least 0.05 ETH on Sepolia: https://cloud.google.com/application/web3/faucet/ethereum/sepolia`);
   }
 
   // 1. Passkey signer (headless for Node)
@@ -87,13 +110,31 @@ async function main() {
   console.log("    wallet.address:", wallet.address);
   console.log(`    upgraded [${ms(t0)}]`);
 
+  // A headless passkey's P256 key lives only in this process, and the throwaway
+  // that owns the address is discarded at creation. Persist the credential
+  // before any funds move: it is the only key that can ever sign for this
+  // wallet, and `signerFromPasskey(credential)` rebuilds it.
+  savePasskeyCredential(wallet.address, passkey.credential);
+
+  const run = async () => {
   // 3. Fund
-  console.log("\n[3] Fund the wallet with 0.5 CELO on Celo Sepolia and 0.003 ETH on Sepolia");
-  const fundTx = await celoFunder.sendTransaction({ to: wallet.address, value: parseEther("0.5") });
-  const sepoliaFundTx = await sepoliaFunder.sendTransaction({ to: wallet.address, value: parseEther("0.003") });
+  // Sepolia gas has been well above the registry write's 0.000376 ETH value:
+  // a plain relayed transfer quoted 0.0026 ETH in September 2026. Fund enough
+  // that the registry write is never the thing that is short, and let the
+  // sweep return the rest.
+  console.log(`\n[3] Fund the wallet with ${formatEther(CELO_FUNDING)} CELO on Celo Sepolia and ${formatEther(SEPOLIA_FUNDING)} ETH on Sepolia`);
+  const fundTx = await celoFunder.sendTransaction({ to: wallet.address, value: CELO_FUNDING });
+  const sepoliaFundTx = await sepoliaFunder.sendTransaction({ to: wallet.address, value: SEPOLIA_FUNDING });
   await Promise.all([
     celoPublic.waitForTransactionReceipt({ hash: fundTx }),
     sepoliaPublic.waitForTransactionReceipt({ hash: sepoliaFundTx }),
+  ]);
+  // A receipt is not a visible balance: forno has answered 0 for a wallet whose
+  // funding transaction had already confirmed, and the relay then quotes the
+  // first intent as unpayable. Wait for the balance itself.
+  await Promise.all([
+    waitForBalance(celoPublic, wallet.address, CELO_FUNDING, 120_000),
+    waitForBalance(sepoliaPublic, wallet.address, SEPOLIA_FUNDING, 120_000),
   ]);
   console.log(`    funded [${ms(t0)}]`);
 
@@ -151,10 +192,89 @@ async function main() {
   const revokeRegistered = await client.revokeSession({ wallet, signer: passkey, session: registered });
   printLegs(revokeRegistered.legs);
   assertStatus(revokeRegistered, "revoked", "revokeSession (registered session)");
+  };
+
+  // The sweep runs pass or fail: leftover testnet funds go back to the funder.
+  try {
+    await run();
+  } finally {
+    console.log("\n[sweep] return leftover funds to the funder");
+    for (const [network, publicClient] of [
+      [celoSepolia, celoPublic],
+      [SEPOLIA, sepoliaPublic],
+    ] as [NetworkConfig, PublicClient][]) {
+      await sweepBack(network, publicClient, passkey, wallet, funder.address);
+    }
+  }
 
   console.log("\n==================================================");
   console.log(`Total wall-clock: ${ms(t0)}`);
   console.log("Result: PASS ✓");
+}
+
+/**
+ * The passkey credential, appended to the shared testnet env file so the
+ * wallet's funds stay reachable if the run dies before the sweep.
+ */
+function savePasskeyCredential(address: Address, credential: unknown) {
+  const file = testnetEnvFile();
+  appendFileSync(
+    file,
+    `\n# smoke-celo-passkey wallet ${address}, ${new Date().toISOString()}: headless passkey credential\n` +
+      `SMOKE_PASSKEY_${address.slice(2, 10).toUpperCase()}_CREDENTIAL='${JSON.stringify(credential)}'\n`,
+  );
+  console.log("    passkey credential saved to the shared testnet env file");
+}
+
+/**
+ * Sends what is left on one chain back to the funder, sized from the relay's
+ * own quote for the transfer. The passkey signs it, which is also the only way
+ * out of a passkey wallet: there is no EOA key to send from. Best effort,
+ * logged, never throws.
+ */
+async function sweepBack(
+  network: NetworkConfig,
+  publicClient: PublicClient,
+  passkey: ReturnType<typeof createHeadlessPasskey>,
+  wallet: { address: Address },
+  funder: Address,
+) {
+  const symbol = network.chain.nativeCurrency.symbol;
+  try {
+    const balance = await publicClient.getBalance({ address: wallet.address });
+    if (balance === 0n) {
+      console.log(`    ${network.chain.name}: nothing left`);
+      return;
+    }
+    const relay = createViemClient({ chain: network.chain, transport: http(network.relayUrl!) });
+    const probe = await quoteCalls(relay, wallet.address, passkey, [{ to: funder, value: 1n, data: "0x" }], {
+      feeToken: "0x0000000000000000000000000000000000000000",
+      submittingKey: { type: "webauthn-p256", signer: passkey, role: "admin" },
+      network,
+    });
+    const fee = probe.nativeNeeded - 1n;
+    const amount = balance - (fee * 13n) / 10n;
+    if (amount <= 0n) {
+      console.log(
+        `    ${network.chain.name}: ${formatEther(balance)} ${symbol} left, below the transfer fee ` +
+          `(${formatEther(fee)}); kept`,
+      );
+      return;
+    }
+    const res = await createClient({ chains: [network] }).execute({
+      wallet,
+      signer: passkey,
+      calls: { to: funder, value: amount, data: "0x" },
+    });
+    console.log(
+      `    ${network.chain.name}: returned ${formatEther(amount)} ${symbol} ` +
+        `(${res.status}${res.transactionHash ? ` ${res.transactionHash}` : ""})`,
+    );
+  } catch (err) {
+    console.log(
+      `    ${network.chain.name}: sweep failed: ${(err instanceof Error ? err.message : String(err)).split("\n")[0]}`,
+    );
+  }
 }
 
 main().catch((err) => {
