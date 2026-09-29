@@ -59,9 +59,10 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
   revoke it produced was invisible to anything on Celo: an L2 rooted in the
   KeyStore reads authority through a `KeyStoreCache`, and the cache knows only
   what someone has proven into it. `keystore_cache_status` reads that cache and
-  separates the three states a caller otherwise conflates (never proven, proven
-  and current, and proven against an L1 block the L2 has moved past, which reads
-  as not valid until a fresh proof lands), and
+  separates the three states a caller otherwise conflates: never proven, proven
+  at the block the L2 anchors, and proven at another one. The third matters
+  because `isValidKey` answers only for the anchored block, so one anchor update
+  makes a correct entry read as not valid until a fresh proof lands. And
   `keystore_encode_cache_proof` returns the unsigned `populateKey` call that
   carries the key's current L1 state across. Relaying is permissionless, so any
   funded L2 account can send it for any user, and the server still signs nothing.

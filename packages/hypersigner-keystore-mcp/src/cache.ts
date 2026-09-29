@@ -9,6 +9,12 @@
  * KeyStore's storage slot for that key. After the proof lands, anything on the
  * L2 can ask the cache `isValidKey(user, keyId)` with one `eth_call`.
  *
+ * The cache answers for the block it anchors and no other: `isValidKey` requires
+ * the entry's `sourceBlockNumber` to equal `L1Block.number()` and reverts
+ * otherwise (cache 1.1.1). So an entry is an assertion about one anchored block,
+ * and the next anchor update ends it. Read it in the window where it was proven,
+ * or prove it again.
+ *
  * So an authorize, a timebox or a revoke recorded on the L1 is not yet visible
  * on the L2. It becomes visible when someone relays a proof, which is
  * permissionless: any funded L2 account may relay one for any user, and the
@@ -91,10 +97,10 @@ export type CacheStatus = {
   /** The L1 block the L2 anchors now. */
   anchor: L1Anchor;
   /**
-   * True when the entry was proven against an older L1 block than the one the
-   * L2 anchors now. The cache refuses to answer on a stale entry, so the key
-   * reads as not valid until a fresh proof lands, even if nothing about it
-   * changed on the L1.
+   * True when the entry was not proven against the block the L2 anchors right
+   * now. `isValidKey` requires the two to be equal (cache 1.1.1) and reverts
+   * otherwise, so the key reads as not valid until a fresh proof lands, even
+   * when nothing about it changed on the L1.
    */
   stale: boolean;
   /** What to do next, in one sentence. */
@@ -123,7 +129,9 @@ export async function readCacheStatus(args: {
   ]);
 
   const absent = entry.publicKey === "0x" || entry.sourceBlockNumber === 0n;
-  const stale = !absent && entry.sourceBlockNumber < anchor.number;
+  // The cache's own rule, not an approximation of it: `isValidKey` requires
+  // `sourceBlockNumber == L1Block.number()` and reverts on anything else.
+  const stale = !absent && entry.sourceBlockNumber !== anchor.number;
   return {
     l2: { key: l2.key, chainId: l2.chainId, cache: l2.cache },
     user: args.user,
@@ -161,7 +169,10 @@ function adviceFor(s: { absent: boolean; valid: boolean; stale: boolean; revoked
   }
   if (s.valid) return "The key is valid on the L2 and needs nothing.";
   if (s.stale) {
-    return "The entry was proven against an older L1 block than the L2 now anchors, so the cache will not answer for it. Encode a fresh proof and send it.";
+    return (
+      "The entry was proven against a different L1 block than the L2 anchors now, and the cache " +
+      "answers only for the block it currently anchors. Encode a fresh proof and send it."
+    );
   }
   return "The cache has the key but does not consider it valid: it has expired, or it was proven before the L1 authorized it. Check the registry with keystore_get_key.";
 }

@@ -90,16 +90,20 @@ a `KeyStoreCacheOPStack`, which answers `isValidKey` with one `eth_call`.
 The cache holds what has been proven into it. A `populateKey` call carries a
 key's L1 state across — an authorization, a new expiry or a revocation alike —
 by proving the KeyStore's storage against the L1 block the L2's `L1Block`
-predeploy anchors. So the L2 follows the L1 one proof at a time, and until the
-next proof lands it answers with the state it was last given. Relaying is
-permissionless: any funded L2 account may relay a proof for any user, and the
-relayer gains nothing and can change nothing.
+predeploy anchors. Relaying is permissionless: any funded L2 account may relay a
+proof for any user, and the relayer gains nothing and can change nothing.
 
-The L2 anchors the L1 with a lag, and a proof can only carry what the anchored
-block already holds. On Celo Sepolia the predeploy advances roughly every 20
-minutes and trails Sepolia by 15 to 20, so an L1 write becomes provable about
-half an hour after it lands. `keystore_cache_status` returns the anchored block
-as `anchor.number`; compare it with the block holding the write.
+An entry is an assertion about one anchored block. `isValidKey` requires the
+entry's `sourceBlockNumber` to equal `L1Block.number()`, so the cache answers
+for the block it anchors and no other, and the next anchor update ends the
+entry's usefulness. Read a key in the window its proof was made for, or prove it
+again.
+
+The lag between the two chains sets that window. A proof can only carry what
+the anchored block already holds, so an L1 write becomes provable once the
+anchor reaches it: on Celo Sepolia the predeploy advances roughly every 20
+minutes and trails Sepolia by 15 to 20, which is also how long the window
+lasts. `keystore_cache_status` returns the anchored block as `anchor.number`.
 
 Set `ALTANA_CHAIN` to the L2. It resolves to the registry that holds the
 KeyStore *and* names the mirror:
