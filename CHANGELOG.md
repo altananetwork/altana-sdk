@@ -211,7 +211,6 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Fixed
 
-<<<<<<< HEAD
 - **A wallet's second operation no longer fails on the nonce.** The relay
   chooses an intent's nonce by reading the account's nonce on chain at `latest`
   and remembers nothing between requests, so an operation prepared before the
@@ -240,7 +239,6 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
   wallet therefore has one address, with the passkey as admin, on the network
   and on its registry chain, where its registry writes go through the relay
   from its own account.
-=======
 - **`signX402Payment` signs a v2 envelope when the requirement names no
   version.** A v2 `PaymentRequirements` carries no `x402Version` of its own (it
   lives on the 402 body), so a caller handing `signX402Payment` an `accepts[]`
@@ -251,7 +249,6 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
   the version. The default is now 2; the requirement's own version still wins,
   and the new `opts.x402Version` overrides both for a v1 merchant that does not
   say so. `fetchWithX402` already stamped the body's version and is unchanged.
->>>>>>> origin/feat/x402-celo-facilitator
 
 - **Cache proofs no longer start before the L2 has anchored the registry
   write.** A relayed KeyStore write took its block number from a public RPC
