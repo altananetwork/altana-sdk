@@ -10,7 +10,9 @@ import {
 const KNOWN = [CELO_SEPOLIA.chainId, BASE_SEPOLIA.chainId, SEPOLIA.chainId];
 
 function rpc(body: unknown, status = 200) {
-  return vi.fn(async () => new Response(JSON.stringify(body), { status }));
+  return vi.fn(async (_url: string, _init?: RequestInit) =>
+    new Response(JSON.stringify(body), { status }),
+  );
 }
 
 describe("probeRelay", () => {
@@ -19,7 +21,7 @@ describe("probeRelay", () => {
     // at all for `params: [[]]`, which is a filter for no chains.
     const fetchImpl = rpc({ result: { "0xaa044c": {}, "0xaa36a7": {} } });
     await probeRelay("http://relay", fetchImpl as never);
-    const sent = JSON.parse((vi.mocked(fetchImpl).mock.calls[0]![1] as RequestInit).body as string);
+    const sent = JSON.parse(fetchImpl.mock.calls[0]![1]!.body as string);
     expect(sent).toMatchObject({ method: "wallet_getCapabilities", params: [] });
   });
 
