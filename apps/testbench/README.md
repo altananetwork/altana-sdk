@@ -30,6 +30,8 @@ bun run --filter '@altananetwork/testbench' typecheck
 bun run --filter '@altananetwork/testbench' test
 ```
 
+Run vitest **from this directory**. `vitest --root apps/testbench` from the repo root collects 16 files and reports spurious errors: it is the wrong invocation, not a failure (qa, 2026-09-29).
+
 Component tests run against a fake SDK client. `tests/brand.test.ts` enforces the Brand Kit hard rules on the source, and `tests/components/brandPanels.test.tsx` enforces them on what is actually rendered. Both run in CI.
 
 ### If vitest cannot find a rollup binding

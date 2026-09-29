@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { draftAgentRecord, loadAgentRecord } from "../../src/lib/agentCard";
+import { agentCardUrl, draftAgentRecord, isRegistrationRecord, loadAgentRecord } from "../../src/lib/agentCard";
 
 const RECORD = { name: "Altana Wallet Agent", description: "Agentic wallets on Celo", version: "1.0.0" };
 const DATA_URI = `data:application/json;base64,${btoa(JSON.stringify(RECORD))}`;
@@ -51,5 +51,39 @@ describe("draftAgentRecord", () => {
     const uri = draftAgentRecord({ name: "Test bench agent", description: "d" });
     const { record } = await loadAgentRecord(uri);
     expect(record).toMatchObject({ name: "Test bench agent", registrations: [] });
+  });
+});
+
+describe("the two record shapes", () => {
+  const registration = {
+    name: "Altana Wallet Agent",
+    services: [
+      { name: "MCP", endpoint: "https://docs.altana.network/.well-known/agent-card.json" },
+      { name: "docs", endpoint: "https://docs.altana.network" },
+    ],
+    type: "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
+    raw: "",
+  };
+
+  test("a registration record is told from an agent card", () => {
+    expect(isRegistrationRecord(registration)).toBe(true);
+    expect(isRegistrationRecord({ name: "x", skills: [], version: "1", raw: "" })).toBe(false);
+  });
+
+  test("the card endpoint is found among the services, not just the first one", () => {
+    // The docs service comes second and is not the card; picking blind would
+    // send the operator to the wrong page.
+    expect(agentCardUrl(registration)).toBe("https://docs.altana.network/.well-known/agent-card.json");
+  });
+
+  test("an A2A card's own url serves as the endpoint when there are no services", () => {
+    expect(agentCardUrl({ url: "https://example.test/card.json", raw: "" })).toBe(
+      "https://example.test/card.json",
+    );
+  });
+
+  test("a record naming neither gives nothing rather than an empty link", () => {
+    expect(agentCardUrl({ name: "x", raw: "" })).toBeUndefined();
+    expect(agentCardUrl({ services: [{ name: "docs", endpoint: "https://docs.example" }], raw: "" })).toBeUndefined();
   });
 });

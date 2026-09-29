@@ -67,10 +67,29 @@ export function AgentIdentityPanel() {
   const show = (id: string) =>
     guard("getErc8004Agent", async () => {
       setLoaded(undefined);
-      const parsed = BigInt(id);
-      const agent = await client.getErc8004Agent({ chainId: CELO, agentId: parsed });
-      const { record, problem } = await loadAgentRecord(agent.agentUri);
-      setLoaded({ ...agent, ...(record ? { record } : {}), ...(problem ? { problem } : {}) });
+      let parsed: bigint;
+      try {
+        parsed = BigInt(id.trim());
+      } catch {
+        throw new Error(`"${id}" is not an agent id. Ids are whole numbers, such as 449.`);
+      }
+      try {
+        const agent = await client.getErc8004Agent({ chainId: CELO, agentId: parsed });
+        const { record, problem } = await loadAgentRecord(agent.agentUri);
+        setLoaded({ ...agent, ...(record ? { record } : {}), ...(problem ? { problem } : {}) });
+      } catch (err) {
+        // The registry is an ERC-721, so an id nobody has minted reverts in
+        // ownerOf/tokenURI. Raw, that reads as a broken call rather than the
+        // plain fact that there is no such agent.
+        const text = err instanceof Error ? err.message : String(err);
+        if (/tokenURI|ownerOf|nonexistent|ERC721/i.test(text)) {
+          throw new Error(
+            `No agent ${parsed} on the Celo Sepolia registry. The highest id is whatever has been minted, ` +
+              `and 449 is Altana's.`,
+          );
+        }
+        throw err;
+      }
     });
 
   useEffect(() => {
