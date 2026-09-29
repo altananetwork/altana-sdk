@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { describe, test, expect } from "bun:test";
 import { size, type Address, type Hex } from "viem";
 import { createPrivateKeySigner, type Signer } from "./internal/signer.js";
 import type { Session } from "./internal/sessions.js";
@@ -128,4 +128,42 @@ test("signX402Payment (permit2) binds the facilitator spender and Permit2 checke
   // Sanity: Permit2 is the checker for this scheme.
   expect(PERMIT2_ADDRESS).toBe("0x000000000022D473030F116dDEE9F6B43aC78BA3");
   expect(size((payload.payload as any).signature as Hex)).toBeGreaterThan(0);
+});
+
+/**
+ * The protocol version in the envelope. A v2 `PaymentRequirements` carries none
+ * of its own (it lives on the 402 body), so a caller handing `signX402Payment`
+ * an `accepts[]` entry straight from a challenge has nothing to copy down.
+ * Signing a v1 envelope then gets refused by real v2 facilitators, and the
+ * refusal says `invalid_format`, which points nowhere near the version: Celo's
+ * answers "data did not match any variant of untagged enum
+ * FacilitatorVerifyRequest".
+ */
+describe("x402Version in the signed envelope", () => {
+  const v2Requirement = {
+    scheme: "exact" as const,
+    network: "eip155:11142220",
+    asset: "0x01C5C0122039549AD1493B8220cABEdD739BC44E" as const,
+    payTo: "0x3C5f3a6cE224BB89D72f5EB4232ecC27F67B3eeA" as const,
+    amount: "10000",
+    maxTimeoutSeconds: 300,
+    extra: { name: "USDC", version: "2", assetTransferMethod: "eip3009" as const },
+  };
+
+  const session = () => makeSession(createPrivateKeySigner());
+
+  test("a requirement with no version signs as v2", async () => {
+    const { payload } = await signX402Payment(session(), v2Requirement);
+    expect(payload.x402Version).toBe(2);
+  });
+
+  test("the requirement's own version still wins, so a v1 merchant is unaffected", async () => {
+    const { payload } = await signX402Payment(session(), { ...v2Requirement, x402Version: 1 });
+    expect(payload.x402Version).toBe(1);
+  });
+
+  test("and an explicit option wins over both", async () => {
+    const { payload } = await signX402Payment(session(), { ...v2Requirement, x402Version: 1 }, { x402Version: 2 });
+    expect(payload.x402Version).toBe(2);
+  });
 });

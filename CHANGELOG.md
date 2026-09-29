@@ -31,6 +31,46 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Added
 
+- **ERC-8004 agent identity on Celo.** The identity registry is now its own
+  address record, `ERC8004_ADDRESSES`, read with `erc8004Registry(chainId)`,
+  and it carries Celo (42220, `0x8004A169…`) and Celo Sepolia (11142220,
+  `0x8004A818…`) alongside BNB Chain and BNB testnet. Every entry point and the
+  MCP tools built on them therefore work on Celo:
+  `registerErc8004Agent`, `setErc8004AgentUri`, `getErc8004Agent`,
+  `erc8004RegisterPermissions` and the two call builders. The registry moved out
+  of `ERC8183_ADDRESSES` because Celo has the registry and none of the ERC-8183
+  job-escrow stack; `Erc8183Addresses.registry` still names the same contract
+  and now reads it from the new record, so the two cannot drift.
+- **`@altananetwork/x402-server`: settle through a hosted facilitator.**
+  `facilitatorService` points a merchant at one, which broadcasts the payment
+  and pays the gas, so a merchant can take payments without an RPC or a funded
+  key. Celo runs the one its own documentation points at:
+  `CELO_FACILITATOR_URL` (42220) and `CELO_SEPOLIA_FACILITATOR_URL`
+  (11142220); `facilitatorSupported` reads its open `GET /supported` and
+  `supportsExactOn` answers whether it serves a chain. The choice is per rail,
+  because Celo's `exact` scheme settles EIP-3009: that rail goes to the
+  facilitator and Permit2 rails keep settling locally, so one route serves an
+  EOA buyer through the facilitator and an Altana smart-account buyer from the
+  merchant's key. Verification stays local either way, since the merchant's own
+  is ERC-1271-aware and a facilitator's need not be. `POST /settle` needs an
+  `X-API-Key`, and a 401 says so rather than looking like a rejected payment.
+- **`@altananetwork/hypersigner-keystore-mcp`: an L1 key, readable on Celo.**
+  The server encoded L1 KeyStore calls only, so an authorize, a timebox or a
+  revoke it produced was invisible to anything on Celo: an L2 rooted in the
+  KeyStore reads authority through a `KeyStoreCache`, and the cache knows only
+  what someone has proven into it. `keystore_cache_status` reads that cache and
+  separates the three states a caller otherwise conflates: never proven, proven
+  at the block the L2 anchors, and proven at another one. The third matters
+  because `isValidKey` answers only for the anchored block, so one anchor update
+  makes a correct entry read as not valid until a fresh proof lands. And
+  `keystore_encode_cache_proof` returns the unsigned `populateKey` call that
+  carries the key's current L1 state across. Relaying is permissionless, so any
+  funded L2 account can send it for any user, and the server still signs nothing.
+  An L2 alias now also names its mirror: `ALTANA_CHAIN=celo-sepolia` resolves to
+  the Sepolia registry and Celo Sepolia's cache, while `ALTANA_CHAIN=sepolia`
+  resolves to the same registry with no L2, because several L2s are rooted in it.
+  `L2_RPC_URL` overrides the L2 read RPC.
+
 - **Keystore writes funded from the L2.** `grantSession`, `revokeSession` and
   `registerSessionKey` no longer need ETH on the Keystore chain: when the wallet
   holds none there, the SDK asks the relay to fund the Sepolia write from the
@@ -181,6 +221,17 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
   ours would make testnet jobs diverge from the policy they bind. (#82)
 
 ### Fixed
+
+- **`signX402Payment` signs a v2 envelope when the requirement names no
+  version.** A v2 `PaymentRequirements` carries no `x402Version` of its own (it
+  lives on the 402 body), so a caller handing `signX402Payment` an `accepts[]`
+  entry straight from a challenge had nothing to copy down and got a v1
+  envelope, which real v2 facilitators refuse for its format before looking at
+  the signature. Celo's answers `invalid_format`, "data did not match any
+  variant of untagged enum FacilitatorVerifyRequest", which points nowhere near
+  the version. The default is now 2; the requirement's own version still wins,
+  and the new `opts.x402Version` overrides both for a v1 merchant that does not
+  say so. `fetchWithX402` already stamped the body's version and is unchanged.
 
 - **Cache proofs no longer start before the L2 has anchored the registry
   write.** A relayed KeyStore write took its block number from a public RPC
