@@ -150,7 +150,11 @@ export async function readCacheStatus(args: {
 
 function adviceFor(s: { absent: boolean; valid: boolean; stale: boolean; revoked: boolean }): string {
   if (s.absent) {
-    return "The cache has never been given this key. Encode a proof with keystore_encode_cache_proof and send it on the L2.";
+    return (
+      "The cache has never been given this key. Encode a proof with keystore_encode_cache_proof and " +
+      "send it on the L2. If the key was registered on the L1 in the last half hour, the L2 may not " +
+      "anchor that block yet: compare the registration's block with `anchor.number` above."
+    );
   }
   if (s.revoked) {
     return "The cache records this key as revoked, which is final: a revoked key never becomes valid again.";
@@ -225,9 +229,12 @@ export async function encodeCacheProof(args: {
       ? {
           warning:
             `At L1 block ${built.l1BlockNumber} this key's KeyStore slot is zero, so the proof says ` +
-            `the key does not exist there. The cache refuses such a proof. Either the key was never ` +
-            `registered, or its registration is newer than the L1 block the L2 anchors: wait for the ` +
-            `L2 to anchor a later block and encode again.`,
+            `the key does not exist there, and the cache refuses such a proof. Either the key was ` +
+            `never registered on the L1, or its registration is newer than the block the L2 anchors. ` +
+            `An L2 anchors the L1 with a lag, and on Celo Sepolia that lag is long: the predeploy ` +
+            `advances roughly every 20 minutes and trails Sepolia by 15 to 20, so a registration made ` +
+            `minutes ago can take close to half an hour to become provable. Wait for the anchor to ` +
+            `pass the block holding the registration, then encode again.`,
         }
       : {}),
     advice:
