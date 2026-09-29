@@ -33,9 +33,12 @@ import {
   readRegistrationFee,
   resolveChain,
 } from "./keystore.js";
+import { encodeCacheProof, readCacheStatus } from "./cache.js";
 
 const CHAIN = resolveChain(process.env.ALTANA_CHAIN);
 const RPC_URL = process.env.RPC_URL || CHAIN.rpcUrl;
+/** The L2 read RPC, when the chain was named by an L2 alias. */
+const L2_RPC_URL = process.env.L2_RPC_URL || CHAIN.l2?.rpcUrl;
 const publicClient = createPublicClient({
   chain: CHAIN.chain,
   transport: http(RPC_URL),
@@ -82,7 +85,13 @@ export function buildServer(): McpServer {
         "L2 wallets are rooted here too: an L2 (Celo 42220, Celo Sepolia " +
         "11142220) keeps its KeyStore on the L1 and reads it through a cache, " +
         "so ALTANA_CHAIN=celo resolves to ethereum and ALTANA_CHAIN=celo-sepolia " +
-        "to sepolia. Sign encoded calls on the chainId they carry (the L1).",
+        "to sepolia. Sign encoded calls on the chainId they carry: the registry " +
+        "calls on the L1, and the one cache call on the L2. An authorization, a " +
+        "timebox or a revoke recorded on the L1 is not visible on the L2 until " +
+        "someone relays a proof of it: keystore_cache_status says whether the " +
+        "L2 has it, and keystore_encode_cache_proof encodes the call that " +
+        "carries it. Relaying is permissionless, so any funded L2 account can " +
+        "send it for any user.",
     },
   );
 
@@ -290,6 +299,77 @@ export function buildServer(): McpServer {
           "msg.sender must equal the user. Sign and send FROM this account.",
         nextStep:
           "Pass {to,value,data,chainId} to your wallet/SDK sign-and-send tool.",
+      });
+    },
+  );
+
+  // ───────────────── L2 cache ─────────────────
+
+  tool(
+    "keystore_cache_status",
+    {
+      title: "Is this key valid on the L2 yet?",
+      description:
+        "Reads the L2 KeyStoreCache for (user, key) and says which of three " +
+        "states it is in: never proven, proven and current, or proven against " +
+        "an L1 block the L2 has moved past (which reads as not valid until a " +
+        "fresh proof lands, even when nothing changed on the L1). Also returns " +
+        "the L1 block the L2 anchors now. Needs ALTANA_CHAIN set to an L2 " +
+        "alias (celo, celo-sepolia); naming the registry chain itself leaves " +
+        "the mirror ambiguous.",
+      inputSchema: {
+        user: z.string(),
+        keyId: z.string().optional(),
+        publicKey: z.string().optional(),
+      },
+    },
+    async ({ user, keyId, publicKey }: { user: string; keyId?: string; publicKey?: string }) => {
+      const addr = assertAddress(user);
+      const id = keyId
+        ? assertBytes32(keyId)
+        : publicKey
+          ? deriveKeyId(assertPublicKey(publicKey))
+          : (() => {
+              throw new Error("Provide either keyId or publicKey.");
+            })();
+      return jsonText(
+        await readCacheStatus({ chain: CHAIN, user: addr, keyId: id, ...(L2_RPC_URL ? { rpcUrl: L2_RPC_URL } : {}) }),
+      );
+    },
+  );
+
+  tool(
+    "keystore_encode_cache_proof",
+    {
+      title: "Encode the call that proves an L1 key onto the L2 (you sign it)",
+      description:
+        "Returns unsigned calldata for the L2 cache's populateKey: the proof " +
+        "that carries this key's CURRENT L1 KeyStore state, whether that is an " +
+        "authorization, a new expiry or a revocation, to the L2. value 0, no " +
+        "fee, and permissionless: sign and send it from ANY funded L2 account, " +
+        "not necessarily the user's. Needs the full public key, not the keyId, " +
+        "because the cache stores the key. The cache takes the proof only while " +
+        "the L2 still anchors the L1 block it was built against, so send it now " +
+        "rather than storing it.",
+      inputSchema: { user: z.string(), publicKey: z.string() },
+    },
+    async ({ user, publicKey }: { user: string; publicKey: string }) => {
+      const proof = await encodeCacheProof({
+        chain: CHAIN,
+        user: assertAddress(user),
+        publicKey: assertPublicKey(publicKey),
+        l1Client: publicClient,
+        ...(L2_RPC_URL ? { rpcUrl: L2_RPC_URL } : {}),
+      });
+      return jsonText({
+        ...proof.call,
+        decoded: { function: "populateKey", user: proof.user, keyId: proof.keyId },
+        provenAt: { l1BlockNumber: proof.l1BlockNumber, l1BlockHash: proof.l1BlockHash },
+        provenKeySlot: proof.provenKeySlot,
+        l2: proof.l2,
+        ...(proof.warning ? { warning: proof.warning } : {}),
+        mustSignAs: "Any funded account on the L2; relaying a proof is permissionless.",
+        nextStep: proof.advice,
       });
     },
   );
