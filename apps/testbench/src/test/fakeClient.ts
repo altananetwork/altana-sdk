@@ -1,5 +1,6 @@
 import { BASE_SEPOLIA, CELO_SEPOLIA, SEPOLIA, type FeeCurrency, type HoldingsResult } from "@altananetwork/sdk";
 import { vi } from "vitest";
+import type { MirrorReading } from "../lib/mirror";
 import type { TestbenchClient } from "../lib/sdk";
 
 export const USDC = "0x01C5C0122039549AD1493B8220cABEdD739BC44E" as const;
@@ -11,6 +12,30 @@ export const celoFees: FeeCurrency[] = [
   { uid: "eurm", address: EURM, symbol: "EURm", decimals: 18, nativeRate: 14428785000000000000n, isNative: false },
   { uid: "usdc", address: USDC, symbol: "USDC", decimals: 6, nativeRate: 666666666666666666n, isNative: false },
 ];
+
+/**
+ * A mirror reading whose key is registered on Ethereum, carried by the anchor,
+ * and proven against the block Celo anchors right now: state (c), "current".
+ * Tests override the fields that make it one of the other four.
+ */
+export const mirrorCurrent: MirrorReading = {
+  anchorL1Block: 11807636n,
+  l1Head: 11807712n,
+  // Packed (nonce|lastUpdated|revoked|expiry|isRoot) with revoked=0, expiry=0.
+  livePacked: 1n,
+  anchorPacked: 1n,
+  cachedSourceBlock: 11807636n,
+  cachedRevoked: false,
+  cachedExpiry: 0,
+  cachedPresent: true,
+  cacheSaysValid: true,
+  readAt: 1_790_000_000,
+};
+
+/** Packs a KeyStore Key slot the way KeyStoreCacheOPStack._decodePackedKey reads it. */
+export function packKey({ revoked = false, expiry = 0, isRoot = false } = {}): bigint {
+  return 1n | (revoked ? 1n << 128n : 0n) | (BigInt(expiry) << 136n) | (isRoot ? 1n << 176n : 0n);
+}
 
 export const holdingsWithUsdc: HoldingsResult = {
   native: 0n,
@@ -36,6 +61,10 @@ export function fakeClient(overrides: Partial<TestbenchClient> = {}): FakeClient
     quoteGrantSession: vi.fn(async () => ({ lines: [], balances: [], complete: true })),
     quoteRevokeSession: vi.fn(async () => ({ lines: [], balances: [], complete: true })),
     revokeSession: vi.fn(async () => ({ keyId: "0x01" as const, status: "revoked" as const, legs: [], cacheSync: Promise.resolve([]) })),
+    readMirror: vi.fn(async () => mirrorCurrent),
+    proveIntoMirror: vi.fn(async () => {
+      throw new Error("proveIntoMirror not configured in this test");
+    }),
     ...overrides,
   };
 }

@@ -1,7 +1,9 @@
 import type { SerializedSession, SessionLeg } from "@altananetwork/sdk";
 import type { Hex } from "viem";
+import { defaultSettings, migrateSettings, type Settings } from "./settings";
 
 export const STORAGE_KEY = "altana.testbench.v1";
+export const SETTINGS_KEY = "altana.testbench.settings.v1";
 
 export type StoredSession = {
   id: string;
@@ -73,6 +75,19 @@ export function save(storage: Storage, state: StoredState): void {
 
 export function clear(storage: Storage): void {
   storage.removeItem(STORAGE_KEY);
+}
+
+export function loadSettings(storage: Storage, env: Record<string, string | undefined>): Settings {
+  try {
+    const raw = storage.getItem(SETTINGS_KEY);
+    return migrateSettings(raw ? JSON.parse(raw) : null, env);
+  } catch {
+    return defaultSettings(env);
+  }
+}
+
+export function saveSettings(storage: Storage, settings: Settings): void {
+  storage.setItem(SETTINGS_KEY, JSON.stringify(settings));
 }
 
 export function isPrivateKey(value: string): value is Hex {

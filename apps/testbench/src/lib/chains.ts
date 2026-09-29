@@ -6,6 +6,7 @@ import {
   type NetworkConfig,
 } from "@altananetwork/sdk";
 import type { Address } from "viem";
+import { relayUrlOf, type Settings } from "./settings";
 
 export const DEFAULT_CHAIN_ID = CELO_SEPOLIA.chainId;
 
@@ -29,6 +30,21 @@ export function applyEnv(network: NetworkConfig, env: Env): NetworkConfig {
 
 export function chainsFromEnv(env: Env): NetworkConfig[] {
   return [CELO_SEPOLIA, BASE_SEPOLIA, SEPOLIA].map((n) => applyEnv(n, env));
+}
+
+const ALL_NETWORKS: readonly NetworkConfig[] = [CELO_SEPOLIA, BASE_SEPOLIA, SEPOLIA];
+
+/**
+ * The chains the client is configured with, for the relay the settings name.
+ * Chains the settings leave out are not configured at all, so a relay that
+ * serves only some of them never gets asked about the rest.
+ */
+export function chainsFor(settings: Settings, env: Env): NetworkConfig[] {
+  const relayUrl = relayUrlOf(settings);
+  const withRelay: Env = { ...env, ...(relayUrl ? { VITE_RELAY_URL: relayUrl } : {}) };
+  const chosen = ALL_NETWORKS.filter((n) => settings.chainIds.includes(n.chainId));
+  const networks = chosen.length > 0 ? chosen : [ALL_NETWORKS[0]!];
+  return networks.map((n) => applyEnv(n, withRelay));
 }
 
 export function chainName(chainId: number, chains: readonly NetworkConfig[]): string {

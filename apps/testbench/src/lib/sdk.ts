@@ -15,10 +15,13 @@ import {
   type RevokeSessionResult,
   type SessionQuote,
   type Signer,
+  type SyncSessionToCacheResult,
 } from "@altananetwork/sdk";
-import type { Address } from "viem";
+import type { Address, Hex } from "viem";
 import { relayReason } from "./errors";
 import { entry, type LogEntry } from "./log";
+import type { MirrorReading } from "./mirror";
+import { cachedNetworkFor, readMirror } from "./mirrorReads";
 
 /** The slice of the SDK client the panels use. Tests provide a fake. */
 export interface TestbenchClient {
@@ -32,6 +35,15 @@ export interface TestbenchClient {
   quoteGrantSession(opts: ClientQuoteGrantSessionOptions): Promise<SessionQuote>;
   quoteRevokeSession(opts: ClientQuoteRevokeSessionOptions): Promise<SessionQuote>;
   revokeSession(opts: ClientRevokeSessionOptions): Promise<RevokeSessionResult>;
+  /** One reading of the Celo mirror, the anchor and the KeyStore slots behind it. */
+  readMirror(opts: { chainId: number; user: Address; keyId: Hex }): Promise<MirrorReading>;
+  /** Sends a populateKey proof for the current anchor, as a wallet call through the relay. */
+  proveIntoMirror(opts: {
+    chainId: number;
+    wallet: Address;
+    signer: Signer;
+    publicKey: Hex;
+  }): Promise<SyncSessionToCacheResult>;
 }
 
 export type Logger = (e: LogEntry) => void;
@@ -67,5 +79,29 @@ export function createLiveClient(chains: NetworkConfig[], log: Logger): Testbenc
     quoteGrantSession: (opts) => call("quoteGrantSession", opts, () => client.quoteGrantSession(opts)),
     quoteRevokeSession: (opts) => call("quoteRevokeSession", opts, () => client.quoteRevokeSession(opts)),
     revokeSession: (opts) => call("revokeSession", opts, () => client.revokeSession(opts)),
+    readMirror: ({ chainId, user, keyId }) =>
+      call("readMirror", { chainId, user, keyId }, () => {
+        const network = cachedNetworkFor(chainId);
+        if (!network) {
+          throw new Error(
+            `Chain ${chainId} keeps its KeyStore locally, so it has no Celo-style mirror to read.`,
+          );
+        }
+        return readMirror({ network, user, keyId });
+      }),
+    proveIntoMirror: ({ chainId, wallet, signer, publicKey }) =>
+      call("proveIntoMirror", { chainId, wallet, publicKey }, () =>
+        client.syncSessionToCache({
+          chainId,
+          wallet: { address: wallet },
+          signer,
+          session: publicKey,
+          // The anchor is already carrying the state the card checked, so the
+          // proof goes against it now. One retry covers an anchor that moves
+          // between the card's read and the relay's simulation.
+          maxAttempts: 2,
+          anchorSettleMs: 0,
+        }),
+      ),
   };
 }
