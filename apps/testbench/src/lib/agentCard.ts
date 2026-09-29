@@ -58,6 +58,14 @@ export type LoadedAgent = {
   /** Absent when the URI could not be read, with `problem` saying why. */
   record?: AgentRecord;
   problem?: string;
+  /**
+   * The A2A card the registration record points at, when it resolves. The
+   * record says where to reach the agent; the card says what it can do, and
+   * the two live in different places on purpose.
+   */
+  card?: AgentRecord;
+  /** Why the card could not be read. Not a fault of the identity. */
+  cardProblem?: string;
 };
 
 const DATA_JSON = /^data:application\/json;base64,/i;
@@ -89,6 +97,31 @@ export async function loadAgentRecord(
   } catch (err) {
     return { problem: err instanceof Error ? err.message : String(err) };
   }
+}
+
+/**
+ * Follows a registration record to its agent card, when it names one.
+ *
+ * Altana's own card is served from the docs site, which deploys from `main`,
+ * so this 404s until the next release even though the on-chain record already
+ * names the final URL. That is worth saying in those words rather than letting
+ * a 404 look like a broken identity.
+ */
+export async function loadLinkedCard(
+  record: AgentRecord,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ card?: AgentRecord; cardProblem?: string }> {
+  const url = agentCardUrl(record);
+  if (!url || !/^https?:/i.test(url)) return {};
+  const { record: card, problem } = await loadAgentRecord(url, fetchImpl);
+  if (card) return { card };
+  return {
+    cardProblem:
+      (problem ?? "the card could not be read") +
+      " Altana's card is served from the docs site, which deploys from main, so it is missing until the next" +
+      " release. The on-chain record already names the final URL, so nothing has to change on chain when it" +
+      " goes live.",
+  };
 }
 
 /** A minimal A2A-shaped record for a newly registered agent. */

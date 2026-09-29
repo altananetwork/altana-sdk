@@ -167,3 +167,43 @@ describe("AgentIdentityPanel, the two record shapes", () => {
     expect(client.getErc8004Agent).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("AgentIdentityPanel, following the record to its card", () => {
+  const CARD_BODY = {
+    name: "Altana Wallet Agent",
+    version: "0.10.0",
+    skills: [
+      { id: "create-wallet", name: "Create an agentic wallet", description: "From a private key or a passkey" },
+      { id: "x402-payments", name: "Pay for HTTP resources with x402", description: "On Celo" },
+    ],
+  };
+
+  test("the card behind the record's endpoint is fetched and shown", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify(CARD_BODY), { status: 200 }));
+    const client = fakeClient({
+      getErc8004Agent: vi.fn(async () => ({ owner: TEST_ADDRESS, agentUri: DATA_URI })),
+    });
+    renderWith(client, <AgentIdentityPanel />, { v: 1, sessions: [] });
+
+    expect(await screen.findByText(/The agent card, fetched from the endpoint above/)).toBeInTheDocument();
+    expect(screen.getByText("Create an agentic wallet")).toBeInTheDocument();
+    expect(screen.getByText("Pay for HTTP resources with x402")).toBeInTheDocument();
+    fetchSpy.mockRestore();
+  });
+
+  test("a card that is not published yet says why, and the identity still reads", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("nope", { status: 404 }));
+    const client = fakeClient({
+      getErc8004Agent: vi.fn(async () => ({ owner: TEST_ADDRESS, agentUri: DATA_URI })),
+    });
+    renderWith(client, <AgentIdentityPanel />, { v: 1, sessions: [] });
+
+    expect(await screen.findByText(/deploys from main/)).toBeInTheDocument();
+    // The on-chain record is unaffected and still rendered.
+    expect(screen.getByText("ERC-8004 registration record")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Altana Wallet Agent" })).toBeInTheDocument();
+    fetchSpy.mockRestore();
+  });
+});

@@ -1,5 +1,11 @@
 import { describe, expect, test, vi } from "vitest";
-import { agentCardUrl, draftAgentRecord, isRegistrationRecord, loadAgentRecord } from "../../src/lib/agentCard";
+import {
+  agentCardUrl,
+  draftAgentRecord,
+  isRegistrationRecord,
+  loadAgentRecord,
+  loadLinkedCard,
+} from "../../src/lib/agentCard";
 
 const RECORD = { name: "Altana Wallet Agent", description: "Agentic wallets on Celo", version: "1.0.0" };
 const DATA_URI = `data:application/json;base64,${btoa(JSON.stringify(RECORD))}`;
@@ -85,5 +91,47 @@ describe("the two record shapes", () => {
   test("a record naming neither gives nothing rather than an empty link", () => {
     expect(agentCardUrl({ name: "x", raw: "" })).toBeUndefined();
     expect(agentCardUrl({ services: [{ name: "docs", endpoint: "https://docs.example" }], raw: "" })).toBeUndefined();
+  });
+});
+
+describe("loadLinkedCard", () => {
+  const registration = {
+    name: "Altana Wallet Agent",
+    services: [{ name: "MCP", endpoint: "https://docs.altana.network/.well-known/agent-card.json" }],
+    type: "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
+    raw: "",
+  };
+
+  test("follows the record to the card and returns it", async () => {
+    const card = { name: "Altana Wallet Agent", version: "0.10.0", skills: [{ id: "create-wallet" }] };
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify(card), { status: 200 }));
+    const { card: got, cardProblem } = await loadLinkedCard(registration, fetchImpl as never);
+    expect(cardProblem).toBeUndefined();
+    expect(got).toMatchObject({ version: "0.10.0" });
+    expect(fetchImpl).toHaveBeenCalledWith("https://docs.altana.network/.well-known/agent-card.json");
+  });
+
+  test("a 404 explains why, in the terms that are actually true", async () => {
+    // The docs site deploys from main, so Altana's own card 404s until the
+    // next release even though the on-chain record names the final URL.
+    const fetchImpl = vi.fn(async () => new Response("nope", { status: 404 }));
+    const { card, cardProblem } = await loadLinkedCard(registration, fetchImpl as never);
+    expect(card).toBeUndefined();
+    expect(cardProblem).toContain("answered 404");
+    expect(cardProblem).toContain("deploys from main");
+    expect(cardProblem).toContain("nothing has to change on chain");
+  });
+
+  test("a record naming no endpoint asks for nothing", async () => {
+    const fetchImpl = vi.fn();
+    expect(await loadLinkedCard({ name: "x", raw: "" }, fetchImpl as never)).toEqual({});
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  test("a data URI is not fetched over the network", async () => {
+    const fetchImpl = vi.fn();
+    const record = { url: "data:application/json;base64,e30=", raw: "" };
+    expect(await loadLinkedCard(record, fetchImpl as never)).toEqual({});
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });

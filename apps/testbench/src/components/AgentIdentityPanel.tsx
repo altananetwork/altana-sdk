@@ -8,6 +8,7 @@ import {
   draftAgentRecord,
   isRegistrationRecord,
   loadAgentRecord,
+  loadLinkedCard,
   type AgentRecord,
   type LoadedAgent,
 } from "../lib/agentCard";
@@ -98,6 +99,23 @@ export function AgentIdentityPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // The card lives behind a URL, so it is fetched after the on-chain record
+  // rather than with it: the identity is what the registry says, and it
+  // renders at once whether or not the card is reachable.
+  const recordUri = loaded?.agentUri;
+  const record = loaded?.record;
+  useEffect(() => {
+    if (!record) return;
+    let cancelled = false;
+    void loadLinkedCard(record).then((linked) => {
+      if (cancelled || (!linked.card && !linked.cardProblem)) return;
+      setLoaded((prev) => (prev && prev.agentUri === recordUri ? { ...prev, ...linked } : prev));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [record, recordUri]);
+
   const register = () =>
     guard("registerErc8004Agent", async () => {
       if (!wallet) return;
@@ -177,6 +195,19 @@ export function AgentIdentityPanel() {
               )}
 
               {loaded.record && <RecordView record={loaded.record} />}
+
+              {loaded.cardProblem && (
+                <div className="banner info">
+                  The agent card behind that endpoint is not there yet: {loaded.cardProblem}
+                </div>
+              )}
+
+              {loaded.card && (
+                <div className="stack">
+                  <span className="muted small">The agent card, fetched from the endpoint above</span>
+                  <RecordView record={loaded.card} />
+                </div>
+              )}
             </div>
           )}
         </div>
