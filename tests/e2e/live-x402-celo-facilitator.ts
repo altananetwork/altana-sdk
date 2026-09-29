@@ -54,6 +54,7 @@ import {
 import { createPublicClient, createWalletClient, encodeFunctionData, formatUnits, http, parseUnits, type Address, type Hex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { appendFileSync } from "node:fs";
+import { testnetEnvFile } from "./testnet-env.js";
 
 const FACILITATOR = process.env.X402_CELO_FACILITATOR_URL ?? CELO_SEPOLIA_FACILITATOR_URL;
 const API_KEY = process.env.X402_CELO_API_KEY;
@@ -290,7 +291,7 @@ async function returnToFunder(
 }
 
 function appendKey(comment: string, name: string, key: Hex) {
-  const file = process.env.TESTNET_ENV_FILE ?? new URL("../../../.env.testnet", import.meta.url).pathname;
+  const file = testnetEnvFile();
   appendFileSync(file, `\n# ${comment}, ${new Date().toISOString()}\n${name}=${key}\n`);
 }
 
