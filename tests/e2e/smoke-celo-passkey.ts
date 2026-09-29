@@ -50,6 +50,7 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { appendFileSync } from "node:fs";
+import { testnetEnvFile } from "./testnet-env.js";
 import { assertStatus, legOf, printLegs } from "./session-legs.js";
 
 const TEST_FUNDER_KEY = process.env.TEST_FUNDER_KEY as Hex;
@@ -216,7 +217,7 @@ async function main() {
  * wallet's funds stay reachable if the run dies before the sweep.
  */
 function savePasskeyCredential(address: Address, credential: unknown) {
-  const file = process.env.TESTNET_ENV_FILE ?? new URL("../../../.env.testnet", import.meta.url).pathname;
+  const file = testnetEnvFile();
   appendFileSync(
     file,
     `\n# smoke-celo-passkey wallet ${address}, ${new Date().toISOString()}: headless passkey credential\n` +
