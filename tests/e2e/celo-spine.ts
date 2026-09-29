@@ -54,6 +54,12 @@
  *   --tokens usdc,..  which stablecoins S2b should try (default: every one
  *                     the relay accepts AND the funder can pay for)
  *   --keep            skip S6, leaving the wallets funded for inspection
+ *
+ * Timing: S4 and S5c's mirror leg each wait for Celo Sepolia's L1 anchor to
+ * reach their write's block, which is about half an hour. The cache requires
+ * `sourceBlockNumber == IL1Block.number()` exactly, so this is a wait and not
+ * a retry. Budget an hour for a full live run and set a generous process
+ * timeout; SPINE_MIRROR_WAIT_MS overrides the 40-minute cap.
  *   --wire            record every relay JSON-RPC call and write it next to
  *                     the report, so a failed registration can be read as
  *                     "requiredFunds asked X, the relay answered Y"
@@ -857,14 +863,30 @@ async function main() {
         ctx.note("mirror check skipped: S4 never proved the key in, so there is nothing to see revoked");
         return;
       }
+      // The post-revocation proof cannot exist until the L2's anchor reaches
+      // the revoke's L1 block, which is about half an hour on Celo Sepolia:
+      // the anchor advances ~28-30 blocks every ~20 minutes and trails the
+      // Sepolia head by 70-95. Polling for a minute, as this did, asks for a
+      // proof that cannot be there yet and calls a timing window a failure.
+      // See celo-harness/evidence/2026-09-29-celo-sepolia-anchor-lag.md.
+      const mirrorWaitMs = Number(process.env.SPINE_MIRROR_WAIT_MS ?? 40 * 60 * 1000);
+      const deadline = Date.now() + mirrorWaitMs;
       let cached = await readCachedKey(celoPublic, CACHE, wallet.address, session.keyId);
-      for (let i = 0; i < 20 && !cached.revoked; i++) {
-        await new Promise((r) => setTimeout(r, 3_000));
+      let waited = 0;
+      while (!cached.revoked && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 15_000));
+        waited += 15;
+        if (waited % 300 === 0) console.log(`    still waiting for the anchor, ${waited / 60}m elapsed`);
         cached = await readCachedKey(celoPublic, CACHE, wallet.address, session.keyId);
       }
-      console.log(`    mirror after revoke: revoked=${cached.revoked}`);
-      assert(cached.revoked, "the mirror still reports the key as live after the post-revocation proof");
-      ctx.note(`Celo mirror ${CACHE}: revoked=true`);
+      console.log(`    mirror after revoke: revoked=${cached.revoked} (waited ${Math.round(waited / 60)}m)`);
+      assert(
+        cached.revoked,
+        `the mirror still reports the key as live ${Math.round(waited / 60)} minutes after the revoke. ` +
+          `The cache requires sourceBlockNumber == the current anchor, so this is only a real failure ` +
+          `once the anchor has passed the revoke's L1 block`,
+      );
+      ctx.note(`Celo mirror ${CACHE}: revoked=true, after waiting ${Math.round(waited / 60)}m for the anchor`);
     },
     () => (S.session ? undefined : "S3 did not produce a session"),
   );
