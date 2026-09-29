@@ -30,6 +30,11 @@
  *
  * Needs:
  *   TEST_FUNDER_KEY        ETH on Sepolia (>= 0.05) and CELO on Celo Sepolia (>= 1)
+ *
+ * Budget an hour of wall clock. The L2 anchors the L1 with a lag and a proof
+ * can only carry what the anchored block holds, so each of the two proofs waits
+ * for the anchor to reach its write: on Celo Sepolia that is about half an hour
+ * each, and the two are sequential because the revoke follows the first proof.
  *   SEPOLIA_RPC_URL        an RPC that serves eth_getProof for recent blocks
  *   CELO_SEPOLIA_RPC_URL   optional read RPC override
  *
@@ -211,7 +216,7 @@ async function relayProof(
   const anchor = await readCacheStatus({ chain: CHAIN, user, keyId: deriveKeyId(publicKey), client: l2 });
   if (anchor.anchor.number < writtenAtL1Block) {
     console.log(
-      `    L2 anchors L1 block ${anchor.anchor.number}, the write is in ${writtenAtL1Block}: waiting for the anchor (up to 40 min)`,
+      `    L2 anchors L1 block ${anchor.anchor.number}, the write is in ${writtenAtL1Block}: waiting for the anchor (up to 60 min)`,
     );
   }
   const reached = await waitForL1Anchor({
@@ -219,7 +224,7 @@ async function relayProof(
     l2Client: l2,
     targetL1Block: writtenAtL1Block,
     pollIntervalMs: 15_000,
-    timeoutMs: 40 * 60_000,
+    timeoutMs: 60 * 60_000,
     label: "celo sepolia anchor",
   });
   console.log(`    L2 now anchors L1 block ${reached.number}`);
