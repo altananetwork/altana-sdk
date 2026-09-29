@@ -3,9 +3,11 @@ import { type NetworkConfig } from "./config.js";
 import { type Signer } from "./internal/signer.js";
 import {
   buildRelayClient,
+  quoteCalls,
   submitCallsDetailed,
   waitForCalls,
   type Call,
+  type CallsQuote,
   type KeyDescriptor,
   type RelayReceipt,
 } from "./internal/relay.js";
@@ -144,6 +146,48 @@ export async function executeWithReceipts(
     ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
     ...(result.receipts ? { receipts: result.receipts } : {}),
   };
+}
+
+/**
+ * What `execute` would be charged for these exact calls, from the relay's
+ * quote, without signing or sending: the maximum fee and the token it is
+ * charged in, the native value the calls carry, and what the wallet is short
+ * by if anything. Same arguments as `execute`. Use it to size a send that
+ * must leave room for the fee, instead of guessing a reserve.
+ */
+export function quoteExecute(wallet: Wallet, signer: Signer, calls: Call | readonly Call[], opts: ExecuteOptions): Promise<CallsQuote>;
+export function quoteExecute(session: Session, calls: Call | readonly Call[], opts: ExecuteOptions): Promise<CallsQuote>;
+export async function quoteExecute(
+  walletOrSession: Wallet | Session,
+  signerOrCalls: Signer | Call | readonly Call[],
+  callsOrOpts?: Call | readonly Call[] | ExecuteOptions,
+  maybeOpts?: ExecuteOptions,
+): Promise<CallsQuote> {
+  const { walletAddress, signer, userCalls, submittingKey, opts } = intentOf(walletOrSession, signerOrCalls, callsOrOpts, maybeOpts);
+  return quoteCalls(buildRelayClient(opts.network), walletAddress, signer, userCalls, {
+    ...(opts.feeToken ? { feeToken: opts.feeToken } : {}),
+    submittingKey,
+    network: opts.network,
+  });
+}
+
+/** The intent both execute and quoteExecute describe, from either argument shape. */
+function intentOf(
+  walletOrSession: Wallet | Session,
+  signerOrCalls: Signer | Call | readonly Call[],
+  callsOrOpts?: Call | readonly Call[] | ExecuteOptions,
+  maybeOpts?: ExecuteOptions,
+) {
+  const isSessionCall = isSession(walletOrSession);
+  const walletAddress = isSessionCall ? walletOrSession.walletAddress : walletOrSession.address;
+  const signer = isSessionCall ? walletOrSession.signer : (signerOrCalls as Signer);
+  const callsArg = isSessionCall ? (signerOrCalls as Call | readonly Call[]) : (callsOrOpts as Call | readonly Call[]);
+  const opts = (isSessionCall ? callsOrOpts : maybeOpts) as ExecuteOptions;
+  const userCalls = Array.isArray(callsArg) ? callsArg : [callsArg as Call];
+  const submittingKey: KeyDescriptor = isSessionCall
+    ? { type: "secp256k1", publicKey: walletOrSession.publicKey, role: "session", expiry: walletOrSession.expiry, permissions: walletOrSession.permissions }
+    : { type: "secp256k1", publicKey: signer.publicKey, role: "admin" };
+  return { walletAddress, signer, userCalls, submittingKey, opts };
 }
 
 function isSession(x: Wallet | Session): x is Session {
