@@ -31,6 +31,17 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Added
 
+- **ERC-8004 agent identity on Celo.** The identity registry is now its own
+  address record, `ERC8004_ADDRESSES`, read with `erc8004Registry(chainId)`,
+  and it carries Celo (42220, `0x8004A169…`) and Celo Sepolia (11142220,
+  `0x8004A818…`) alongside BNB Chain and BNB testnet. Every entry point and the
+  MCP tools built on them therefore work on Celo:
+  `registerErc8004Agent`, `setErc8004AgentUri`, `getErc8004Agent`,
+  `erc8004RegisterPermissions` and the two call builders. The registry moved out
+  of `ERC8183_ADDRESSES` because Celo has the registry and none of the ERC-8183
+  job-escrow stack; `Erc8183Addresses.registry` still names the same contract
+  and now reads it from the new record, so the two cannot drift.
+
 - **Keystore writes funded from the L2.** `grantSession`, `revokeSession` and
   `registerSessionKey` no longer need ETH on the Keystore chain: when the wallet
   holds none there, the SDK asks the relay to fund the Sepolia write from the
