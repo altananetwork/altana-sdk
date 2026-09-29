@@ -50,6 +50,14 @@ export function fakeClient(overrides: Partial<TestbenchClient> = {}): FakeClient
   return {
     chains,
     createWallet: vi.fn(async (signer) => ({ address: signer.address })),
+    // WebAuthn does not exist in jsdom, so a test that wants a passkey wallet
+    // supplies the credential itself rather than prompting for one.
+    createPasskeyWallet: vi.fn(async () => {
+      throw new Error("createPasskeyWallet not configured in this test");
+    }),
+    recoverFromPasskey: vi.fn(async () => {
+      throw new Error("recoverFromPasskey not configured in this test");
+    }),
     holdings: vi.fn(async () => holdingsWithUsdc),
     feeCurrencies: vi.fn(async (chainId) => ({ chainId, currencies: celoFees, rateTtl: 300 })),
     execute: vi.fn(async () => ({ callsId: "0x01" as const, status: "CONFIRMED" as const, transactionHash: "0xabc" as const, feeToken: USDC })),
@@ -68,6 +76,15 @@ export function fakeClient(overrides: Partial<TestbenchClient> = {}): FakeClient
     ...overrides,
   };
 }
+
+/** A headless passkey credential, for tests and for the fake client. */
+export const TEST_PASSKEY_CREDENTIAL = {
+  kind: "webauthn" as const,
+  id: "dGVzdC1jcmVkZW50aWFs",
+  publicKey:
+    "0x1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809" as const,
+  rpId: "localhost",
+};
 
 export const TEST_KEY = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d" as const;
 export const TEST_ADDRESS = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as const;
