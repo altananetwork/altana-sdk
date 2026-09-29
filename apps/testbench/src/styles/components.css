@@ -40,6 +40,8 @@
 .row { display: flex; gap: var(--space-sm); align-items: center; flex-wrap: wrap; }
 .row.between { justify-content: space-between; }
 .stack { display: flex; flex-direction: column; gap: var(--space-sm); }
+/* A badge in a column is sized by its text, not stretched to the column's width. */
+.stack > .badge { align-self: flex-start; }
 
 .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .field label { font-weight: 500; color: var(--text-secondary); font-size: 13px; }

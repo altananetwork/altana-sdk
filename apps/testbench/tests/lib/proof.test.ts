@@ -19,6 +19,7 @@ Last updated: 2026-09-28
 | 1a | Contracts deployed | **Proven (live)** | - | Plan-verified |
 | 1c | Published to npm | Missing | - | npm is on 0.9.0 |
 | 1b | Cross-chain registration | Blocked by gate | railway | G1 |
+| 1b | Fee-currency oracle | **Proven (live)** on staging, blocked by gate for Railway | local | G1 |
 
 ## The spine, step by step
 
@@ -44,7 +45,7 @@ describe("build-proof", () => {
     const file = generate();
     expect(file.matrixUpdated).toBe("2026-09-28");
     expect(file.sections.map((s) => s.title)).toEqual(["Milestone 1", "The spine, step by step"]);
-    expect(file.sections[0]!.rows.map((r) => r.item)).toEqual(["1a", "1c", "1b"]);
+    expect(file.sections[0]!.rows.map((r) => r.item)).toEqual(["1a", "1c", "1b", "1b"]);
   });
 
   test("a status qualified inside the parentheses is not read as live", () => {
@@ -54,6 +55,14 @@ describe("build-proof", () => {
     const s3 = generate().sections[1]!.rows.find((r) => r.item === "S3")!;
     expect(s3.state).toBe("proven-fork");
     expect(s3.status).toContain("funder check stubbed");
+  });
+
+  test("a status saying proven and blocked is shown as blocked, not green", () => {
+    // "Proven (live) on staging, blocked by gate for Railway" is not something
+    // a third party can check yet, and the proof view must not claim it is.
+    const row = generate().sections[0]!.rows.find((r) => r.title === "Fee-currency oracle")!;
+    expect(row.state).toBe("blocked");
+    expect(row.status).toContain("Proven (live) on staging");
   });
 
   test("a status naming both live and fork is neither on its own", () => {
@@ -117,6 +126,7 @@ describe("summaries", () => {
   test("counts every state present, and none that is not", () => {
     const counts = countStates(generate());
     expect(counts.find((c) => c.state === "proven-live")?.count).toBe(2);
+    expect(counts.find((c) => c.state === "blocked")?.count).toBe(2);
     expect(counts.find((c) => c.state === "missing")?.count).toBe(1);
     expect(counts.find((c) => c.state === "unproven")).toBeUndefined();
   });

@@ -1,10 +1,12 @@
 import { describe, expect, test } from "vitest";
+import { keccak256 } from "viem";
 import {
   canPopulate,
   decodePackedKey,
   minutesUntilProvable,
   mirrorState,
   mirrorSummary,
+  targetFromInput,
   type MirrorReading,
 } from "../../src/lib/mirror";
 import { mirrorCurrent, packKey } from "../../src/test/fakeClient";
@@ -165,5 +167,54 @@ describe("mirrorSummary", () => {
       expect(text.length).toBeGreaterThan(40);
       expect(text).not.toMatch(/^(no|not valid)\b/i);
     }
+  });
+});
+
+describe("targetFromInput", () => {
+  const WALLET = "0x6A75e80B961f7d884f9D03E5Aa0808d05e47c50d" as const;
+  const KEY_ID = "0x26aaf13c72b195571d3d7587c9df471e3f0752fb297da285e961267ac898e87d" as const;
+  const PUBLIC_KEY =
+    "0x04a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9" as const;
+
+  test("a key id gives a target that can be read and not proven", () => {
+    const { target } = targetFromInput({ wallet: WALLET, key: KEY_ID });
+    expect(target).toMatchObject({ user: WALLET, keyId: KEY_ID });
+    expect(target?.publicKey).toBeUndefined();
+  });
+
+  test("a public key is hashed, and carried so the key can be proven", () => {
+    const { target } = targetFromInput({ wallet: WALLET, key: PUBLIC_KEY });
+    expect(target?.publicKey).toBe(PUBLIC_KEY);
+    expect(target?.keyId).toBe(keccak256(PUBLIC_KEY));
+  });
+
+  test("a blank wallet falls back to the one in the browser", () => {
+    expect(targetFromInput({ wallet: "  ", key: KEY_ID, fallbackWallet: WALLET }).target?.user).toBe(WALLET);
+  });
+
+  test("a value the message calls invalid never becomes a target", () => {
+    // The form's message and the chain read must not disagree: 0xdeadbeef is
+    // hex, and is neither a key id nor a public key.
+    for (const key of ["not hex", "0xdeadbeef", "0x"]) {
+      const out = targetFromInput({ wallet: WALLET, key });
+      expect(out.target, `${key} should not be read`).toBeUndefined();
+      expect(out.keyProblem).toBeTruthy();
+    }
+  });
+
+  test("a malformed wallet is named and yields no target", () => {
+    const out = targetFromInput({ wallet: "0x123", key: KEY_ID });
+    expect(out.target).toBeUndefined();
+    expect(out.walletProblem).toBe("That is not an address.");
+  });
+
+  test("no wallet anywhere says so rather than reading a blank one", () => {
+    expect(targetFromInput({ wallet: "", key: KEY_ID }).walletProblem).toContain("No wallet in this browser");
+  });
+
+  test("an empty key is not an error, it is just nothing to read yet", () => {
+    const out = targetFromInput({ wallet: WALLET, key: "" });
+    expect(out.target).toBeUndefined();
+    expect(out.keyProblem).toBeUndefined();
   });
 });

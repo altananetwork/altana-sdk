@@ -3,6 +3,7 @@ import { describe, expect, test, vi } from "vitest";
 import type { ReactNode } from "react";
 import { AgentIdentityPanel } from "../../src/components/AgentIdentityPanel";
 import { MirrorCard } from "../../src/components/MirrorCard";
+import { MirrorPanel } from "../../src/components/MirrorPanel";
 import { PasskeyPanel } from "../../src/components/PasskeyPanel";
 import { ProofPanel } from "../../src/components/ProofPanel";
 import { SettingsPanel } from "../../src/components/SettingsPanel";
@@ -24,6 +25,7 @@ const PANELS: { name: string; ui: ReactNode }[] = [
   { name: "Passkey", ui: <PasskeyPanel /> },
   { name: "x402", ui: <X402Panel /> },
   { name: "Agent identity", ui: <AgentIdentityPanel /> },
+  { name: "Celo mirror", ui: <MirrorPanel /> },
   { name: "Proof", ui: <ProofPanel fetchImpl={(async () => new Response("{}", { status: 404 })) as never} /> },
   {
     name: "Settings",
