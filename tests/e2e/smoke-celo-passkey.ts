@@ -22,7 +22,7 @@
  * Needs, and fails loudly without:
  *   TEST_FUNDER_KEY   funded with CELO on Celo Sepolia (>= 1 CELO,
  *                     https://faucet.celo.org/celo-sepolia) and ETH on Sepolia
- *                     (>= 0.01 ETH, for the relayed registry write)
+ *                     (>= 0.05 ETH, for the relayed registry write)
  *   CELO_SEPOLIA_RPC_URL  optional override of the Celo Sepolia read RPC
  *
  * Run: bun run smoke:celo-passkey   (from tests/e2e)
@@ -63,6 +63,11 @@ const celoSepolia: NetworkConfig = {
   ...(process.env.CELO_SEPOLIA_RPC_URL ? { publicRpcUrl: process.env.CELO_SEPOLIA_RPC_URL } : {}),
 };
 
+/** CELO for the Celo Sepolia legs: execute, two grants, two revokes. */
+const CELO_FUNDING = parseEther("0.5");
+/** ETH for the one relayed Sepolia leg, the KeyStore registry write. */
+const SEPOLIA_FUNDING = parseEther("0.03");
+
 function ms(start: number) {
   return `${((performance.now() - start) / 1000).toFixed(2)}s`;
 }
@@ -86,8 +91,8 @@ async function main() {
   const sepoliaPublic = createPublicClient({ chain: SEPOLIA.chain, transport: http(SEPOLIA.publicRpcUrl) });
   const sepoliaFunder = createWalletClient({ account: funder, chain: SEPOLIA.chain, transport: http(SEPOLIA.publicRpcUrl) });
   const sepoliaBal = await sepoliaPublic.getBalance({ address: funder.address });
-  if (sepoliaBal < parseEther("0.01")) {
-    throw new Error(`Fund ${funder.address} with at least 0.01 ETH on Sepolia: https://cloud.google.com/application/web3/faucet/ethereum/sepolia`);
+  if (sepoliaBal < parseEther("0.05")) {
+    throw new Error(`Fund ${funder.address} with at least 0.05 ETH on Sepolia: https://cloud.google.com/application/web3/faucet/ethereum/sepolia`);
   }
 
   // 1. Passkey signer (headless for Node)
@@ -111,9 +116,13 @@ async function main() {
 
   const run = async () => {
   // 3. Fund
-  console.log("\n[3] Fund the wallet with 0.5 CELO on Celo Sepolia and 0.003 ETH on Sepolia");
-  const fundTx = await celoFunder.sendTransaction({ to: wallet.address, value: parseEther("0.5") });
-  const sepoliaFundTx = await sepoliaFunder.sendTransaction({ to: wallet.address, value: parseEther("0.003") });
+  // Sepolia gas has been well above the registry write's 0.000376 ETH value:
+  // a plain relayed transfer quoted 0.0026 ETH in September 2026. Fund enough
+  // that the registry write is never the thing that is short, and let the
+  // sweep return the rest.
+  console.log(`\n[3] Fund the wallet with ${formatEther(CELO_FUNDING)} CELO on Celo Sepolia and ${formatEther(SEPOLIA_FUNDING)} ETH on Sepolia`);
+  const fundTx = await celoFunder.sendTransaction({ to: wallet.address, value: CELO_FUNDING });
+  const sepoliaFundTx = await sepoliaFunder.sendTransaction({ to: wallet.address, value: SEPOLIA_FUNDING });
   await Promise.all([
     celoPublic.waitForTransactionReceipt({ hash: fundTx }),
     sepoliaPublic.waitForTransactionReceipt({ hash: sepoliaFundTx }),
