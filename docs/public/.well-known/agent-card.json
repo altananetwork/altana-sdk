@@ -1,0 +1,99 @@
+{
+  "protocolVersion": "0.3.0",
+  "name": "Altana Wallet Agent",
+  "description": "Runs a non-custodial Altana agentic wallet on Celo. Creates the wallet from a private key or a passkey, pays gas in CELO or any fee token the relay accepts, grants and revokes timeboxed session keys recorded in the Ethereum KeyStore and mirrored into the Celo KeyStoreCache, and pays for HTTP resources over x402.",
+  "version": "0.10.0",
+  "provider": {
+    "organization": "Altana",
+    "url": "https://altana.network"
+  },
+  "documentationUrl": "https://docs.altana.network",
+  "iconUrl": "https://docs.altana.network/altana-icon.png",
+  "preferredTransport": "MCP",
+  "url": "https://www.npmjs.com/package/@altananetwork/mcp",
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false,
+    "stateTransitionHistory": false
+  },
+  "defaultInputModes": [
+    "application/json",
+    "text/plain"
+  ],
+  "defaultOutputModes": [
+    "application/json",
+    "text/plain"
+  ],
+  "skills": [
+    {
+      "id": "create-wallet",
+      "name": "Create an agentic wallet",
+      "description": "Creates a smart agentic wallet on Celo from a private key or a passkey. The address is the same on Celo and on the Ethereum chain that holds its KeyStore registry.",
+      "tags": [
+        "wallet",
+        "eip-7702",
+        "passkey"
+      ],
+      "examples": [
+        "Create a wallet on Celo Sepolia and tell me its address"
+      ]
+    },
+    {
+      "id": "pay-gas-in-any-fee-token",
+      "name": "Pay gas in a chosen token",
+      "description": "Sends transactions whose fee is charged in CELO, USDC, USDm, EURm or KESm, whichever the wallet holds and the relay accepts. The wallet needs no separate gas balance.",
+      "tags": [
+        "fee-abstraction",
+        "celo",
+        "stablecoin"
+      ],
+      "examples": [
+        "Send 1 USDC and charge the fee in USDC"
+      ]
+    },
+    {
+      "id": "session-keys",
+      "name": "Grant and revoke session keys",
+      "description": "Grants a timeboxed session key scoped to named contracts, selectors and spend caps, records it in the Ethereum KeyStore paid from the Celo balance, proves it into the Celo KeyStoreCache, and revokes it.",
+      "tags": [
+        "session-keys",
+        "delegation",
+        "keystore"
+      ],
+      "examples": [
+        "Grant a one-hour session that may only send USDC, capped at 10 a day"
+      ]
+    },
+    {
+      "id": "agent-identity",
+      "name": "Register an agent identity",
+      "description": "Mints and maintains this agent's ERC-8004 AgentIdentity token, whose tokenURI is this record, using a session key scoped to the registry's register and setAgentURI selectors.",
+      "tags": [
+        "erc-8004",
+        "identity"
+      ],
+      "examples": [
+        "Register my agent identity on Celo and show the record"
+      ]
+    },
+    {
+      "id": "x402-payments",
+      "name": "Pay for HTTP resources with x402",
+      "description": "Answers an HTTP 402 challenge by signing an ERC-3009 or Permit2 authorization from the wallet, so an agent pays per request without holding a subscription.",
+      "tags": [
+        "x402",
+        "payments",
+        "http"
+      ],
+      "examples": [
+        "Fetch this paid endpoint and pay what it asks in USDC"
+      ]
+    }
+  ],
+  "registrations": [
+    {
+      "agentId": 449,
+      "agentRegistry": "eip155:11142220:0x8004A818BFB912233c491871b3d84c89A494BD9e"
+    }
+  ]
+}

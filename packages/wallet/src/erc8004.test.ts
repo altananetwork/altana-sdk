@@ -28,7 +28,7 @@ import {
   type Address,
   type Hex,
 } from "viem";
-import { BNB_TESTNET } from "./config.js";
+import { BNB, BNB_TESTNET, CELO, CELO_SEPOLIA } from "./config.js";
 import { erc8183Addresses } from "./erc8183.js";
 import { waitForCalls } from "./internal/relay.js";
 import type { Session } from "./internal/sessions.js";
@@ -55,6 +55,8 @@ const {
   encodeErc8004AgentUri,
   decodeErc8004AgentUri,
   withErc8004Registration,
+  ERC8004_ADDRESSES,
+  erc8004Registry,
 } = await import("./erc8004.js");
 const { createPrivateKeySigner } = await import("./internal/signer.js");
 
@@ -142,11 +144,48 @@ describe("call builders", () => {
     expect(args).toEqual([7n, "data:application/json;base64,e30="]);
   });
 
-  test("both builders reuse the ERC-8183 registry address, and reject unknown chains", () => {
-    expect(buildErc8004RegisterCall(56, "x").to).toBe(erc8183Addresses(56).registry);
+  test("both builders target the registry record, and reject unknown chains", () => {
+    expect(buildErc8004RegisterCall(56, "x").to).toBe(erc8004Registry(56));
     expect(() => buildErc8004RegisterCall(1, "x")).toThrow(/chainId 1/);
     expect(() => buildErc8004SetAgentUriCall(1, 1n, "x")).toThrow(/chainId 1/);
     expect(() => erc8004RegisterPermissions(1)).toThrow(/chainId 1/);
+  });
+});
+
+// ============================== addresses ====================================
+
+// The registry is its own record. It has to be: Celo has the AgentIdentity
+// registry and none of the ERC-8183 job-escrow stack, so a Celo entry in
+// ERC8183_ADDRESSES would have to invent four addresses that do not exist.
+describe("ERC8004_ADDRESSES", () => {
+  test("Celo and Celo Sepolia have the registry", () => {
+    expect(erc8004Registry(CELO.chainId)).toBe("0x8004A169FB4a3325136EB29fA0ceB6D2e539a432");
+    expect(erc8004Registry(CELO_SEPOLIA.chainId)).toBe("0x8004A818BFB912233c491871b3d84c89A494BD9e");
+  });
+
+  test("the mainnet and testnet addresses are one each, shared across networks of that kind", () => {
+    expect(erc8004Registry(CELO.chainId)).toBe(erc8004Registry(BNB.chainId));
+    expect(erc8004Registry(CELO_SEPOLIA.chainId)).toBe(erc8004Registry(BNB_TESTNET.chainId));
+    // And never crossed: each is codeless on the other kind of network.
+    expect(erc8004Registry(CELO.chainId)).not.toBe(erc8004Registry(CELO_SEPOLIA.chainId));
+  });
+
+  test("the ERC-8183 stack names the same contract, so the two cannot drift", () => {
+    for (const chainId of [BNB.chainId, BNB_TESTNET.chainId]) {
+      expect(erc8183Addresses(chainId).registry).toBe(erc8004Registry(chainId));
+    }
+  });
+
+  test("a chain without the registry says which ones have it", () => {
+    expect(() => erc8004Registry(1)).toThrow(/chainId 1 \(known: .*11142220/);
+    expect(Object.keys(ERC8004_ADDRESSES).map(Number)).toContain(CELO_SEPOLIA.chainId);
+  });
+
+  test("every entry point reaches the registry on Celo Sepolia", () => {
+    const registry = erc8004Registry(CELO_SEPOLIA.chainId);
+    expect(buildErc8004RegisterCall(CELO_SEPOLIA.chainId, "x").to).toBe(registry);
+    expect(buildErc8004SetAgentUriCall(CELO_SEPOLIA.chainId, 1n, "x").to).toBe(registry);
+    expect(erc8004RegisterPermissions(CELO_SEPOLIA.chainId).map((p) => p.to)).toEqual([registry, registry]);
   });
 });
 
