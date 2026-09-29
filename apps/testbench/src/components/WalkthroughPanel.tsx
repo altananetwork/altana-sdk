@@ -7,7 +7,7 @@ import {
 } from "@altananetwork/sdk";
 import { useEffect, useMemo, useState } from "react";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { keccak256, type Address } from "viem";
+import { keccak256, type Address, type Hex } from "viem";
 import { chainName } from "../lib/chains";
 import { relayReason } from "../lib/errors";
 import { txUrl } from "../lib/explorer";
@@ -69,6 +69,9 @@ export function WalkthroughPanel() {
   const [steps, setSteps] = useState<WalkthroughState>(emptyWalkthrough);
   const [feeToken, setFeeToken] = useState<string>("auto");
   const [recipient, setRecipient] = useState<string>("");
+  // Step 4 makes the session key; step 6 uses and revokes it. Held here rather
+  // than in the step's `data`, which is persisted and displayed.
+  const [sessionKey, setSessionKey] = useState<Hex>();
 
   const chains = client.chains;
   const celoConfigured = chains.some((c) => c.chainId === CELO);
@@ -217,9 +220,10 @@ export function WalkthroughPanel() {
             "The relay in use does not serve Ethereum Sepolia, so the KeyStore write cannot be made from here. Switch to a relay that does on the Settings tab.",
         };
       }
-      const sessionKey = generatePrivateKey();
-      const sessionSigner = signerFromPrivateKey(sessionKey);
-      const publicKey = privateKeyToAccount(sessionKey).publicKey;
+      const key = generatePrivateKey();
+      setSessionKey(key);
+      const sessionSigner = signerFromPrivateKey(key);
+      const publicKey = privateKeyToAccount(key).publicKey;
       const grant = await client.grantSession({
         wallet: { address: wallet.address },
         signer: wallet.signer,
@@ -281,10 +285,64 @@ export function WalkthroughPanel() {
     },
 
     async "use-and-revoke"() {
+      const wallet = app.wallet;
+      if (!wallet) return { status: "blocked", detail: "No wallet." };
+      if (!sessionKey || !data.sessionPublicKey) {
+        return { status: "blocked", detail: "Run step 4 first, so there is a session key to use." };
+      }
+      const publicKey = data.sessionPublicKey;
+      const txs: { chainId: number; hash: Hex; label: string }[] = [];
+
+      // Use it: a transaction signed by the session key, not the wallet key.
+      const used = await client.execute({
+        session: {
+          walletAddress: wallet.address,
+          signer: signerFromPrivateKey(sessionKey),
+          publicKey,
+          permissions: { spend: [{ limit: 10n ** 16n, period: "day" }] },
+          expiry: Math.floor(Date.now() / 1000) + 3600,
+        },
+        chainId: CELO,
+        calls: [{ to: wallet.address, value: 0n, data: "0x" }],
+      } as never);
+      if (used.transactionHash) {
+        txs.push({ chainId: CELO, hash: used.transactionHash, label: "signed by the session key" });
+      }
+      if (used.status !== "CONFIRMED") {
+        return {
+          status: "failed",
+          txs,
+          error: `The session key's transaction returned ${used.status}.`,
+        };
+      }
+
+      // Revoke it, everywhere it was granted.
+      const revoked = await client.revokeSession({
+        wallet: { address: wallet.address },
+        signer: wallet.signer,
+        session: publicKey,
+      });
+      const legs = revoked.legs ?? [];
+      for (const leg of legs) {
+        if (leg.transactionHash) {
+          txs.push({ chainId: leg.chainId, hash: leg.transactionHash, label: `revoke, ${leg.kind} leg` });
+        }
+      }
+      const failed = legs.filter((l: SessionLeg) => l.status === "FAILED");
+      if (revoked.status !== "revoked" || failed.length > 0) {
+        return {
+          status: "failed",
+          txs,
+          error:
+            failed.map((l: SessionLeg) => `${l.kind} on ${chainName(l.chainId, chains)}: ${l.reason ?? "failed"}`).join("; ") ||
+            `revokeSession returned ${revoked.status}.`,
+        };
+      }
       return {
-        status: "blocked",
+        status: "done",
+        txs,
         detail:
-          "Drive this from the Sessions tab: execute with the stored session, then revoke it. Come back to the mirror card here to watch it carry the revocation, which takes another anchor.",
+          "The session key transacted, then the wallet revoked it on Ethereum. The mirror card above still shows the key as it was last proven: it carries the revocation only after Celo anchors an Ethereum block from after the revoke, about half an hour. Read the card again then.",
       };
     },
   };

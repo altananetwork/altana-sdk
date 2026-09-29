@@ -186,3 +186,98 @@ describe("WalkthroughPanel", () => {
     expect(screen.getByText(/0 of 6 steps done/)).toBeInTheDocument();
   });
 });
+
+describe("WalkthroughPanel step 6", () => {
+  function clientThroughStep4() {
+    return fakeClient({
+      grantSession: vi.fn(async () => grant()),
+      readMirror: vi.fn(async () => mirrorCurrent),
+    });
+  }
+
+  async function runToStep6(client: ReturnType<typeof fakeClient>) {
+    renderWith(client, <WalkthroughPanel />, WITH_WALLET);
+    for (const t of [/1\. Create/, /2\. Balances/, /3\. Pay gas/, /4\. Register/, /5\. Show the key/]) {
+      await runStep(t);
+    }
+  }
+
+  test("uses the session key from step 4, then revokes it", async () => {
+    const client = clientThroughStep4();
+    (client.execute as ReturnType<typeof vi.fn>).mockResolvedValue({
+      callsId: "0x01",
+      status: "CONFIRMED",
+      transactionHash: "0xused",
+    });
+    (client.revokeSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+      keyId: "0x02",
+      status: "revoked",
+      legs: [{ chainId: SEPOLIA.chainId, kind: "registry", status: "CONFIRMED", via: "relay", transactionHash: "0xrev" }],
+      cacheSync: Promise.resolve([]),
+    });
+    await runToStep6(client);
+    await runStep(/6\. Use the key/);
+
+    // The execute for step 6 is signed by the session, not the wallet key.
+    const sessionCall = vi.mocked(client.execute).mock.calls.at(-1)![0] as Record<string, unknown>;
+    expect(sessionCall).toHaveProperty("session");
+    expect(sessionCall).not.toHaveProperty("signer");
+
+    await waitFor(() => expect(client.revokeSession).toHaveBeenCalled());
+    // The key revoked is the one step 4 generated and this browser holds, not
+    // whatever the relay echoed back.
+    const revokedKey = vi.mocked(client.revokeSession).mock.calls[0]![0].session as string;
+    expect(revokedKey).toMatch(/^0x04[0-9a-f]{128}$/);
+    expect(await screen.findByText(/carries the revocation only after Celo anchors/)).toBeInTheDocument();
+    expect(screen.getByText(/0xrev/)).toBeInTheDocument();
+  });
+
+  test("a session key transaction that does not confirm stops before the revoke", async () => {
+    const client = clientThroughStep4();
+    // Step 3 uses the wallet key and must pass; only the session-signed call
+    // in step 6 fails, so the walkthrough gets that far.
+    (client.execute as ReturnType<typeof vi.fn>).mockImplementation(async (o: Record<string, unknown>) =>
+      "session" in o
+        ? { callsId: "0x01", status: "FAILED" }
+        : { callsId: "0x01", status: "CONFIRMED", transactionHash: "0xpay" },
+    );
+    await runToStep6(client);
+    await runStep(/6\. Use the key/);
+    await waitFor(() =>
+      expect(within(card(/6\. Use the key/)).getByRole("alert")).toHaveTextContent(
+        /session key's transaction returned FAILED/,
+      ),
+    );
+    expect(client.revokeSession).not.toHaveBeenCalled();
+  });
+
+  test("a failed revoke leg is a failure, with the relay's words", async () => {
+    const client = clientThroughStep4();
+    (client.execute as ReturnType<typeof vi.fn>).mockResolvedValue({
+      callsId: "0x01",
+      status: "CONFIRMED",
+      transactionHash: "0xused",
+    });
+    (client.revokeSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+      keyId: "0x02",
+      status: "failed",
+      legs: [{ chainId: SEPOLIA.chainId, kind: "registry", status: "FAILED", reason: "intent reverted: 0x" }],
+      cacheSync: Promise.resolve([]),
+    });
+    await runToStep6(client);
+    await runStep(/6\. Use the key/);
+    await waitFor(() =>
+      expect(within(card(/6\. Use the key/)).getByRole("alert")).toHaveTextContent(
+        /registry on Sepolia: intent reverted: 0x/,
+      ),
+    );
+  });
+
+  test("without step 4 there is no key, and the step says so", async () => {
+    const client = fakeClient();
+    renderWith(client, <WalkthroughPanel />, WITH_WALLET);
+    // Force it open by finishing the earlier steps with a failed registration,
+    // which still yields no usable session key.
+    expect(within(card(/6\. Use the key/)).getByRole("button", { name: /Run this step/ })).toBeDisabled();
+  });
+});
