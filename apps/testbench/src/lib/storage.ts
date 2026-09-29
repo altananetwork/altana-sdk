@@ -1,5 +1,5 @@
-import type { SerializedSession, SessionLeg } from "@altananetwork/sdk";
-import type { Hex } from "viem";
+import type { PasskeyCredential, SerializedSession, SessionLeg } from "@altananetwork/sdk";
+import type { Address, Hex } from "viem";
 import { defaultSettings, migrateSettings, type Settings } from "./settings";
 
 export const STORAGE_KEY = "altana.testbench.v1";
@@ -18,9 +18,21 @@ export type StoredSession = {
   status?: "granting" | "granted" | "failed";
 };
 
+/**
+ * A passkey wallet, which has no private key to persist. The credential
+ * identifies the passkey to WebAuthn; the address comes from createWallet,
+ * because a passkey is not an EOA and has no address of its own.
+ */
+export type StoredPasskey = {
+  credential: PasskeyCredential;
+  address: Address;
+};
+
 export type StoredState = {
   v: 1;
   walletKey?: Hex;
+  /** Set instead of `walletKey` when the wallet is a passkey. */
+  passkey?: StoredPasskey;
   /** Set once the key was registered with the relay the page is pointed at. */
   registered?: boolean;
   chainId?: number;
@@ -41,7 +53,28 @@ export function migrate(raw: unknown): StoredState {
     ? (r.sessions.filter(isStoredSession) as StoredSession[])
     : [];
   const registered = r.registered === true;
-  return { v: 1, ...(walletKey ? { walletKey } : {}), ...(registered ? { registered } : {}), ...(chainId ? { chainId } : {}), sessions };
+  const passkey = isStoredPasskey(r.passkey) ? r.passkey : undefined;
+  return {
+    v: 1,
+    ...(walletKey ? { walletKey } : {}),
+    ...(passkey && !walletKey ? { passkey } : {}),
+    ...(registered ? { registered } : {}),
+    ...(chainId ? { chainId } : {}),
+    sessions,
+  };
+}
+
+function isStoredPasskey(p: unknown): p is StoredPasskey {
+  if (!p || typeof p !== "object") return false;
+  const x = p as Record<string, unknown>;
+  const cred = x.credential as Record<string, unknown> | undefined;
+  return (
+    typeof x.address === "string" &&
+    /^0x[0-9a-fA-F]{40}$/.test(x.address) &&
+    !!cred &&
+    typeof cred === "object" &&
+    typeof cred.publicKey === "string"
+  );
 }
 
 function isStoredSession(s: unknown): s is StoredSession {

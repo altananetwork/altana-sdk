@@ -57,12 +57,12 @@ describe("MirrorCard", () => {
         .mockResolvedValueOnce({ ...mirrorCurrent, cachedPresent: false, cachedSourceBlock: 0n, cacheSaysValid: false })
         .mockResolvedValue(mirrorCurrent),
       proveIntoMirror: vi.fn(async () => ({
-        callsId: "0x01",
-        status: "CONFIRMED",
-        transactionHash: "0xproof",
-        cachedKey: {},
+        callsId: "0x01" as const,
+        status: "CONFIRMED" as const,
+        transactionHash: "0xproof" as const,
+        cachedKey: {} as never,
         l1BlockNumber: mirrorCurrent.anchorL1Block,
-        keyStoreCache: "0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD",
+        keyStoreCache: "0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD" as const,
         attempts: 1,
       })),
     });

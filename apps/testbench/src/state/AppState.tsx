@@ -1,13 +1,34 @@
-import { signerFromPrivateKey, type FeeCurrency, type HoldingsResult, type Signer } from "@altananetwork/sdk";
+import {
+  signerFromPasskey,
+  signerFromPrivateKey,
+  type FeeCurrency,
+  type HoldingsResult,
+  type Signer,
+} from "@altananetwork/sdk";
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, type ReactNode } from "react";
 import { privateKeyToAccount } from "viem/accounts";
 import type { Address, Hex } from "viem";
 import { DEFAULT_CHAIN_ID } from "../lib/chains";
 import type { LogEntry } from "../lib/log";
 import type { TestbenchClient } from "../lib/sdk";
-import { load, save, type StoredSession, type StoredState, type Storage } from "../lib/storage";
+import { load, save, type StoredPasskey, type StoredSession, type StoredState, type Storage } from "../lib/storage";
 
-export type WalletState = { key: Hex; address: Address; signer: Signer; registered: boolean };
+/**
+ * The wallet the panels act with. A passkey wallet carries no private key:
+ * the signer is the passkey and the address came from createWallet, because a
+ * passkey is not an EOA and has no address of its own. `key` is therefore
+ * present only for a generated or pasted private key, and the two features
+ * that need the raw key (revealing it, and the porto cross-chain path) are
+ * offered only then.
+ */
+export type WalletState = {
+  kind: "privateKey" | "passkey";
+  key?: Hex;
+  passkey?: StoredPasskey;
+  address: Address;
+  signer: Signer;
+  registered: boolean;
+};
 
 export type AppState = {
   wallet?: WalletState;
@@ -22,6 +43,7 @@ export type AppState = {
 
 export type Action =
   | { type: "wallet/set"; key: Hex }
+  | { type: "wallet/setPasskey"; passkey: StoredPasskey; registered?: boolean }
   | { type: "wallet/registered" }
   | { type: "wallet/clear" }
   | { type: "chain/set"; chainId: number }
@@ -35,13 +57,30 @@ export type Action =
 
 export function walletFromKey(key: Hex, registered = false): WalletState {
   const account = privateKeyToAccount(key);
-  return { key, address: account.address, signer: signerFromPrivateKey(key), registered };
+  return { kind: "privateKey", key, address: account.address, signer: signerFromPrivateKey(key), registered };
+}
+
+export function walletFromPasskey(passkey: StoredPasskey, registered = false): WalletState {
+  return {
+    kind: "passkey",
+    passkey,
+    address: passkey.address,
+    signer: signerFromPasskey(passkey.credential),
+    registered,
+  };
 }
 
 export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "wallet/set":
       return { ...state, wallet: walletFromKey(action.key), holdings: undefined, holdingsChainId: undefined };
+    case "wallet/setPasskey":
+      return {
+        ...state,
+        wallet: walletFromPasskey(action.passkey, action.registered ?? false),
+        holdings: undefined,
+        holdingsChainId: undefined,
+      };
     case "wallet/registered":
       return state.wallet ? { ...state, wallet: { ...state.wallet, registered: true } } : state;
     case "wallet/clear":
@@ -67,7 +106,11 @@ export function reducer(state: AppState, action: Action): AppState {
 
 export function initialState(stored: StoredState): AppState {
   return {
-    wallet: stored.walletKey ? walletFromKey(stored.walletKey, stored.registered === true) : undefined,
+    wallet: stored.walletKey
+      ? walletFromKey(stored.walletKey, stored.registered === true)
+      : stored.passkey
+        ? walletFromPasskey(stored.passkey, stored.registered === true)
+        : undefined,
     chainId: stored.chainId ?? DEFAULT_CHAIN_ID,
     sessions: stored.sessions,
     log: [],
@@ -77,7 +120,8 @@ export function initialState(stored: StoredState): AppState {
 export function toStored(state: AppState): StoredState {
   return {
     v: 1,
-    ...(state.wallet ? { walletKey: state.wallet.key, registered: state.wallet.registered } : {}),
+    ...(state.wallet?.key ? { walletKey: state.wallet.key, registered: state.wallet.registered } : {}),
+    ...(state.wallet?.passkey ? { passkey: state.wallet.passkey, registered: state.wallet.registered } : {}),
     chainId: state.chainId,
     sessions: state.sessions,
   };
@@ -98,7 +142,7 @@ export function AppProvider({
   const [state, dispatch] = useReducer(reducer, storage, (s) => initialState(load(s)));
   useEffect(() => {
     save(storage, toStored(state));
-  }, [state.wallet?.key, state.wallet?.registered, state.chainId, state.sessions, storage]);
+  }, [state.wallet?.key, state.wallet?.passkey, state.wallet?.registered, state.chainId, state.sessions, storage]);
   const value = useMemo(() => ({ state, dispatch, client }), [state, client]);
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }

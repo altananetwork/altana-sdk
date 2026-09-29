@@ -180,7 +180,7 @@ export function WalletPanel() {
                 Forget key
               </Button>
             </div>
-            {revealed && (
+            {revealed && wallet.key && (
               <div className="stack">
                 <span className="muted small">Private key (test only)</span>
                 <Address value={wallet.key} short={false} />
