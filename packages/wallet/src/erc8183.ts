@@ -20,6 +20,7 @@
 
 import { encodeFunctionData, hexToString, keccak256, toHex, type Address, type Hex } from "viem";
 import { canonicalJson } from "./internal/canonicalJson.js";
+import { erc8004Registry } from "./erc8004.js";
 import { type NetworkConfig } from "./config.js";
 import { execute, type ExecuteOptions } from "./execute.js";
 import { buildPublicClient, type Call } from "./internal/relay.js";
@@ -32,7 +33,11 @@ export type Erc8183Addresses = {
   commerce: Address;
   router: Address;
   policy: Address;
-  /** ERC-8004 identity registry (seller discovery). */
+  /**
+   * ERC-8004 identity registry (seller discovery). The same contract
+   * `erc8004Registry(chainId)` names; identity is not part of this stack and
+   * lives on chains that have none of the rest.
+   */
   registry: Address;
   /** $U (United Stables) — the payment token the kernel escrows. */
   paymentToken: Address;
@@ -43,14 +48,14 @@ export const ERC8183_ADDRESSES: Record<number, Erc8183Addresses> = {
     commerce: "0xEa4DAa3100A767e86FDed867729ae7446476EBA6",
     router: "0x51895229E12F9876011789B04f8698af06cCD6DA",
     policy: "0x9C01845705b3078Aa2e8cfF7520a6376FD766dE5",
-    registry: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
+    registry: erc8004Registry(56),
     paymentToken: "0xcE24439F2D9C6a2289F741120FE202248B666666",
   },
   97: {
     commerce: "0xa206c0517B6371C6638CD9e4a42Cc9f02A33B0DE",
     router: "0xD7d36D66d2F1B608A0F943f722D27e3744f66F25",
     policy: "0xd6a4217588F6B1F5657a92A3e94E6422aD771cEA",
-    registry: "0x8004A818BFB912233c491871b3d84c89A494BD9e",
+    registry: erc8004Registry(97),
     paymentToken: "0xc70B8741B8B07A6d61E54fd4B20f22Fa648E5565",
   },
 };

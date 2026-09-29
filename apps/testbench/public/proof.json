@@ -1,0 +1,546 @@
+{
+  "generatedAt": "2026-09-29T14:04:05.030Z",
+  "source": "celo-harness/MATRIX.md",
+  "matrixUpdated": "2026-09-29",
+  "sections": [
+    {
+      "title": "Milestone 1",
+      "rows": [
+        {
+          "item": "1a",
+          "title": "Celo Sepolia contracts deployed + verified (account stack, KeyStoreCacheOPStack 0xB1002cE9…deeD, block 35678512)",
+          "status": "Proven (live)",
+          "state": "proven-live",
+          "relay": "",
+          "note": "Plan-verified 2026-09-28; re-confirmed by relay capabilities (orchestrator 0xcb5cef3c…, account impl 0x33ad2f49… v0.5.10, proxy 0x4f4dde38…, funder 0xb2486 02e…, escrow 0xcd075ceb…)",
+          "links": []
+        },
+        {
+          "item": "1a",
+          "title": "Celo mainnet (42220) contracts",
+          "status": "Missing",
+          "state": "missing",
+          "relay": "",
+          "note": "Nothing deployed, no config, no deploy script, no cache. SDK CELO.registry.keyStoreCache is the KEYSTORE_CACHE_UNSET zero address — confirmed in packages/wallet/src/config.ts. G3.",
+          "links": []
+        },
+        {
+          "item": "1b",
+          "title": "Live relay serves Celo Sepolia",
+          "status": "Proven (live)",
+          "state": "proven-live",
+          "relay": "railway",
+          "note": "/health → {\"status\":\"rpc ok\",\"version\":\"26.1.4\"}; chain 0xaa044c present with full contract set",
+          "links": []
+        },
+        {
+          "item": "1b",
+          "title": "Relay fee-currency oracle (#26)",
+          "status": "Proven (live) on staging, blocked by gate for Railway",
+          "state": "blocked",
+          "relay": "local",
+          "note": "On relay staging it works: local mode A lists all six tokens with live FeeCurrencyDirectory rates, and USDC was charged live on chain. The Railway relay still lists one token, so G1 is what stands between this and the public proof",
+          "links": []
+        },
+        {
+          "item": "1b",
+          "title": "Relay cross-chain registration (#25)",
+          "status": "Blocked by gate, and a relay bug behind it",
+          "state": "blocked",
+          "relay": "railway, fork",
+          "note": "Merged to relay staging, not on main; interop: false on Celo native, live (G1). Behind that, infra traced the quote path attaching the funder address but never a funder signature for any intent carrying fund transfers, so SimpleFunder.fund() simulates with an empty signature and the ERC-1271 fallback staticcalls the funder (CallNotAllowedInsideStatic). A relay fix needing its own proposal to Doris. The per-chain funder-key mismatch is a real deployment problem but is *not* this bug. evidence/2026-09-28-s3-root-cause.md",
+          "links": []
+        },
+        {
+          "item": "1b",
+          "title": "42220 in any relay config",
+          "status": "Missing",
+          "state": "missing",
+          "relay": "",
+          "note": "Not in relay.testnet.yaml; no mainnet relay config. G3",
+          "links": []
+        },
+        {
+          "item": "1c",
+          "title": "Celo merged in sdk/mcp/x402-server/hypersigner on staging",
+          "status": "Proven (live)",
+          "state": "proven-live",
+          "relay": "",
+          "note": "CI baseline green on origin/staging: build, typecheck, 449 unit tests, 0 failures. evidence/2026-09-28-ci-baseline.md",
+          "links": []
+        },
+        {
+          "item": "1c",
+          "title": "Published to npm",
+          "status": "Missing",
+          "state": "missing",
+          "relay": "",
+          "note": "npm is on sdk/mcp 0.9.0 and x402-server 0.2.0; staging carries 0.10.0 / 0.3.0 / 0.2.1. Phase 4",
+          "links": []
+        },
+        {
+          "item": "1d",
+          "title": "Explorer: renders KeyStore keys",
+          "status": "Proven (live)",
+          "state": "proven-live",
+          "relay": "",
+          "note": "testnet.altana.network/account/0xD035abdb79eDb8F868319F8B3FB3a2fb51032cB8 returns 200 and renders 1 active of 4 total keys, with Root and Session types and Expired states. Explorer origin/staging (d455043) CI green locally (typecheck, 9 tests, both builds)",
+          "links": []
+        },
+        {
+          "item": "1d",
+          "title": "Explorer: shows a Celo key and its cache proof",
+          "status": "Proven (live)",
+          "state": "proven-live",
+          "relay": "",
+          "note": "Verified independently on testnet.altana.network/account/0x6A75e80B961f7d884f9D03E5Aa0808d05e47c50d: \"Key populated · key 0x26aa…e87d · proof anchored L1 # 11,668,326 · Celo\", alongside 66 registered / 24 revoked / 5 synced-on-L2. That anchor is the same block my fork:celo-cache run read off the live mirror, so two independent sources agree. This is the third-party-verifiable record item 1d asks for",
+          "links": []
+        },
+        {
+          "item": "1d",
+          "title": "Explorer: indexer is at head for Celo",
+          "status": "Not established",
+          "state": "unproven",
+          "relay": "",
+          "note": "Corrected: infra suggested today's passkey wallets prove freshness, but they render \"The Keystore has no record of this address\" — they never registered in the KeyStore (the repro dropped the L1 relay, so no admin registration, and no registered session was granted). The newest Celo event on the explorer is the 19-day-old September grant. Nothing here is *wrong*; we simply have no fresh Celo KeyStore write to test freshness with, because S3 has only ever succeeded on a fork",
+          "links": []
+        },
+        {
+          "item": "1d",
+          "title": "Explorer: unit tests do not run at all",
+          "status": "Gap, pre-existing",
+          "state": "other",
+          "relay": "",
+          "note": "Raised by infra 2026-09-29: bun run test fails on explorer staging both before and after their lockfile PR #14, with Cannot find native binding … @rolldown/binding-wasm32-wasi. The binding is absent from the lockfile either way, so it is a rolldown/vitest optional-dependency problem, not a regression. The explorer therefore has no working test coverage, which is worth owning before the milestone leans on it",
+          "links": []
+        },
+        {
+          "item": "1d",
+          "title": "Explorer: Celo mainnet entry",
+          "status": "Missing",
+          "state": "missing",
+          "relay": "",
+          "note": "G3",
+          "links": []
+        },
+        {
+          "item": "1e",
+          "title": "Key grant, session, timeboxing, revocation with private keys, wallet paying its own Sepolia ETH",
+          "status": "Proven (live)",
+          "state": "proven-live",
+          "relay": "railway",
+          "note": "The 2026-09-09 run. Confirmed from git: commit 71e2f92 funded the wallet with 0.003 ETH on Sepolia explicitly \"(registry writes)\"",
+          "links": []
+        },
+        {
+          "item": "1e",
+          "title": "The same, paid from the Celo balance (route a)",
+          "status": "Never proven, live or otherwise",
+          "state": "unproven",
+          "relay": "",
+          "note": "L2-funded registry writes did not exist on 2026-09-09; the first commit is 661466f, a week later. So no live run has ever exercised this path, and every attempt since has failed. See the route (a) row under milestone 2",
+          "links": []
+        },
+        {
+          "item": "1e",
+          "title": "Passkey first execute",
+          "status": "Proven (live)",
+          "state": "proven-live",
+          "relay": "railway",
+          "note": "The reported 0x revert does not reproduce. Two runs on the live relay confirmed: 0x0739a6af…, 0xd999db88…. Both accounts carry a keyType 1 (WebAuthnP256) super-admin key on-chain. G2 may not be needed. evidence/2026-09-28-passkey-celo-sepolia.md",
+          "links": [
+            {
+              "label": "0x0739a6af…",
+              "url": "https://sepolia.celoscan.io/tx/0x0739a6afbad778515781e606e30fe1d28e4b72641de9fa777f339850174fd1d9"
+            },
+            {
+              "label": "0xd999db88…",
+              "url": "https://sepolia.celoscan.io/tx/0xd999db88842cd5f4d7fddb5e5e5e11abb13b0af56dfdacc9a790ff5af3b93ea1"
+            }
+          ]
+        },
+        {
+          "item": "1e",
+          "title": "Passkey wallet creation",
+          "status": "Fixed in SDK PR #103, verified live",
+          "state": "proven-live",
+          "relay": "railway",
+          "note": "Was: createWallet({signer: passkey}) refused on any cached-registry network. Now one address across chains. qa verified independently on 0xAcFDbA26e136b1Eace8D00D8437B8bA65A0C2986: codesize 23 on both Celo Sepolia and Sepolia, same keyType 1 (WebAuthnP256) super-admin key, same keyHash 0x51d40fcc…c627 on each. evidence/2026-09-29-review-sdk-prs.md",
+          "links": []
+        }
+      ]
+    },
+    {
+      "title": "Milestone 2",
+      "rows": [
+        {
+          "item": "2a",
+          "title": "SDK feeCurrencies(), feeToken (address or list), MCP list_fee_currencies",
+          "status": "Proven (live)",
+          "state": "proven-live",
+          "relay": "railway, local",
+          "note": "MCP server driven over stdio with ALTANA_CHAIN=celo-sepolia: 22 tools advertised, list_fee_currencies present, and it returns the relay's currencies read live. One token against Railway is the correct answer; the same call on a relay with #26 lists all six. It also reports the native as S-CELO, so the relay's ETH mislabel does not reach an agent. evidence/2026-09-28-mcp-and-x402-celo.md",
+          "links": []
+        },
+        {
+          "item": "2a",
+          "title": "Fee paid in CELO",
+          "status": "Proven (live)",
+          "state": "proven-live",
+          "relay": "railway",
+          "note": "Spine S2a, live Railway relay: 0xeb473071…. Charged at or under the quote",
+          "links": [
+            {
+              "label": "0xeb473071…",
+              "url": "https://sepolia.celoscan.io/tx/0xeb473071ce72584bf2ce88822709309efdedbc2165cde989a3abda6d4f76fe23"
+            }
+          ]
+        },
+        {
+          "item": "2a",
+          "title": "Fee paid in USDC",
+          "status": "Proven (live)",
+          "state": "proven-live",
+          "relay": "local",
+          "note": "Twice. Through the SDK's public API, spine S2b on local mode A: 0xeb432e6c…, wallet held 1 USDC and 0 CELO. And infra's relay-script run: 0x4c2cbd12…. Live forno, not a fork; relay staging, so still G1 for Railway",
+          "links": [
+            {
+              "label": "0xeb432e6c…",
+              "url": "https://sepolia.celoscan.io/tx/0xeb432e6c456c97dd0e544ab2209417b5d0b57e380c67e7b6dec1a9653512c538"
+            },
+            {
+              "label": "0x4c2cbd12…",
+              "url": "https://celo-sepolia.blockscout.com/tx/0x4c2cbd1270692571d7d8bbda48fecd3bce616a5e82151ae576c487ee0577fec4"
+            }
+          ]
+        },
+        {
+          "item": "2a",
+          "title": "Fee paid in USDm",
+          "status": "Proven (fork) — final for testnet",
+          "state": "proven-fork",
+          "relay": "fork",
+          "note": "Spine S2b on fork mode B: a wallet holding 1 USDm and 0 CELO executed and paid its fee in USDm. Doris decided 2026-09-29 that this stays fork-proven on testnet, rather than holding the milestone for a funding route that does not exist: the funder holds none and Mento has no path from USDC (evidence/2026-09-28-mento-routes.md). Not a gap; a settled scope decision",
+          "links": []
+        },
+        {
+          "item": "2a",
+          "title": "Fee paid in EURm",
+          "status": "Proven (fork) — final for testnet",
+          "state": "proven-fork",
+          "relay": "fork",
+          "note": "Spine S2b on fork mode B, and independently by infra. Doris decided 2026-09-29 this stays fork-proven on testnet. EURm is in no Mento pool at all and its Celo Sepolia supply is 97.4 tokens, so there was never a live route",
+          "links": []
+        },
+        {
+          "item": "2a",
+          "title": "Fee paid in KESm",
+          "status": "Proven (fork) — final for testnet",
+          "state": "proven-fork",
+          "relay": "fork",
+          "note": "Spine S2b on fork mode B. Doris decided 2026-09-29 this stays fork-proven on testnet. Reachable on Mento only from USDm, which we cannot obtain",
+          "links": []
+        },
+        {
+          "item": "2a",
+          "title": "Fee paid in USD₮",
+          "status": "Proven (fork)",
+          "state": "proven-fork",
+          "relay": "fork",
+          "note": "Spine S2b on fork mode B, balance set with anvil_setStorageAt. Not provable live by design: USD₮ is owner-minted on testnet. USA₮ is mainnet only",
+          "links": []
+        },
+        {
+          "item": "2b",
+          "title": "x402: Celo token registry",
+          "status": "Proven (fork)",
+          "state": "proven-fork",
+          "relay": "fork",
+          "note": "fork-celo-x402-server.ts (in CI's fork:all) settles both buyer families on chain against a real Celo merchant: an EOA over EIP-3009 USDC, and an Altana smart account over permit2 USDT with ERC-1271, with replay refused. Fork is the right level: it deploys a merchant and moves balances",
+          "links": []
+        },
+        {
+          "item": "2b",
+          "title": "x402 on Celo mainnet: which tokens a smart account can actually pay in",
+          "status": "USDC only",
+          "state": "other",
+          "relay": "",
+          "note": "Measured by infra on a Celo mainnet fork, by installing an always-valid ERC-1271 contract and calling as it. USDC: EIP-3009 and permit, both accepting ERC-1271, so our wallets work. USD₮ and USA₮: neither surface exists. USDm, EURm, KESm: permit only, and ecrecover-only, so a contract wallet cannot sign one. The Mento local-currency tokens are signable by an EOA but not by a smart account, which excludes the whole agent category from exactly the tokens that make Celo interesting. Recommendation 1 of the standards audit",
+          "links": []
+        },
+        {
+          "item": "2b",
+          "title": "x402: Celo facilitator settlement option",
+          "status": "Added in SDK PR #106; /settle blocked on an API key",
+          "state": "blocked",
+          "relay": "",
+          "note": "Celo's facilitator api.x402.sepolia.celo.org is wired in. qa read its /supported live: it advertises both envelopes, x402Version 1 as network celo-sepolia and x402Version 2 as eip155:11142220 with an eip2612GasSponsoring extension, which is what the signX402Payment v1/v2 fix is for. /settle needs an X-API-Key — waiting on Doris",
+          "links": []
+        },
+        {
+          "item": "2b",
+          "title": "x402 on Celo: what an agent can actually pay in",
+          "status": "Permit2 with local settlement, not EIP-3009",
+          "state": "other",
+          "relay": "fork",
+          "note": "Milestone finding. Celo USDC is FiatTokenV2 and does expose the EIP-3009 surface (version() = \"2\", authorizationState answers), but it verifies the authorization with ecrecover, so an Altana smart account cannot produce a signature it accepts. Phrase it that way: \"Celo USDC has no EIP-3009\" would be wrong. Proven on a fork 2026-09-28: an EOA settles USDC over EIP-3009, an Altana account settles over permit2-exact with ERC-1271. Consistent with infra's mainnet audit, where USDC is the only token an agent can pay in",
+          "links": []
+        },
+        {
+          "item": "—",
+          "title": "Cache legs reading PENDING in the #103 and #105 live runs",
+          "status": "Expected, not failures",
+          "state": "other",
+          "relay": "railway",
+          "note": "They were waiting for the L1 anchor to reach the registration's block. grantSession returns before the L2 proofs and exposes them as cacheSync; a script that exits, or reads the cache immediately, is asking for a proof that cannot exist for another ~30 minutes. Nothing to fix in either PR",
+          "links": []
+        },
+        {
+          "item": "—",
+          "title": "Relay error hints",
+          "status": "Fixed in SDK PR #86",
+          "state": "other",
+          "relay": "",
+          "note": "A bare 0x now reads \"its simulation reverted with no reason … the response says nothing about the cause\" instead of inventing a balance shortfall. The old hint claimed a wallet holding 1 ETH could not cover 0.000376 ETH",
+          "links": []
+        },
+        {
+          "item": "2b",
+          "title": "ERC-8004 registry on-chain on Celo",
+          "status": "Proven (live)",
+          "state": "proven-live",
+          "relay": "",
+          "note": "Verified 2026-09-28: Celo Sepolia 0x8004A818BFB912233c491871b3d84c89A494BD9e and Celo mainnet 0x8004A169FB4a3325136EB29fA0ceB6D2e539a432 are both live ERC-1967 proxies, ERC-721 (name() = \"AgentIdentity\", symbol() = \"AGENT\", supportsInterface(0x80ac58cd) = true)",
+          "links": []
+        },
+        {
+          "item": "2b",
+          "title": "ERC-8004 in the SDK for Celo",
+          "status": "Added in SDK PR #105, agent live",
+          "state": "proven-live",
+          "relay": "",
+          "note": "Altana's agent registered on Celo Sepolia as agent 449. qa verified on-chain: ownerOf(449) = 0x52fFF8245f278cD7710ee186752f4FCe36D65294, which is a real Altana smart account (codesize 23, keyType 2 super-admin plus timeboxed session keys), and the base64 card decodes self-consistently with agentId 449 and agentRegistry eip155:11142220:0x8004A818…",
+          "links": []
+        },
+        {
+          "item": "2b",
+          "title": "Registration without ETH, route (a) — SDK PR #97",
+          "status": "Reviewed, safe to merge; blocked live by the relay",
+          "state": "blocked",
+          "relay": "fork",
+          "note": "qa review 2026-09-29: merge it. Clean merge, 449 unit tests pass, spine mode A green, and spine mode B S3 passes: requiredFunds sent, write funded from chain 11142220 with a source tx on Celo, isValidKey true on Sepolia, Sepolia ETH 0 before. The SDK side is correct and ready. It cannot be proven live until the relay's empty-funderSignature bug is fixed and G1 lands. evidence/2026-09-29-review-pr97.md",
+          "links": []
+        },
+        {
+          "item": "2b",
+          "title": "Registration without ETH, route (b) — relay #25 one signature",
+          "status": "Blocked, same bug as (a)",
+          "state": "blocked",
+          "relay": "fork",
+          "note": "Not a fallback. The relay's own testnet-interop-register.cjs fails on fork mode B with the identical bare 0x on wallet_prepareCalls, at the same 186,858,393,994,055 wei requiredFunds. Both routes die in the same place, so choosing between them unblocks nothing. The September green runs in the relay's README are not currently reproducible. evidence/2026-09-28-route-b-fails-identically.md",
+          "links": []
+        },
+        {
+          "item": "2a",
+          "title": "Fee-token choice for a wallet holding none",
+          "status": "Risk, pre-G1 decision",
+          "state": "other",
+          "relay": "local",
+          "note": "New. An empty wallet is quoted in USDm on a 6-token relay and in CELO on Railway, and nativeNeeded drops from 0.049 CELO to 0. After G1 an empty wallet is told to fund a token the faucet cannot supply. Not a #26 defect; a decision for Doris. evidence/2026-09-28-empty-wallet-quoted-in-usdm.md",
+          "links": []
+        },
+        {
+          "item": "—",
+          "title": "The relay reserves no nonce: two intents prepared before the first mines collide",
+          "status": "Relay bug stands (N1); SDK survives it from PR #104",
+          "state": "other",
+          "relay": "railway, local",
+          "note": "Unchanged as a relay defect. SDK PR #104 adds a bounded retry: qa verified live that four back-to-back operations on one wallet now all confirm, where the same shape gave InvalidNonce and a failed grant on 2026-09-28. Correction to earlier guidance: \"wait for the previous transaction to mine\" is NOT sufficient — both of sdk's live failures came *after* a confirmed receipt, because the relay's read of latest lags the receipts it hands out. Also closed off: a client-supplied nonce is not a narrower fix but a broken one, since the sequence key changes at the delegation transition",
+          "links": []
+        },
+        {
+          "item": "—",
+          "title": "hypersigner: Celo cache proofs",
+          "status": "Added in SDK PR #107",
+          "state": "other",
+          "relay": "",
+          "note": "qa reviewed: 342 wallet / 22 hypersigner / 44 x402 / 63 mcp, all typechecks clean. It models \"never proven\" and \"proven but stale\" as distinct states rather than folding both into false, and its header states the 1.1.1 equality rule correctly",
+          "links": []
+        },
+        {
+          "item": "2b",
+          "title": "Standards-parity audit",
+          "status": "Missing",
+          "state": "missing",
+          "relay": "",
+          "note": "Not started; infra owns it (Phase 1)",
+          "links": []
+        },
+        {
+          "item": "—",
+          "title": "Test bench: backed up",
+          "status": "Proven",
+          "state": "proven-live",
+          "relay": "",
+          "note": "origin/backup/celo-testbench at a169a8f exists on the remote. Phase 0 task 1 done; nothing at risk",
+          "links": []
+        },
+        {
+          "item": "—",
+          "title": "Test bench: automated suite",
+          "status": "Proven",
+          "state": "proven-live",
+          "relay": "",
+          "note": "typecheck passes; 50 tests in 15 files pass, brand lint included. evidence/2026-09-28-testbench-baseline.md",
+          "links": []
+        },
+        {
+          "item": "—",
+          "title": "Test bench: manual checklist, scenario 1",
+          "status": "Proven (live)",
+          "state": "proven-live",
+          "relay": "local",
+          "note": "Walked in the browser against mode A: key generated, funded, registered, sent. CONFIRMED, \"Charged in S-CELO\", tx 0x481fad54…. The fee-token list shows all six with live rates and only S-CELO Held, exactly as the README says",
+          "links": [
+            {
+              "label": "0x481fad54…",
+              "url": "https://sepolia.celoscan.io/tx/0x481fad54efb2bbaf37237b03fcb27d09f9d22a78fb8e76df2ebcc5623b8f466f"
+            }
+          ]
+        },
+        {
+          "item": "—",
+          "title": "Test bench: scenario 3, forcing an unheld token",
+          "status": "Fails its stated pass condition",
+          "state": "other",
+          "relay": "local",
+          "note": "The README expects a failure *before* the relay naming the accepted tokens and the wallet's holdings. It actually fails *at* the relay with \"quote has asset deficits\", naming neither. No pre-flight on a forced fee token. Also the Result panel keeps showing the previous CONFIRMED result next to the new failure",
+          "links": []
+        },
+        {
+          "item": "—",
+          "title": "Test bench: relay override",
+          "status": "Bug",
+          "state": "other",
+          "relay": "local",
+          "note": "VITE_RELAY_URL applies to all three configured chains including Base Sepolia, so the bench cannot point at a relay serving a subset, and the failure surfaces as an unguarded Cannot destructure property 'contracts' rather than the SDK's \"does not serve chain N\"",
+          "links": []
+        },
+        {
+          "item": "—",
+          "title": "Test bench: manual checklist, scenarios 4 and 5",
+          "status": "Blocked",
+          "state": "blocked",
+          "relay": "",
+          "note": "Both are spine S3",
+          "links": []
+        },
+        {
+          "item": "—",
+          "title": "Altana Desktop",
+          "status": "Out of scope",
+          "state": "other",
+          "relay": "",
+          "note": "Own plan after the SDK release",
+          "links": []
+        }
+      ]
+    },
+    {
+      "title": "The spine, step by step",
+      "rows": [
+        {
+          "item": "S1",
+          "title": "Fresh wallet, CELO only, Sepolia ETH asserted 0",
+          "status": "Proven (live)",
+          "state": "proven-live",
+          "relay": "railway, local",
+          "note": "Passes on every relay",
+          "links": []
+        },
+        {
+          "item": "S2a",
+          "title": "Execute on Celo paying CELO",
+          "status": "Proven (live)",
+          "state": "proven-live",
+          "relay": "railway, local",
+          "note": "0xeb473071…",
+          "links": [
+            {
+              "label": "0xeb473071…",
+              "url": "https://sepolia.celoscan.io/tx/0xeb473071ce72584bf2ce88822709309efdedbc2165cde989a3abda6d4f76fe23"
+            }
+          ]
+        },
+        {
+          "item": "S2b",
+          "title": "Execute paying a stablecoin, wallet holding only that token",
+          "status": "USDC Proven (live); USDm, EURm, KESm, USD₮ Proven (fork)",
+          "state": "proven-mixed",
+          "relay": "local, fork",
+          "note": "All six fee tokens pass. See the 2a rows",
+          "links": []
+        },
+        {
+          "item": "S3",
+          "title": "Register a session key in the Sepolia KeyStore paid from Celo; Sepolia ETH 0; isValidKey true",
+          "status": "Proven (fork, funder check stubbed)",
+          "state": "proven-fork",
+          "relay": "fork",
+          "note": "With infra's ERC-1271 funder stub on, S3 passes: registry write on Sepolia 0x473227e834dd74e197fe317c858bba536c22996b46838f448fb91bfa6cb4ba2e (fork-local), fundedFromChainId 11142220 with source tx 0x76bba038b68374e2dd7fd7a01e8e7028aebdbcd32109633d634da097cdf67bf2 (fork-local) on Celo, isValidKey true on the Sepolia KeyStore, Sepolia ETH 0 before the write. The stub bypasses only the broken funder-signature check, so this proves the KeyStore write and the L2 funding shape, not that the funder transfer is correctly signed",
+          "links": []
+        },
+        {
+          "item": "S4",
+          "title": "Cache proof: key valid in the Celo mirror, anchored L1 block",
+          "status": "Proven (live)",
+          "state": "proven-live",
+          "relay": "railway",
+          "note": "A key is now live in the Celo mirror: proved through the test bench on 2026-09-29, isValidKey true, sourceBlockNumber 11807900 equal to the anchor, and keccak(cached publicKey) == keyId verified on chain. The deployed cache is KeyStoreCacheOPStack 1.1.1 and isValidKey requires sourceBlockNumber == IL1Block.number() — equality, not recency. So a cached key is an assertion about one anchored L1 block, true inside a window, not a durable mirror. qa measured the anchor live 2026-09-29: 11807636 against a Sepolia head of 11807722, 86 blocks / ~17 minutes behind, matching sdk's 70-95. Consequences: a KeyStore write is provable ~30 min after it lands, and a proof is good for ~20 min. My own fork-celo-cache run already showed the equality rule from the other side — moving the anchor one block made isCachedKeyValid go false. evidence/2026-09-29-celo-sepolia-anchor-lag.md",
+          "links": []
+        },
+        {
+          "item": "S5a",
+          "title": "Use the session key",
+          "status": "Proven (fork, funder check stubbed)",
+          "state": "proven-fork",
+          "relay": "fork",
+          "note": "0x17cbb3b8e9f995f55ba468a5fe20fe8f7d26cf50428b455bd6dd82c57f6d584a (fork-local). A registered session key transacted",
+          "links": []
+        },
+        {
+          "item": "S5b",
+          "title": "Short timebox expires, then rejection",
+          "status": "Proven (live); fails on fork mode B for a fork-specific reason",
+          "state": "proven-live",
+          "relay": "railway, fork",
+          "note": "The timebox is proven live: a key granted with a 150s expiry executed, then the same key was rejected 14s past its expiry with nothing else changed. On fork mode B it fails deterministically, even in isolation — the relay reports the just-authorized key as unknown on the very next prepare. Not the nonce bug (it fails with nothing else in flight, and anvil's instant mining closes that window), and not a grant lying about success (the authorize tx emits Authorized; ruled out from the event log). Cause not fully established; a fork collapses the gap between a tx landing and the next request to zero. evidence/2026-09-28-s5b-fork-only-failure.md",
+          "links": []
+        },
+        {
+          "item": "S5c",
+          "title": "Revoke, then rejection, then the mirror shows revoked",
+          "status": "Proven (fork, funder check stubbed) for revoke and rejection; mirror leg not covered",
+          "state": "proven-fork",
+          "relay": "fork",
+          "note": "Revoke confirmed on both chains: account 0xdecc6e7998ed0a7be639325a4e2746e0e8487b33c821c79a71bd7225513bd72f (fork-local), registry 0x605256d97ccacf058d68f22bc1b6f46b3c534b265cb520bb66372f12c37a10d0 (fork-local), and the key was rejected afterwards. The mirror-shows-revoked half was skipped because S4 never proved the key in on that fork",
+          "links": []
+        },
+        {
+          "item": "S6",
+          "title": "Refund the funder",
+          "status": "Proven (live)",
+          "state": "proven-live",
+          "relay": "railway, local",
+          "note": "Every run swept its wallets back. One returned 0.378748739998349646 CELO at 0x04c96338…",
+          "links": [
+            {
+              "label": "0x04c96338…",
+              "url": "https://sepolia.celoscan.io/tx/0x04c96338365424a324d6000d108fc6cba2297b6151e87ee2539f0654ab3d836b"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

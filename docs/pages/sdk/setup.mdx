@@ -33,8 +33,8 @@ console.log(wallet.address);
 | `ETHEREUM` | Ethereum | 1 | ETH |
 | `CELO` | Celo | 42220 | CELO, or USDC, USDT, USDm, EURm or KESm (the relay takes its fee in whichever the wallet holds), plus ETH on Ethereum for Keystore writes |
 | `BNB_TESTNET` | BNB Smart Chain Testnet | 97 | test BNB: [faucet](https://testnet.bnbchain.org/faucet-smart) |
-| `CELO_SEPOLIA` | Celo Sepolia | 11142220 | test CELO: [faucet](https://faucet.celo.org/celo-sepolia), or test USDC, USDm, EURm or KESm. No Sepolia ETH needed: Keystore writes on Sepolia are funded from this balance |
-| `BASE_SEPOLIA` | Base Sepolia | 84532 | Base Sepolia ETH. No Sepolia ETH needed: Keystore writes on Sepolia are funded from this balance |
+| `CELO_SEPOLIA` | Celo Sepolia | 11142220 | test CELO: [faucet](https://faucet.celo.org/celo-sepolia), or test USDC, USDm, EURm or KESm. Keystore writes on Sepolia are paid from this balance; ETH on Sepolia is not used |
+| `BASE_SEPOLIA` | Base Sepolia | 84532 | Base Sepolia ETH. Keystore writes on Sepolia are paid from this balance; ETH on Sepolia is not used |
 
 BNB Smart Chain and Ethereum are L1s: the [Keystore](/concepts/keystore) is
 on the chain itself. Celo and Base Sepolia are L2s: the Keystore is on Ethereum (Sepolia on

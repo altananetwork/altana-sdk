@@ -5,9 +5,9 @@
  * the Celo Sepolia KeyStoreCache.
  *
  *   1. createWallet (admin signer)
- *   2. fund the wallet on Celo Sepolia (CELO, relay fees) and on Sepolia
- *      (ETH: registry writes are relayed wallet calls there, paying the
- *      relay fee and the registration fee)
+ *   2. fund the wallet on Celo Sepolia only (CELO): the registry writes on
+ *      Sepolia are relayed wallet calls paid from this balance, registration
+ *      fee and relay fee alike
  *   3. execute(wallet, admin, ...) on Celo Sepolia (no registry prepend here)
  *   4. grantSession: registry write on Sepolia, account authorization on
  *      Celo Sepolia, proof into the cache; all three reported
@@ -18,9 +18,8 @@
  *   8. execute(session, ...) after revoke: rejected
  *
  * Needs, and fails loudly without:
- *   TEST_FUNDER_KEY   funded with CELO on Celo Sepolia (>= 0.2 CELO,
- *                     https://faucet.celo.org/celo-sepolia) AND with ETH on
- *                     Sepolia (>= 0.01 ETH, https://cloud.google.com/application/web3/faucet/ethereum/sepolia)
+ *   TEST_FUNDER_KEY   funded with CELO on Celo Sepolia (>= 1 CELO,
+ *                     https://faucet.celo.org/celo-sepolia); nothing on Sepolia
  *   CELO_SEPOLIA_CACHE  optional override of the KeyStoreCacheOPStack address
  *                     (the SDK config carries the deployed one)
  *   SEPOLIA_RPC_URL   optional override of the Sepolia RPC (default
@@ -48,8 +47,7 @@ import { privateKeyToAccount } from "viem/accounts";
 const TEST_FUNDER_KEY = process.env.TEST_FUNDER_KEY as Hex;
 if (!TEST_FUNDER_KEY) {
   throw new Error(
-    "Set TEST_FUNDER_KEY: a key funded with CELO on Celo Sepolia (https://faucet.celo.org/celo-sepolia) " +
-      "and with ETH on Sepolia (https://cloud.google.com/application/web3/faucet/ethereum/sepolia).",
+    "Set TEST_FUNDER_KEY: a key funded with CELO on Celo Sepolia (https://faucet.celo.org/celo-sepolia).",
   );
 }
 
@@ -95,7 +93,7 @@ async function main() {
   if (celoBal < parseEther("1")) {
     throw new Error(`Fund ${funder.address} with at least 0.2 CELO on Celo Sepolia: https://faucet.celo.org/celo-sepolia`);
   }
-  // No Sepolia ETH is needed: the registry writes are funded from the wallet's CELO by the relay.
+  // No Sepolia ETH is needed: every registry write is paid from the wallet's CELO by the relay.
   console.log(`cache: ${CACHE}\n`);
 
   // 1. Create wallet with admin signer
@@ -160,10 +158,18 @@ async function main() {
 
   // 7. Revoke: account and registry in parallel, then the post-revocation proof
   console.log("\n[7] revokeSession");
-  // The funded grant may leave the unspent part of the fee allowance on Sepolia; a wallet that can
-  // pay there does, so the revoke is funded from Celo only when it cannot.
-  const sepoliaBeforeRevoke = await sepoliaPublic.getBalance({ address: wallet.address });
-  console.log(`    wallet holds ${formatEther(sepoliaBeforeRevoke)} ETH on Sepolia before the revoke`);
+  // The funded grant leaves the unspent part of the relay's maximum fee on Sepolia. The revoke
+  // must still be paid from Celo: ETH the wallet holds on Sepolia is not used. Wait for the
+  // leftover to show (a public RPC can lag the relay's settlement) so the run proves that case.
+  let sepoliaBeforeRevoke = 0n;
+  for (let i = 0; i < 10 && sepoliaBeforeRevoke === 0n; i++) {
+    sepoliaBeforeRevoke = await sepoliaPublic.getBalance({ address: wallet.address });
+    if (sepoliaBeforeRevoke === 0n) await new Promise((r) => setTimeout(r, 3_000));
+  }
+  if (sepoliaBeforeRevoke === 0n) {
+    throw new Error("expected leftover ETH on Sepolia from the funded grant; the run would not prove the leftover case");
+  }
+  console.log(`    wallet holds ${formatEther(sepoliaBeforeRevoke)} ETH on Sepolia before the revoke (leftover from the grant)`);
   const revokeRes = await client.revokeSession({
     wallet,
     signer: adminSigner,
@@ -176,13 +182,13 @@ async function main() {
   if (legOf(revokeRes.legs, "account", celoSepolia.chainId).status !== "CONFIRMED") throw new Error("account revoke failed");
   const revokeRegistry = legOf(revokeRes.legs, "registry", sepolia.chainId);
   if (revokeRegistry.status !== "CONFIRMED") throw new Error("registry revoke did not confirm");
-  if (sepoliaBeforeRevoke < parseEther("0.001")) {
-    if (revokeRegistry.fundedFromChainId !== celoSepolia.chainId) throw new Error("registry revoke was not funded from Celo Sepolia");
-    console.log("    registry revoke funded from Celo Sepolia, source tx:", revokeRegistry.sourceTransactionHash);
-  } else {
-    if (revokeRegistry.fundedFromChainId !== undefined) throw new Error("registry revoke was funded from an L2 although the wallet could pay on Sepolia");
-    console.log("    registry revoke paid from the wallet's own ETH on Sepolia");
+  if (revokeRegistry.fundedFromChainId !== celoSepolia.chainId) {
+    throw new Error(
+      `registry revoke was not funded from Celo Sepolia although the wallet held ${formatEther(sepoliaBeforeRevoke)} ETH on Sepolia`,
+    );
   }
+  console.log("    registry revoke funded from Celo Sepolia, source tx:", revokeRegistry.sourceTransactionHash);
+  console.log(`    wallet holds ${formatEther(await sepoliaPublic.getBalance({ address: wallet.address }))} ETH on Sepolia after the revoke`);
   if (legOf(revokeRes.legs, "cache", celoSepolia.chainId).status !== "CONFIRMED") throw new Error("post-revocation proof did not confirm");
   // Public RPCs can lag the relay's confirmation; poll until the entry shows the
   // post-revocation proof (up to 60s).

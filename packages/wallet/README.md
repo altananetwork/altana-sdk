@@ -144,6 +144,10 @@ Registration is two-phase because the record embeds the id the mint assigns.
 `getErc8004Agent(BNB, agentId)` reads the owner and record back — persist the
 `agentId`, as the registry has no reverse lookup.
 
+`ERC8004_ADDRESSES` lists the registry per network and `erc8004Registry(chainId)`
+reads one. Identity is its own registry: where the ERC-8183 job escrow above is
+also deployed, `ERC8183_ADDRESSES[chainId].registry` names the same contract.
+
 Full reference: [ERC-8004 agent identity](https://docs.altana.network/sdk/erc8004).
 
 

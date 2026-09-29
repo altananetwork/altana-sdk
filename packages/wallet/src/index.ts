@@ -19,6 +19,7 @@ export type {
 export type { CreateWalletOptions, CreateWalletResult } from "./createWallet.js";
 export type { CreatePasskeyWalletOptions } from "./createPasskeyWallet.js";
 export type { RecoverFromPasskeyOptions } from "./recoverFromPasskey.js";
+export { quoteExecute } from "./execute.js";
 export type { ExecuteOptions, Call } from "./execute.js";
 export type { BalancesResult, TokenBalance } from "./balances.js";
 export type { HoldingsResult } from "./holdings.js";
@@ -120,8 +121,9 @@ export {
   provisioningNetworks,
 } from "./internal/cachedRegistry.js";
 
-// Testnet faucet helper — funds an EOA with native tokens via the testnet
-// relay's faucet. Works only on networks whose relay exposes it (BSC testnet).
+// Funding helpers. `fundNative` is deprecated and always throws: the relay's
+// faucet mints ERC-20 fee tokens and cannot send native currency. Fund the
+// address from the chain's faucet (`faucetHint`) and poll `waitForBalance`.
 export { fundNative, waitForBalance } from "./internal/relay.js";
 
 // Relay fee tokens: what the relay accepts as fee payment on a chain, read
@@ -233,8 +235,11 @@ export type {
 } from "./erc8183.js";
 
 // ERC-8004 agent identity — mint and maintain an agent's on-chain identity.
-// The registry address is the one already in ERC8183_ADDRESSES.registry.
+// The registry stands on its own: `ERC8004_ADDRESSES` lists it per network,
+// including Celo, which has the registry and none of the ERC-8183 stack.
 export {
+  ERC8004_ADDRESSES,
+  erc8004Registry,
   buildErc8004RegisterCall,
   buildErc8004SetAgentUriCall,
   erc8004RegisterPermissions,
