@@ -252,6 +252,10 @@ async function relayProof(
       const receipt = await l2.waitForTransactionReceipt({ hash });
       assert(receipt.status === "success", `the proof confirmed (${hash})`);
       console.log(`    relayed: ${L2.explorerUrl}/tx/${hash}`);
+      // A receipt is not a readable state: forno has answered an empty cache
+      // entry for a populateKey that had already confirmed. Poll until the read
+      // catches up, rather than reading once and calling the proof absent.
+      await waitForCacheEntry(user, deriveKeyId(publicKey));
       return;
     } catch (err) {
       const message = (err instanceof Error ? err.message : String(err)).split("\n")[0]!;
@@ -259,6 +263,19 @@ async function relayProof(
       if (attempt === 5) throw err;
       await new Promise((r) => setTimeout(r, 12_000));
     }
+  }
+}
+
+/** Waits until the node serving the reads has the cache entry the proof just wrote. */
+async function waitForCacheEntry(user: Address, keyId: Hex, timeoutMs = 120_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const s = await readCacheStatus({ chain: CHAIN, user, keyId, client: l2 });
+    if (!s.absent) return s;
+    if (Date.now() > deadline) {
+      throw new Error(`the cache still reads empty ${timeoutMs}ms after the proof confirmed`);
+    }
+    await new Promise((r) => setTimeout(r, 3_000));
   }
 }
 
