@@ -81,6 +81,8 @@ cd tests/e2e && bun run serve:x402-celo
 
 That script builds `@altananetwork/x402-server` before starting, so it works from a clean checkout; without the build it fails with "Cannot find module '@altananetwork/x402-server'".
 
+**Before the first payment on the Permit2 rail**, the wallet has to approve Permit2 for the token: Permit2 pulls the payment with `permitTransferFrom`, and without the approval the payment fails with an error that says nothing about approvals. The panel checks the allowance and offers the approval when it is missing.
+
 It sells one paid route at 0.01 USDC on live Celo Sepolia, over Permit2 and EIP-3009, and reports its own receipt so the panel names the rail rather than inferring it. With `X402_CELO_API_KEY` set it settles the EIP-3009 rail through Celo's facilitator; Permit2 always settles from the merchant's key, because the facilitator does not take that rail.
 
 ## The proof view

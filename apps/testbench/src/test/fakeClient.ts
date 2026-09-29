@@ -69,6 +69,12 @@ export function fakeClient(overrides: Partial<TestbenchClient> = {}): FakeClient
     quoteGrantSession: vi.fn(async () => ({ lines: [], balances: [], complete: true })),
     quoteRevokeSession: vi.fn(async () => ({ lines: [], balances: [], complete: true })),
     revokeSession: vi.fn(async () => ({ keyId: "0x01" as const, status: "revoked" as const, legs: [], cacheSync: Promise.resolve([]) })),
+    permit2Allowance: vi.fn(async () => 0n),
+    approvePermit2: vi.fn(async () => ({
+      callsId: "0x01" as const,
+      status: "CONFIRMED" as const,
+      transactionHash: "0xapprove" as const,
+    })),
     getErc8004Agent: vi.fn(async () => {
       throw new Error("getErc8004Agent not configured in this test");
     }),

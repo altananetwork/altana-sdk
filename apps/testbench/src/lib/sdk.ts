@@ -18,8 +18,10 @@ import {
   type Signer,
   type Session,
   type SyncSessionToCacheResult,
+  approveTokenForPermit2,
   fetchWithX402,
   getErc8004Agent,
+  PERMIT2_ADDRESS,
   networkByChainId,
   registerErc8004Agent,
 } from "@altananetwork/sdk";
@@ -27,7 +29,20 @@ import type { Address, Hex } from "viem";
 import { relayReason } from "./errors";
 import { entry, type LogEntry } from "./log";
 import type { MirrorReading } from "./mirror";
-import { cachedNetworkFor, readMirror } from "./mirrorReads";
+import { cachedNetworkFor, publicClientFor, readMirror } from "./mirrorReads";
+
+const ALLOWANCE_ABI = [
+  {
+    name: "allowance",
+    type: "function",
+    stateMutability: "view",
+    inputs: [
+      { name: "owner", type: "address" },
+      { name: "spender", type: "address" },
+    ],
+    outputs: [{ type: "uint256" }],
+  },
+] as const;
 
 /** The slice of the SDK client the panels use. Tests provide a fake. */
 export interface TestbenchClient {
@@ -45,6 +60,15 @@ export interface TestbenchClient {
   quoteGrantSession(opts: ClientQuoteGrantSessionOptions): Promise<SessionQuote>;
   quoteRevokeSession(opts: ClientQuoteRevokeSessionOptions): Promise<SessionQuote>;
   revokeSession(opts: ClientRevokeSessionOptions): Promise<RevokeSessionResult>;
+  /** The wallet's ERC-20 allowance for Permit2, which the Permit2 x402 rail needs. */
+  permit2Allowance(opts: { chainId: number; wallet: Address; token: Address }): Promise<bigint>;
+  /** Approves Permit2 to pull this token, as a wallet call through the relay. */
+  approvePermit2(opts: {
+    chainId: number;
+    wallet: Address;
+    signer: Signer;
+    token: Address;
+  }): Promise<ExecuteResult>;
   /** Reads an ERC-8004 identity: its owner and the record it points at. */
   getErc8004Agent(opts: { chainId: number; agentId: bigint }): Promise<{ owner: Address; agentUri: string }>;
   /** Mints an ERC-8004 identity for the wallet and returns the id the registry assigned. */
@@ -125,6 +149,21 @@ export function createLiveClient(chains: NetworkConfig[], log: Logger): Testbenc
     quoteGrantSession: (opts) => call("quoteGrantSession", opts, () => client.quoteGrantSession(opts)),
     quoteRevokeSession: (opts) => call("quoteRevokeSession", opts, () => client.quoteRevokeSession(opts)),
     revokeSession: (opts) => call("revokeSession", opts, () => client.revokeSession(opts)),
+    permit2Allowance: ({ chainId, wallet, token }) =>
+      call("permit2Allowance", { chainId, wallet, token }, async () => {
+        const network = networkFor(chainId, chains);
+        const publicClient = publicClientFor(network);
+        return (await publicClient.readContract({
+          address: token,
+          abi: ALLOWANCE_ABI,
+          functionName: "allowance",
+          args: [wallet, PERMIT2_ADDRESS],
+        })) as bigint;
+      }),
+    approvePermit2: ({ chainId, wallet, signer, token }) =>
+      call("approvePermit2", { chainId, wallet, token }, () =>
+        approveTokenForPermit2({ address: wallet }, signer, token, { network: networkFor(chainId, chains) }),
+      ),
     getErc8004Agent: ({ chainId, agentId }) =>
       call("getErc8004Agent", { chainId, agentId: agentId.toString() }, () =>
         getErc8004Agent(networkFor(chainId, chains), agentId),
