@@ -119,6 +119,12 @@ Each scenario names what to do on the page and what a pass looks like. The Activ
 3. Send with fee Choose from a list, tick EURm then USDC. Pass: "Charged in USDC" (EURm is accepted but not held, so the second choice wins).
 4. Send with Force one token = EURm while holding none. Pass: the send fails and the Result panel shows the relay's reason, with no stale result from the previous send beside it. It fails **at** the relay, not before it: there is no pre-flight check on a forced fee token for a wallet-key send, and the message names neither the accepted tokens nor what the wallet holds. That is the product today (qa, 2026-09-28); the weak message is an SDK matter, not a bench one.
 
+### Granting a session on a live relay today
+
+The Sessions tab has a **Write it into the Ethereum Sepolia KeyStore** tick, on by default because that is the SDK's default and the third-party-verifiable record the Celo mirror proves. On every live relay today that leg fails, for the relay bug awaiting a decision, so **untick it** to grant. The account still enforces the scope, the caps and the expiry, so an account-only session is a real boundary; there is simply no KeyStore entry, and therefore nothing for the mirror to show for that key.
+
+The x402 tab needs a session, so it needs this too.
+
 ### 4. Grant, use and revoke a session paying fees in USDC
 
 1. Sessions: name "agent one", cap 2.5 USDC per day, lifetime 7 days, chain Celo Sepolia, tick USDC under fee tokens. Quote first.

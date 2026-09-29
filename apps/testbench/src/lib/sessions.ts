@@ -11,12 +11,23 @@ export type SessionForm = {
   days: string;
   chainIds: number[];
   feeTokens: Address[];
+  /**
+   * Write the key into the Ethereum Sepolia KeyStore as well as authorizing it
+   * on the account (default true, the SDK's own default).
+   *
+   * Turning it off keeps the grant on Celo: the account still enforces the
+   * scope, the caps and the expiry, so the session is a real boundary, but
+   * there is no KeyStore entry and therefore nothing for the Celo mirror to
+   * prove. It is also the only way to grant on a live relay today, because the
+   * registry write is the step blocked by the relay's funder-signature bug.
+   */
+  register: boolean;
 };
 
 export const PERIODS: SpendPermission["period"][] = ["minute", "hour", "day", "week", "month", "year"];
 
 export function defaultForm(chainId: number): SessionForm {
-  return { name: "", caps: [{ amount: "0.05", period: "day", token: "native" }], scopeTo: "", days: "7", chainIds: [chainId], feeTokens: [] };
+  return { name: "", caps: [{ amount: "0.05", period: "day", token: "native" }], scopeTo: "", days: "7", chainIds: [chainId], feeTokens: [], register: true };
 }
 
 /** Builds the SDK permissions and expiry from the form; throws readable errors. */
