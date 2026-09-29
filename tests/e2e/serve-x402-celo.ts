@@ -74,10 +74,23 @@ const seller = createX402Merchant({
     : {}),
 });
 
-/** The bench runs on another port, so every answer needs these. */
+/**
+ * The bench runs on another port, so every answer needs these.
+ *
+ * `payment-signature` is load-bearing and easy to miss: `fetchWithX402` sets
+ * **two** headers, `X-PAYMENT` and `PAYMENT-SIGNATURE`, because some b402
+ * merchants read the second one (see `fetchWithX402` in the wallet package).
+ * A browser preflight refuses any header not listed here, so leaving it out
+ * blocks the request client-side: the panel reports "Failed to fetch" and this
+ * seller logs nothing at all, because the request never reached it.
+ *
+ * Only a browser meets this. A server-side fetch sends no preflight, so the
+ * same purchase through the SDK passes against a seller that would fail in the
+ * page (qa, 2026-09-29).
+ */
 const CORS = {
   "access-control-allow-origin": "*",
-  "access-control-allow-headers": "content-type, x-payment, X-PAYMENT",
+  "access-control-allow-headers": "content-type, x-payment, payment-signature",
   "access-control-allow-methods": "GET, POST, OPTIONS",
   "access-control-expose-headers": "x-payment-response",
 };
