@@ -55,8 +55,9 @@ Roughly 20 minutes, plus the Celo anchor's own wait. Before you start: Settings,
 3. **Walkthrough**, step 5, the mirror card, or the **Celo mirror** tab for a key registered earlier. See below: it has a clock in it.
 4. **Passkey**. Create a passkey wallet and show the same address on every chain, then execute, grant and revoke with it.
 5. **x402**. Ask the seller what it charges, then pay, and read which rail carried it. The point to make: an Altana smart account pays over Permit2 and settles locally, because Celo's USDC checks an EIP-3009 signature with ecrecover and cannot verify a contract wallet's.
-6. **Agent identity**. Agent 449 is Altana's, registered live on Celo Sepolia. Read it, then mint one from the wallet in use.
-7. **Proof**. The whole checklist with its evidence links, as qa's matrix has it.
+6. **Walkthrough**, step 6. The session key signs a transaction of its own, then the wallet revokes it. The mirror carries the revocation one anchor later, so do not wait for it on stage: point at the card and say when it will flip.
+7. **Agent identity**. Agent 449 is Altana's, registered live on Celo Sepolia. Read it, then mint one from the wallet in use.
+8. **Proof**. The whole checklist with its evidence links, as qa's matrix has it.
 
 ### The mirror card has a clock in it, so plan around it
 
