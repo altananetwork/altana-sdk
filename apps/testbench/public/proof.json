@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-29T13:28:30.160Z",
+  "generatedAt": "2026-09-29T13:35:10.852Z",
   "source": "celo-harness/MATRIX.md",
   "matrixUpdated": "2026-09-28",
   "sections": [
@@ -37,7 +37,7 @@
           "item": "1b",
           "title": "Relay fee-currency oracle (#26)",
           "status": "Proven (live) on staging, blocked by gate for Railway",
-          "state": "proven-live",
+          "state": "blocked",
           "relay": "local",
           "note": "On relay staging it works: local mode A lists all six tokens with live FeeCurrencyDirectory rates, and USDC was charged live on chain. The Railway relay still lists one token, so G1 is what stands between this and the public proof",
           "links": []

@@ -31,7 +31,7 @@
  * revocation has not reached the anchor yet" from "a proof would work now".
  */
 
-import type { Address, Hex } from "viem";
+import { isAddress, isHex, keccak256, type Address, type Hex } from "viem";
 
 /** L1 KeyStore v1.0.0 packed Key slot, as KeyStoreCacheOPStack._decodePackedKey reads it. */
 export type PackedKey = {
@@ -173,6 +173,11 @@ export function minutesUntilProvable(blocksBehind: bigint): number {
   return Number(jumps) * ANCHOR_PERIOD_MINUTES;
 }
 
+/** A 32-byte key id, as keccak256 produces. */
+const KEY_ID_LENGTH = 66;
+/** An uncompressed SEC1 public key is 65 bytes; a flat P256 one is 64. */
+const MIN_PUBLIC_KEY_LENGTH = 130;
+
 /** Identifies the key a mirror card is about. */
 export type MirrorTarget = {
   /** The wallet whose KeyStore entry is mirrored. */
@@ -189,3 +194,49 @@ export type MirrorTarget = {
   /** Where the target came from, for the card's label. */
   label?: string;
 };
+
+/**
+ * Turns what the operator typed into a target, or says what is wrong with it.
+ *
+ * One function so the form's message and the read can never disagree: a value
+ * the message calls invalid must not also be read from the chain.
+ */
+export function targetFromInput(args: {
+  wallet: string;
+  key: string;
+  /** Used when the wallet field is blank. */
+  fallbackWallet?: Address;
+}): { target?: MirrorTarget; walletProblem?: string; keyProblem?: string } {
+  const walletText = args.wallet.trim();
+  const keyText = args.key.trim();
+
+  const user = walletText ? walletText : args.fallbackWallet;
+  const walletProblem = !user
+    ? "No wallet in this browser, so type the one that owns the key."
+    : isAddress(user)
+      ? undefined
+      : "That is not an address.";
+
+  let keyProblem: string | undefined;
+  let keyId: Hex | undefined;
+  let publicKey: Hex | undefined;
+  if (keyText) {
+    if (!isHex(keyText)) {
+      keyProblem = "That is not hex. Paste a key id or a public key, both starting 0x.";
+    } else if (keyText.length === KEY_ID_LENGTH) {
+      keyId = keyText as Hex;
+    } else if (keyText.length >= MIN_PUBLIC_KEY_LENGTH) {
+      publicKey = keyText as Hex;
+      keyId = keccak256(publicKey);
+    } else {
+      keyProblem = "That is neither a 32 byte key id nor a public key.";
+    }
+  }
+
+  if (walletProblem || keyProblem || !user || !keyId) {
+    return { ...(walletProblem ? { walletProblem } : {}), ...(keyProblem ? { keyProblem } : {}) };
+  }
+  return {
+    target: { user: user as Address, keyId, ...(publicKey ? { publicKey } : {}), label: "typed in" },
+  };
+}

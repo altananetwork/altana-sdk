@@ -58,10 +58,14 @@ export function classify(status) {
   // put a green badge on the one step that has never worked live.
   const live = s.includes("proven (live");
   const fork = s.includes("proven (fork");
+  // Blocked wins over proven when a status says both, as in "Proven (live) on
+  // staging, blocked by gate for Railway". A green badge there would claim
+  // something the public cannot check yet; the status text below the badge
+  // still carries the whole sentence.
+  if (s.includes("blocked")) return "blocked";
   if (live && fork) return "proven-mixed";
   if (fork) return "proven-fork";
   if (live) return "proven-live";
-  if (s.includes("blocked")) return "blocked";
   if (s.includes("missing")) return "missing";
   if (s.includes("unproven") || s.includes("never proven") || s.includes("not established")) return "unproven";
   // qa also writes a verdict rather than a status word when a PR closed the

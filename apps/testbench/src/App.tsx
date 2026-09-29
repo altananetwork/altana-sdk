@@ -4,6 +4,7 @@ import { AgentIdentityPanel } from "./components/AgentIdentityPanel";
 import { CrossChainPanel } from "./components/CrossChainPanel";
 import { FeeTokensPanel } from "./components/FeeTokensPanel";
 import { SendPanel } from "./components/SendPanel";
+import { MirrorPanel } from "./components/MirrorPanel";
 import { PasskeyPanel } from "./components/PasskeyPanel";
 import { SessionsPanel } from "./components/SessionsPanel";
 import { ProofPanel } from "./components/ProofPanel";
@@ -22,6 +23,7 @@ export type Tab =
   | "fees"
   | "send"
   | "sessions"
+  | "mirror"
   | "crosschain"
   | "x402"
   | "identity"
@@ -35,6 +37,7 @@ export const TABS: { id: Tab; label: string }[] = [
   { id: "fees", label: "Fee tokens" },
   { id: "send", label: "Send" },
   { id: "sessions", label: "Sessions" },
+  { id: "mirror", label: "Celo mirror" },
   { id: "crosschain", label: "Cross-chain" },
   { id: "x402", label: "x402" },
   { id: "identity", label: "Agent identity" },
@@ -87,6 +90,7 @@ export function App({ attachLog, settings, onSettings, initialTab = "walkthrough
           {tab === "fees" && <FeeTokensPanel />}
           {tab === "send" && <SendPanel />}
           {tab === "sessions" && <SessionsPanel />}
+          {tab === "mirror" && <MirrorPanel />}
           {tab === "crosschain" && <CrossChainPanel />}
           {tab === "x402" && <X402Panel />}
           {tab === "identity" && <AgentIdentityPanel />}
