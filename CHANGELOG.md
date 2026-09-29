@@ -31,13 +31,13 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Added
 
-- **Keystore writes funded from the L2.** `grantSession`, `revokeSession` and
-  `registerSessionKey` no longer need ETH on the Keystore chain: when the wallet
-  holds none there, the SDK asks the relay to fund the Sepolia write from the
-  wallet's balance on the L2 (Celo Sepolia, Base Sepolia) under the same single
-  signature. Registry legs and quote lines carry `fundedFromChainId` and
-  `sourceTransactionHash`; quotes charge such a line to the L2 balance. A wallet
-  that holds ETH on the Keystore chain pays there as before.
+- **Keystore writes paid from the wallet's own chain.** `grantSession`,
+  `revokeSession` and `registerSessionKey` need no ETH on the Keystore chain:
+  the SDK asks the relay to pay the Sepolia write, registration fee and relay
+  fee, from the wallet's balance on the L2 it acts on (Celo Sepolia, Base
+  Sepolia) under the same single signature, always. ETH the wallet holds on
+  Sepolia is not used. Registry legs and quote lines carry `fundedFromChainId`
+  and `sourceTransactionHash`; quotes charge the line to the L2 balance.
 
 - **Relay fees in the token the wallet holds.** The SDK no longer names the
   native token on every call. With no `feeToken`, a wallet (admin) key sends
@@ -161,7 +161,6 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 - Relay rejections for an account the relay has not registered now say to create the wallet with `client.createWallet` first.
 - When the relay's simulation reverts without a reason, the SDK reads the wallet's balances through the relay and says which chain cannot pay for the call, and which chains it could not be funded from. Session quotes label such legs "could not be quoted" instead of "fee unknown".
 - Relay rejections carrying an `Error(string)` or `Panic` revert show the message ("Cache: bad storage proof") instead of the hex data.
-- A registry write the relay rejects with "Cannot generate proof for single leaf tree" (it sourced the fee cross-chain by itself and failed) is retried once asking for the L2 funding explicitly, which takes the relay's working path.
 - Session quotes price the cache-proof legs with a key the wallet already has in the Keystore instead of asking the relay to simulate a proof that does not exist yet. On a first grant the leg is marked `deferred` (priced once the registry write lands), no longer reported as a failure.
 
 - **Hire expiry is documented and pinned, and the MCP deadline option is

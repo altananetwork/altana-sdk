@@ -92,8 +92,7 @@ What to fund, and where:
 
 | Chain | Asset | Used for |
 | --- | --- | --- |
-| Celo Sepolia | CELO, or any fee token below | Relay fees for wallet actions; the relay charges whichever accepted token the wallet holds |
-| Sepolia | ETH | Keystore writes through the relay (registration fee plus relay fee) |
+| Celo Sepolia | CELO, or any fee token below | Relay fees for wallet actions (the relay charges whichever accepted token the wallet holds), and the Keystore writes on Sepolia (registration fee plus relay fee), which the relay pays from the wallet's CELO |
 
 Fee tokens the relay accepts besides CELO, priced live from Celo's
 FeeCurrencyDirectory (`client.feeCurrencies()` returns the current list and
@@ -153,8 +152,7 @@ What to fund, and where:
 
 | Chain | Asset | Used for |
 | --- | --- | --- |
-| Base Sepolia | ETH | Relay fees for wallet actions |
-| Sepolia | ETH | Keystore writes through the relay (registration fee plus relay fee) |
+| Base Sepolia | ETH | Relay fees for wallet actions, and the Keystore writes on Sepolia (registration fee plus relay fee), which the relay pays from this balance |
 
 | Contract | Address |
 | --- | --- |
@@ -163,9 +161,9 @@ What to fund, and where:
 ## Sepolia: `SEPOLIA`
 
 Hosts the testnet KeyStore behind Celo Sepolia and Base Sepolia. The Altana
-testnet relay serves it, so KeyStore writes are relayed wallet calls: paid in
-Sepolia ETH when the wallet holds some, otherwise funded by the relay from the
-wallet's balance on the L2. The SDK reaches it as `registryNetwork(CELO_SEPOLIA)`.
+testnet relay serves it, so KeyStore writes are relayed wallet calls, paid by
+the relay from the wallet's balance on the L2 it acts on, registration fee and
+relay fee; ETH the wallet holds on Sepolia is not used. The SDK reaches it as `registryNetwork(CELO_SEPOLIA)`.
 
 - **Relay:** `https://testnet-relay.altana.network`
 
