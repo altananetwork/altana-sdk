@@ -163,3 +163,47 @@ describe("SessionsPanel", () => {
     expect(screen.getByRole("button", { name: "Execute" })).toBeDisabled();
   });
 });
+
+describe("where the session key is recorded", () => {
+  test("registered by default, which is the SDK's own default", async () => {
+    const client = fakeClient();
+    (client.grantSession as ReturnType<typeof vi.fn>).mockResolvedValue(
+      grantResult({ permissions: { spend: [] }, expiry: 0 }),
+    );
+    setup(client);
+    expect(screen.getByRole("checkbox", { name: /Write it into the Ethereum Sepolia KeyStore/ })).toBeChecked();
+    await userEvent.click(screen.getByRole("button", { name: "Grant session" }));
+    await waitFor(() => expect(client.grantSession).toHaveBeenCalled());
+    expect(vi.mocked(client.grantSession).mock.calls[0]![0]).toMatchObject({ register: true });
+  });
+
+  test("unticking it grants an account-only session, the one that works on a live relay today", async () => {
+    // Every grant went through the Ethereum KeyStore write, which is the step
+    // blocked on every live relay, so the bench could not grant at all there.
+    const client = fakeClient();
+    (client.grantSession as ReturnType<typeof vi.fn>).mockResolvedValue(
+      grantResult({ permissions: { spend: [] }, expiry: 0 }),
+    );
+    setup(client);
+    await userEvent.click(screen.getByRole("checkbox", { name: /Write it into the Ethereum Sepolia KeyStore/ }));
+    expect(screen.getByText(/nothing for the Celo mirror to show/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Grant session" }));
+    await waitFor(() => expect(client.grantSession).toHaveBeenCalled());
+    expect(vi.mocked(client.grantSession).mock.calls[0]![0]).toMatchObject({ register: false });
+  });
+
+  test("the quote is priced for the same choice as the grant", async () => {
+    const client = fakeClient();
+    (client.grantSession as ReturnType<typeof vi.fn>).mockResolvedValue(
+      grantResult({ permissions: { spend: [] }, expiry: 0 }),
+    );
+    setup(client);
+    await userEvent.click(screen.getByRole("checkbox", { name: /Write it into the Ethereum Sepolia KeyStore/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Grant session" }));
+    await waitFor(() => expect(client.quoteGrantSession).toHaveBeenCalled());
+    // A quote priced with the registry leg against a grant without it would
+    // show the operator a cost they are not going to pay.
+    expect(vi.mocked(client.quoteGrantSession).mock.calls[0]![0]).toMatchObject({ register: false });
+  });
+});

@@ -89,6 +89,7 @@ export function SessionsPanel() {
       permissions,
       expiry,
       chainIds: form.chainIds,
+      register: form.register,
       ...(feeTokens.length ? { feeToken: feeTokens } : {}),
     };
   };
@@ -285,6 +286,23 @@ export function SessionsPanel() {
                 ))}
               </div>
             </div>
+            <div className="stack">
+              <span className="muted small">Where the key is recorded</span>
+              <label className="row" style={{ gap: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={form.register}
+                  onChange={(e) => setForm({ ...form, register: e.target.checked })}
+                />
+                <span>Write it into the Ethereum Sepolia KeyStore</span>
+              </label>
+              <span className="muted small">
+                {form.register
+                  ? "The third-party-verifiable record the Celo mirror proves. On every live relay today this leg fails, for the relay bug awaiting a decision."
+                  : "Account only: the account still enforces the scope, the caps and the expiry, so the session is a real boundary. There is no KeyStore entry, so there is nothing for the Celo mirror to show. This is the one that works on a live relay today."}
+              </span>
+            </div>
+
             <div className="stack">
               <span className="muted small">Fee tokens the session may pay with (a daily cap is added for each; none means native only)</span>
               <div className="row">
