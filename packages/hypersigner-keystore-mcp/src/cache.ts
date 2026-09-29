@@ -109,8 +109,8 @@ export type CacheStatus = {
 
 /**
  * Reads the L2 cache for (user, keyId). Distinguishes the three states a caller
- * confuses otherwise: never proven, proven and current, and proven against a
- * block the L2 has moved past.
+ * confuses otherwise: never proven, proven at the block the L2 anchors, and
+ * proven at another one.
  */
 export async function readCacheStatus(args: {
   chain: ChainConfig;
