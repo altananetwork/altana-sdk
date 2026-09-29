@@ -2,13 +2,12 @@ import {
   CELO_SEPOLIA,
   NATIVE_TOKEN,
   SEPOLIA,
-  networkByChainId,
   signerFromPrivateKey,
   type SessionLeg,
 } from "@altananetwork/sdk";
 import { useEffect, useMemo, useState } from "react";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { keccak256, type Address, type Hex } from "viem";
+import { keccak256, type Address } from "viem";
 import { chainName } from "../lib/chains";
 import { relayReason } from "../lib/errors";
 import { txUrl } from "../lib/explorer";
@@ -36,7 +35,6 @@ import { Badge } from "./shared/Badge";
 import { Button } from "./shared/Button";
 import { Card } from "./shared/Card";
 import { Field } from "./shared/Field";
-import { LegsTable } from "./shared/LegsTable";
 
 const CELO = CELO_SEPOLIA.chainId;
 
