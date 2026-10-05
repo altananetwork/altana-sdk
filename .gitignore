@@ -18,5 +18,6 @@ docs/public/skill.md
 
 # live-run state (contains private keys)
 tests/e2e/.live-hire-*.json
+tests/e2e/.live-erc8004-*.json
 tests/e2e/.sweep.env
 docs/pages/changelog.md
