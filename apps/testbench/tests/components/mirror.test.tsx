@@ -367,3 +367,47 @@ describe("what the card shows while and after proving", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/a revocation is permanent/);
   });
 });
+
+describe("what the operator reads during a retry, in order", () => {
+  test("the sequence a presenter would see while the anchor moves under them", async () => {
+    // The wording half of "how does the 60 second wait read", which can be
+    // checked without burning a showcase key. The only thing left unmeasured
+    // is whether a minute feels long, and that needs no test to answer.
+    const seen: string[] = [];
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+
+    const client = fakeClient({
+      readMirror: vi.fn(async () => ({ ...mirrorCurrent, cachedPresent: false, cachedSourceBlock: 0n })),
+      proveIntoMirror: vi.fn(async (opts) => {
+        opts.onStatus?.({ kind: "building", attempt: 1, anchorL1Block: 11848161n });
+        opts.onStatus?.({ kind: "sending", attempt: 1, anchorL1Block: 11848161n });
+        opts.onStatus?.({ kind: "anchor-moved", attempt: 1, from: 11848161n, to: 11848190n, waitingMs: 60_000 });
+        await held;
+        opts.onStatus?.({ kind: "building", attempt: 2, anchorL1Block: 11848190n });
+        return { status: "CONFIRMED", transactionHash: "0xagain" as const, l1BlockNumber: 11848190n, attempts: 2 };
+      }),
+    });
+
+    renderWith(client, <MirrorCard chainId={CELO_SEPOLIA.chainId} target={withKey} />, {
+      v: 1,
+      walletKey: TEST_KEY,
+      sessions: [],
+    });
+    await userEvent.click(await screen.findByRole("button", { name: "Prove into the Celo mirror" }));
+
+    // Mid-flight: the wait is on screen, as a status rather than an alert.
+    const waiting = await screen.findByText(/anchor moved to 11848190/);
+    seen.push(waiting.textContent ?? "");
+    expect(waiting.closest(".banner")).toHaveClass("info");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(waiting).toHaveTextContent(/Re-proving against the new one in 60 seconds/);
+    // The button stays busy, so nobody clicks twice into the same window.
+    expect(screen.getByRole("button", { name: "Proving" })).toBeDisabled();
+
+    release();
+    expect(await screen.findByText(/Proof confirmed against Ethereum block 11848190/)).toBeInTheDocument();
+    expect(screen.getByText(/after 2 attempts, the anchor having moved/)).toBeInTheDocument();
+    expect(seen[0]).toContain("so that proof is for a block Celo no longer anchors");
+  });
+});
