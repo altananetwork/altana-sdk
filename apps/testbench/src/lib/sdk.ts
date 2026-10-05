@@ -17,7 +17,10 @@ import {
   type SessionQuote,
   type Signer,
   type Session,
+  type X402ApprovalStatus,
+  type X402Requirement,
   buildPopulateKeyCall,
+  checkX402Approvals,
   approveSignatureChecker,
   approveTokenForPermit2,
   fetchWithX402,
@@ -32,21 +35,7 @@ import { relayReason } from "./errors";
 import { entry, type LogEntry } from "./log";
 import type { MirrorReading } from "./mirror";
 import { cachedNetworkFor, mirrorTargetsOf, publicClientFor, readMirror } from "./mirrorReads";
-import { APPROVED_CHECKERS_ABI } from "./permit2Setup";
 import { proveWithRetry, type ProveResult, type ProveStatus } from "./proveMirror";
-
-const ALLOWANCE_ABI = [
-  {
-    name: "allowance",
-    type: "function",
-    stateMutability: "view",
-    inputs: [
-      { name: "owner", type: "address" },
-      { name: "spender", type: "address" },
-    ],
-    outputs: [{ type: "uint256" }],
-  },
-] as const;
 
 /** The slice of the SDK client the panels use. Tests provide a fake. */
 export interface TestbenchClient {
@@ -64,13 +53,13 @@ export interface TestbenchClient {
   quoteGrantSession(opts: ClientQuoteGrantSessionOptions): Promise<SessionQuote>;
   quoteRevokeSession(opts: ClientQuoteRevokeSessionOptions): Promise<SessionQuote>;
   revokeSession(opts: ClientRevokeSessionOptions): Promise<RevokeSessionResult>;
-  /** Both things the Permit2 rail needs: the token allowance and the session's approved checkers. */
-  permit2Readiness(opts: {
-    chainId: number;
-    wallet: Address;
-    token: Address;
-    sessionKeyHash: Hex;
-  }): Promise<{ tokenAllowance: bigint; checkers: readonly Address[] }>;
+  /**
+   * Both approvals a rail needs, read from chain by the SDK rather than
+   * inferred here. Covers **both** rails: Permit2 is the checker on the permit2
+   * rails and the token itself on eip3009, and each needs approving for the
+   * session key (evidence/2026-10-05-celo-usdc-does-honour-erc1271.md).
+   */
+  x402Approvals(opts: { session: Session; req: X402Requirement }): Promise<X402ApprovalStatus>;
   /** Approves Permit2 to pull this token, as a wallet call through the relay. */
   approvePermit2Token(opts: {
     chainId: number;
@@ -83,11 +72,13 @@ export interface TestbenchClient {
    * the **admin**, not the session: setSignatureCheckerApproval is onlyThis, so
    * it runs as a self-call inside an admin-signed intent.
    */
-  approvePermit2Checker(opts: {
+  approveX402Checker(opts: {
     chainId: number;
     wallet: Address;
     signer: Signer;
     session: Session;
+    /** Permit2 on the permit2 rails, the token itself on eip3009. */
+    checker: Address;
   }): Promise<ExecuteResult>;
   /** Reads an ERC-8004 identity: its owner and the record it points at. */
   getErc8004Agent(opts: { chainId: number; agentId: bigint }): Promise<{ owner: Address; agentUri: string }>;
@@ -133,6 +124,9 @@ export interface TestbenchClient {
     onStatus?: (s: ProveStatus) => void;
   }): Promise<ProveResult>;
 }
+
+/** Celo Sepolia, the only chain the bench's x402 panel buys on. */
+const CELO_CHAIN_ID = 11142220;
 
 export type Logger = (e: LogEntry) => void;
 
@@ -186,38 +180,17 @@ export function createLiveClient(chains: NetworkConfig[], log: Logger): Testbenc
     quoteGrantSession: (opts) => call("quoteGrantSession", opts, () => client.quoteGrantSession(opts)),
     quoteRevokeSession: (opts) => call("quoteRevokeSession", opts, () => client.quoteRevokeSession(opts)),
     revokeSession: (opts) => call("revokeSession", opts, () => client.revokeSession(opts)),
-    permit2Readiness: ({ chainId, wallet, token, sessionKeyHash }) =>
-      call("permit2Readiness", { chainId, wallet, token, sessionKeyHash }, async () => {
-        const network = networkFor(chainId, chains);
-        const publicClient = publicClientFor(network);
-        const [tokenAllowance, checkers] = await Promise.all([
-          publicClient.readContract({
-            address: token,
-            abi: ALLOWANCE_ABI,
-            functionName: "allowance",
-            args: [wallet, PERMIT2_ADDRESS],
-          }) as Promise<bigint>,
-          // An account that has never been deployed has no checkers to read;
-          // an empty list is the right answer, not an error.
-          publicClient
-            .readContract({
-              address: wallet,
-              abi: APPROVED_CHECKERS_ABI,
-              functionName: "approvedSignatureCheckers",
-              args: [sessionKeyHash],
-            })
-            .then((c) => c as readonly Address[])
-            .catch(() => [] as readonly Address[]),
-        ]);
-        return { tokenAllowance, checkers };
-      }),
+    x402Approvals: ({ session, req }) =>
+      call("x402Approvals", { wallet: session.walletAddress, asset: req.asset }, () =>
+        checkX402Approvals(session, req, { network: networkFor(CELO_CHAIN_ID, chains) }),
+      ),
     approvePermit2Token: ({ chainId, wallet, signer, token }) =>
       call("approvePermit2Token", { chainId, wallet, token }, () =>
         approveTokenForPermit2({ address: wallet }, signer, token, { network: networkFor(chainId, chains) }),
       ),
-    approvePermit2Checker: ({ chainId, wallet, signer, session }) =>
-      call("approvePermit2Checker", { chainId, wallet, checker: PERMIT2_ADDRESS }, () =>
-        approveSignatureChecker({ address: wallet }, signer, { session, checker: PERMIT2_ADDRESS }, {
+    approveX402Checker: ({ chainId, wallet, signer, session, checker }) =>
+      call("approveX402Checker", { chainId, wallet, checker }, () =>
+        approveSignatureChecker({ address: wallet }, signer, { session, checker }, {
           network: networkFor(chainId, chains),
         }),
       ),

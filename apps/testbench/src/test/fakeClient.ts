@@ -69,13 +69,23 @@ export function fakeClient(overrides: Partial<TestbenchClient> = {}): FakeClient
     quoteGrantSession: vi.fn(async () => ({ lines: [], balances: [], complete: true })),
     quoteRevokeSession: vi.fn(async () => ({ lines: [], balances: [], complete: true })),
     revokeSession: vi.fn(async () => ({ keyId: "0x01" as const, status: "revoked" as const, legs: [], cacheSync: Promise.resolve([]) })),
-    permit2Readiness: vi.fn(async () => ({ tokenAllowance: 0n, checkers: [] as readonly `0x${string}`[] })),
+    x402Approvals: vi.fn(async () => ({
+      ok: true,
+      rail: "permit2" as const,
+      token: USDC,
+      checker: "0x000000000022D473030F116dDEE9F6B43aC78BA3" as const,
+      keyHash: "0x11" as const,
+      isSuperAdmin: false,
+      permit2Allowance: { needed: 10_000n, actual: 2n ** 256n - 1n, ok: true },
+      checkerApproved: true,
+      missing: [] as string[],
+    })),
     approvePermit2Token: vi.fn(async () => ({
       callsId: "0x01" as const,
       status: "CONFIRMED" as const,
       transactionHash: "0xapprovetoken" as const,
     })),
-    approvePermit2Checker: vi.fn(async () => ({
+    approveX402Checker: vi.fn(async () => ({
       callsId: "0x02" as const,
       status: "CONFIRMED" as const,
       transactionHash: "0xapprovechecker" as const,

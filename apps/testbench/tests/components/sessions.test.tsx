@@ -49,7 +49,7 @@ describe("SessionsPanel", () => {
     await userEvent.clear(screen.getByLabelText("Cap 1 amount"));
     await userEvent.type(screen.getByLabelText("Cap 1 amount"), "2.5");
     await userEvent.selectOptions(screen.getByLabelText("Cap 1 token"), USDC);
-    await userEvent.click(screen.getByLabelText("USDC"));
+    await userEvent.click(screen.getByRole("checkbox", { name: "USDC for fees" }));
     await userEvent.click(screen.getByRole("button", { name: "Grant session" }));
     await waitFor(() => expect(client.grantSession).toHaveBeenCalledTimes(1));
     const opts = (client.grantSession as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
@@ -205,5 +205,33 @@ describe("where the session key is recorded", () => {
     // A quote priced with the registry leg against a grant without it would
     // show the operator a cost they are not going to pay.
     expect(vi.mocked(client.quoteGrantSession).mock.calls[0]![0]).toMatchObject({ register: false });
+  });
+});
+
+describe("granting a session that can pay x402", () => {
+  test("ticking a token approves both of its signature checkers in the same grant", async () => {
+    // Without this the session is granted and cannot pay, and the failure
+    // arrives later as an invalid-signature revert with nothing naming the
+    // missing approval (evidence/2026-10-05-x402-session-approvals.md).
+    const client = fakeClient();
+    (client.grantSession as ReturnType<typeof vi.fn>).mockResolvedValue(
+      grantResult({ permissions: { spend: [] }, expiry: 0 }),
+    );
+    setup(client);
+    await userEvent.click(await screen.findByRole("checkbox", { name: "USDC for x402" }));
+    await userEvent.click(screen.getByRole("button", { name: "Grant session" }));
+    await waitFor(() => expect(client.grantSession).toHaveBeenCalled());
+    expect(vi.mocked(client.grantSession).mock.calls[0]![0]).toMatchObject({ x402Tokens: [USDC] });
+  });
+
+  test("a session not meant for x402 sends no x402Tokens at all", async () => {
+    const client = fakeClient();
+    (client.grantSession as ReturnType<typeof vi.fn>).mockResolvedValue(
+      grantResult({ permissions: { spend: [] }, expiry: 0 }),
+    );
+    setup(client);
+    await userEvent.click(screen.getByRole("button", { name: "Grant session" }));
+    await waitFor(() => expect(client.grantSession).toHaveBeenCalled());
+    expect(vi.mocked(client.grantSession).mock.calls[0]![0]).not.toHaveProperty("x402Tokens");
   });
 });

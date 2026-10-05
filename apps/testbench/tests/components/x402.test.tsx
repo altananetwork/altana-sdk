@@ -4,9 +4,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { CELO_SEPOLIA, type SerializedSession } from "@altananetwork/sdk";
 import { X402Panel } from "../../src/components/X402Panel";
 import type { StoredSession, StoredState } from "../../src/lib/storage";
-import { keccak256 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { accountKeyHashForAddress } from "../../src/lib/permit2Setup";
 import { TEST_ADDRESS, TEST_KEY, fakeClient } from "../../src/test/fakeClient";
 import { renderWith } from "../../src/test/render";
 
@@ -128,7 +126,7 @@ describe("X402Panel", () => {
     expect(screen.getByText(/ERC-1271/)).toBeInTheDocument();
   });
 
-  test("choosing the EIP-3009 rail is passed through, and its note says who can use it", async () => {
+  test("choosing the EIP-3009 rail is passed through, and its note names the verifying contract", async () => {
     mockFetch(() => Response.json({ price: "10000" }));
     const client = fakeClient({
       fetchWithX402: vi.fn(async () => Response.json({ rail: "eip3009", settledVia: "facilitator" })),
@@ -138,7 +136,9 @@ describe("X402Panel", () => {
     await userEvent.click(screen.getByRole("button", { name: "Pay and fetch" }));
     await waitFor(() => expect(client.fetchWithX402).toHaveBeenCalled());
     expect(vi.mocked(client.fetchWithX402).mock.calls[0]![0]).toMatchObject({ preferRail: "eip3009" });
-    expect(await screen.findByText(/smart account cannot/)).toBeInTheDocument();
+    // Corrected: a smart account CAN pay on this rail; what it needs is the
+    // token approved as its signature checker.
+    expect(await screen.findByText(/the token is the contract that verifies/)).toBeInTheDocument();
     expect(screen.getByText("settled by the facilitator")).toBeInTheDocument();
   });
 
@@ -165,122 +165,100 @@ describe("X402Panel", () => {
 
 const PERMIT2 = "0x000000000022D473030F116dDEE9F6B43aC78BA3" as const;
 
-describe("X402Panel, the two Permit2 approvals", () => {
+const PERMIT2_ADDR = "0x000000000022D473030F116dDEE9F6B43aC78BA3" as const;
+
+describe("X402Panel, the approvals a rail needs", () => {
   const HEALTH = { price: "10000", token: USDC, facilitator: null };
-  const both = { tokenAllowance: 2n ** 256n - 1n, checkers: [PERMIT2] as readonly `0x${string}`[] };
+  const ok = {
+    ok: true,
+    rail: "permit2" as const,
+    token: USDC,
+    checker: PERMIT2_ADDR,
+    keyHash: "0x11" as const,
+    isSuperAdmin: false,
+    permit2Allowance: { needed: 10_000n, actual: 2n ** 256n - 1n, ok: true },
+    checkerApproved: true,
+    missing: [] as string[],
+  };
 
-  test("a session missing both approvals is told which, and offered one button", async () => {
-    mockFetch(() => Response.json(HEALTH));
-    const client = fakeClient({
-      permit2Readiness: vi.fn(async () => ({ tokenAllowance: 0n, checkers: [] })),
-    });
-    renderWith(client, <X402Panel />, { ...WITH_SESSION, walletKey: TEST_KEY });
-    expect(await screen.findByText(/not approved to Permit2, so it cannot pull the payment/)).toBeInTheDocument();
-    expect(screen.getByText(/refuses its callback and settlement reverts/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Set up Permit2 for this session" })).toBeEnabled();
-  });
-
-  test("the token approved but not the checker still blocks, which is the state that used to look ready", async () => {
-    // This is exactly the wallet qa found reverting: allowance set, checker missing.
-    mockFetch(() => Response.json(HEALTH));
-    const client = fakeClient({
-      permit2Readiness: vi.fn(async () => ({ tokenAllowance: 2n ** 256n - 1n, checkers: [] })),
-    });
-    renderWith(client, <X402Panel />, { ...WITH_SESSION, walletKey: TEST_KEY });
-    expect(await screen.findByText(/refuses its callback and settlement reverts/)).toBeInTheDocument();
-    expect(screen.queryByText(/cannot pull the payment/)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Set up Permit2 for this session" })).toBeInTheDocument();
-  });
-
-  test("both approvals present says so, and asks for nothing", async () => {
-    mockFetch(() => Response.json(HEALTH));
-    const client = fakeClient({ permit2Readiness: vi.fn(async () => both) });
-    renderWith(client, <X402Panel />, { ...WITH_SESSION, walletKey: TEST_KEY });
-    expect(await screen.findByText(/both halves of what the rail needs/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Set up Permit2 for this session" })).not.toBeInTheDocument();
-  });
-
-  test("setting up runs both calls, and the checker one is signed by the admin", async () => {
-    mockFetch(() => Response.json(HEALTH));
-    const readiness = vi
-      .fn()
-      .mockResolvedValueOnce({ tokenAllowance: 0n, checkers: [] })
-      .mockResolvedValue(both);
-    const client = fakeClient({ permit2Readiness: readiness as never });
-    renderWith(client, <X402Panel />, { ...WITH_SESSION, walletKey: TEST_KEY });
-
-    await userEvent.click(await screen.findByRole("button", { name: "Set up Permit2 for this session" }));
-    await waitFor(() => expect(client.approvePermit2Checker).toHaveBeenCalled());
-    expect(vi.mocked(client.approvePermit2Token).mock.calls[0]![0]).toMatchObject({ token: USDC });
-    const checkerCall = vi.mocked(client.approvePermit2Checker).mock.calls[0]![0];
-    expect(checkerCall.wallet).toBe(TEST_ADDRESS);
-    // The admin signs it: setSignatureCheckerApproval is onlyThis.
-    expect(checkerCall.signer.address).toBe(TEST_ADDRESS);
-    expect(checkerCall.session.publicKey).toBe(SESSION_PUBLIC_KEY);
-    expect(await screen.findByText(/both halves of what the rail needs/)).toBeInTheDocument();
-  });
-
-  test("an approval already in place is not sent again", async () => {
-    mockFetch(() => Response.json(HEALTH));
-    const readiness = vi
-      .fn()
-      .mockResolvedValueOnce({ tokenAllowance: 2n ** 256n - 1n, checkers: [] })
-      .mockResolvedValue(both);
-    const client = fakeClient({ permit2Readiness: readiness as never });
-    renderWith(client, <X402Panel />, { ...WITH_SESSION, walletKey: TEST_KEY });
-    await userEvent.click(await screen.findByRole("button", { name: "Set up Permit2 for this session" }));
-    await waitFor(() => expect(client.approvePermit2Checker).toHaveBeenCalled());
-    expect(client.approvePermit2Token).not.toHaveBeenCalled();
-  });
-
-  test("a checker approval that does not confirm is reported, not assumed", async () => {
-    mockFetch(() => Response.json(HEALTH));
-    const client = fakeClient({
-      permit2Readiness: vi.fn(async () => ({ tokenAllowance: 2n ** 256n - 1n, checkers: [] })),
-      approvePermit2Checker: vi.fn(async () => ({ callsId: "0x02" as const, status: "FAILED" as const })),
-    });
-    renderWith(client, <X402Panel />, { ...WITH_SESSION, walletKey: TEST_KEY });
-    await userEvent.click(await screen.findByRole("button", { name: "Set up Permit2 for this session" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(/signature checker returned FAILED/);
-  });
-
-  /**
-   * KNOWN WRONG, pending the x402 correction. This pins what the panel does
-   * today, not what it should do.
-   *
-   * The eip3009 rail needs an approved checker too: the **token itself**, where
-   * the permit2 rails need Permit2 (sdk, evidence/2026-10-05-celo-usdc-does-
-   * honour-erc1271.md). Without it the payment fails with
-   * `FiatTokenV2: invalid signature`, which is the same silent class of failure
-   * the Permit2 approval banner exists to prevent, in the rail this panel
-   * models as needing nothing.
-   *
-   * It is left green and renamed rather than deleted so the suite does not
-   * certify the falsehood: a passing test called "needs neither approval" is
-   * worse than no test, because it tells the next reader the question is
-   * settled.
-   */
-  test("today the panel asks for nothing on the EIP-3009 rail, which is known to be wrong", async () => {
-    mockFetch(() => Response.json(HEALTH));
-    const client = fakeClient({
-      permit2Readiness: vi.fn(async () => ({ tokenAllowance: 0n, checkers: [] })),
-    });
-    renderWith(client, <X402Panel />, { ...WITH_SESSION, walletKey: TEST_KEY });
-    await userEvent.selectOptions(screen.getByLabelText(/Preferred rail/), "eip3009");
-    await waitFor(() =>
-      expect(screen.queryByRole("button", { name: "Set up Permit2 for this session" })).not.toBeInTheDocument(),
+  function probed(status: Record<string, unknown>) {
+    mockFetch((url) =>
+      url.endsWith("/health")
+        ? Response.json(HEALTH)
+        : new Response(JSON.stringify({ x402Version: 2, accepts: [permit2Req] }), { status: 402 }),
     );
+    return fakeClient({ x402Approvals: vi.fn(async () => status as never) });
+  }
+
+  async function ask(client: ReturnType<typeof fakeClient>) {
+    renderWith(client, <X402Panel />, { ...WITH_SESSION, walletKey: TEST_KEY });
+    await userEvent.click(await screen.findByRole("button", { name: "Ask what it charges" }));
+  }
+
+  test("the eip3009 rail asks for the TOKEN as checker, which it used to ask nothing for", async () => {
+    // The panel modelled eip3009 as needing no approval. It needs the token
+    // itself approved as the key's signature checker, and without it the
+    // payment fails with FiatTokenV2: invalid signature and no guidance
+    // (evidence/2026-10-05-celo-usdc-does-honour-erc1271.md).
+    const client = probed({
+      ...ok,
+      ok: false,
+      rail: "eip3009",
+      checker: USDC,
+      permit2Allowance: undefined,
+      checkerApproved: false,
+      missing: ["approve the token as a signature checker for this key"],
+    });
+    await ask(client);
+    expect(await screen.findByText(/not set up for the eip3009 rail/)).toBeInTheDocument();
+    expect(screen.getByText(/approve the token as a signature checker/)).toBeInTheDocument();
+    // The checker named is the token, not Permit2.
+    expect(screen.getByText(USDC, { exact: false })).toBeInTheDocument();
   });
 
-  test("the session key hash asked about is the account's, not the KeyStore's", async () => {
-    // The two differ and querying with the wrong one answers empty rather than
-    // erroring, so this is the mistake that would silently show "all set".
-    mockFetch(() => Response.json(HEALTH));
-    const client = fakeClient({ permit2Readiness: vi.fn(async () => both) });
-    renderWith(client, <X402Panel />, { ...WITH_SESSION, walletKey: TEST_KEY });
-    await waitFor(() => expect(client.permit2Readiness).toHaveBeenCalled());
-    const asked = vi.mocked(client.permit2Readiness).mock.calls[0]![0].sessionKeyHash;
-    expect(asked).toBe(accountKeyHashForAddress(privateKeyToAccount(SESSION_KEY).address));
-    expect(asked).not.toBe(keccak256(SESSION_PUBLIC_KEY));
+  test("a missing Permit2 allowance is named as itself, not as a generic failure", async () => {
+    const client = probed({
+      ...ok,
+      ok: false,
+      permit2Allowance: { needed: 10_000n, actual: 0n, ok: false },
+      missing: ["approve the token to Permit2 so it can pull the payment"],
+    });
+    await ask(client);
+    expect(await screen.findByText(/so it can pull the payment/)).toBeInTheDocument();
+  });
+
+  test("a super-admin key needs no checker approval, and the panel says why", async () => {
+    const client = probed({ ...ok, isSuperAdmin: true });
+    await ask(client);
+    expect(await screen.findByText(/super admin, which the account accepts from any contract/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve them for this session" })).not.toBeInTheDocument();
+  });
+
+  test("both approvals present says which checker is approved for which rail", async () => {
+    const client = probed(ok);
+    await ask(client);
+    expect(await screen.findByText(/can verify this key's signatures on the permit2 rail/)).toBeInTheDocument();
+  });
+
+  test("repairing approves the checker the SDK named, not Permit2 by assumption", async () => {
+    const client = probed({
+      ...ok,
+      ok: false,
+      rail: "eip3009",
+      checker: USDC,
+      permit2Allowance: undefined,
+      checkerApproved: false,
+      missing: ["approve the token as a signature checker for this key"],
+    });
+    await ask(client);
+    await userEvent.click(await screen.findByRole("button", { name: "Approve them for this session" }));
+    await waitFor(() => expect(client.approveX402Checker).toHaveBeenCalled());
+    expect(vi.mocked(client.approveX402Checker).mock.calls[0]![0].checker).toBe(USDC);
+  });
+
+  test("the banner points at the grant-time fix rather than making repair the main path", async () => {
+    const client = probed({ ...ok, ok: false, checkerApproved: false, missing: ["approve Permit2"] });
+    await ask(client);
+    expect(await screen.findByText(/x402 tokens ticked needs none of this/)).toBeInTheDocument();
   });
 });

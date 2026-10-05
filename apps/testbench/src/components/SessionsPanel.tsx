@@ -91,6 +91,7 @@ export function SessionsPanel() {
       expiry,
       chainIds: form.chainIds,
       register: form.register,
+      ...(form.x402Tokens.length ? { x402Tokens: form.x402Tokens } : {}),
       ...(feeTokens.length ? { feeToken: feeTokens } : {}),
     };
   };
@@ -289,6 +290,41 @@ export function SessionsPanel() {
               </div>
             </div>
             <div className="stack">
+              <span className="muted small">
+                Tokens this session will pay x402 with (approves both contracts that can verify its signature,
+                in the same grant)
+              </span>
+              <div className="row">
+                {currencies
+                  .filter((c) => !c.isNative)
+                  .map((x) => (
+                    <label key={`x402-${x.uid}`} className="row" style={{ gap: 6 }}>
+                      <input
+                        type="checkbox"
+                        // Distinct from the fee-token checkbox for the same
+                        // symbol: two "USDC" boxes meaning different things.
+                        aria-label={`${x.symbol} for x402`}
+                        checked={form.x402Tokens.some((a) => sameAddress(a, x.address))}
+                        onChange={(e) =>
+                          setForm({
+                            ...form,
+                            x402Tokens: e.target.checked
+                              ? [...form.x402Tokens, x.address]
+                              : form.x402Tokens.filter((a) => !sameAddress(a, x.address)),
+                          })
+                        }
+                      />
+                      <span>{x.symbol}</span>
+                    </label>
+                  ))}
+              </div>
+              <span className="muted small">
+                Leave empty for a session that will not pay x402. Ticking a token here is what makes the x402
+                tab work without a repair step afterwards.
+              </span>
+            </div>
+
+            <div className="stack">
               <span className="muted small">Where the key is recorded</span>
               <label className="row" style={{ gap: 6 }}>
                 <input
@@ -312,6 +348,7 @@ export function SessionsPanel() {
                   <label key={x.uid} className="row" style={{ gap: 6 }}>
                     <input
                       type="checkbox"
+                      aria-label={`${x.symbol} for fees`}
                       checked={form.feeTokens.some((a) => sameAddress(a, x.address))}
                       onChange={(e) =>
                         setForm({ ...form, feeTokens: e.target.checked ? [...form.feeTokens, x.address] : form.feeTokens.filter((a) => !sameAddress(a, x.address)) })

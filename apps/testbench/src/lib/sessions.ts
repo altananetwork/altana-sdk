@@ -22,12 +22,23 @@ export type SessionForm = {
    * registry write is the step blocked by the relay's funder-signature bug.
    */
   register: boolean;
+  /**
+   * Tokens this session will pay x402 with. For each, the grant approves both
+   * contracts that can verify the key's signature: Permit2 for the permit2
+   * rails and the token itself for eip3009, in one intent.
+   *
+   * Without it a session is granted that cannot pay, and the failure arrives
+   * later as `FiatTokenV2: invalid signature` or a silent Permit2 revert, with
+   * nothing naming the missing approval
+   * (evidence/2026-10-05-x402-session-approvals.md).
+   */
+  x402Tokens: Address[];
 };
 
 export const PERIODS: SpendPermission["period"][] = ["minute", "hour", "day", "week", "month", "year"];
 
 export function defaultForm(chainId: number): SessionForm {
-  return { name: "", caps: [{ amount: "0.05", period: "day", token: "native" }], scopeTo: "", days: "7", chainIds: [chainId], feeTokens: [], register: true };
+  return { name: "", caps: [{ amount: "0.05", period: "day", token: "native" }], scopeTo: "", days: "7", chainIds: [chainId], feeTokens: [], register: true, x402Tokens: [] };
 }
 
 /** Builds the SDK permissions and expiry from the form; throws readable errors. */

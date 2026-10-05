@@ -6,12 +6,17 @@
  * split out, the requirement is chosen with the SDK's own
  * `selectX402Requirement`, and only then is the payment made.
  *
- * Why the rail matters on Celo: `eip3009` settles against Celo Sepolia's USDC,
- * which checks the signature with `ecrecover` and knows nothing about
- * ERC-1271, so an Altana smart account cannot pay on it at all. Permit2 does
- * verify ERC-1271, so that is the smart-account rail. The facilitator only
- * takes eip3009. An agent wallet therefore pays locally, and the facilitator
- * is for EOA buyers (evidence/2026-09-29-x402-celo-facilitator.md).
+ * **Why the rail matters on Celo, corrected.** Both rails carry a smart
+ * account's signature. What differs is which contract calls `isValidSignature`
+ * back on the wallet, and that contract has to be an approved signature checker
+ * for the session key: Permit2 on the permit2 rails, the token itself on
+ * `eip3009`. There is no EOA-only rail on Celo.
+ *
+ * This replaces an earlier reading that Celo's USDC was `ecrecover` only and
+ * that an agent could pay on Permit2 alone. That came from our own missing
+ * approval, not from the token (sdk,
+ * evidence/2026-10-05-celo-usdc-does-honour-erc1271.md). Granting with
+ * `x402Tokens` sets both approvals.
  */
 
 import { selectX402Requirement, type X402Requirement } from "@altananetwork/sdk";
@@ -118,10 +123,17 @@ export function railOf(req: X402Requirement): string | undefined {
 export function railNote(rail: string | undefined): string {
   if (!rail) return "The seller did not say which rail carried the payment.";
   if (rail.startsWith("permit2")) {
-    return "Permit2, which verifies an ERC-1271 signature on chain. This is the rail an Altana smart account can pay on, and it settles from the merchant's own key: Celo's facilitator does not take it.";
+    return (
+      "Permit2 moves the token, so Permit2 is the contract that verifies the signature and it must be an " +
+      "approved checker for the key. An Altana smart account can pay on this rail, through ERC-1271."
+    );
   }
   if (rail === "eip3009") {
-    return "EIP-3009 on USDC, whose signature check is ecrecover only. A plain EOA can pay on it; an Altana smart account cannot. This is the rail Celo's facilitator settles.";
+    return (
+      "The token moves itself, so the token is the contract that verifies the signature and it must be an " +
+      "approved checker for the key. Celo's USDC verifies through SignatureChecker, so an Altana smart " +
+      "account can pay on this rail too, once that approval is set."
+    );
   }
   return `Rail ${rail}.`;
 }

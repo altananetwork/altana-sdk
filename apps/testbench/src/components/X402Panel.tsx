@@ -1,13 +1,7 @@
-import { CELO_SEPOLIA, deserializeSession, PERMIT2_ADDRESS, signerFromPrivateKey } from "@altananetwork/sdk";
+import { CELO_SEPOLIA, deserializeSession, signerFromPrivateKey } from "@altananetwork/sdk";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Address } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
-import {
-  accountKeyHashForAddress,
-  missingSteps,
-  readiness,
-  type Permit2Readiness,
-} from "../lib/permit2Setup";
+import type { X402ApprovalStatus } from "@altananetwork/sdk";
 import { relayReason } from "../lib/errors";
 import { txUrl } from "../lib/explorer";
 import { entry } from "../lib/log";
@@ -37,10 +31,11 @@ const DEFAULT_URL = "http://127.0.0.1:4021/paid";
 /**
  * Paying per request on Celo Sepolia, from a granted session key.
  *
- * The panel shows which rail carried the payment because on Celo that is the
- * whole story: an Altana smart account can only pay on Permit2, and Celo's
- * facilitator only settles EIP-3009. So an agent wallet's payment settles from
- * the merchant's key, and the facilitator route is for EOA buyers.
+ * The panel shows which rail carried the payment, and which contract verified
+ * the signature, because those are two different things and the second is what
+ * needs approving. A smart account pays on either rail; what differs is whether
+ * Permit2 or the token itself calls back to verify, and that contract must be
+ * an approved checker for the session key.
  */
 export function X402Panel() {
   const { state: app, dispatch, client } = useApp();
@@ -100,55 +95,45 @@ export function X402Panel() {
       dispatch({ type: "log/add", entry: entry("x402 pay", { result: answer }) });
     });
 
-  const [ready, setReady] = useState<Permit2Readiness>();
+  const [approvals, setApprovals] = useState<X402ApprovalStatus>();
 
-  // The Permit2 rail needs two approvals and the panel used to check one, so it
-  // looked ready while settlement was still going to revert. qa proved the
-  // second on chain by A/B: the only difference between a wallet that settled
-  // and one that reverted was Permit2's presence in the session key's
-  // approvedSignatureCheckers.
+  // Both rails need an approved signature checker, and they need different
+  // ones: Permit2 on the permit2 rails, the **token itself** on eip3009. This
+  // panel used to model only the first, so an eip3009 payment failed with
+  // "FiatTokenV2: invalid signature" and no guidance
+  // (evidence/2026-10-05-celo-usdc-does-honour-erc1271.md). The SDK reads both
+  // from chain, so the panel no longer infers which is missing.
   const payToken = health?.token as Address | undefined;
   const wallet = app.wallet;
-  const sessionKeyHash = useMemo(
-    () => (selected ? accountKeyHashForAddress(privateKeyToAccount(selected.sessionKey).address) : undefined),
-    [selected],
-  );
+  const chosenRequirement = probe?.chosen;
 
-  const refreshReadiness = useCallback(async () => {
-    // KNOWN GAP, pending the x402 correction: the eip3009 rail needs the
-    // *token* approved as the key's checker, exactly as the permit2 rails need
-    // Permit2 (evidence/2026-10-05-celo-usdc-does-honour-erc1271.md). This
-    // readiness check models only the permit2 half, so an eip3009 payment from
-    // a session without that approval fails with "FiatTokenV2: invalid
-    // signature" and no guidance here.
-    if (!wallet || !payToken || !sessionKeyHash || rail !== "permit2") {
-      setReady(undefined);
+  const refreshApprovals = useCallback(async () => {
+    if (!selected || !chosenRequirement) {
+      setApprovals(undefined);
       return;
     }
     try {
-      const read = await client.permit2Readiness({
-        chainId: CELO,
-        wallet: wallet.address,
-        token: payToken,
-        sessionKeyHash,
-      });
-      setReady(readiness({ ...read, permit2: PERMIT2_ADDRESS }));
+      const session = deserializeSession(selected.serialized, signerFromPrivateKey(selected.sessionKey));
+      setApprovals(await client.x402Approvals({ session, req: chosenRequirement }));
     } catch {
-      setReady(undefined);
+      setApprovals(undefined);
     }
-  }, [client, wallet, payToken, sessionKeyHash, rail]);
+  }, [client, selected, chosenRequirement]);
 
   useEffect(() => {
-    void refreshReadiness();
-  }, [refreshReadiness]);
+    void refreshApprovals();
+  }, [refreshApprovals]);
 
-  const setUpPermit2 = () =>
-    guard("setUpPermit2", async () => {
-      if (!wallet || !payToken || !selected) return;
+  /**
+   * Repairs a session granted before `x402Tokens` existed. A session granted
+   * with it needs none of this, which is the better flow and the one the
+   * Sessions tab now takes.
+   */
+  const repairApprovals = () =>
+    guard("repairApprovals", async () => {
+      if (!wallet || !payToken || !selected || !approvals) return;
       const session = deserializeSession(selected.serialized, signerFromPrivateKey(selected.sessionKey));
-      // Neither approval is useful without the other, so both run behind one
-      // button and a failure in either stops before claiming success.
-      if (!ready?.tokenApproved) {
+      if (approvals.permit2Allowance && !approvals.permit2Allowance.ok) {
         const approved = await client.approvePermit2Token({
           chainId: CELO,
           wallet: wallet.address,
@@ -159,19 +144,20 @@ export function X402Panel() {
           throw new Error(`Approving the token returned ${approved.status}.`);
         }
       }
-      if (!ready?.checkerApproved) {
-        const approved = await client.approvePermit2Checker({
+      if (!approvals.checkerApproved) {
+        const approved = await client.approveX402Checker({
           chainId: CELO,
           wallet: wallet.address,
           // The admin signs it: setSignatureCheckerApproval is onlyThis.
           signer: wallet.signer,
           session,
+          checker: approvals.checker,
         });
         if (approved.status !== "CONFIRMED") {
-          throw new Error(`Approving Permit2 as a signature checker returned ${approved.status}.`);
+          throw new Error(`Approving ${approvals.checker} as a signature checker returned ${approved.status}.`);
         }
       }
-      await refreshReadiness();
+      await refreshApprovals();
     });
 
   return (
@@ -242,7 +228,7 @@ export function X402Panel() {
             <Field
               label="Preferred rail"
               htmlFor="x402-rail"
-              help="Permit2 is the only rail an Altana smart account can pay on."
+              help="A smart account can pay on either. They differ in which contract verifies its signature, and so in which approval the session needs."
             >
               <select id="x402-rail" value={rail} onChange={(e) => setRail(e.target.value as Rail)}>
                 <option value="permit2">Permit2</option>
@@ -258,28 +244,37 @@ export function X402Panel() {
             </div>
           )}
 
-          {ready && !ready.ready && (
+          {approvals && !approvals.ok && (
             <div className="banner info">
               <div className="stack">
-                <span>This session is not set up for the Permit2 rail yet:</span>
+                <span>
+                  This session is not set up for the {approvals.rail} rail yet. The contract that verifies its
+                  signature is <span className="addr">{approvals.checker}</span>, and it must be approved for
+                  this key:
+                </span>
                 <ul className="stack" style={{ gap: 2 }}>
-                  {missingSteps(ready).map((m) => (
+                  {approvals.missing.map((m) => (
                     <li key={m}>{m}</li>
                   ))}
                 </ul>
                 <div className="row">
-                  <Button onClick={() => void setUpPermit2()} disabled={busy !== undefined || !wallet}>
-                    {busy === "setUpPermit2" ? "Setting up" : "Set up Permit2 for this session"}
+                  <Button onClick={() => void repairApprovals()} disabled={busy !== undefined || !wallet}>
+                    {busy === "repairApprovals" ? "Approving" : "Approve them for this session"}
                   </Button>
                 </div>
+                <span className="muted small">
+                  A session granted with the x402 tokens ticked needs none of this. The Sessions tab does that
+                  now; this repairs one granted before it.
+                </span>
               </div>
             </div>
           )}
 
-          {ready?.ready && (
+          {approvals?.ok && (
             <p className="muted small">
-              Permit2 is approved for the token and for this session key&apos;s signatures, which is both halves
-              of what the rail needs.
+              {approvals.isSuperAdmin
+                ? "This key is a super admin, which the account accepts from any contract, so no checker approval is needed."
+                : `Approved: ${approvals.checker} can verify this key's signatures on the ${approvals.rail} rail, which is what that rail needs.`}
             </p>
           )}
 

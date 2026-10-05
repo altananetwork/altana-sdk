@@ -87,14 +87,21 @@ describe("readPaidResponse", () => {
 });
 
 describe("railNote", () => {
-  test("permit2 is named as the smart-account rail, settled locally", () => {
-    expect(railNote("permit2-exact")).toContain("ERC-1271");
-    expect(railNote("permit2-exact")).toContain("facilitator does not take it");
+  test("each rail names the contract that verifies the signature, which is what needs approving", () => {
+    // The old copy said Permit2 was the only rail a smart account could pay on
+    // and that Celo's USDC was ecrecover only. Both were wrong, and came from
+    // our own missing approval (evidence/2026-10-05-celo-usdc-does-honour-erc1271.md).
+    expect(railNote("permit2-exact")).toContain("Permit2 is the contract that verifies");
+    expect(railNote("eip3009")).toContain("the token is the contract that verifies");
+    for (const rail of ["permit2-exact", "eip3009"]) {
+      expect(railNote(rail), rail).toContain("approved checker for the key");
+    }
   });
 
-  test("eip3009 is named as the EOA rail that a smart account cannot use", () => {
-    expect(railNote("eip3009")).toContain("ecrecover");
-    expect(railNote("eip3009")).toContain("smart account cannot");
+  test("neither rail is described as closed to a smart account any more", () => {
+    for (const rail of ["permit2-exact", "eip3009"]) {
+      expect(railNote(rail)).not.toMatch(/cannot pay|ecrecover only|EOA buyers/);
+    }
   });
 
   test("an unreported rail is not invented", () => {

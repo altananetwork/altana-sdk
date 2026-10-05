@@ -57,7 +57,7 @@ Roughly 20 minutes, plus the Celo anchor's own wait. Before you start: Settings,
 3. **Walkthrough**, step 5, the mirror card, or the **Celo mirror** tab for a key registered earlier. See below: it has a clock in it.
 4. **Walkthrough**, step 6. The session key signs a transaction of its own, then the wallet revokes it. The mirror carries the revocation one anchor later, so do not wait for it on stage: point at the card and say when it will flip.
 5. **Passkey**. Create a passkey wallet and show the same address on every chain, then execute, grant and revoke with it.
-6. **x402**. Ask the seller what it charges, then pay, and read which rail carried it. The point to make: an Altana smart account pays over Permit2 and settles locally, because Celo's USDC checks an EIP-3009 signature with ecrecover and cannot verify a contract wallet's.
+6. **x402**. Ask the seller what it charges, then pay, and read which rail carried it. The point to make: an agent wallet pays on either rail, and what differs is which contract verifies its signature, Permit2 or the token, each needing to be an approved checker for the session key. Granting with the x402 tokens ticked sets both, so the session can pay without a repair step.
 7. **Agent identity**. Agent 449 is Altana's, registered live on Celo Sepolia. Read it, then mint one from the wallet in use.
 8. **Proof**. The whole checklist with its evidence links, as qa's matrix has it.
 
@@ -91,14 +91,11 @@ cd tests/e2e && bun run serve:x402-celo
 
 That script builds `@altananetwork/x402-server` before starting, so it works from a clean checkout; without the build it fails with "Cannot find module '@altananetwork/x402-server'".
 
-**The Permit2 rail needs two approvals, not one**, and missing either makes settlement revert with no reason that mentions approvals:
+**Every rail needs the contract that verifies the signature approved as a checker for the session key**, and `IthacaAccount.isValidSignature` gates on `msg.sender`, so only a super-admin key passes without one. Which contract depends on the rail: Permit2 on the permit2 rails, **the token itself** on `eip3009`. The permit2 rails additionally need the ERC-20 allowance to Permit2, since that is how it pulls the payment.
 
-1. the token approved to Permit2, which is how it pulls the payment;
-2. **Permit2 approved as a signature checker for that session key.** `IthacaAccount.isValidSignature` gates on `msg.sender`, so only super-admin keys pass by default and Permit2's callback to verify the session key is refused.
+Missing either makes the payment revert with nothing naming an approval, so **tick the tokens under "Tokens this session will pay x402 with" when you grant**: that sets both in the same intent. The x402 tab reads the approvals from chain and offers a repair for sessions granted before that, naming the contract the SDK says is missing rather than assuming Permit2.
 
-The panel reads both and offers a single "Set up Permit2 for this session" button until both are in place, because neither is useful alone. The second approval is signed by the admin, not the session: `setSignatureCheckerApproval` is `onlyThis`.
-
-It sells one paid route at 0.01 USDC on live Celo Sepolia, over Permit2 and EIP-3009, and reports its own receipt so the panel names the rail rather than inferring it. With `X402_CELO_API_KEY` set it settles the EIP-3009 rail through Celo's facilitator; Permit2 always settles from the merchant's key, because the facilitator does not take that rail.
+It sells one paid route at 0.01 USDC on live Celo Sepolia, over Permit2 and EIP-3009, and reports its own receipt so the panel names the rail rather than inferring it. With `X402_CELO_API_KEY` set it settles the EIP-3009 rail through Celo's facilitator and the Permit2 rails from its own key. Which routes the facilitator will take is being re-measured; the seller's current split is its configuration, not a limit of the facilitator.
 
 ## The proof view
 
