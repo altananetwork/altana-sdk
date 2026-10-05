@@ -133,10 +133,17 @@ Point a merchant at one with `facilitatorService: { url, apiKey }`;
 `facilitatorSupported` reads its open `GET /supported`. `POST /settle` needs an
 `X-API-Key`, issued at https://x402.celo.org against a signed message.
 
-The choice is per rail. Celo's `exact` scheme settles EIP-3009, so that rail
-goes to the facilitator and Permit2 rails keep settling from the merchant's own
-key; verification stays local either way, because the merchant's is ERC-1271
-aware and a facilitator's need not be.
+The choice is per rail: `facilitatorService.rails` decides what goes there and
+everything else settles from the merchant's own key. A facilitator declares what
+it takes per asset in `GET /supported`, which `facilitatorRails` and
+`facilitatorAssets` read — Celo's mainnet facilitator lists `eip3009` for USDC,
+USDT and USAT and `permit2` for wARS, wBRL and wCOP. Verification stays local
+either way, because the merchant's is ERC-1271 aware and a facilitator's need
+not be.
+
+The receipt says which route settled a payment: `settledVia` is `"facilitator"`
+or `"merchant"`, recorded by whichever one broadcast it. Read it rather than
+deriving the route from the rail, because the rail does not imply it.
 
 The rail follows from who verifies the signature.
 `Permit2.permitWitnessTransferFrom` verifies through ERC-1271, so
@@ -144,7 +151,7 @@ The rail follows from who verifies the signature.
 approved checker; an EIP-3009 token verifies `transferWithAuthorization` in its
 own code, so the `eip3009` rail carries one with the token as the checker.
 Circle's USDC verifies through `SignatureChecker`, so both rails carry a smart
-account's signature, and `eip3009` is the rail the facilitator settles.
+account's signature.
 `tests/e2e/live-x402-celo-facilitator.ts` checks both against the live
 facilitator, and `tests/e2e/fork-eip3009-celo.ts` is the on-chain A/B for the
 token's ERC-1271 path.

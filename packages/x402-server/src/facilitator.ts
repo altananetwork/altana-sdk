@@ -21,12 +21,23 @@
  * `POST /settle` needs an `X-API-Key`, issued at https://x402.celo.org against
  * a signed message.
  *
- * **Which rails it can take.** The `exact` scheme on Celo settles EIP-3009
- * `transferWithAuthorization`, so the facilitator handles the `eip3009` rail
- * and nothing else. A merchant's Permit2 rails keep settling locally, which is
- * why this is a per-rail choice rather than a mode: an Altana smart-account
- * buyer paying over Permit2 and a plain EOA paying over EIP-3009 can hit the
- * same route and settle by different paths.
+ * **Which rails it can take is the facilitator's to declare, not ours to
+ * assume.** `GET /supported` lists each asset with an `assetTransferMethod`,
+ * and Celo's mainnet facilitator advertises `eip3009` for USDC, USDT and USAT
+ * and `permit2` for wARS, wBRL and wCOP. So a facilitator is not an EIP-3009
+ * thing: `facilitatorRails` reads what it actually claims, and
+ * `FacilitatorConfig.rails` decides what to send it.
+ *
+ * `DEFAULT_FACILITATOR_RAILS` is `["eip3009"]` all the same, because a default
+ * should be a rail that is known to work end to end. Measured 2026-10-05
+ * against Celo's mainnet `/verify`, with an EIP-3009 payment as the control in
+ * the same run: our EIP-3009 payload is accepted (it reaches the balance
+ * check), and our Permit2 payload is refused `invalid_format` — their request
+ * schema has no variant for the payload we emit, which carries
+ * `permit`/`permit2Authorization` where EIP-3009 carries `authorization`. The
+ * capability they advertise and the wire shape they accept do not yet meet, and
+ * their docs describe neither, so routing Permit2 there is opt-in until that is
+ * settled with them.
  *
  * **Verification stays local.** The merchant's own `verifyPayment` is
  * ERC-1271-aware and lets a smart-account buyer through; a facilitator's
@@ -48,15 +59,25 @@ export type FacilitatorConfig = {
    */
   apiKey?: string;
   /**
-   * Which rails to send there. Defaults to `["eip3009"]`, which is what the
-   * `exact` scheme settles on Celo. Every other rail settles locally.
+   * Which rails to send there. Defaults to `DEFAULT_FACILITATOR_RAILS`; every
+   * rail not listed settles from the merchant's own key. `facilitatorRails`
+   * reads what a facilitator claims, which is what this should usually be set
+   * from rather than hardcoded.
    */
   rails?: readonly DecodedPayment["rail"][];
   /** Swap the transport in tests, or to add a proxy or a timeout. */
   fetch?: typeof fetch;
 };
 
-/** The rails a facilitator is asked to settle when its config does not say. */
+/**
+ * The rails a facilitator is asked to settle when its config does not say.
+ *
+ * `eip3009` only, deliberately: it is the one proven end to end against Celo's
+ * facilitator. Celo advertises `permit2` for its wrapped currencies, but its
+ * `/verify` refuses the Permit2 payload we emit (`invalid_format`), so sending
+ * Permit2 there by default would break payments that settle locally today. Pass
+ * `rails` to opt in, and `facilitatorRails` to see what a facilitator claims.
+ */
 export const DEFAULT_FACILITATOR_RAILS: readonly DecodedPayment["rail"][] = ["eip3009"];
 
 /** Celo's own facilitator, per Celo's x402 documentation. */
@@ -76,8 +97,23 @@ export function settlesViaFacilitator(rail: DecodedPayment["rail"], facilitator:
   return (facilitator.rails ?? DEFAULT_FACILITATOR_RAILS).includes(rail);
 }
 
+/** One asset a facilitator lists, with the rail it settles it over. */
+export type FacilitatorAsset = {
+  asset: string;
+  symbol?: string;
+  decimals?: number;
+  name?: string;
+  version?: string;
+  assetTransferMethod?: string;
+};
+
 /** One `(network, scheme)` pair a facilitator says it takes. */
-export type FacilitatorKind = { x402Version?: number; scheme: string; network: string };
+export type FacilitatorKind = {
+  x402Version?: number;
+  scheme: string;
+  network: string;
+  extra?: { supportedAssets?: FacilitatorAsset[]; defaultAsset?: FacilitatorAsset; extensions?: string[] };
+};
 
 /**
  * What the facilitator says it supports, from its open `GET /supported`.
@@ -104,6 +140,57 @@ export function supportsExactOn(
   chainId: number,
 ): boolean {
   return kinds.some((k) => k.scheme === "exact" && k.network === `eip155:${chainId}`);
+}
+
+/**
+ * The assets a facilitator lists for this chain, each with the
+ * `assetTransferMethod` it settles them over.
+ *
+ * Reads the v2 `kinds` entry, because a v1 entry may carry no `extra` at all.
+ */
+export function facilitatorAssets(
+  kinds: readonly FacilitatorKind[],
+  chainId: number,
+): FacilitatorAsset[] {
+  const network = `eip155:${chainId}`;
+  const seen = new Map<string, FacilitatorAsset>();
+  for (const k of kinds) {
+    if (k.scheme !== "exact" || k.network !== network) continue;
+    for (const a of k.extra?.supportedAssets ?? []) {
+      if (a?.asset) seen.set(a.asset.toLowerCase(), a);
+    }
+  }
+  return [...seen.values()];
+}
+
+/**
+ * The rails a facilitator claims for this chain, as our rail names.
+ *
+ * What it *claims*, which is not the same as what its `/verify` accepts — see
+ * the note on `DEFAULT_FACILITATOR_RAILS`. Use it to decide what is worth
+ * configuring, not as proof a rail will settle.
+ */
+export function facilitatorRails(
+  kinds: readonly FacilitatorKind[],
+  chainId: number,
+): DecodedPayment["rail"][] {
+  const rails: DecodedPayment["rail"][] = [];
+  for (const a of facilitatorAssets(kinds, chainId)) {
+    const rail = railOf(a.assetTransferMethod);
+    if (rail && !rails.includes(rail)) rails.push(rail);
+  }
+  return rails;
+}
+
+/** A facilitator's `assetTransferMethod` as our rail name, when we have one. */
+function railOf(method: string | undefined): DecodedPayment["rail"] | undefined {
+  if (method === "eip3009") return "eip3009";
+  // The two Permit2 variants are different signatures, not spellings: plain
+  // `permit2` is a direct PermitTransferFrom, `permit2-exact` binds the
+  // recipient in a witness. Celo advertises the plain one.
+  if (method === "permit2") return "permit2";
+  if (method === "permit2-exact") return "permit2-witness";
+  return undefined;
 }
 
 /**
@@ -164,7 +251,12 @@ export async function settleViaFacilitator(
     if (!txHash) {
       throw new Error(`x402 facilitator ${facilitator.url} reported settlement_pending with no transaction hash`);
     }
-    return { txHash, settlement: "pending", pendingReason: "the facilitator has broadcast it and has no receipt yet" };
+    return {
+      txHash,
+      settlement: "pending",
+      pendingReason: "the facilitator has broadcast it and has no receipt yet",
+      settledVia: "facilitator",
+    };
   }
   if (body?.success !== true) {
     throw new Error(`x402 facilitator ${facilitator.url} refused to settle: ${body?.errorReason ?? "no reason given"}`);
@@ -172,7 +264,7 @@ export async function settleViaFacilitator(
   if (!txHash) {
     throw new Error(`x402 facilitator ${facilitator.url} reported success with no transaction hash`);
   }
-  return { txHash, settlement: "confirmed" };
+  return { txHash, settlement: "confirmed", settledVia: "facilitator" };
 }
 
 /** The x402 v2 `SettleResponse`. */

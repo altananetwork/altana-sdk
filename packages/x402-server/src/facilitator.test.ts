@@ -19,6 +19,8 @@ import {
   CELO_FACILITATOR_URL,
   CELO_SEPOLIA_FACILITATOR_URL,
   DEFAULT_FACILITATOR_RAILS,
+  facilitatorAssets,
+  facilitatorRails,
   facilitatorSupported,
   facilitatorUrlFor,
   settleViaFacilitator,
@@ -129,7 +131,7 @@ describe("POST /settle", () => {
     const requirements = { scheme: "exact", network: "eip155:11142220", asset: USDC_CELO_SEPOLIA.address };
     const result = await settleViaFacilitator(payment, requirements, { url: URL, apiKey: "k", fetch: fn });
 
-    expect(result).toEqual({ txHash: TX, settlement: "confirmed" });
+    expect(result).toEqual({ txHash: TX, settlement: "confirmed", settledVia: "facilitator" });
     expect(calls[0]!.url).toBe(`${URL}/settle`);
     expect((calls[0]!.init.headers as Record<string, string>)["X-API-Key"]).toBe("k");
     const sent = JSON.parse(String(calls[0]!.init.body));
@@ -337,6 +339,65 @@ describe("createX402Merchant with facilitatorService", () => {
     expect(local.broadcasts).toBe(1);
   });
 
+  // The receipt has to NAME the route. A seller that infers it from the rail is
+  // wrong as soon as a facilitator's rails are configured away from the
+  // default, and the rail is the only thing it has to go on.
+  test("the receipt names the facilitator when the facilitator settled", async () => {
+    const { fn } = stubFetch({ body: { success: true, transaction: TX } });
+    const { merchant, local } = merchantOn({ url: URL, apiKey: "k", fetch: fn });
+    const result = await merchant.requirePayment(await usdcPayment(`0x${"d1".repeat(32)}`));
+    expect(result.status).toBe(200);
+    if (result.status !== 200) return;
+    expect(result.receipt.settledVia).toBe("facilitator");
+    expect(local.broadcasts).toBe(0);
+  });
+
+  test("the receipt names the merchant when the merchant's own key settled", async () => {
+    const { merchant, local } = merchantOn(undefined);
+    const result = await merchant.requirePayment(await usdcPayment(`0x${"d2".repeat(32)}`));
+    expect(result.status).toBe(200);
+    if (result.status !== 200) return;
+    expect(result.receipt.settledVia).toBe("merchant");
+    expect(local.broadcasts).toBe(1);
+  });
+
+  // The point of the field, in one test: the SAME rail settles by a different
+  // route depending on configuration, so the rail cannot imply the route.
+  test("the same rail settles locally when the facilitator is not given it", async () => {
+    const { fn, calls } = stubFetch({ body: { success: true, transaction: TX } });
+    const { merchant, local } = merchantOn({ url: URL, apiKey: "k", fetch: fn, rails: [] });
+    const result = await merchant.requirePayment(await usdcPayment(`0x${"d3".repeat(32)}`));
+    expect(result.status).toBe(200);
+    if (result.status !== 200) return;
+    expect(result.receipt.rail).toBe("eip3009");
+    expect(result.receipt.settledVia).toBe("merchant");
+    expect(calls).toHaveLength(0);
+    expect(local.broadcasts).toBe(1);
+  });
+
+  // A *pending* payment is the one a buyer is re-answered about from the cache
+  // (a confirmed one is a 402 replay, by design). That answer is assembled
+  // without settling again, so the route has to be remembered, not recomputed.
+  test("a re-asked pending payment reports the route that really settled it", async () => {
+    const { fn, calls } = stubFetch({ body: { success: false, errorReason: "settlement_pending", transaction: TX } });
+    const { merchant } = merchantOn({ url: URL, apiKey: "k", fetch: fn });
+    const header = await usdcPayment(`0x${"d4".repeat(32)}`);
+
+    const first = await merchant.requirePayment(header);
+    expect(first.status).toBe(200);
+    if (first.status !== 200) return;
+    expect(first.receipt.settlement).toBe("pending");
+    expect(first.receipt.settledVia).toBe("facilitator");
+
+    const again = await merchant.requirePayment(header);
+    expect(again.status).toBe(200);
+    if (again.status !== 200) return;
+    expect(again.receipt.txHash).toBe(TX);
+    expect(again.receipt.settledVia).toBe("facilitator");
+    // Answered from the cache: the facilitator was asked exactly once.
+    expect(calls).toHaveLength(1);
+  });
+
   test("a facilitator refusal is a 402 the buyer may retry, and the nonce is released", async () => {
     const { fn, calls } = stubFetch({ body: { success: false, errorReason: "insufficient_funds", transaction: "" } });
     const { merchant } = merchantOn({ url: URL, apiKey: "k", fetch: fn });
@@ -370,5 +431,96 @@ describe("createX402Merchant with facilitatorService", () => {
     const again = await merchant.requirePayment(header);
     expect(again.status).toBe(200);
     expect(calls).toHaveLength(1);
+  });
+});
+
+/**
+ * What a facilitator claims per asset, which is not the same as what its
+ * /verify accepts. These two fixtures are the real `GET /supported` bodies,
+ * trimmed: Celo mainnet advertises BOTH rails, Celo Sepolia only EIP-3009.
+ * Measured 2026-10-05, and the mainnet one is why the module no longer says a
+ * facilitator is an EIP-3009-only thing.
+ */
+describe("what a facilitator claims per asset", () => {
+  const MAINNET_KINDS = [
+    {
+      x402Version: 2,
+      scheme: "exact",
+      network: "eip155:42220",
+      extra: {
+        supportedAssets: [
+          { asset: "0xcebA9300f2b948710d2653dD7B07f33A8B32118C", symbol: "USDC", assetTransferMethod: "eip3009" },
+          { asset: "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e", symbol: "USDT", assetTransferMethod: "eip3009" },
+          { asset: "0x0DC4F92879B7670e5f4e4e6e3c801D229129D90D", symbol: "wARS", assetTransferMethod: "permit2" },
+          { asset: "0xD76f5Faf6888e24D9F04Bf92a0c8B921FE4390e0", symbol: "wBRL", assetTransferMethod: "permit2" },
+        ],
+      },
+    },
+    // A v1 entry carries no `extra` at all, and must not throw or contribute.
+    { x402Version: 1, scheme: "exact", network: "celo" },
+  ];
+  const SEPOLIA_KINDS = [
+    {
+      x402Version: 2,
+      scheme: "exact",
+      network: "eip155:11142220",
+      extra: {
+        supportedAssets: [
+          { asset: "0x01C5C0122039549AD1493B8220cABEdD739BC44E", symbol: "USDC", assetTransferMethod: "eip3009" },
+        ],
+      },
+    },
+    { x402Version: 1, scheme: "exact", network: "celo-sepolia" },
+  ];
+
+  test("Celo mainnet advertises Permit2 as well as EIP-3009", () => {
+    expect(facilitatorRails(MAINNET_KINDS, 42220).sort()).toEqual(["eip3009", "permit2"]);
+    expect(facilitatorAssets(MAINNET_KINDS, 42220)).toHaveLength(4);
+  });
+
+  test("Celo Sepolia advertises EIP-3009 only, so Permit2 cannot be proven there", () => {
+    expect(facilitatorRails(SEPOLIA_KINDS, 11142220)).toEqual(["eip3009"]);
+  });
+
+  test("a chain the facilitator does not serve has no assets and no rails", () => {
+    expect(facilitatorAssets(MAINNET_KINDS, 8453)).toEqual([]);
+    expect(facilitatorRails(MAINNET_KINDS, 8453)).toEqual([]);
+  });
+
+  test("the two Permit2 methods are different signatures, not spellings", () => {
+    const kinds = [
+      {
+        scheme: "exact",
+        network: "eip155:42220",
+        extra: {
+          supportedAssets: [
+            { asset: "0xa", assetTransferMethod: "permit2" },
+            { asset: "0xb", assetTransferMethod: "permit2-exact" },
+          ],
+        },
+      },
+    ];
+    expect(facilitatorRails(kinds, 42220)).toEqual(["permit2", "permit2-witness"]);
+  });
+
+  test("an unknown transfer method is ignored rather than guessed at", () => {
+    const kinds = [
+      {
+        scheme: "exact",
+        network: "eip155:42220",
+        extra: { supportedAssets: [{ asset: "0xa", assetTransferMethod: "some-future-rail" }] },
+      },
+    ];
+    expect(facilitatorRails(kinds, 42220)).toEqual([]);
+    // Still listed, so a merchant can see what it was.
+    expect(facilitatorAssets(kinds, 42220)).toHaveLength(1);
+  });
+
+  test("the default stays EIP-3009 even though Celo claims Permit2", () => {
+    // Celo's /verify refuses the Permit2 payload we emit (invalid_format,
+    // measured 2026-10-05 with an EIP-3009 control in the same run), so the
+    // claim is not enough to route by default.
+    expect(DEFAULT_FACILITATOR_RAILS).toEqual(["eip3009"]);
+    expect(facilitatorRails(MAINNET_KINDS, 42220)).toContain("permit2");
   });
 });

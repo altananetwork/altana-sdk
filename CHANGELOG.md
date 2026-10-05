@@ -51,11 +51,16 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
   key. Celo runs the one its own documentation points at:
   `CELO_FACILITATOR_URL` (42220) and `CELO_SEPOLIA_FACILITATOR_URL`
   (11142220); `facilitatorSupported` reads its open `GET /supported` and
-  `supportsExactOn` answers whether it serves a chain. The choice is per rail,
-  because Celo's `exact` scheme settles EIP-3009: that rail goes to the
-  facilitator and Permit2 rails keep settling locally, so one route covers both
-  rails whoever the buyer is. Verification stays local either way, since the
-  merchant's own is ERC-1271-aware and a facilitator's need not be. `POST /settle` needs an
+  `supportsExactOn` answers whether it serves a chain. The choice is per rail:
+  `facilitatorService.rails` decides what goes there and everything else
+  settles from the merchant's key, so one route covers both paths.
+  `facilitatorRails` and `facilitatorAssets` read what a facilitator claims per
+  asset from `GET /supported` — Celo's mainnet facilitator lists `eip3009` for
+  USDC, USDT and USAT and `permit2` for wARS, wBRL and wCOP — and the new
+  receipt field `settledVia` (`"facilitator"` or `"merchant"`) reports which
+  route settled a payment, so a seller states the route instead of inferring it
+  from the rail. Verification stays local either way, since the merchant's own
+  is ERC-1271-aware and a facilitator's need not be. `POST /settle` needs an
   `X-API-Key`, and a 401 says so rather than looking like a rejected payment.
 
 - **Keystore writes funded from the L2.** `grantSession`, `revokeSession` and

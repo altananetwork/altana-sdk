@@ -179,13 +179,26 @@ const merchant = createX402Merchant({
 });
 ```
 
-The choice is **per rail**. Celo's `exact` scheme settles EIP-3009, so that rail goes to the facilitator and Permit2 rails keep settling from the merchant's own key: one route serves an EOA buyer through the facilitator and an Altana smart-account buyer locally. Set `rails` on `facilitatorService` to change which go where. Verification stays local either way, because the merchant's own is ERC-1271-aware and a facilitator's need not be.
+The choice is **per rail**, and the receipt says which route settled each payment:
 
-Which path each buyer takes on Celo:
+```ts
+const { receipt } = await merchant.guard(request);
+receipt.settledVia;   // "facilitator" | "merchant"
+receipt.rail;         // "eip3009" | "permit2" | "permit2-witness"
+```
 
-| Buyer | Rail | Settles |
-| --- | --- | --- |
-| Plain EOA | `eip3009` on USDC | through the facilitator, or locally |
-| Altana smart account | `permit2-exact` | locally |
+`settledVia` is recorded by whichever route broadcast it, so read it rather than deriving it from the rail — the rail does not imply the route, because `rails` decides what goes where.
 
-The rail follows from who verifies the signature. `Permit2.permitWitnessTransferFrom` verifies through ERC-1271, so `permit2-exact` carries a smart account's signature with Permit2 as the approved checker; an EIP-3009 token verifies `transferWithAuthorization` in its own code, so the `eip3009` rail carries one with the token as the checker. Circle's USDC verifies through `SignatureChecker`, so both rails carry a smart account's signature. The facilitator settles the `exact` scheme over EIP-3009, which is the path it serves.
+`facilitatorService.rails` is `["eip3009"]` unless you set it; every other rail settles from the merchant's own key. A facilitator declares what it takes per asset in `GET /supported`, and `facilitatorRails` reads it:
+
+```ts
+import { facilitatorSupported, facilitatorRails, facilitatorAssets, CELO_FACILITATOR_URL } from "@altananetwork/x402-server";
+
+const supported = await facilitatorSupported({ url: CELO_FACILITATOR_URL });
+facilitatorRails(supported.kinds, 42220);   // the rails it claims for this chain
+facilitatorAssets(supported.kinds, 42220);  // each asset, with its assetTransferMethod
+```
+
+Verification stays local either way, because the merchant's own is ERC-1271-aware and a facilitator's need not be.
+
+The rail follows from who verifies the signature, and that contract must be an approved signature checker for the key. `Permit2.permitWitnessTransferFrom` verifies through ERC-1271, so `permit2-exact` carries a smart account's signature with Permit2 as the checker; an EIP-3009 token verifies `transferWithAuthorization` in its own code, so the `eip3009` rail carries one with the token as the checker. Circle's USDC verifies through `SignatureChecker`, so both rails carry a smart account's signature.

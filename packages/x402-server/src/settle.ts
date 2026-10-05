@@ -123,6 +123,14 @@ export type SettleResult = {
   settlement: "confirmed" | "pending";
   /** Why the receipt was unavailable (`pending` only). No RPC URL, safe to log. */
   pendingReason?: string;
+  /**
+   * Which route broadcast it: `merchant` is the merchant's own key,
+   * `facilitator` is a hosted facilitator. Set by whichever function settled,
+   * so a seller reports the route rather than guessing it from the rail — the
+   * rail does not imply the route, because a facilitator's rails are
+   * configurable (`FacilitatorConfig.rails`).
+   */
+  settledVia: "merchant" | "facilitator";
 };
 
 /** viem's one-line message plus the node's detail; never the URL/request dump. */
@@ -200,7 +208,7 @@ export async function settlePayment(
     });
   } catch (e) {
     // The transfer is in flight; the hash is the only evidence there is.
-    return { txHash, settlement: "pending", pendingReason: describeError(e) };
+    return { txHash, settlement: "pending", pendingReason: describeError(e), settledVia: "merchant" };
   }
   if (receipt.transactionHash !== txHash) {
     // A same-nonce transaction from the facilitator superseded ours: this one
@@ -210,7 +218,7 @@ export async function settlePayment(
   if (receipt.status !== "success") {
     throw new Error(`settle: transaction ${txHash} reverted`);
   }
-  return { txHash, settlement: "confirmed" };
+  return { txHash, settlement: "confirmed", settledVia: "merchant" };
 }
 
 /**

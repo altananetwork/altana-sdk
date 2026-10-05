@@ -42,9 +42,10 @@ export type MerchantOptions = MerchantConfig & {
   /**
    * Settle through a hosted facilitator, which broadcasts the payment and pays
    * the gas, instead of from `facilitator` (the merchant's own key). Per rail,
-   * not per merchant: rails the facilitator does not take still settle locally,
-   * so one route can serve an EIP-3009 buyer through the facilitator and a
-   * Permit2 buyer from the merchant's key. Celo runs one, see
+   * not per merchant: the rails in `FacilitatorConfig.rails` go there and every
+   * other settles locally, so one route can serve both by different paths.
+   * Which rails those are is configuration, not a property of the rail — the
+   * receipt's `settledVia` is what actually settled it. Celo runs one, see
    * `CELO_FACILITATOR_URL`. Omitted, everything settles locally as before.
    */
   facilitatorService?: FacilitatorConfig;
@@ -83,7 +84,14 @@ export function createX402Merchant(opts: MerchantOptions) {
   // so a buyer that never received its answer can ask again (#76). Single
   // process only: behind a load balancer the on-chain nonce still refuses the
   // replay, but as "settlement failed", not "replayed authorization".
-  type Seen = "inflight" | { txHash: SettleResult["txHash"]; settlement: SettleResult["settlement"] };
+  type Seen =
+    | "inflight"
+    | {
+        txHash: SettleResult["txHash"];
+        settlement: SettleResult["settlement"];
+        /** Remembered so a replayed receipt names the route that really settled. */
+        settledVia: SettleResult["settledVia"];
+      };
   const seen = new Map<string, { state: Seen; expiresAt: number }>();
   const sweep = (now: number) => {
     for (const [k, v] of seen) if (v.expiresAt < now) seen.delete(k);
@@ -176,18 +184,25 @@ export function createX402Merchant(opts: MerchantOptions) {
         seen.delete(nonceKey); // it landed and failed: the authorization is unspent
         return { status: 402, body: { ...challengeBody(), error: `settlement failed: transaction ${txHash} reverted` } };
       }
+      const settledVia = prior.state.settledVia;
       if (receipt?.status === "success") {
-        seen.set(nonceKey, { state: { txHash, settlement: "confirmed" }, expiresAt });
-        return { status: 200, receipt: receiptOf({ txHash, settlement: "confirmed" }) };
+        seen.set(nonceKey, { state: { txHash, settlement: "confirmed", settledVia }, expiresAt });
+        return { status: 200, receipt: receiptOf({ txHash, settlement: "confirmed", settledVia }) };
       }
-      return { status: 200, receipt: receiptOf({ txHash, settlement: "pending", pendingReason: "receipt not yet available" }) };
+      return {
+        status: 200,
+        receipt: receiptOf({ txHash, settlement: "pending", pendingReason: "receipt not yet available", settledVia }),
+      };
     }
     seen.set(nonceKey, { state: "inflight", expiresAt });
 
     try {
       const settled = await settle(decoded, verdict.token);
       // Confirmed or pending, the authorization is spent (or about to be): keep it.
-      seen.set(nonceKey, { state: { txHash: settled.txHash, settlement: settled.settlement }, expiresAt });
+      seen.set(nonceKey, {
+        state: { txHash: settled.txHash, settlement: settled.settlement, settledVia: settled.settledVia },
+        expiresAt,
+      });
       return { status: 200, receipt: receiptOf(settled) };
     } catch (e) {
       // Nothing was broadcast, or it reverted / was replaced and the nonce is

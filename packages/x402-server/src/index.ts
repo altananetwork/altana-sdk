@@ -8,11 +8,14 @@ export {
   facilitatorSupported,
   facilitatorUrlFor,
   supportsExactOn,
+  facilitatorAssets,
+  facilitatorRails,
   CELO_FACILITATOR_URL,
   CELO_SEPOLIA_FACILITATOR_URL,
   DEFAULT_FACILITATOR_RAILS,
   type FacilitatorConfig,
   type FacilitatorKind,
+  type FacilitatorAsset,
 } from "./facilitator.js";
 export {
   createX402Merchant,
