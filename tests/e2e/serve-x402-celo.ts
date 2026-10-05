@@ -35,9 +35,11 @@ const RPC = process.env.CELO_SEPOLIA_RPC_URL ?? "https://forno.celo-sepolia.celo
 const PRICE = 10_000n; // 0.01 USDC, 6 decimals
 const API_KEY = process.env.X402_CELO_API_KEY;
 /**
- * The rails this seller hands to the facilitator. `eip3009` only, for now,
- * which is a choice here and not a property of the facilitator: whether it
- * also takes Permit2 is being measured by sdk.
+ * The rails this seller hands to the facilitator.
+ *
+ * A choice made here, not a property of the facilitator: Celo's takes a smart
+ * account's signature on both rails. What it decides is only where this seller
+ * sends each payment, and the receipt, not this constant, says where one went.
  */
 const FACILITATOR_RAILS = ["eip3009"] as const;
 
@@ -137,12 +139,12 @@ Bun.serve({
     const { response, receipt } = await seller.guard(req);
     if (response) return withCors(response);
 
-    // TODO(sdk): infer no longer, once a merchant receipt can say which route
-    // settled it. Today this reads the seller's own configuration, which is
-    // right while that configuration decides the route and wrong the moment
-    // anything else does.
-    const settledVia =
-      API_KEY && (FACILITATOR_RAILS as readonly string[]).includes(receipt!.rail) ? "facilitator" : "merchant key";
+    // What actually settled it, from the receipt. This used to be inferred
+    // from the rail and the seller's own configuration, which was already wrong
+    // before the facilitator took Permit2: a merchant configured with no
+    // facilitator rails settles eip3009 locally, and the inference would still
+    // have called it "facilitator" (#106, ccea306).
+    const settledVia = receipt!.settledVia;
     console.log(
       `paid ${receipt!.amount} by ${receipt!.payer} on ${receipt!.rail} via ${settledVia}: ${receipt!.txHash} (${receipt!.settlement})`,
     );

@@ -119,6 +119,59 @@ export function railOf(req: X402Requirement): string | undefined {
   return extra?.assetTransferMethod;
 }
 
+/**
+ * What a facilitator failure means, in words.
+ *
+ * Celo's facilitator **defers to the chain**: it simulates the transfer and
+ * surfaces the revert, implementing no ERC-1271 of its own. That is why a
+ * contract signer works at all, and it is also why a refused signature arrives
+ * as an unmapped `500 unexpected_error: execution reverted: ...` rather than a
+ * structured `invalid_signature` (sdk,
+ * evidence/2026-10-05-celo-facilitator-permit2.md). The revert is the most
+ * informative part of that string and the least readable.
+ */
+const FACILITATOR_FAILURES: { match: RegExp; say: string }[] = [
+  {
+    match: /invalid signature/i,
+    say:
+      "the token simulated the transfer and refused the signature. For a session key that almost always " +
+      "means the token is not an approved signature checker for it, which is what granting with the x402 " +
+      "tokens ticked sets.",
+  },
+  {
+    match: /balance is not enough|insufficient_funds/i,
+    say: "the wallet does not hold enough of the token to pay. That check runs before the signature one.",
+  },
+  {
+    match: /missing x-api-key|unauthorized/i,
+    say:
+      "the facilitator would not settle without its API key. Verification is open; settling is not, and the " +
+      "key is issued at x402.celo.org.",
+  },
+  {
+    match: /invalid_format|did not match any variant/i,
+    say: "the facilitator rejected the envelope's shape before looking at the signature, which usually means the x402 version is wrong.",
+  },
+];
+
+/**
+ * Adds the meaning to a facilitator failure, keeping its own words. An
+ * `execution reverted` from this facilitator is a chain revert it relayed, not
+ * a fault of its own, and saying so stops it reading as the facilitator being
+ * broken.
+ */
+export function explainX402Failure(reason: string): string {
+  for (const { match, say } of FACILITATOR_FAILURES) {
+    if (match.test(reason)) {
+      const relayed = /execution reverted/i.test(reason)
+        ? " The facilitator simulates the payment on chain rather than checking signatures itself, so this is the chain's answer relayed, not a failure of the facilitator."
+        : "";
+      return `${reason} In other words, ${say}${relayed}`;
+    }
+  }
+  return reason;
+}
+
 /** One line naming the rail and what it means for this buyer. */
 export function railNote(rail: string | undefined): string {
   if (!rail) return "The seller did not say which rail carried the payment.";

@@ -285,3 +285,22 @@ describe("X402Panel, the approvals a rail needs", () => {
     expect(await screen.findByText(/x402 tokens ticked needs none of this/)).toBeInTheDocument();
   });
 });
+
+describe("a failed payment through the facilitator", () => {
+  test("the unmapped revert is explained, and the facilitator is not blamed for it", async () => {
+    mockFetch(() => Response.json({ price: "10000", token: USDC, facilitator: null }));
+    const client = fakeClient({
+      fetchWithX402: vi.fn(async () => {
+        throw new Error("unexpected_error: execution reverted: FiatTokenV2: invalid signature");
+      }),
+    });
+    renderWith(client, <X402Panel />, { ...WITH_SESSION, walletKey: TEST_KEY });
+    await userEvent.click(await screen.findByRole("button", { name: "Pay and fetch" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/not an approved signature checker/);
+    expect(alert).toHaveTextContent(/chain's answer relayed/);
+    // The chain's own words are kept, not replaced.
+    expect(alert).toHaveTextContent(/FiatTokenV2: invalid signature/);
+  });
+});

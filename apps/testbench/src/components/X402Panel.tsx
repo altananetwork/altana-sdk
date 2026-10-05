@@ -7,6 +7,7 @@ import { txUrl } from "../lib/explorer";
 import { entry } from "../lib/log";
 import {
   amountOf,
+  explainX402Failure,
   probeX402,
   railOf,
   railNote,
@@ -69,7 +70,10 @@ export function X402Panel() {
     try {
       await fn();
     } catch (err) {
-      const reason = relayReason(err);
+      // A facilitator failure is a chain revert it relayed; explain it rather
+      // than showing "unexpected_error: execution reverted" and leaving the
+      // reader to guess whose fault it was.
+      const reason = explainX402Failure(relayReason(err));
       setError(reason);
       dispatch({ type: "log/add", entry: entry(label, { error: reason, level: "error" }) });
     } finally {

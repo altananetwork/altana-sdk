@@ -1,5 +1,13 @@
 import { describe, expect, test, vi } from "vitest";
-import { amountOf, probeX402, railNote, railOf, readPaidResponse, readSellerHealth } from "../../src/lib/x402";
+import {
+  amountOf,
+  explainX402Failure,
+  probeX402,
+  railNote,
+  railOf,
+  readPaidResponse,
+  readSellerHealth,
+} from "../../src/lib/x402";
 
 const USDC = "0x01C5C0122039549AD1493B8220cABEdD739BC44E";
 
@@ -139,5 +147,40 @@ describe("amountOf and railOf", () => {
     expect(railOf(permit2Req as never)).toBe("permit2-exact");
     expect(railOf(eip3009Req as never)).toBe("eip3009");
     expect(railOf({ ...permit2Req, extra: undefined } as never)).toBeUndefined();
+  });
+});
+
+describe("explainX402Failure", () => {
+  const REVERT = "unexpected_error: execution reverted: FiatTokenV2: invalid signature";
+
+  test("the unmapped 500 becomes the sentence someone needs at that moment", () => {
+    // Celo's facilitator defers to the chain, so a refused signature arrives as
+    // an unmapped execution-reverted rather than a structured invalid_signature
+    // (evidence/2026-10-05-celo-facilitator-permit2.md).
+    const said = explainX402Failure(REVERT);
+    expect(said).toContain("FiatTokenV2: invalid signature");
+    expect(said).toContain("not an approved signature checker");
+    expect(said).toContain("x402 tokens ticked");
+  });
+
+  test("it says whose answer the revert is, so the facilitator is not blamed for it", () => {
+    expect(explainX402Failure(REVERT)).toContain("the chain's answer relayed, not a failure of the facilitator");
+  });
+
+  test("a balance failure is told apart from a signature one, and says which runs first", () => {
+    const said = explainX402Failure("insufficient_funds: Onchain balance is not enough");
+    expect(said).toContain("does not hold enough");
+    expect(said).toContain("before the signature one");
+    // Not a chain revert, so it does not claim to be one.
+    expect(said).not.toContain("relayed");
+  });
+
+  test("the settle key and the envelope shape each get their own words", () => {
+    expect(explainX402Failure("unauthorized: Missing X-API-Key")).toContain("issued at x402.celo.org");
+    expect(explainX402Failure("invalid_format: data did not match any variant")).toContain("x402 version");
+  });
+
+  test("anything it does not recognise is left exactly as it was", () => {
+    expect(explainX402Failure("some new failure")).toBe("some new failure");
   });
 });

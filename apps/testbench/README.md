@@ -95,7 +95,9 @@ That script builds `@altananetwork/x402-server` before starting, so it works fro
 
 Missing either makes the payment revert with nothing naming an approval, so **tick the tokens under "Tokens this session will pay x402 with" when you grant**: that sets both in the same intent. The x402 tab reads the approvals from chain and offers a repair for sessions granted before that, naming the contract the SDK says is missing rather than assuming Permit2.
 
-It sells one paid route at 0.01 USDC on live Celo Sepolia, over Permit2 and EIP-3009, and reports its own receipt so the panel names the rail rather than inferring it. With `X402_CELO_API_KEY` set it settles the EIP-3009 rail through Celo's facilitator and the Permit2 rails from its own key. Which routes the facilitator will take is being re-measured; the seller's current split is its configuration, not a limit of the facilitator.
+It sells one paid route at 0.01 USDC on live Celo Sepolia, over Permit2 and EIP-3009, and reports its own receipt so the panel names the rail rather than inferring it. With `X402_CELO_API_KEY` set it hands the EIP-3009 rail to Celo's facilitator and settles the Permit2 rails from its own key. That split is this seller's configuration, not a limit of the facilitator: Celo's takes a smart account's signature on both rails. The panel reports which route settled a payment from the receipt rather than inferring it from the rail.
+
+Celo's facilitator **defers to the chain**: it simulates the payment and surfaces the revert rather than checking signatures itself, which is why a contract signer works at all. A refused signature therefore arrives as an unmapped `500 execution reverted`, and the panel explains it rather than showing it raw.
 
 ## The proof view
 
