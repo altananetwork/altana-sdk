@@ -9,6 +9,9 @@ import {
   type KeyDescriptor,
 } from "./internal/relay.js";
 import { buildAdditionalRegisterCall, deriveKeyId } from "./internal/keystore.js";
+import { buildSetCheckerApprovalCall } from "./approveSignatureChecker.js";
+import { buildApproveTokenForPermit2Call } from "./approveTokenForPermit2.js";
+import { PERMIT2_ADDRESS } from "./internal/x402Rails.js";
 import { isCachedRegistry } from "./internal/cachedRegistry.js";
 import { fetchFeeCurrencies, type FeeCurrency } from "./internal/feeCurrencies.js";
 import { addFeeSpendCaps, feeTokenList } from "./internal/feeTokenSelection.js";
@@ -140,6 +143,24 @@ export async function runGrantSession(
     opts.feeSpendLimit,
   );
 
+  // The approvals an x402 payment needs, if the caller said the session will
+  // make one. They ride in the same intent as the key authorization: the relay
+  // applies `authorizeKeys` before the intent's own calls, so the key exists by
+  // the time `setSignatureCheckerApproval` runs (it reverts `KeyDoesNotExist()`
+  // otherwise). Measured live on Celo Sepolia, tx 0x178d30ee…99382.
+  const x402Calls: Call[] = (opts.x402Tokens ?? []).flatMap((token): Call[] => [
+    // Permit2 moves the token with an ordinary transferFrom.
+    buildApproveTokenForPermit2Call(token),
+    // The token calls isValidSignature itself on the eip3009 rail.
+    { ...buildSetCheckerApprovalCall({ wallet: wallet.address, keyHash, checker: token, isApproved: true }) },
+  ]);
+  if (x402Calls.length > 0) {
+    // Permit2 calls back on the permit2 rail; once, not per token.
+    x402Calls.push(
+      buildSetCheckerApprovalCall({ wallet: wallet.address, keyHash, checker: PERMIT2_ADDRESS, isApproved: true }),
+    );
+  }
+
   // Session key descriptor — secp256k1 or passkey (WebAuthnP256), by signer.
   const descriptor: KeyDescriptor = keyDescriptorFromSigner(sessionSigner, {
     role: "session",
@@ -227,6 +248,9 @@ export async function runGrantSession(
           return { status: "FAILED", reason: `could not read the registration fee: ${errorMessage(err)}` };
         }
       }
+      // Per chain, like the authorization: the account's approvals are its own
+      // storage on each one.
+      calls = [...calls, ...x402Calls];
       onStatus?.("account-authorization", { chainId: n.chainId });
       const outcome = await deps.submitAccountIntent(n, {
         wallet,

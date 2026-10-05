@@ -33,7 +33,8 @@
     "smoke:everywhere": "bun run smoke-everywhere.ts",
     "live:erc8004-celo": "bun run live-erc8004-celo-sepolia.ts",
     "live:x402-celo-facilitator": "bun run live-x402-celo-facilitator.ts",
-    "live:hypersigner-celo": "bun run live-hypersigner-celo-cache.ts"
+    "live:hypersigner-celo": "bun run live-hypersigner-celo-cache.ts",
+    "live:x402-approvals": "bun run live-x402-session-approvals.ts"
   },
   "dependencies": {
     "@altananetwork/hypersigner-keystore-mcp": "workspace:*",

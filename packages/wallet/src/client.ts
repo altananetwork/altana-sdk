@@ -192,6 +192,11 @@ export type ClientFetchWithX402Options = {
   init?: RequestInit;
   /** Preferred rail when a chain offers several (defaults to "permit2"). */
   preferRail?: FetchWithX402Options["preferRail"];
+  /**
+   * Read the session's two on-chain approvals before paying (default true), and
+   * refuse rather than settle into a revert. See `checkX402Approvals`.
+   */
+  checkApprovals?: boolean;
 } & ChainSelector;
 
 export type Client = {
@@ -321,6 +326,7 @@ export function createClient(opts: CreateClientOptions): Client {
       ...(o.populateCache !== undefined ? { populateCache: o.populateCache } : {}),
       ...(o.onStatus ? { onStatus: o.onStatus } : {}),
       ...(o.feeSpendLimit !== undefined ? { feeSpendLimit: o.feeSpendLimit } : {}),
+      ...(o.x402Tokens ? { x402Tokens: o.x402Tokens } : {}),
     };
   }
 
@@ -478,6 +484,7 @@ export function createClient(opts: CreateClientOptions): Client {
       return fetchWithX402Impl(o.session, o.url, o.init, {
         chainId: o.chainId ?? defaultChainId,
         ...(o.preferRail ? { preferRail: o.preferRail } : {}),
+        ...(o.checkApprovals !== undefined ? { checkApprovals: o.checkApprovals } : {}),
       });
     },
   };

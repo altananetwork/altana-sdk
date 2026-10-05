@@ -591,3 +591,95 @@ describe("registry write funded from the L2", () => {
     expect(result.legs.find((l) => l.kind === "account")?.fundedFromChainId).toBeUndefined();
   });
 });
+
+/**
+ * `x402Tokens` puts the two approvals an x402 payment needs into the same
+ * intent that authorizes the session, so a session can pay straight away
+ * instead of after two follow-up transactions that nothing reminds you to make.
+ *
+ * It rides in that intent rather than following it because the relay applies
+ * `authorizeKeys` before the intent's own calls, which matters:
+ * `setSignatureCheckerApproval` reverts `KeyDoesNotExist()` if the key is not
+ * there yet. Measured live on Celo Sepolia (tx 0x178d30ee…99382), and the
+ * calls' presence and order is what these tests pin.
+ */
+describe("grantSession with x402Tokens", () => {
+  const USDC: Address = "0x01C5C0122039549AD1493B8220cABEdD739BC44E";
+  const USDT: Address = "0xd077A400968890Eacc75cdc901F0356c943e4fDb";
+  const PERMIT2: Address = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
+
+  /** The `to` of every call in the account intent for one chain. */
+  const callTargets = (log: ReturnType<typeof fakeChains>["log"], chainId: number) =>
+    log.account.find((s) => s.chainId === chainId)!.calls.map((c: { to: Address }) => c.to);
+
+  test("no x402Tokens: the intent carries no approvals, exactly as before", async () => {
+    const { deps, log } = fakeChains();
+    await grant([CELO_SEPOLIA], deps);
+    expect(callTargets(log, 11142220)).toEqual([]);
+  });
+
+  test("one token: the token approved to Permit2, the token and Permit2 as checkers", async () => {
+    const { deps, log } = fakeChains();
+    const result = await grant([CELO_SEPOLIA], deps, { x402Tokens: [USDC] });
+    expect(result.status).toBe("granted");
+    // approve(token -> Permit2), setChecker(token), setChecker(Permit2).
+    // The two self-calls target the wallet, since setSignatureCheckerApproval
+    // is onlyThis.
+    expect(callTargets(log, 11142220)).toEqual([USDC, WALLET.address, WALLET.address]);
+  });
+
+  test("Permit2 is approved as a checker once, not once per token", async () => {
+    const { deps, log } = fakeChains();
+    await grant([CELO_SEPOLIA], deps, { x402Tokens: [USDC, USDT] });
+    const targets = callTargets(log, 11142220);
+    // Two tokens: two ERC-20 approvals, two token checkers, one Permit2 checker.
+    expect(targets.filter((t) => t === USDC)).toHaveLength(1);
+    expect(targets.filter((t) => t === USDT)).toHaveLength(1);
+    expect(targets.filter((t) => t === WALLET.address)).toHaveLength(3);
+    expect(targets).toHaveLength(5);
+  });
+
+  // The account's approvals are its own storage on each chain, so a session
+  // granted on two chains needs them on both.
+  test("the approvals are made on every chain the session is granted on", async () => {
+    const { deps, log } = fakeChains();
+    await grant([CELO_SEPOLIA, BASE_SEPOLIA], deps, { x402Tokens: [USDC] });
+    for (const chainId of [11142220, 84532]) {
+      expect(callTargets(log, chainId)).toEqual([USDC, WALLET.address, WALLET.address]);
+    }
+  });
+
+  // A bundled registry write shares the intent, and must still come first:
+  // it carries the registration fee as value.
+  test("they follow a bundled registry call rather than displacing it", async () => {
+    const { deps, log } = fakeChains();
+    await grant([SEPOLIA, CELO_SEPOLIA], deps, { x402Tokens: [USDC] });
+    const sepolia = log.account.find((s) => s.chainId === 11155111)!;
+    expect(sepolia.calls[0]!.value).toBe(7n);
+    expect(sepolia.calls.map((c: { to: Address }) => c.to).slice(1)).toEqual([
+      USDC,
+      WALLET.address,
+      WALLET.address,
+    ]);
+  });
+
+  test("the checker approvals name this session's key hash", async () => {
+    const { deps, log } = fakeChains();
+    const sessionSigner = createPrivateKeySigner();
+    await runGrantSession(
+      WALLET,
+      createPrivateKeySigner(),
+      { permissions: {}, expiry: 1_800_000_000, sessionSigner, x402Tokens: [USDC] },
+      { networks: [CELO_SEPOLIA] },
+      deps,
+    );
+    const keyHash = keyHashForSigner(sessionSigner);
+    const selfCalls = log.account
+      .find((s) => s.chainId === 11142220)!
+      .calls.filter((c: { to: Address }) => c.to === WALLET.address);
+    expect(selfCalls).toHaveLength(2);
+    for (const call of selfCalls) {
+      expect((call as { data: string }).data).toContain(keyHash.slice(2));
+    }
+  });
+});

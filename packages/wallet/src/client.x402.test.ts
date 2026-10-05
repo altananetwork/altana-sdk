@@ -71,7 +71,7 @@ test("client.fetchWithX402 defaults the x402 chainId to the client's defaultChai
   const session = makeSession(createPrivateKeySigner());
   const calls = mock402();
 
-  const res = await client.fetchWithX402({ session, url: "https://api.example.com/x402" });
+  const res = await client.fetchWithX402({ session, url: "https://api.example.com/x402", checkApprovals: false });
   expect(res.status).toBe(200);
 
   const decoded = decodeXPayment(calls);
@@ -86,6 +86,7 @@ test("client.fetchWithX402 honors an explicit chainId override", async () => {
   const calls = mock402();
 
   const res = await client.fetchWithX402({
+    checkApprovals: false,
     session,
     url: "https://api.example.com/x402",
     chainId: 8453,
