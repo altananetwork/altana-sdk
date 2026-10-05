@@ -16,7 +16,16 @@ const networks = [
   rpc(BASE_SEPOLIA, process.env.BASE_SEPOLIA_RPC_URL),
   rpc(SEPOLIA, process.env.SEPOLIA_RPC_URL),
 ];
-const keys = Object.entries(process.env).filter(([k]) => /^SMOKE_THROWAWAY_[0-9A-F]+_KEY$/.test(k));
+// Throwaway wallets accumulate across runs under several prefixes. Sweep all
+// of them; each live script that creates one persists its key here first, so
+// this is the one place that returns what they left behind.
+//
+// SHOWCASE_A_* is deliberately NOT in this list: those are the demo's keys,
+// and their wallets are a demo asset rather than a leftover. They need no
+// funds anyway, since a mirror proof is paid by whichever wallet submits it.
+const keys = Object.entries(process.env).filter(([k]) =>
+  /^(SMOKE_THROWAWAY_[0-9A-F]+|SHOWCASE_ORPHAN[0-9]+|X402_CELO_[0-9A-F]+|QA_X402_[0-9A-F]+|X402APPROVALS_[0-9A-F]+|TB_X402_RERUN|REVIEW109)_KEY$/.test(k),
+);
 
 for (const [name, key] of keys) {
   const admin = signerFromPrivateKey(key as Hex);

@@ -36,7 +36,8 @@
     "live:hypersigner-celo": "bun run live-hypersigner-celo-cache.ts",
     "live:x402-approvals": "bun run live-x402-session-approvals.ts",
     "build:x402": "cd ../../packages/x402-server && bun run build",
-    "serve:x402-celo": "bun run build:x402 && bun run serve-x402-celo.ts"
+    "serve:x402-celo": "bun run build:x402 && bun run serve-x402-celo.ts",
+    "spine": "bun run celo-spine.ts"
   },
   "dependencies": {
     "@altananetwork/hypersigner-keystore-mcp": "workspace:*",
