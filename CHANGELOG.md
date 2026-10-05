@@ -62,6 +62,22 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
   from the rail. Verification stays local either way, since the merchant's own
   is ERC-1271-aware and a facilitator's need not be. `POST /settle` needs an
   `X-API-Key`, and a 401 says so rather than looking like a rejected payment.
+- **`@altananetwork/hypersigner-keystore-mcp`: an L1 key, readable on Celo.**
+  The server encoded L1 KeyStore calls only, so an authorize, a timebox or a
+  revoke it produced was invisible to anything on Celo: an L2 rooted in the
+  KeyStore reads authority through a `KeyStoreCache`, and the cache knows only
+  what someone has proven into it. `keystore_cache_status` reads that cache and
+  separates the three states a caller otherwise conflates: never proven, proven
+  at the block the L2 anchors, and proven at another one. The third matters
+  because `isValidKey` answers only for the anchored block, so one anchor update
+  makes a correct entry read as not valid until a fresh proof lands. And
+  `keystore_encode_cache_proof` returns the unsigned `populateKey` call that
+  carries the key's current L1 state across. Relaying is permissionless, so any
+  funded L2 account can send it for any user, and the server still signs nothing.
+  An L2 alias now also names its mirror: `ALTANA_CHAIN=celo-sepolia` resolves to
+  the Sepolia registry and Celo Sepolia's cache, while `ALTANA_CHAIN=sepolia`
+  resolves to the same registry with no L2, because several L2s are rooted in it.
+  `L2_RPC_URL` overrides the L2 read RPC.
 
 - **Keystore writes funded from the L2.** `grantSession`, `revokeSession` and
   `registerSessionKey` no longer need ETH on the Keystore chain: when the wallet

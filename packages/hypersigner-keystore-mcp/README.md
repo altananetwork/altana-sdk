@@ -45,8 +45,9 @@ Use stdio transport:
 
 Optional env vars:
 
-- `ALTANA_CHAIN`: `bnb`, `bsc`, `56`, `ethereum`, `eth`, `1`, `bnb-testnet`, `97`, `sepolia`, `11155111`. Defaults to `bnb`. L2 aliases resolve to the L1 that holds the KeyStore: `celo` / `42220` to `ethereum`, `celo-sepolia` / `11142220` to `sepolia`. Encoded calls carry that chain's `chainId`; sign them there.
-- `RPC_URL`: override the default public RPC URL.
+- `ALTANA_CHAIN`: `bnb`, `bsc`, `56`, `ethereum`, `eth`, `1`, `bnb-testnet`, `97`, `sepolia`, `11155111`. Defaults to `bnb`. L2 aliases resolve to the L1 that holds the KeyStore *and* name the L2's cache: `celo` / `42220` to `ethereum`, `celo-sepolia` / `11142220` to `sepolia`. Every encoded call carries the `chainId` to sign it on: registry calls the L1's, the cache proof the L2's. See [Reaching an L2: Celo](#reaching-an-l2-celo).
+- `RPC_URL`: override the default registry RPC URL.
+- `L2_RPC_URL`: override the L2 read RPC URL, when `ALTANA_CHAIN` names an L2.
 
 ## Tools
 
@@ -71,6 +72,52 @@ Optional env vars:
   - Returns unsigned calldata to revoke a key.
   - Revocation must be signed by the user account.
 
+- `keystore_cache_status`
+  - Reads the L2 KeyStoreCache: is this key valid on the L2 right now?
+  - Says which state the entry is in (never proven, proven at the anchored block, proven at an earlier one) and which L1 block the L2 anchors.
+  - Set `ALTANA_CHAIN` to an L2 alias (`celo`, `celo-sepolia`).
+
+- `keystore_encode_cache_proof`
+  - Returns unsigned calldata for the L2 cache's `populateKey`: the proof that carries the key's current L1 state to the L2.
+  - Permissionless: sign and send it from any funded L2 account, not necessarily the user's.
+
+## Reaching an L2: Celo
+
+An L2 keeps its KeyStore on the L1. Celo's wallets are authorized in the
+Ethereum registry, Celo Sepolia's in the Sepolia one, and read on the L2 through
+a `KeyStoreCacheOPStack`, which answers `isValidKey` with one `eth_call`.
+
+The cache holds what has been proven into it. A `populateKey` call carries a
+key's L1 state across — an authorization, a new expiry or a revocation alike —
+by proving the KeyStore's storage against the L1 block the L2's `L1Block`
+predeploy anchors. Relaying is permissionless: any funded L2 account may relay a
+proof for any user, and the relayer gains nothing and can change nothing.
+
+An entry is an assertion about one anchored block. `isValidKey` requires the
+entry's `sourceBlockNumber` to equal `L1Block.number()`, so the cache answers
+for the block it anchors and no other, and the next anchor update ends the
+entry's usefulness. Read a key in the window its proof was made for, or prove it
+again.
+
+The lag between the two chains sets that window. A proof can only carry what
+the anchored block already holds, so an L1 write becomes provable once the
+anchor reaches it: on Celo Sepolia the predeploy advances roughly every 20
+minutes and trails Sepolia by 15 to 20, which is also how long the window
+lasts. `keystore_cache_status` returns the anchored block as `anchor.number`.
+
+Set `ALTANA_CHAIN` to the L2. It resolves to the registry that holds the
+KeyStore *and* names the mirror:
+
+| `ALTANA_CHAIN` | Registry (sign registry calls here) | Cache (sign the proof here) |
+| --- | --- | --- |
+| `celo`, `42220` | Ethereum, chain 1 | Celo, chain 42220 |
+| `celo-sepolia`, `11142220` | Sepolia, chain 11155111 | Celo Sepolia, chain 11142220 |
+
+Naming the registry chain itself (`ethereum`, `sepolia`) resolves to the same
+registry with no mirror: more than one L2 is rooted in each, so nothing would
+say which cache a proof is meant for. `L2_RPC_URL` overrides the L2 read RPC, as
+`RPC_URL` does for the registry.
+
 ## Safety Model
 
 This server is intentionally not a wallet.
@@ -89,6 +136,10 @@ This server is intentionally not a wallet.
 4. A counterparty calls `keystore_verify_authorization` before serving the agent.
 5. The user can later call `keystore_encode_revoke_key`; once signed and sent, all readers see the key as invalid.
 
+On an L2, steps 3 and 5 each carry on with one more call:
+`keystore_encode_cache_proof`, signed and sent on the L2, takes the new state to
+the cache, and readers there see it from then on.
+
 ## Programmatic Helpers
 
 The package also exports typed helpers:
@@ -101,7 +152,15 @@ import {
   readIsValidKey,
   resolveChain,
 } from "@altananetwork/hypersigner-keystore-mcp/keystore";
+
+// The L2 cache, same shape: reads and unsigned calls.
+import { encodeCacheProof, readCacheStatus } from "@altananetwork/hypersigner-keystore-mcp/cache";
 ```
+
+`./keystore` needs nothing but viem. `./cache` borrows the SDK's proof builder
+rather than keeping a second copy of the KeyStore's storage layout, because a
+proof built against the wrong slot does not fail loudly: it proves the value of
+another word.
 
 ## License
 

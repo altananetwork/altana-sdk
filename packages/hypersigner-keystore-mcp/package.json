@@ -20,7 +20,8 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./keystore": "./src/keystore.ts"
+    "./keystore": "./src/keystore.ts",
+    "./cache": "./src/cache.ts"
   },
   "files": [
     "src",
@@ -49,6 +50,7 @@
     "prepublishOnly": "node ../../scripts/check-publishable.mjs && bun run typecheck"
   },
   "dependencies": {
+    "@altananetwork/sdk": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "viem": "^2.21.0",
     "zod": "^3.23.0"

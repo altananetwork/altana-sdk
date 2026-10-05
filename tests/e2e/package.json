@@ -32,14 +32,16 @@
     "smoke:celo-fee-currency": "bun run smoke-celo-fee-currency.ts",
     "smoke:everywhere": "bun run smoke-everywhere.ts",
     "live:erc8004-celo": "bun run live-erc8004-celo-sepolia.ts",
-    "live:x402-celo-facilitator": "bun run live-x402-celo-facilitator.ts"
+    "live:x402-celo-facilitator": "bun run live-x402-celo-facilitator.ts",
+    "live:hypersigner-celo": "bun run live-hypersigner-celo-cache.ts"
   },
   "dependencies": {
-    "@altananetwork/sdk": "workspace:*",
+    "@altananetwork/hypersigner-keystore-mcp": "workspace:*",
     "@altananetwork/mcp": "workspace:*",
+    "@altananetwork/sdk": "workspace:*",
+    "@altananetwork/x402-server": "workspace:*",
     "porto": "0.2.37",
-    "viem": "^2.21.0",
-    "@altananetwork/x402-server": "workspace:*"
+    "viem": "^2.21.0"
   },
   "devDependencies": {
     "typescript": "^5.6.3",
