@@ -34,7 +34,9 @@
     "live:erc8004-celo": "bun run live-erc8004-celo-sepolia.ts",
     "live:x402-celo-facilitator": "bun run live-x402-celo-facilitator.ts",
     "live:hypersigner-celo": "bun run live-hypersigner-celo-cache.ts",
-    "live:x402-approvals": "bun run live-x402-session-approvals.ts"
+    "live:x402-approvals": "bun run live-x402-session-approvals.ts",
+    "build:x402": "cd ../../packages/x402-server && bun run build",
+    "serve:x402-celo": "bun run build:x402 && bun run serve-x402-celo.ts"
   },
   "dependencies": {
     "@altananetwork/hypersigner-keystore-mcp": "workspace:*",
