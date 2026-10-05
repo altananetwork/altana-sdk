@@ -144,3 +144,61 @@ const merchant = createX402Merchant({
 ```
 
 `USDC_CELO` and `USDT_CELO` are the mainnet equivalents (chain 42220, `chain: celo`). Settlement transactions are standard EIP-1559: viem's Celo serializer only emits the Celo-specific type when a fee currency is set, which the merchant never does. Buyers name the chain as `eip155:11142220` (or the SDK alias `celo-sepolia`).
+
+### Settling through Celo's facilitator
+
+Celo runs a hosted facilitator, which broadcasts the payment and pays the gas, so a merchant can take payments without an RPC or a funded key:
+
+| Network | Base URL |
+| --- | --- |
+| Celo (42220) | `CELO_FACILITATOR_URL`, `https://api.x402.celo.org` |
+| Celo Sepolia (11142220) | `CELO_SEPOLIA_FACILITATOR_URL`, `https://api.x402.sepolia.celo.org` |
+
+Point a merchant at one with `facilitatorService`. `GET /supported` and `POST /verify` are open; `POST /settle` needs an `X-API-Key`, issued at [x402.celo.org](https://x402.celo.org) against a signed message.
+
+```ts
+import { createX402Merchant, facilitatorSupported, supportsExactOn, CELO_SEPOLIA_FACILITATOR_URL, USDC_CELO_SEPOLIA } from "@altananetwork/x402-server";
+
+// Optional, and worth it at startup: a merchant pointed at the wrong network
+// gets a clear answer before a buyer pays for one.
+const supported = await facilitatorSupported({ url: CELO_SEPOLIA_FACILITATOR_URL });
+if (!supportsExactOn(supported.kinds, 11142220)) throw new Error("facilitator does not serve this chain");
+
+const merchant = createX402Merchant({
+  chainId: 11142220,
+  payTo: "0xYourAltanaSmartAccount",
+  price: 200_000n,
+  rails: [{ rail: "eip3009", token: USDC_CELO_SEPOLIA }],
+  facilitator: privateKeyToAccount(process.env.FACILITATOR_KEY),  // still the Permit2 spender
+  facilitatorService: {
+    url: CELO_SEPOLIA_FACILITATOR_URL,
+    apiKey: process.env.X402_CELO_API_KEY,
+  },
+  rpcUrl: "https://forno.celo-sepolia.celo-testnet.org",
+  chain: celoSepolia,
+});
+```
+
+The choice is **per rail**, and the receipt says which route settled each payment:
+
+```ts
+const { receipt } = await merchant.guard(request);
+receipt.settledVia;   // "facilitator" | "merchant"
+receipt.rail;         // "eip3009" | "permit2" | "permit2-witness"
+```
+
+`settledVia` is recorded by whichever route broadcast it, so read it rather than deriving it from the rail — the rail does not imply the route, because `rails` decides what goes where.
+
+`facilitatorService.rails` is `["eip3009"]` unless you set it; every other rail settles from the merchant's own key. A facilitator declares what it takes per asset in `GET /supported`, and `facilitatorRails` reads it:
+
+```ts
+import { facilitatorSupported, facilitatorRails, facilitatorAssets, CELO_FACILITATOR_URL } from "@altananetwork/x402-server";
+
+const supported = await facilitatorSupported({ url: CELO_FACILITATOR_URL });
+facilitatorRails(supported.kinds, 42220);   // the rails it claims for this chain
+facilitatorAssets(supported.kinds, 42220);  // each asset, with its assetTransferMethod
+```
+
+Verification stays local either way, because the merchant's own is ERC-1271-aware and a facilitator's need not be.
+
+The rail follows from who verifies the signature, and that contract must be an approved signature checker for the key. `Permit2.permitWitnessTransferFrom` verifies through ERC-1271, so `permit2-exact` carries a smart account's signature with Permit2 as the checker; an EIP-3009 token verifies `transferWithAuthorization` in its own code, so the `eip3009` rail carries one with the token as the checker. Circle's USDC verifies through `SignatureChecker`, so both rails carry a smart account's signature.

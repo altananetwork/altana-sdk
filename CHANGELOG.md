@@ -45,6 +45,23 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
   of `ERC8183_ADDRESSES` because Celo has the registry and none of the ERC-8183
   job-escrow stack; `Erc8183Addresses.registry` still names the same contract
   and now reads it from the new record, so the two cannot drift.
+- **`@altananetwork/x402-server`: settle through a hosted facilitator.**
+  `facilitatorService` points a merchant at one, which broadcasts the payment
+  and pays the gas, so a merchant can take payments without an RPC or a funded
+  key. Celo runs the one its own documentation points at:
+  `CELO_FACILITATOR_URL` (42220) and `CELO_SEPOLIA_FACILITATOR_URL`
+  (11142220); `facilitatorSupported` reads its open `GET /supported` and
+  `supportsExactOn` answers whether it serves a chain. The choice is per rail:
+  `facilitatorService.rails` decides what goes there and everything else
+  settles from the merchant's key, so one route covers both paths.
+  `facilitatorRails` and `facilitatorAssets` read what a facilitator claims per
+  asset from `GET /supported` — Celo's mainnet facilitator lists `eip3009` for
+  USDC, USDT and USAT and `permit2` for wARS, wBRL and wCOP — and the new
+  receipt field `settledVia` (`"facilitator"` or `"merchant"`) reports which
+  route settled a payment, so a seller states the route instead of inferring it
+  from the rail. Verification stays local either way, since the merchant's own
+  is ERC-1271-aware and a facilitator's need not be. `POST /settle` needs an
+  `X-API-Key`, and a 401 says so rather than looking like a rejected payment.
 
 - **Keystore writes funded from the L2.** `grantSession`, `revokeSession` and
   `registerSessionKey` no longer need ETH on the Keystore chain: when the wallet
@@ -225,6 +242,16 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
   counterfactual wallet's first intent gets a random sequence key and every
   intent after the delegation lands uses key 0, so counting up from the
   previous nonce is wrong exactly when it matters.
+- **`signX402Payment` signs a v2 envelope when the requirement names no
+  version.** A v2 `PaymentRequirements` carries no `x402Version` of its own (it
+  lives on the 402 body), so a caller handing `signX402Payment` an `accepts[]`
+  entry straight from a challenge had nothing to copy down and got a v1
+  envelope, which real v2 facilitators refuse for its format before looking at
+  the signature. Celo's answers `invalid_format`, "data did not match any
+  variant of untagged enum FacilitatorVerifyRequest", which points nowhere near
+  the version. The default is now 2; the requirement's own version still wins,
+  and the new `opts.x402Version` overrides both for a v1 merchant that does not
+  say so. `fetchWithX402` already stamped the body's version and is unchanged.
 
 - **Cache proofs no longer start before the L2 has anchored the registry
   write.** A relayed KeyStore write took its block number from a public RPC

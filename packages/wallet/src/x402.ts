@@ -112,7 +112,14 @@ export type X402Requirement = {
   amount?: string;
   payTo: Address;
   maxTimeoutSeconds?: number;
-  /** Echoed into the X-PAYMENT so it matches the challenge (real B402 = 2). */
+  /**
+   * Echoed into the X-PAYMENT so it matches the challenge. A v2
+   * `PaymentRequirements` carries no version of its own (it lives on the 402
+   * body), so this is transport-only: `fetchWithX402` copies the body's version
+   * down onto the requirement it picks, and `signX402Payment` assumes 2 when
+   * nobody says otherwise. Set it, or `opts.x402Version`, to sign for a v1
+   * merchant.
+   */
   x402Version?: number;
   /**
    * What the payment buys. Carried from the 402 body (top-level `resource`) so
@@ -161,6 +168,11 @@ export type X402PaymentPayload = {
 export type SignX402Options = {
   /** Unix seconds "now"; defaults to Date.now()/1000. */
   now?: number;
+  /**
+   * The protocol version to sign for. Defaults to the requirement's, then 2.
+   * Set it to 1 only for a merchant that speaks v1 and does not say so.
+   */
+  x402Version?: number;
   /** EIP-3009 32-byte authorization nonce; defaults to random. */
   eip3009Nonce?: Hex;
   /** Permit2 nonce; defaults to a random uint256. */
@@ -249,7 +261,14 @@ export async function signX402Payment(
 
   // Echo the challenge's version/scheme/network so the X-PAYMENT matches it
   // (real B402: x402Version 2, scheme "exact", network "eip155:56").
-  const version = req.x402Version ?? 1;
+  //
+  // 2 when nobody says otherwise. A v2 `accepts[]` entry carries no version by
+  // spec, so a caller handing `signX402Payment` one straight from a 402 has
+  // nothing to copy down, and a v1 envelope is refused by real v2 facilitators:
+  // Celo's answers `invalid_format`, "data did not match any variant of
+  // untagged enum FacilitatorVerifyRequest", which says nothing about the
+  // version. `fetchWithX402` stamps the body's version and is unaffected.
+  const version = opts.x402Version ?? req.x402Version ?? 2;
   const rail = resolveRail(req);
 
   let inner: Record<string, unknown>;

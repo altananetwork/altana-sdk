@@ -3,6 +3,21 @@ export { decodeXPayment } from "./decode.js";
 export { verifyPayment, type VerifyOptions, type VerifySignatureFn } from "./verify.js";
 export { describeError, settlePayment, witnessHash, type SettleClients, type SettleOptions, type SettleResult } from "./settle.js";
 export {
+  settleViaFacilitator,
+  settlesViaFacilitator,
+  facilitatorSupported,
+  facilitatorUrlFor,
+  supportsExactOn,
+  facilitatorAssets,
+  facilitatorRails,
+  CELO_FACILITATOR_URL,
+  CELO_SEPOLIA_FACILITATOR_URL,
+  DEFAULT_FACILITATOR_RAILS,
+  type FacilitatorConfig,
+  type FacilitatorKind,
+  type FacilitatorAsset,
+} from "./facilitator.js";
+export {
   createX402Merchant,
   type HandleResult,
   type MerchantClients,

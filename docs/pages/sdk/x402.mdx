@@ -107,10 +107,16 @@ readable by b402 merchants and by anything already integrated against Altana:
   `PAYMENT-SIGNATURE`, since some b402 merchants read only the latter.
 
 When passing a requirement to `signX402Payment` yourself, set `resource` on it
-so the envelope carries one.
+so the envelope carries one. The envelope is signed as x402 **v2** unless the
+requirement carries an `x402Version` of its own, or you pass
+`{ x402Version: 1 }` for a merchant that speaks v1 and does not say so. A v2
+`accepts[]` entry never carries a version (it belongs to the 402 body), so
+there is nothing to copy down when you hand one straight over;
+`fetchWithX402` stamps the body's version for you.
 
 ## Notes
 
 - **Pay once per call.** `fetchWithX402` signs one authorization and retries once. If the merchant answers that retry with another 402, the settlement failed on its side and the response is returned to you unchanged. Do not loop back into `fetchWithX402` blindly: a merchant that reports "failed" for a transfer it did broadcast would collect twice. Altana's own merchant package never does this (a broadcast payment is answered 200 with a pending receipt), but before re-paying a third-party merchant, check the first authorization's on-chain state.
 - **Browser limitation.** Third-party x402 endpoints often omit `X-PAYMENT` from CORS `Access-Control-Allow-Headers`, so a browser can't POST the payment. Run `fetchWithX402` server-side.
 - The signature is a 98-byte ERC-1271 envelope, not an EOA signature — see [Off-chain signatures](/concepts/off-chain-signatures). A facilitator must verify via `isValidSignature`.
+- **Which rail carries a smart-account signature.** The settling contract verifies it, so the rail decides which contract calls `isValidSignature` on the wallet — and that contract must be an approved signature checker for the key. `Permit2.permitWitnessTransferFrom` verifies through ERC-1271, so `permit2-exact` carries an Altana wallet's signature with Permit2 as the checker. An EIP-3009 token verifies `transferWithAuthorization` in its own code, so the `eip3009` rail carries it with the token as the checker. Circle's USDC and `$U` both verify through `SignatureChecker`, so both rails carry an Altana wallet's signature once the matching approval is set; granting with `x402Tokens` sets both.
