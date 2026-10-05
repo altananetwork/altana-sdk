@@ -115,6 +115,12 @@ export function X402Panel() {
   );
 
   const refreshReadiness = useCallback(async () => {
+    // KNOWN GAP, pending the x402 correction: the eip3009 rail needs the
+    // *token* approved as the key's checker, exactly as the permit2 rails need
+    // Permit2 (evidence/2026-10-05-celo-usdc-does-honour-erc1271.md). This
+    // readiness check models only the permit2 half, so an eip3009 payment from
+    // a session without that approval fails with "FiatTokenV2: invalid
+    // signature" and no guidance here.
     if (!wallet || !payToken || !sessionKeyHash || rail !== "permit2") {
       setReady(undefined);
       return;

@@ -244,7 +244,23 @@ describe("X402Panel, the two Permit2 approvals", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/signature checker returned FAILED/);
   });
 
-  test("the EIP-3009 rail needs neither approval, so none is asked for", async () => {
+  /**
+   * KNOWN WRONG, pending the x402 correction. This pins what the panel does
+   * today, not what it should do.
+   *
+   * The eip3009 rail needs an approved checker too: the **token itself**, where
+   * the permit2 rails need Permit2 (sdk, evidence/2026-10-05-celo-usdc-does-
+   * honour-erc1271.md). Without it the payment fails with
+   * `FiatTokenV2: invalid signature`, which is the same silent class of failure
+   * the Permit2 approval banner exists to prevent, in the rail this panel
+   * models as needing nothing.
+   *
+   * It is left green and renamed rather than deleted so the suite does not
+   * certify the falsehood: a passing test called "needs neither approval" is
+   * worse than no test, because it tells the next reader the question is
+   * settled.
+   */
+  test("today the panel asks for nothing on the EIP-3009 rail, which is known to be wrong", async () => {
     mockFetch(() => Response.json(HEALTH));
     const client = fakeClient({
       permit2Readiness: vi.fn(async () => ({ tokenAllowance: 0n, checkers: [] })),
