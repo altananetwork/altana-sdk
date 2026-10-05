@@ -237,23 +237,31 @@ describe("granting a session that can pay x402", () => {
 });
 
 describe("which tokens a session can be granted x402 for", () => {
-  /** The live relay: the oracle is gate G1, so it lists no ERC-20 fee tokens. */
-  const feeTokensEmpty = fakeClient({
-    feeCurrencies: vi.fn(async (chainId) => ({
-      chainId,
-      currencies: [{ uid: "native", address: ZERO, symbol: "S-CELO", decimals: 18, nativeRate: 10n ** 18n, isNative: true }],
-      rateTtl: 300,
-    })),
-  });
+  /**
+   * The live relay: the oracle is gate G1, so it lists no ERC-20 fee tokens.
+   *
+   * A factory rather than one shared client, because `grantSession.mock.calls`
+   * accumulates: shared, every test after the first reads an earlier test's
+   * grant out of `calls[0]` and passes or fails for the wrong reason.
+   */
+  const nativeOnlyRelay = () => {
+    const client = fakeClient({
+      feeCurrencies: vi.fn(async (chainId) => ({
+        chainId,
+        currencies: [{ uid: "native", address: ZERO, symbol: "S-CELO", decimals: 18, nativeRate: 10n ** 18n, isNative: true }],
+        rateTtl: 300,
+      })),
+    });
+    (client.grantSession as ReturnType<typeof vi.fn>).mockResolvedValue(grantResult({ permissions: { spend: [] }, expiry: 0 }));
+    return client;
+  };
 
   test("the list survives a relay that accepts no ERC-20 fees, because it is not the fee list", async () => {
     // Sourcing it from fee currencies left nothing to tick on the live relay,
     // so a session could not be granted x402-ready at all (qa, 2026-10-05).
     // What a seller charges in has nothing to do with what the relay takes for
     // gas, and that list is empty for an unrelated reason: gate G1.
-    (feeTokensEmpty.grantSession as ReturnType<typeof vi.fn>).mockResolvedValue(
-      grantResult({ permissions: { spend: [] }, expiry: 0 }),
-    );
+    const feeTokensEmpty = nativeOnlyRelay();
     setup(feeTokensEmpty);
     const usdc = await screen.findByRole("checkbox", { name: "USDC for x402" });
     expect(usdc).toBeInTheDocument();
@@ -264,6 +272,38 @@ describe("which tokens a session can be granted x402 for", () => {
     await userEvent.click(screen.getByRole("button", { name: "Grant session" }));
     await waitFor(() => expect(feeTokensEmpty.grantSession).toHaveBeenCalled());
     expect(vi.mocked(feeTokensEmpty.grantSession).mock.calls[0]![0]).toMatchObject({ x402Tokens: [USDC] });
+  });
+
+  test("a USDC spend cap is settable on that same relay, and lands at 6 decimals", async () => {
+    // The cap dropdown was the last control still keyed to the fee list, so on
+    // the live relay the only cap settable was S-CELO while the session paid
+    // x402 in USDC: a bound on a token it never spends (qa, 2026-10-05).
+    const feeTokensEmpty = nativeOnlyRelay();
+    setup(feeTokensEmpty);
+    const token = await screen.findByRole("combobox", { name: "Cap 1 token" });
+    await userEvent.selectOptions(token, USDC);
+    const amount = screen.getByRole("textbox", { name: "Cap 1 amount" });
+    await userEvent.clear(amount);
+    await userEvent.type(amount, "2.5");
+
+    await userEvent.click(screen.getByRole("button", { name: "Grant session" }));
+    await waitFor(() => expect(feeTokensEmpty.grantSession).toHaveBeenCalled());
+    // 2_500_000, not 2.5e18: the decimals come from the token, and resolving a
+    // 6-decimal token at 18 would have granted a cap 10^12 too large.
+    expect(vi.mocked(feeTokensEmpty.grantSession).mock.calls[0]![0].permissions.spend).toEqual([
+      { limit: 2_500_000n, period: "day", token: USDC },
+    ]);
+  });
+
+  test("ticking USDC for x402 also caps it, so the grant bounds the token it spends", async () => {
+    const feeTokensEmpty = nativeOnlyRelay();
+    setup(feeTokensEmpty);
+    await userEvent.click(await screen.findByRole("checkbox", { name: "USDC for x402" }));
+    await userEvent.click(screen.getByRole("button", { name: "Grant session" }));
+    await waitFor(() => expect(feeTokensEmpty.grantSession).toHaveBeenCalled());
+    const sent = vi.mocked(feeTokensEmpty.grantSession).mock.calls[0]![0];
+    expect(sent).toMatchObject({ x402Tokens: [USDC] });
+    expect(sent.permissions.spend).toEqual([{ limit: 50_000n, period: "day", token: USDC }]);
   });
 
   test("a token neither list anticipated can be typed in", async () => {

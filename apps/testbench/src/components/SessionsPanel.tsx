@@ -15,9 +15,10 @@ import type { Address } from "viem";
 import { txUrl } from "../lib/explorer";
 import { nativeLabel, symbolFor } from "../lib/fees";
 import { formatAmount, sameAddress } from "../lib/format";
+import { knownTokensOf } from "../lib/holdings";
 import { relayReason } from "../lib/errors";
 import { entry } from "../lib/log";
-import { PERIODS, buildGrant, defaultForm, describeCaps, type SessionForm } from "../lib/sessions";
+import { PERIODS, buildGrant, capTokenOptions, defaultForm, describeCaps, withX402Cap, type SessionForm } from "../lib/sessions";
 import type { StoredSession } from "../lib/storage";
 import { useApp, useEnsureRegistered, useRun } from "../state/AppState";
 import { chainName, STABLECOINS } from "../lib/chains";
@@ -65,6 +66,13 @@ export function SessionsPanel() {
    * in: a seller can charge in a token neither list anticipated.
    */
   const x402Candidates = STABLECOINS[state.chainId] ?? [];
+  /**
+   * Tokens a spend cap can be set in: the chain's ERC-20s as well as the
+   * relay's fee currencies. Sourcing this from the fee list alone left only
+   * S-CELO settable on the live relay, so a session paying x402 in USDC was
+   * capped in a token it never spent (qa, 2026-10-05).
+   */
+  const capTokens = capTokenOptions(state.chainId, currencies);
   const [error, setError] = useState<string>();
   const [quote, setQuote] = useState<SessionQuote>();
   const [busy, setBusy] = useState<string>();
@@ -97,7 +105,7 @@ export function SessionsPanel() {
 
   const grantArgs = () => {
     if (!wallet) throw new Error("Create a wallet first.");
-    const { permissions, expiry } = buildGrant(form, currencies);
+    const { permissions, expiry } = buildGrant(form, capTokens);
     // A remembered token the relay no longer lists (its price feed lapsed) is dropped.
     const feeTokens = form.feeTokens.filter((a) => currencies.some((c) => sameAddress(c.address, a)));
     return {
@@ -198,7 +206,7 @@ export function SessionsPanel() {
           chainId: state.chainId,
         });
         setExecResult({ id: s.id, result });
-        const holdings = await client.holdings(wallet.address, state.chainId);
+        const holdings = await client.mergedHoldings(wallet.address, state.chainId, knownTokensOf(state));
         dispatch({ type: "holdings/set", chainId: state.chainId, holdings });
       } finally {
         setBusy(undefined);
@@ -255,8 +263,8 @@ export function SessionsPanel() {
                   <input aria-label={`Cap ${i + 1} amount`} value={c.amount} onChange={(e) => setCap(i, { amount: e.target.value })} style={{ width: 110 }} />
                   <select aria-label={`Cap ${i + 1} token`} value={c.token} onChange={(e) => setCap(i, { token: e.target.value as Address | "native" })}>
                     <option value="native">{native}</option>
-                    {currencies.filter((x) => !x.isNative).map((x) => (
-                      <option key={x.uid} value={x.address}>
+                    {capTokens.map((x) => (
+                      <option key={x.address} value={x.address}>
                         {x.symbol}
                       </option>
                     ))}
@@ -317,14 +325,18 @@ export function SessionsPanel() {
                       type="checkbox"
                       aria-label={`${t.symbol} for x402`}
                       checked={form.x402Tokens.some((a) => sameAddress(a, t.address))}
-                      onChange={(e) =>
-                        setForm({
+                      onChange={(e) => {
+                        const next = {
                           ...form,
                           x402Tokens: e.target.checked
                             ? [...form.x402Tokens, t.address]
                             : form.x402Tokens.filter((a) => !sameAddress(a, t.address)),
-                        })
-                      }
+                        };
+                        // Ticking a token to pay with also caps it, while no
+                        // cap names an ERC-20 yet: the alternative is a grant
+                        // bounded only in a token it never spends.
+                        setForm(e.target.checked ? withX402Cap(next, t.address) : next);
+                      }}
                     />
                     <span>{t.symbol}</span>
                   </label>
@@ -478,7 +490,7 @@ export function SessionsPanel() {
                   </div>
                 </div>
                 <div className="muted small">
-                  Key <Addr value={s.keyId} /> · caps: {describeCaps(s.serialized.permissions.spend ?? [], currencies, native)} · expires{" "}
+                  Key <Addr value={s.keyId} /> · caps: {describeCaps(s.serialized.permissions.spend ?? [], capTokens, native)} · expires{" "}
                   {new Date(s.serialized.expiry * 1000).toLocaleString()}
                 </div>
                 {shownKey === s.id && (

@@ -65,7 +65,16 @@ export type StablecoinInfo = {
   sourceUrl?: string;
 };
 
-/** Fee tokens the testnet relay accepts on Celo Sepolia (relay.testnet.yaml). */
+/**
+ * The bench's own registry of ERC-20s on each chain, with the decimals every
+ * amount on screen is scaled by.
+ *
+ * It began as a copy of the testnet relay's fee list (relay.testnet.yaml) and
+ * is no longer that: the relay's fee currencies are what it takes for gas,
+ * which is a different question from what a session may spend or pay x402
+ * with. Those lists are read from the relay at runtime; this one is the chain's
+ * tokens.
+ */
 export const STABLECOINS: Record<number, readonly StablecoinInfo[]> = {
   [CELO_SEPOLIA.chainId]: [
     {

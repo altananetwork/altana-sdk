@@ -9,6 +9,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { keccak256, type Address, type Hex } from "viem";
+import { knownTokensFor } from "../lib/holdings";
 import { chainName } from "../lib/chains";
 import { relayReason } from "../lib/errors";
 import { txUrl } from "../lib/explorer";
@@ -164,7 +165,10 @@ export function WalkthroughPanel() {
     async balances() {
       const wallet = app.wallet;
       if (!wallet) return { status: "blocked", detail: "No wallet." };
-      const celo = await client.holdings(wallet.address, CELO);
+      // The merged read, not the relay's: on Celo the relay enumerates no
+      // ERC-20s, so step 2 of the demo would open by reporting that a funded
+      // wallet holds nothing.
+      const celo = await client.mergedHoldings(wallet.address, CELO, knownTokensFor(CELO, app.feeCurrenciesChainId === CELO ? app.feeCurrencies ?? [] : []));
       dispatch({ type: "holdings/set", chainId: CELO, holdings: celo });
       const held = [
         ...(celo.native > 0n ? [`${formatAmount(celo.native, 18)} ${native}`] : []),
@@ -176,7 +180,7 @@ export function WalkthroughPanel() {
           detail: `On Celo Sepolia: ${held.join(", ") || "nothing yet"}. The relay in use does not serve Ethereum Sepolia, so its balance cannot be read from here.`,
         };
       }
-      const sepolia = await client.holdings(wallet.address, SEPOLIA.chainId);
+      const sepolia = await client.holdings(wallet.address, SEPOLIA.chainId);  // native ETH is all this step reads
       const zeroEth = sepolia.native === 0n;
       return {
         status: "done",

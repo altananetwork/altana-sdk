@@ -2,9 +2,9 @@ import {
   signerFromPasskey,
   signerFromPrivateKey,
   type FeeCurrency,
-  type HoldingsResult,
   type Signer,
 } from "@altananetwork/sdk";
+import type { MergedHoldings } from "../lib/holdings";
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, type ReactNode } from "react";
 import { privateKeyToAccount } from "viem/accounts";
 import type { Address, Hex } from "viem";
@@ -33,7 +33,7 @@ export type WalletState = {
 export type AppState = {
   wallet?: WalletState;
   chainId: number;
-  holdings?: HoldingsResult;
+  holdings?: MergedHoldings;
   holdingsChainId?: number;
   feeCurrencies?: FeeCurrency[];
   feeCurrenciesChainId?: number;
@@ -47,7 +47,7 @@ export type Action =
   | { type: "wallet/registered" }
   | { type: "wallet/clear" }
   | { type: "chain/set"; chainId: number }
-  | { type: "holdings/set"; chainId: number; holdings: HoldingsResult }
+  | { type: "holdings/set"; chainId: number; holdings: MergedHoldings }
   | { type: "fees/set"; chainId: number; currencies: FeeCurrency[] }
   | { type: "sessions/add"; session: StoredSession }
   | { type: "sessions/update"; id: string; patch: Partial<StoredSession> }

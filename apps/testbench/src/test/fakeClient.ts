@@ -1,4 +1,7 @@
 import { BASE_SEPOLIA, CELO_SEPOLIA, SEPOLIA, type FeeCurrency, type HoldingsResult } from "@altananetwork/sdk";
+import { mergeHoldings, type KnownToken } from "../lib/holdings";
+import type { Address } from "viem";
+import { formatAmount } from "../lib/format";
 import { vi } from "vitest";
 import type { MirrorReading } from "../lib/mirror";
 import type { TestbenchClient } from "../lib/sdk";
@@ -47,7 +50,17 @@ export type FakeClient = TestbenchClient & { [K in keyof TestbenchClient]: Testb
 /** A recording client with sensible defaults; override any method per test. */
 export function fakeClient(overrides: Partial<TestbenchClient> = {}): FakeClient {
   const chains = [CELO_SEPOLIA, BASE_SEPOLIA, SEPOLIA];
-  return {
+  /**
+   * Chain balances the relay does not enumerate, keyed by token address.
+   *
+   * Empty by default, which is the live relay on Celo: it lists no ERC-20s at
+   * all. A test that wants a token only the chain knows about sets
+   * `onChainBalances` through the overrides.
+   */
+  const onChain = new Map<string, bigint>(
+    Object.entries((overrides as { onChainBalances?: Record<string, bigint> }).onChainBalances ?? {}).map(([k, v]) => [k.toLowerCase(), v]),
+  );
+  const built: FakeClient = {
     chains,
     createWallet: vi.fn(async (signer) => ({ address: signer.address })),
     // WebAuthn does not exist in jsdom, so a test that wants a passkey wallet
@@ -59,6 +72,23 @@ export function fakeClient(overrides: Partial<TestbenchClient> = {}): FakeClient
       throw new Error("recoverFromPasskey not configured in this test");
     }),
     holdings: vi.fn(async () => holdingsWithUsdc),
+    /**
+     * Delegates to this same fake's `holdings`, then fills from `onChain`.
+     *
+     * Delegating matters: every test that controls balances does it by
+     * overriding `holdings`, and a `mergedHoldings` that answered on its own
+     * would ignore all of them and quietly return the default.
+     */
+    mergedHoldings: vi.fn(async (wallet: Address, chainId: number, known: readonly KnownToken[]) => {
+      const relay = await built.holdings(wallet, chainId);
+      const reads = known
+        .filter((k) => !relay.tokens.some((t) => t.address.toLowerCase() === k.address.toLowerCase()))
+        .map((k) => {
+          const raw = onChain.get(k.address.toLowerCase()) ?? 0n;
+          return { address: k.address, ok: true as const, raw, decimals: k.decimals, symbol: k.symbol, display: formatAmount(raw, k.decimals) };
+        });
+      return mergeHoldings(relay, reads);
+    }),
     feeCurrencies: vi.fn(async (chainId) => ({ chainId, currencies: celoFees, rateTtl: 300 })),
     execute: vi.fn(async () => ({ callsId: "0x01" as const, status: "CONFIRMED" as const, transactionHash: "0xabc" as const, feeToken: USDC })),
     // The relay's fee for a native send, in CELO: 0.09, as seen on Celo Sepolia on 2026-09-17.
@@ -108,6 +138,7 @@ export function fakeClient(overrides: Partial<TestbenchClient> = {}): FakeClient
     })),
     ...overrides,
   };
+  return built;
 }
 
 /** A headless passkey credential, for tests and for the fake client. */

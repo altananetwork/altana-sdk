@@ -1,7 +1,8 @@
-import { NATIVE_TOKEN, type ExecuteResult, type HoldingsResult } from "@altananetwork/sdk";
+import { NATIVE_TOKEN, type ExecuteResult } from "@altananetwork/sdk";
 import { useEffect, useState } from "react";
 import { encodeFunctionData, erc20Abi, type Address } from "viem";
 import { chainName } from "../lib/chains";
+import { knownTokensOf, type MergedHoldings } from "../lib/holdings";
 import { txUrl } from "../lib/explorer";
 import { feeTokenOption, nativeLabel, symbolFor, type FeeMode } from "../lib/fees";
 import { formatAmount, isAddress, parseAmount, sameAddress } from "../lib/format";
@@ -11,7 +12,7 @@ import { Button } from "./shared/Button";
 import { Card } from "./shared/Card";
 import { Field } from "./shared/Field";
 
-type Outcome = { result: ExecuteResult; before: HoldingsResult; after?: HoldingsResult };
+type Outcome = { result: ExecuteResult; before: MergedHoldings; after?: MergedHoldings };
 
 export function SendPanel() {
   const { state, dispatch, client } = useApp();
@@ -81,7 +82,7 @@ export function SendPanel() {
       setOutcome(undefined);
       try {
         await ensureRegistered();
-        const before = holdings ?? (await client.holdings(wallet.address, state.chainId));
+        const before = holdings ?? (await client.mergedHoldings(wallet.address, state.chainId, knownTokensOf(state)));
         const result = await client.execute({
           wallet: { address: wallet.address },
           signer: wallet.signer,
@@ -90,7 +91,7 @@ export function SendPanel() {
           ...(feeToken !== undefined ? { feeToken } : {}),
         });
         setOutcome({ result, before });
-        const after = await client.holdings(wallet.address, state.chainId);
+        const after = await client.mergedHoldings(wallet.address, state.chainId, knownTokensOf(state));
         dispatch({ type: "holdings/set", chainId: state.chainId, holdings: after });
         setOutcome({ result, before, after });
       } catch (e) {

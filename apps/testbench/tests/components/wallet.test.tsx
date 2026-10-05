@@ -122,4 +122,63 @@ describe("Move all funds re-reads what the wallet holds", () => {
     const sent = vi.mocked(client.execute).mock.calls.map((c) => (c[0] as unknown as { calls: { to: string }[] }).calls[0]!.to);
     expect(sent).toContain(USDC);
   });
+
+  /**
+   * The relay can MOVE a token it cannot LIST: enumeration and execution are
+   * different capabilities and only enumeration is missing on the live testnet
+   * relay (qa, 2026-10-05). So neither readout may state that the wallet is
+   * empty of tokens, because the bench was never told that.
+   */
+  test("an empty token list is reported as the relay's answer, not as the wallet being empty", async () => {
+    const client = fakeClient();
+    (client.holdings as ReturnType<typeof vi.fn>).mockResolvedValue({ native: 10n ** 18n, tokens: [] });
+    renderWith(client, <WalletPanel />, { v: 1, walletKey: TEST_KEY, sessions: [] });
+    await waitFor(() => expect(client.holdings).toHaveBeenCalled());
+    const screenText = await screen.findByText(/No balance found for any token this bench knows about/);
+    expect(screenText).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("No tokens held on this chain");
+  });
+
+  test("the sweep says what it could not see, so a leftover is not silent", async () => {
+    const client = fakeClient();
+    (client.holdings as ReturnType<typeof vi.fn>).mockResolvedValue({ native: 10n ** 18n, tokens: [] });
+    renderWith(client, <WalletPanel />, { v: 1, walletKey: TEST_KEY, sessions: [] });
+    await userEvent.type(await screen.findByLabelText("Destination address"), TEST_ADDRESS);
+    await userEvent.click(screen.getByRole("button", { name: "Move everything" }));
+    await waitFor(() => expect(client.execute).toHaveBeenCalled());
+    expect(await screen.findByText(/A token in neither list would not have been seen/)).toBeInTheDocument();
+  });
+
+  /**
+   * The live relay on Celo: wallet_getAssets answers with the native balance
+   * alone, because the relay's token discovery runs on NodeReal and that is
+   * enabled for chains 1 and 56 only. The bench asks the chain for the rest.
+   */
+  describe("a relay that lists no ERC-20s at all", () => {
+    const nativeOnly = () =>
+      fakeClient({
+        holdings: vi.fn(async () => ({ native: 10n ** 18n, tokens: [] })),
+        // 0.09 USDC on chain: the balance qa watched the sweep strand.
+        onChainBalances: { [USDC]: 90_000n },
+      } as never);
+
+    test("a balance only the chain knows about is shown", async () => {
+      const client = nativeOnly();
+      renderWith(client, <WalletPanel />, { v: 1, walletKey: TEST_KEY, sessions: [] });
+      await waitFor(() => expect(client.mergedHoldings).toHaveBeenCalled());
+      expect(await screen.findByText("0.09")).toBeInTheDocument();
+      // And the old sentence, which asserted what the bench could not see, is gone.
+      expect(document.body.textContent).not.toContain("No tokens held on this chain");
+    });
+
+    test("the sweep moves it, instead of stranding it", async () => {
+      const client = nativeOnly();
+      renderWith(client, <WalletPanel />, { v: 1, walletKey: TEST_KEY, sessions: [] });
+      await userEvent.type(await screen.findByLabelText("Destination address"), TEST_ADDRESS);
+      await userEvent.click(screen.getByRole("button", { name: "Move everything" }));
+      await waitFor(() => expect(client.execute).toHaveBeenCalled());
+      const sent = vi.mocked(client.execute).mock.calls.map((c) => (c[0] as unknown as { calls: { to: string }[] }).calls[0]!.to);
+      expect(sent, "the USDC the relay never listed must still be swept").toContain(USDC);
+    });
+  });
 });

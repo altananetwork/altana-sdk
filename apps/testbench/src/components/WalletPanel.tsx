@@ -3,9 +3,10 @@ import { NATIVE_TOKEN } from "@altananetwork/sdk";
 import { encodeFunctionData, erc20Abi, type Address as Addr, type Hex } from "viem";
 import { generatePrivateKey } from "viem/accounts";
 import { NATIVE_FAUCETS, STABLECOINS, chainName } from "../lib/chains";
-import { nativeLabel } from "../lib/fees";
+import { EMPTY_HOLDINGS_NOTE, SWEEP_SCOPE_NOTE, nativeLabel } from "../lib/fees";
 import { addressUrl, tokenUrl, txUrl } from "../lib/explorer";
 import { formatAmount, isAddress } from "../lib/format";
+import { knownTokensOf } from "../lib/holdings";
 import { isPrivateKey } from "../lib/storage";
 import { useApp, useEnsureRegistered, useRun } from "../state/AppState";
 import { Address } from "./shared/Address";
@@ -33,7 +34,7 @@ export function WalletPanel() {
       if (!wallet) return;
       setBusy(true);
       try {
-        const holdings = await client.holdings(wallet.address, state.chainId);
+        const holdings = await client.mergedHoldings(wallet.address, state.chainId, knownTokensOf(state));
         dispatch({ type: "holdings/set", chainId: state.chainId, holdings });
       } finally {
         setBusy(false);
@@ -89,7 +90,7 @@ export function WalletPanel() {
       const results: { asset: string; status: string; hash?: Hex }[] = [];
       try {
         await ensureRegistered();
-        const held = await client.holdings(wallet.address, state.chainId);
+        const held = await client.mergedHoldings(wallet.address, state.chainId, knownTokensOf(state));
         dispatch({ type: "holdings/set", chainId: state.chainId, holdings: held });
         for (const t of held.tokens) {
           if (!t.ok || t.raw === 0n) continue;
@@ -105,7 +106,7 @@ export function WalletPanel() {
         // The fee comes from the relay's quote for this exact send, never from a guess: send
         // everything minus that fee when the relay charges in the native token, everything
         // when it charges in a token the wallet no longer holds nothing of.
-        const current = await client.holdings(wallet.address, state.chainId);
+        const current = await client.mergedHoldings(wallet.address, state.chainId, knownTokensOf(state));
         if (current.native > 0n) {
           const quoteArgs = { wallet: { address: wallet.address }, signer: wallet.signer, chainId: state.chainId };
           const q = await client.quoteExecute({ ...quoteArgs, calls: [{ to, value: current.native, data: "0x" }] });
@@ -115,7 +116,7 @@ export function WalletPanel() {
           results.push({ asset: native, status: r.status, hash: r.transactionHash });
           setMoved([...results]);
         }
-        dispatch({ type: "holdings/set", chainId: state.chainId, holdings: await client.holdings(wallet.address, state.chainId) });
+        dispatch({ type: "holdings/set", chainId: state.chainId, holdings: await client.mergedHoldings(wallet.address, state.chainId, knownTokensOf(state)) });
       } finally {
         setBusy(false);
       }
@@ -258,7 +259,7 @@ export function WalletPanel() {
                   {holdings.tokens.length === 0 && (
                     <tr>
                       <td colSpan={2} className="muted">
-                        No tokens held on this chain.
+                        {EMPTY_HOLDINGS_NOTE}
                       </td>
                     </tr>
                   )}
@@ -276,6 +277,7 @@ export function WalletPanel() {
                 </Button>
               </div>
             </Field>
+            {moved && <p className="muted small">{SWEEP_SCOPE_NOTE}</p>}
             {moved && (
               <ul className="stack small" style={{ margin: 0, paddingLeft: 18 }}>
                 {moved.map((m, i) => (

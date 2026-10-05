@@ -35,6 +35,8 @@ import { relayReason } from "./errors";
 import { entry, type LogEntry } from "./log";
 import type { MirrorReading } from "./mirror";
 import { cachedNetworkFor, mirrorTargetsOf, publicClientFor, readMirror } from "./mirrorReads";
+import { mergeHoldings, readOnChainBalances, type KnownToken, type MergedHoldings } from "./holdings";
+import { sameAddress } from "./format";
 import { proveWithRetry, type ProveResult, type ProveStatus } from "./proveMirror";
 
 /** The slice of the SDK client the panels use. Tests provide a fake. */
@@ -46,6 +48,17 @@ export interface TestbenchClient {
   /** Finds the wallet from an existing passkey, with no stored state. */
   recoverFromPasskey(): Promise<{ address: Address; signer: PasskeySigner }>;
   holdings(wallet: Address, chainId: number): Promise<HoldingsResult>;
+  /**
+   * The relay's holdings, plus a direct `balanceOf` for every known token the
+   * relay did not list.
+   *
+   * The relay enumerates ERC-20s through NodeReal, which is enabled for chains
+   * 1 and 56 only, so on Celo Sepolia `wallet_getAssets` answers with the
+   * native balance alone and a funded wallet looks empty (qa, 2026-10-05). The
+   * relay can still transfer what it cannot list, so the gap is in enumeration
+   * only, and every entry records which source it came from.
+   */
+  mergedHoldings(wallet: Address, chainId: number, known: readonly KnownToken[]): Promise<MergedHoldings>;
   feeCurrencies(chainId: number): Promise<FeeCurrenciesResult>;
   execute(opts: ClientExecuteOptions): Promise<ExecuteResult>;
   quoteExecute(opts: ClientExecuteOptions): Promise<CallsQuote>;
@@ -173,6 +186,14 @@ export function createLiveClient(chains: NetworkConfig[], log: Logger): Testbenc
       }),
     holdings: (wallet, chainId) =>
       call("holdings", { wallet, chainId }, () => client.holdings({ wallet, chainId, includeZero: false })),
+    mergedHoldings: (wallet, chainId, known) =>
+      call("mergedHoldings", { wallet, chainId, known: known.length }, async () => {
+        const relay = await client.holdings({ wallet, chainId, includeZero: false });
+        const missing = known.filter((k) => !relay.tokens.some((t) => sameAddress(t.address, k.address)));
+        if (missing.length === 0) return mergeHoldings(relay, []);
+        const onChain = await readOnChainBalances(publicClientFor(networkFor(chainId, chains)), wallet, missing);
+        return mergeHoldings(relay, onChain);
+      }),
     feeCurrencies: (chainId) => call("feeCurrencies", { chainId }, () => client.feeCurrencies({ chainId })),
     execute: (opts) => call("execute", opts, () => client.execute(opts)),
     quoteExecute: (opts) => call("quoteExecute", opts, () => client.quoteExecute(opts)),
