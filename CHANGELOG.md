@@ -187,6 +187,20 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Fixed
 
+- **A passkey wallet can be created on a cached-registry network.**
+  `createWallet({ signer: passkey })` refused on Celo Sepolia and Base Sepolia
+  with "signer produced a different address on chain 11155111". Those networks
+  provision two chains, the network and the KeyStore chain behind it, and
+  `createWallet` asked each chain for a wallet address separately. A passkey
+  has no EOA, so the throwaway secp256k1 that stands in for one was generated
+  per chain, giving the wallet a different address on each. The address and the
+  key that signs the EIP-7702 authorization over it are now decided once per
+  wallet (`planAccountProvisioning`) and used on every chain
+  (`provisionAccount`); `createPasskeyWallet` shares the same step. A passkey
+  wallet therefore has one address, with the passkey as admin, on the network
+  and on its registry chain, where its registry writes go through the relay
+  from its own account.
+
 - **Cache proofs no longer start before the L2 has anchored the registry
   write.** A relayed KeyStore write took its block number from a public RPC
   receipt lookup; when that lookup failed (the node had not indexed the
