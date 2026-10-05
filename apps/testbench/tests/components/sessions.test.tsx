@@ -5,7 +5,7 @@ import type { GrantSessionResult, SessionLeg } from "@altananetwork/sdk";
 import { SessionsPanel } from "../../src/components/SessionsPanel";
 import type { StoredSession } from "../../src/lib/storage";
 import { privateKeyToAccount } from "viem/accounts";
-import { TEST_ADDRESS, TEST_KEY, USDC, fakeClient } from "../../src/test/fakeClient";
+import { TEST_ADDRESS, TEST_KEY, USDC, ZERO, fakeClient } from "../../src/test/fakeClient";
 import { renderWith } from "../../src/test/render";
 
 const KEY_ID = "0x1111111111111111111111111111111111111111111111111111111111111111" as const;
@@ -233,5 +233,56 @@ describe("granting a session that can pay x402", () => {
     await userEvent.click(screen.getByRole("button", { name: "Grant session" }));
     await waitFor(() => expect(client.grantSession).toHaveBeenCalled());
     expect(vi.mocked(client.grantSession).mock.calls[0]![0]).not.toHaveProperty("x402Tokens");
+  });
+});
+
+describe("which tokens a session can be granted x402 for", () => {
+  /** The live relay: the oracle is gate G1, so it lists no ERC-20 fee tokens. */
+  const feeTokensEmpty = fakeClient({
+    feeCurrencies: vi.fn(async (chainId) => ({
+      chainId,
+      currencies: [{ uid: "native", address: ZERO, symbol: "S-CELO", decimals: 18, nativeRate: 10n ** 18n, isNative: true }],
+      rateTtl: 300,
+    })),
+  });
+
+  test("the list survives a relay that accepts no ERC-20 fees, because it is not the fee list", async () => {
+    // Sourcing it from fee currencies left nothing to tick on the live relay,
+    // so a session could not be granted x402-ready at all (qa, 2026-10-05).
+    // What a seller charges in has nothing to do with what the relay takes for
+    // gas, and that list is empty for an unrelated reason: gate G1.
+    (feeTokensEmpty.grantSession as ReturnType<typeof vi.fn>).mockResolvedValue(
+      grantResult({ permissions: { spend: [] }, expiry: 0 }),
+    );
+    setup(feeTokensEmpty);
+    const usdc = await screen.findByRole("checkbox", { name: "USDC for x402" });
+    expect(usdc).toBeInTheDocument();
+    // And no fee-token checkbox exists at all, which is the state that broke it.
+    expect(screen.queryByRole("checkbox", { name: "USDC for fees" })).not.toBeInTheDocument();
+
+    await userEvent.click(usdc);
+    await userEvent.click(screen.getByRole("button", { name: "Grant session" }));
+    await waitFor(() => expect(feeTokensEmpty.grantSession).toHaveBeenCalled());
+    expect(vi.mocked(feeTokensEmpty.grantSession).mock.calls[0]![0]).toMatchObject({ x402Tokens: [USDC] });
+  });
+
+  test("a token neither list anticipated can be typed in", async () => {
+    const client = fakeClient();
+    (client.grantSession as ReturnType<typeof vi.fn>).mockResolvedValue(
+      grantResult({ permissions: { spend: [] }, expiry: 0 }),
+    );
+    setup(client);
+    const other = "0x1111111111111111111111111111111111111111";
+    await userEvent.type(screen.getByLabelText(/Another token to pay x402 with/), other);
+    await userEvent.click(screen.getByRole("button", { name: "Grant session" }));
+    await waitFor(() => expect(client.grantSession).toHaveBeenCalled());
+    expect(vi.mocked(client.grantSession).mock.calls[0]![0]).toMatchObject({ x402Tokens: [other] });
+  });
+
+  test("a half-typed address is named and not sent", async () => {
+    const client = fakeClient();
+    setup(client);
+    await userEvent.type(screen.getByLabelText(/Another token to pay x402 with/), "0x123");
+    expect(await screen.findByText("That is not an address.")).toBeInTheDocument();
   });
 });

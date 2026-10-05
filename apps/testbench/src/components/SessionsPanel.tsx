@@ -10,7 +10,7 @@ import {
 } from "@altananetwork/sdk";
 import { useEffect, useState } from "react";
 import { generatePrivateKey } from "viem/accounts";
-import { keccak256 } from "viem";
+import { isAddress, keccak256 } from "viem";
 import type { Address } from "viem";
 import { txUrl } from "../lib/explorer";
 import { nativeLabel, symbolFor } from "../lib/fees";
@@ -20,7 +20,7 @@ import { entry } from "../lib/log";
 import { PERIODS, buildGrant, defaultForm, describeCaps, type SessionForm } from "../lib/sessions";
 import type { StoredSession } from "../lib/storage";
 import { useApp, useEnsureRegistered, useRun } from "../state/AppState";
-import { chainName } from "../lib/chains";
+import { chainName, STABLECOINS } from "../lib/chains";
 import { describeStatus } from "../lib/sessions";
 import { Address as Addr } from "./shared/Address";
 import { Badge } from "./shared/Badge";
@@ -49,6 +49,22 @@ export function SessionsPanel() {
   const native = nativeLabel(state.chainId, currencies, chains);
 
   const [form, setForm] = useState<SessionForm>(() => defaultForm(state.chainId));
+  const [x402Extra, setX402Extra] = useState("");
+
+  /**
+   * Which tokens the grant offers to approve for x402.
+   *
+   * **Not the relay's fee currencies.** Those are the tokens the relay will
+   * take for gas, which is gate G1 on the live relay and therefore empty, and
+   * has nothing to do with what a seller charges in. Sourcing the list from
+   * them left nothing to tick on the live relay, so a session could not be
+   * granted x402-ready at all and the x402 tab always needed the repair step
+   * (qa, 2026-10-05).
+   *
+   * This is the bench's own token registry for the chain, plus anything typed
+   * in: a seller can charge in a token neither list anticipated.
+   */
+  const x402Candidates = STABLECOINS[state.chainId] ?? [];
   const [error, setError] = useState<string>();
   const [quote, setQuote] = useState<SessionQuote>();
   const [busy, setBusy] = useState<string>();
@@ -295,29 +311,50 @@ export function SessionsPanel() {
                 in the same grant)
               </span>
               <div className="row">
-                {currencies
-                  .filter((c) => !c.isNative)
-                  .map((x) => (
-                    <label key={`x402-${x.uid}`} className="row" style={{ gap: 6 }}>
-                      <input
-                        type="checkbox"
-                        // Distinct from the fee-token checkbox for the same
-                        // symbol: two "USDC" boxes meaning different things.
-                        aria-label={`${x.symbol} for x402`}
-                        checked={form.x402Tokens.some((a) => sameAddress(a, x.address))}
-                        onChange={(e) =>
-                          setForm({
-                            ...form,
-                            x402Tokens: e.target.checked
-                              ? [...form.x402Tokens, x.address]
-                              : form.x402Tokens.filter((a) => !sameAddress(a, x.address)),
-                          })
-                        }
-                      />
-                      <span>{x.symbol}</span>
-                    </label>
-                  ))}
+                {x402Candidates.map((t) => (
+                  <label key={t.address} className="row" style={{ gap: 6 }}>
+                    <input
+                      type="checkbox"
+                      aria-label={`${t.symbol} for x402`}
+                      checked={form.x402Tokens.some((a) => sameAddress(a, t.address))}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          x402Tokens: e.target.checked
+                            ? [...form.x402Tokens, t.address]
+                            : form.x402Tokens.filter((a) => !sameAddress(a, t.address)),
+                        })
+                      }
+                    />
+                    <span>{t.symbol}</span>
+                  </label>
+                ))}
               </div>
+              <Field
+                label="Another token to pay x402 with"
+                htmlFor="x402-extra"
+                help="Any ERC-20 the seller charges in. The list above is what this bench knows on this chain, not what it can pay."
+                {...(x402Extra.trim() && !isAddress(x402Extra.trim()) ? { error: "That is not an address." } : {})}
+              >
+                <input
+                  id="x402-extra"
+                  value={x402Extra}
+                  placeholder="0x"
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setX402Extra(next);
+                    const typed = next.trim();
+                    const known = x402Candidates.map((t) => t.address);
+                    setForm((f) => ({
+                      ...f,
+                      x402Tokens: [
+                        ...f.x402Tokens.filter((a) => known.some((k) => sameAddress(k, a))),
+                        ...(isAddress(typed) ? [typed as Address] : []),
+                      ],
+                    }));
+                  }}
+                />
+              </Field>
               <span className="muted small">
                 Leave empty for a session that will not pay x402. Ticking a token here is what makes the x402
                 tab work without a repair step afterwards.
