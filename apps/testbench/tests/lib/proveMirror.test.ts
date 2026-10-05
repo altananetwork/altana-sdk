@@ -58,8 +58,10 @@ describe("proveWithRetry", () => {
   });
 
   test("it waits between attempts rather than firing both into the same window", async () => {
-    // Two fast attempts lose the same anchor window, which is exactly what
-    // happened: attempts 1 and 2 failed, and a third two minutes later worked.
+    // Observed: attempts 1 and 2 failed in quick succession and a third, two
+    // minutes later, worked. Whether the cause was the shared window or a slow
+    // round trip was never established, so the wait guards one and the
+    // re-read before sending guards the other.
     const { d, sleep } = deps({ anchors: [100n, 101n, 101n, 101n] });
     await proveWithRetry(d, { maxAttempts: 2, anchorSettleMs: 60_000 });
     expect(sleep).toHaveBeenCalledWith(60_000);

@@ -6,12 +6,18 @@
  * is slow (an `eth_getProof` and a header fetch), so an attempt can lose the
  * race it started, and the revert says `Cache: block header mismatch`.
  *
- * qa's dry run hit this twice in a row and succeeded on a third attempt two
- * minutes later (2026-10-05). Two fast attempts both lose the same window,
- * which is why a retry has to wait rather than fire immediately: the SDK's
- * `syncSessionToCache` pauses `anchorSettleMs`, 60 seconds by default, so that
- * every backend of a load-balanced RPC, and the relay's own node, agree on the
- * anchor before a proof is built against it.
+ * What was observed (qa, 2026-10-05): two attempts fired in quick succession
+ * both failed with that revert, and a third about two minutes later succeeded.
+ * Why is **not** established. Two explanations fit equally well: the two fast
+ * attempts lost the same anchor-settling window, or the anchor simply moved
+ * during a slow relay round trip. One data point does not separate them.
+ *
+ * So this guards against both rather than picking one. The anchor is re-read
+ * before sending, which defeats the slow-round-trip case, and a retry waits
+ * `anchorSettleMs` before trying again, which defeats the same-window case.
+ * The 60-second default is the SDK's own measured value in
+ * `syncSessionToCache`: long enough for every backend of a load-balanced RPC,
+ * and the relay's node, to settle on the same anchor.
  *
  * This is the one action the showcase turns on, and showcase key A can only be
  * proven once, so a failed attempt there has no second chance with the same
@@ -93,8 +99,9 @@ export type ProveOptions = {
   maxAttempts?: number;
   /**
    * How long to let a just-moved anchor propagate before building against it.
-   * The SDK measured 60 seconds for this; a shorter wait is how two attempts
-   * lose the same window.
+   * The SDK measured 60 seconds for this. A shorter wait risks two attempts
+   * landing in the same window, which is one of the two explanations for the
+   * failure this exists to prevent.
    */
   anchorSettleMs?: number;
   onStatus?: (s: ProveStatus) => void;
