@@ -16,8 +16,9 @@ const baseUrl =
 export default defineConfig({
   title: "Altana",
   titleTemplate: "%s · Altana",
+  // Also the opening line of llms.txt and llms-full.txt.
   description:
-    "Noncustodial authorization infrastructure for agentic workflows. Give agents provable, revocable authority to act onchain, scoped by policy you control and verifiable by anyone.",
+    "Altana is the self-custodial stack for agentic finance, enabling AI agents to execute across any open protocol under user-defined rules.",
   rootDir: ".",
   baseUrl,
   ogImageUrl:
@@ -106,10 +107,22 @@ export default defineConfig({
     {
       text: "Get Started",
       items: [
+        { text: "Build with AI", link: "/getting-started/build-with-claude" },
+        // Untitled group so llms-full.txt renders indented under the item
+        // above, like the Wallets children. Nesting it as that item's own
+        // `items` instead would let a click on the parent link fold it away.
+        {
+          text: "",
+          items: [
+            // Absolute URL on purpose: Vocs only emits llms-full.txt at build
+            // time, so a relative link 404s in dev. Absolute links also render
+            // with the external arrow and open in a new tab.
+            { text: "llms-full.txt", link: "https://docs.altana.network/llms-full.txt" },
+          ],
+        },
         { text: "Create a smart agentic wallet", link: "/getting-started/create-agentic-wallet" },
         { text: "Passkey wallet quickstart", link: "/getting-started/passkey" },
         { text: "Private key wallet quickstart", link: "/getting-started/private-key" },
-        { text: "Connect an AI tool", link: "/getting-started/build-with-claude" },
       ],
     },
     {

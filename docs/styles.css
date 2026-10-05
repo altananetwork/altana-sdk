@@ -65,6 +65,16 @@ h1.home-title {
   color: var(--vocs-color_text2);
   max-width: none;
   margin: 0 0 26px;
+  text-wrap: balance;
+}
+
+/* Three statements: what Altana is, how it works, what you build with. */
+.home-intro p {
+  margin: 0;
+}
+
+.home-intro p + p {
+  margin-top: 1em;
 }
 
 .home-proof {
@@ -501,6 +511,24 @@ a.pathway-head:hover .pathway-title {
 .vocs_Sidebar_items:empty {
   padding-top: 0;
   padding-bottom: 12px;
+}
+
+/* External sidebar entries (llms-full.txt) read as a file link rather than
+   a page: underlined, with the Vocs arrow in the accent color. */
+.vocs_Sidebar_item[target="_blank"] {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.vocs_Sidebar_item[target="_blank"]::after {
+  color: var(--vocs-color_textAccent);
+}
+
+/* An untitled sidebar group (llms-full.txt under Build with AI) has no
+   header, so drop the top margin Vocs reserves for one. The indent then sits
+   as close to the item above as createWallet does to Wallets. */
+.vocs_Sidebar_section > .vocs_Sidebar_levelInset:first-child {
+  margin-top: 0;
 }
 
 .altana-theme-switch {
