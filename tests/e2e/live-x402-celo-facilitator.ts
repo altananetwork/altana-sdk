@@ -18,8 +18,10 @@
  *   1. Does the facilitator accept a payment built from **our** merchant's
  *      challenge, unchanged? (the wire compatibility question)
  *   2. Can an **Altana smart account** pay through it, or only a plain EOA?
- *      Celo's `exact` scheme settles EIP-3009, and whether its verifier is
- *      ERC-1271-aware decides whether an agent wallet can use it at all.
+ *      Celo's `exact` scheme settles EIP-3009. The token honours ERC-1271
+ *      (fork-eip3009-celo.ts), so what is left to measure is the facilitator's
+ *      own verifier. Buyer A is the control: if A verifies and B does not, the
+ *      difference is the facilitator and nothing else.
  *
  * Money: buyer A is the shared funder's own EOA, paying 0.01 USDC to a
  * throwaway payout address. `/verify` moves nothing. A `/settle` with a key
@@ -157,13 +159,12 @@ async function main() {
   if (verifyB.body.isValid === true) {
     console.log("    the facilitator verifies ERC-1271: an Altana wallet can pay it over EIP-3009");
   } else {
-    // Measured 2026-09-29: `FiatTokenV2: invalid signature`. Celo Sepolia's
-    // USDC checks the EIP-3009 signature with ecrecover and knows nothing about
-    // ERC-1271, so the rejection is the token's, not the facilitator's, and no
-    // facilitator can settle it. An Altana wallet pays this route over Permit2
-    // instead, which settles locally.
+    // A rejection here is the facilitator's own verification, not the token's:
+    // the token honours ERC-1271 (fork-eip3009-celo.ts), and the session above
+    // is granted with x402Tokens so the account accepts the token as this key's
+    // checker. The Permit2 rail remains available either way.
     console.log(`    rejected: ${verifyB.body.invalidReason} ${verifyB.body.invalidReasonDetails ?? ""}`);
-    console.log("    an Altana smart account cannot pay this token over EIP-3009; use the Permit2 rail");
+    console.log("    the facilitator's own verifier refuses a contract signer; pay over the Permit2 rail");
   }
 
   // ── 5. Settle, if we have a key. ──
@@ -262,6 +263,12 @@ async function smartAccountPayment(req: X402Requirement, funderWallet: ReturnTyp
       spend: [{ limit: parseUnits("0.2", 18), period: "day" }],
     },
     expiry: Math.floor(Date.now() / 1000) + 3600,
+    // The eip3009 rail's checker is the TOKEN, because FiatTokenV2 calls
+    // isValidSignature from its own code. Without this the account declines and
+    // the token reports `FiatTokenV2: invalid signature`, which is what this
+    // script measured on 2026-09-29 and wrongly read as the token lacking
+    // ERC-1271 support (fork-eip3009-celo.ts is the A/B that corrected it).
+    x402Tokens: [USDC_CELO_SEPOLIA.address],
   });
   if (session.status !== "granted") {
     throw new Error(`grantSession failed: ${JSON.stringify(session.legs, (_k, v) => (typeof v === "bigint" ? v.toString() : v))}`);
