@@ -145,7 +145,18 @@ export { signOrder, signOrderTypedData } from "./signOrder.js";
 export {
   approveSignatureChecker,
   revokeSignatureChecker,
+  buildSetCheckerApprovalCall,
 } from "./approveSignatureChecker.js";
+export { buildApproveTokenForPermit2Call } from "./approveTokenForPermit2.js";
+
+// The two approvals a session needs to pay x402, read before paying.
+export {
+  checkX402Approvals,
+  approvedSignatureCheckers,
+  x402SignatureChecker,
+  x402ApprovalError,
+  type X402ApprovalStatus,
+} from "./x402Approvals.js";
 
 // x402 payments (Permit2 + EIP-3009).
 export {

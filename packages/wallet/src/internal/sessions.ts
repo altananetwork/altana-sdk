@@ -227,6 +227,29 @@ export type GrantSessionOptions = {
    * Tokens already capped keep their cap.
    */
   feeSpendLimit?: bigint;
+  /**
+   * Tokens this session will pay x402 with. For each one, the same intent that
+   * authorizes the session also makes the two approvals an x402 payment needs,
+   * so the session can pay straight away instead of after two follow-up
+   * transactions.
+   *
+   * A payment from a smart account is an ERC-1271 signature, and the account
+   * accepts a session key's signature only from a contract it has approved as a
+   * signature checker for that key, so:
+   *
+   *  - the token is approved to Permit2, which is how Permit2 moves it, and
+   *  - Permit2 and the token are both approved as signature checkers for this
+   *    key, which covers the permit2 rail (Permit2 calls back) and the eip3009
+   *    rail (the token calls back).
+   *
+   * Without them a payment fails at settlement, not at signing, and reverts
+   * with no reason naming either approval. See `checkX402Approvals`, which
+   * reads the same two things before paying.
+   *
+   * Per chain, like the authorization itself. Does nothing for a session that
+   * will not pay x402.
+   */
+  x402Tokens?: readonly Address[];
 };
 
 /**

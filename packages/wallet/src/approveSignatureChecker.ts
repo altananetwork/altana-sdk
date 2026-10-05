@@ -27,23 +27,36 @@ const SET_CHECKER_ABI = [
 ] as const;
 
 /**
- * Build the `setSignatureCheckerApproval(sessionKeyHash, checker, isApproved)`
+ * Build the `setSignatureCheckerApproval(keyHash, checker, isApproved)`
  * self-call. `setSignatureCheckerApproval` is `onlyThis`, so it must run as a
  * call from the account on itself — i.e. inside an admin-signed intent.
+ *
+ * It also reverts `KeyDoesNotExist()` unless the account already holds the key,
+ * which matters when the call rides in the same intent that authorizes it. The
+ * relay applies `authorizeKeys` before the intent's own calls, so that works;
+ * measured on live Celo Sepolia, tx
+ * `0x178d30ee2f40d1d414feedba885721484734c3d5b2d2478ac3c7bff6b8699382`
+ * authorized a session key and set both of its x402 approvals in one intent.
  */
 export function buildSetCheckerApprovalCall(args: {
   wallet: Address;
-  session: Session;
+  /** The key to approve the checker for; a Session, or its key hash. */
+  session?: Session;
+  keyHash?: Hex;
   checker: Address;
   isApproved: boolean;
 }): { to: Address; value: bigint; data: Hex } {
+  const keyHash = args.keyHash ?? (args.session ? sessionKeyHash(args.session) : undefined);
+  if (!keyHash) {
+    throw new Error("buildSetCheckerApprovalCall: pass either `session` or `keyHash`.");
+  }
   return {
     to: args.wallet,
     value: 0n,
     data: encodeFunctionData({
       abi: SET_CHECKER_ABI,
       functionName: "setSignatureCheckerApproval",
-      args: [sessionKeyHash(args.session), args.checker, args.isApproved],
+      args: [keyHash, args.checker, args.isApproved],
     }),
   };
 }
