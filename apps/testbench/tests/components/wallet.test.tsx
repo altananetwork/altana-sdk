@@ -156,11 +156,11 @@ describe("Move all funds re-reads what the wallet holds", () => {
    */
   describe("a relay that lists no ERC-20s at all", () => {
     const nativeOnly = () =>
-      fakeClient({
-        holdings: vi.fn(async () => ({ native: 10n ** 18n, tokens: [] })),
+      fakeClient(
+        { holdings: vi.fn(async () => ({ native: 10n ** 18n, tokens: [] })) },
         // 0.09 USDC on chain: the balance qa watched the sweep strand.
-        onChainBalances: { [USDC]: 90_000n },
-      } as never);
+        { [USDC]: 90_000n },
+      );
 
     test("a balance only the chain knows about is shown", async () => {
       const client = nativeOnly();

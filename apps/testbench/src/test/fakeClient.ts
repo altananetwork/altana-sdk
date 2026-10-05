@@ -48,18 +48,19 @@ export const holdingsWithUsdc: HoldingsResult = {
 export type FakeClient = TestbenchClient & { [K in keyof TestbenchClient]: TestbenchClient[K] };
 
 /** A recording client with sensible defaults; override any method per test. */
-export function fakeClient(overrides: Partial<TestbenchClient> = {}): FakeClient {
+/**
+ * Balances only the chain knows about, keyed by token address.
+ *
+ * Separate from the method overrides because it is not a method: it is what
+ * `mergedHoldings` finds when it reads the chain for tokens the relay did not
+ * list, which on Celo is every token.
+ */
+export type FakeChainBalances = Record<string, bigint>;
+
+export function fakeClient(overrides: Partial<TestbenchClient> = {}, chainBalances: FakeChainBalances = {}): FakeClient {
   const chains = [CELO_SEPOLIA, BASE_SEPOLIA, SEPOLIA];
-  /**
-   * Chain balances the relay does not enumerate, keyed by token address.
-   *
-   * Empty by default, which is the live relay on Celo: it lists no ERC-20s at
-   * all. A test that wants a token only the chain knows about sets
-   * `onChainBalances` through the overrides.
-   */
-  const onChain = new Map<string, bigint>(
-    Object.entries((overrides as { onChainBalances?: Record<string, bigint> }).onChainBalances ?? {}).map(([k, v]) => [k.toLowerCase(), v]),
-  );
+  // Empty by default, which is the live relay on Celo: it lists no ERC-20s.
+  const onChain = new Map<string, bigint>(Object.entries(chainBalances).map(([k, v]) => [k.toLowerCase(), v]));
   const built: FakeClient = {
     chains,
     createWallet: vi.fn(async (signer) => ({ address: signer.address })),
