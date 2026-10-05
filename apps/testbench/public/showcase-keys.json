@@ -1,0 +1,116 @@
+{
+  "$comment": "Phase 3 showcase keys, prepared ahead of the demo by tests/e2e/prepare-showcase-keys.ts. Every field was read from chain. The demo LOADS this file; it never retypes a hash. publicKey is the field the mirror card needs: populateKey takes the public key and the cache checks it hashes to keyId, so keyId alone cannot prove anything.",
+  "updated": "2026-10-05",
+  "contracts": {
+    "keyStore": {
+      "chainId": 11155111,
+      "address": "0x38Aaf396F462Ad3a4F38ADa653AF6bDEA55F772d"
+    },
+    "keyStoreCache": {
+      "chainId": 11142220,
+      "address": "0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD",
+      "version": "1.1.1"
+    }
+  },
+  "derivation": {
+    "keyStoreKeyId": "keccak256(publicKey)",
+    "accountKeyHash": "keccak256(abi.encode(uint8 keyType, keccak256(publicKey)))",
+    "note": "These are DIFFERENT values. The KeyStore, the cache and populateKey all use keyStoreKeyId. The account's getKeys() returns accountKeyHash. Querying either contract with the other's hash returns an empty entry, not an error, so a key that is plainly there reads as absent."
+  },
+  "keys": [
+    {
+      "label": "passkey admin (WebAuthn P256)",
+      "user": "0xAcFDbA26e136b1Eace8D00D8437B8bA65A0C2986",
+      "keyType": 1,
+      "keyTypeName": "WebAuthnP256",
+      "isSuperAdmin": true,
+      "expiry": 0,
+      "publicKey": "0x2819e56c33d6a737101062199834785fba12f53ad2a397226f988441b5956e7cc177246d31e7917bfcfd5d11f6c9656a98a976948af8605dc56edceb6fb3491a",
+      "keyStoreKeyId": "0xc52762a88bbcd5790199ca133a6f5f8075733921afd3b8fb5a9eeec8c60e3a6b",
+      "accountKeyHash": "0x51d40fcc06e00a39bada75c9631e1814c7309f4e6d63b0d0fb781f66c9d2c627",
+      "verified": {
+        "keyStoreIsValidKey": true,
+        "accountDelegatedOn": [
+          11142220,
+          11155111
+        ],
+        "cacheEntry": "present: revoked=false, isRoot=true, sourceBlockNumber=11807900",
+        "cacheProvenVia": "test bench Celo mirror tab, 2026-09-29",
+        "keccakCachedPublicKeyMatchesKeyId": true
+      },
+      "registrationTx": null,
+      "revocationTx": null,
+      "source": "SDK PR #103",
+      "cacheProofTx": "0xd04ddeca29ec136eb60e1e285224c55a249646641a0b1c66418499e6f7e6ee32",
+      "anchoredL1Block": 11807900,
+      "role": "D-passkey-admin",
+      "demoNote": "The passkey wallet's own ADMIN key (WebAuthn P256, super-admin), registered and proven into the mirror by SDK PR #103. Kept because it is the only keyType 1 key in the set: it shows the mirror proving a P256 key, not just a secp256k1 one.",
+      "walletKind": "passkey",
+      "registrationL1Block": null,
+      "revocationCacheProofTx": null
+    },
+    {
+      "label": "showcase A: valid, prove on demand",
+      "role": "A-valid",
+      "demoNote": "Registered and anchored well before the demo, deliberately NOT proven. The mirror card proves it live in one step, with no anchor wait.",
+      "user": "0xb5D3c1436eE76aCa1ecBd54BB27823488A26FD85",
+      "walletKind": "secp256k1",
+      "keyType": 2,
+      "keyTypeName": "Secp256k1",
+      "isSuperAdmin": false,
+      "expiry": 1793782750,
+      "publicKey": "0x04e68c9a70b8f4e1a46efc0a07b6b1e6e83e8dc356c9b012a91b8caf04e27058d603a1414d1e8150e2c4a4babe82973d4b498b274c673de85633199a090c1bd1c1",
+      "keyStoreKeyId": "0x2a92e8d2b6fc6b36c1dd140c8a72123e6c105e024e531eca3d0780063a9bbf07",
+      "accountKeyHash": "0xa8640291f221af673051cb188847452c18027b7a5510109fe5b4abfb4a889435",
+      "registrationTx": "0x390d6001b213679d2fc87dbea9693fb07ae43dd40c15a0d4d71460030f26a1e8",
+      "registrationL1Block": 11847826,
+      "registrationVia": "relay",
+      "cacheProofTx": null,
+      "anchoredL1Block": null,
+      "revocationTx": null,
+      "revocationL1Block": null,
+      "revocationCacheProofTx": null,
+      "revocationAnchoredL1Block": null,
+      "verified": {
+        "keyStoreIsValidKey": true,
+        "paidInSepoliaEth": true
+      }
+    },
+    {
+      "label": "showcase B: valid, then revoked",
+      "role": "B-revoked",
+      "demoNote": "The pair. Proven valid into the mirror, then revoked on Sepolia and the revocation proven. Final state: the mirror says revoked, and that is the honest end state.",
+      "user": "0x142c1257a09CEbB20BC651c909c250A95f0F3f1e",
+      "walletKind": "secp256k1",
+      "keyType": 2,
+      "keyTypeName": "Secp256k1",
+      "isSuperAdmin": false,
+      "expiry": 1793782806,
+      "publicKey": "0x04d8d699075e45532494206490ea0fa8f9a1ed71c90dc6ce712d5bed2d8a0b996d3e03108902d0ae6c927e0dcbe0760fcd38fba14191c99bfb773470482c87b906",
+      "keyStoreKeyId": "0x8e3c3493a7da06932f30810e722167c7fd2b1b89203a9c7b3e542474eeff5137",
+      "accountKeyHash": "0x0724846a8095e6d90c418b8b0ce515bb0c771af6055642c67c1314619c6c2d1c",
+      "registrationTx": "0x11cc7cfcfeccdb89744dfaee5a2df1885ae9aa41dfdbf8097a951d8820d76459",
+      "registrationL1Block": 11847830,
+      "registrationVia": "relay",
+      "cacheProofTx": null,
+      "anchoredL1Block": null,
+      "revocationTx": null,
+      "revocationL1Block": null,
+      "revocationCacheProofTx": null,
+      "revocationAnchoredL1Block": null,
+      "verified": {
+        "keyStoreIsValidKey": true,
+        "paidInSepoliaEth": true
+      }
+    }
+  ],
+  "howToUse": {
+    "mirrorCard": "Pass user + publicKey. Read with isValidKey(user, keyStoreKeyId).",
+    "timing": "The mirror answers for ONE anchored L1 block, not 'now'. isValidKey requires sourceBlockNumber == IL1Block.number() exactly. A key proven earlier reads valid only while Celo still anchors that block (about 20 minutes), so the demo re-proves on demand rather than relying on a proof made hours ago.",
+    "roles": {
+      "A-valid": "Registered and anchored, never proven. Prove it live in one step.",
+      "B-revoked": "Registered, proven valid, revoked on Sepolia, revocation proven. Final: revoked.",
+      "C-passkey": "Passkey wallet, session key registered through the Sepolia relay, proven in."
+    }
+  }
+}

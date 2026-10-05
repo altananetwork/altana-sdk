@@ -1,7 +1,13 @@
 import { CELO_SEPOLIA } from "@altananetwork/sdk";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { keccak256, type Hex } from "viem";
 import { targetFromInput, type MirrorTarget } from "../lib/mirror";
+import {
+  expectedEndState,
+  loadShowcaseKeys,
+  type ShowcaseFile,
+  type ShowcaseKey,
+} from "../lib/showcaseKeys";
 import { useDebounced } from "../lib/useDebounced";
 import { useApp } from "../state/AppState";
 import { MirrorCard } from "./MirrorCard";
@@ -31,9 +37,40 @@ export function MirrorPanel() {
   const [walletInput, setWalletInput] = useState("");
   const [keyInput, setKeyInput] = useState("");
   const [picked, setPicked] = useState<string>("");
+  const [showcasePick, setShowcasePick] = useState<string>("");
+  const [showcase, setShowcase] = useState<ShowcaseFile>();
+
+  // The showcase keys are registered ahead of time and picked, not typed: a
+  // demo whose first step is pasting 66 hex characters on a projector has its
+  // most fragile step first, and a typo there reads exactly like the mirror
+  // saying "not valid".
+  useEffect(() => {
+    let cancelled = false;
+    void loadShowcaseKeys().then((f) => {
+      if (!cancelled) setShowcase(f);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const sessions = app.sessions;
   const wallet = app.wallet;
+
+  const chosenShowcase: ShowcaseKey | undefined = showcase?.keys.find((k) => k.role === showcasePick);
+
+  const fromShowcase = useMemo<MirrorTarget | undefined>(
+    () =>
+      chosenShowcase
+        ? {
+            user: chosenShowcase.user,
+            keyId: chosenShowcase.keyStoreKeyId,
+            publicKey: chosenShowcase.publicKey,
+            label: chosenShowcase.label,
+          }
+        : undefined,
+    [chosenShowcase],
+  );
 
   const fromSession = useMemo<MirrorTarget | undefined>(() => {
     const session = sessions.find((s) => s.id === picked);
@@ -61,9 +98,11 @@ export function MirrorPanel() {
     [settledWallet, settledKey, wallet?.address],
   );
 
-  const target = picked ? fromSession : typed.target;
-  const keyProblem = picked ? undefined : settledKey.trim() ? typed.keyProblem : undefined;
-  const walletProblem = picked ? undefined : settledKey.trim() ? typed.walletProblem : undefined;
+  // A showcase key wins over a stored session, which wins over what is typed.
+  const target = chosenShowcase ? fromShowcase : picked ? fromSession : typed.target;
+  const typing = !chosenShowcase && !picked;
+  const keyProblem = typing && settledKey.trim() ? typed.keyProblem : undefined;
+  const walletProblem = typing && settledKey.trim() ? typed.walletProblem : undefined;
 
   return (
     <div className="panel">
@@ -77,7 +116,49 @@ export function MirrorPanel() {
       <div className="card">
         <h3>Which key</h3>
         <div className="stack">
-          {sessions.length > 0 && (
+          {showcase && showcase.keys.length > 0 && (
+            <Field
+              label="A showcase key"
+              htmlFor="mirror-showcase"
+              help="Registered ahead of the demo, so nothing is typed on stage. Each carries its public key, so each can be proven."
+            >
+              <select
+                id="mirror-showcase"
+                value={showcasePick}
+                onChange={(e) => {
+                  setShowcasePick(e.target.value);
+                  setPicked("");
+                }}
+              >
+                <option value="">Not a showcase key</option>
+                {showcase.keys.map((k) => (
+                  <option key={k.role} value={k.role}>
+                    {k.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
+
+          {chosenShowcase && (
+            <div className="stack" style={{ gap: 4 }}>
+              {chosenShowcase.demoNote && <p className="muted">{chosenShowcase.demoNote}</p>}
+              <span className="muted small">
+                {expectedEndState(chosenShowcase) === "revoked"
+                  ? "This key was revoked on Ethereum, so revoked is the right answer here, not a failure."
+                  : "Proving moves it to valid for the current anchor. A proof lasts one anchor, about 20 minutes, so prove and read in one go."}
+              </span>
+            </div>
+          )}
+
+          {showcase && showcase.rejected.length > 0 && (
+            <div className="banner error" role="alert">
+              {showcase.rejected.length} showcase key(s) were left out because they do not hold together:{" "}
+              {showcase.rejected.map((r) => `${r.role} (${r.reason})`).join("; ")}
+            </div>
+          )}
+
+          {!chosenShowcase && sessions.length > 0 && (
             <Field
               label="A session from this browser"
               htmlFor="mirror-session"
@@ -94,7 +175,7 @@ export function MirrorPanel() {
             </Field>
           )}
 
-          {!picked && (
+          {typing && (
             <div className="row">
               <Field
                 label="Wallet"

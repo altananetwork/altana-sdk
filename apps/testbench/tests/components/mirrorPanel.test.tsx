@@ -122,3 +122,102 @@ describe("MirrorPanel", () => {
     expect(client.readMirror).not.toHaveBeenCalled();
   });
 });
+
+describe("MirrorPanel, the showcase keys", () => {
+  const SHOWCASE_PK = `0x04${"ab".repeat(64)}` as const;
+  const SHOWCASE_USER = "0xb5D3c1436eE76aCa1ecBd54BB27823488A26FD85" as const;
+
+  const FILE = {
+    updated: "2026-10-05",
+    keys: [
+      {
+        role: "A-valid",
+        label: "showcase A: valid, prove on demand",
+        demoNote: "Registered and anchored before the demo, deliberately not proven.",
+        user: SHOWCASE_USER,
+        publicKey: SHOWCASE_PK,
+        keyStoreKeyId: keccak256(SHOWCASE_PK),
+        keyType: 2,
+      },
+      {
+        role: "B-revoked",
+        label: "showcase B: valid, then revoked",
+        demoNote: "The pair.",
+        user: TEST_ADDRESS,
+        publicKey: `0x04${"cd".repeat(64)}`,
+        keyStoreKeyId: keccak256(`0x04${"cd".repeat(64)}`),
+        revocationTx: "0xrevoked",
+        keyType: 2,
+      },
+    ],
+  };
+
+  function withFile(body: unknown = FILE, status = 200) {
+    return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      String(input).includes("showcase-keys.json")
+        ? new Response(JSON.stringify(body), { status })
+        : new Response("{}", { status: 404 }),
+    );
+  }
+
+  test("picking a showcase key reads its mirror, and it can be proven", async () => {
+    const spy = withFile();
+    const client = fakeClient({
+      readMirror: vi.fn(async () => ({ ...mirrorCurrent, cachedPresent: false, cachedSourceBlock: 0n })),
+    });
+    renderWith(client, <MirrorPanel />, { v: 1, walletKey: TEST_KEY, sessions: [] });
+
+    await userEvent.selectOptions(await screen.findByLabelText(/A showcase key/), "A-valid");
+    await waitFor(() =>
+      expect(client.readMirror).toHaveBeenCalledWith(
+        expect.objectContaining({ user: SHOWCASE_USER, keyId: keccak256(SHOWCASE_PK) }),
+      ),
+    );
+    // It carries the public key, which is what keeps Prove live.
+    expect(screen.getByText(/Registered and anchored before the demo/)).toBeInTheDocument();
+    expect(screen.getByText(/prove and read in one go/)).toBeInTheDocument();
+    spy.mockRestore();
+  });
+
+  test("a revoked showcase key says revoked is the right answer, not a failure", async () => {
+    const spy = withFile();
+    renderWith(fakeClient(), <MirrorPanel />, { v: 1, walletKey: TEST_KEY, sessions: [] });
+    await userEvent.selectOptions(await screen.findByLabelText(/A showcase key/), "B-revoked");
+    expect(screen.getByText(/revoked is the right answer here, not a failure/)).toBeInTheDocument();
+    spy.mockRestore();
+  });
+
+  test("a showcase key whose hashes disagree is left out, loudly", async () => {
+    const spy = withFile({
+      keys: [{ ...FILE.keys[0], keyStoreKeyId: keccak256("0xdeadbeef") }],
+    });
+    renderWith(fakeClient(), <MirrorPanel />, { v: 1, walletKey: TEST_KEY, sessions: [] });
+    expect(await screen.findByRole("alert")).toHaveTextContent(/do not hold together/);
+    expect(screen.queryByLabelText(/A showcase key/)).not.toBeInTheDocument();
+    spy.mockRestore();
+  });
+
+  test("no file at all leaves the tab exactly as it was", async () => {
+    const spy = withFile(undefined, 404);
+    const client = fakeClient();
+    renderWith(client, <MirrorPanel />, { v: 1, walletKey: TEST_KEY, sessions: [] });
+    await waitFor(() => expect(screen.getByLabelText(/Key id or public key/)).toBeInTheDocument());
+    expect(screen.queryByLabelText(/A showcase key/)).not.toBeInTheDocument();
+    spy.mockRestore();
+  });
+
+  test("a showcase key wins over what was typed, and hides the fields", async () => {
+    const spy = withFile();
+    const client = fakeClient();
+    renderWith(client, <MirrorPanel />, { v: 1, walletKey: TEST_KEY, sessions: [] });
+    await userEvent.type(await screen.findByLabelText(/Key id or public key/), KEY_ID);
+    await userEvent.selectOptions(screen.getByLabelText(/A showcase key/), "A-valid");
+    await waitFor(() =>
+      expect(client.readMirror).toHaveBeenLastCalledWith(
+        expect.objectContaining({ keyId: keccak256(SHOWCASE_PK) }),
+      ),
+    );
+    expect(screen.queryByLabelText(/Key id or public key/)).not.toBeInTheDocument();
+    spy.mockRestore();
+  });
+});
