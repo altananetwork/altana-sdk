@@ -33,20 +33,57 @@ const res = await client.fetchWithX402({
 console.log(res.status, await res.text()); // 200 + paid content
 ```
 
-## One-time provisioning
+## Who verifies the payment, and the approvals that follow from it
 
-Before the first payment, the wallet's admin sets up the rail:
+A payment from a smart account is an ERC-1271 signature, so some contract calls
+`isValidSignature` on the wallet to check it. The account answers:
+
+```solidity
+isValid = _isSuperAdmin(keyHash) || _getKeyExtraStorage(keyHash).checkers.contains(msg.sender);
+```
+
+It gates on `msg.sender`. A **super-admin** key passes from any caller, which is
+why an admin-signed payment needs no setup. A **session** key passes only from a
+contract the account has approved as a signature checker **for that key**. The
+checker is whoever calls back: `Permit2` on the permit2 rails, and the token
+itself on the eip3009 rail, since a FiatTokenV2-style token verifies
+`transferWithAuthorization` in its own code.
+
+The permit2 rails need a second, unrelated approval. Permit2 moves the token
+with `permitTransferFrom`, an ordinary `transferFrom`, so the wallet must have
+approved Permit2 as an ERC-20 spender.
+
+So a session paying over permit2 needs two approvals, and over eip3009 one.
+`grantSession` makes them in the same intent that authorizes the session:
+
+```ts
+const session = await client.grantSession({
+  wallet,
+  signer: admin,
+  permissions: { calls: [{ to: USDC }], spend: [{ limit: 200_000n, period: "day" }] },
+  expiry: Math.floor(Date.now() / 1000) + 3600,
+  x402Tokens: [USDC],   // approves USDC to Permit2, and both checkers for this key
+});
+```
+
+Or as their own transactions, for a session that already exists:
 
 ```ts
 import { PERMIT2_ADDRESS } from "@altananetwork/sdk";
 
-// permit2-exact rail:
-await client.approveTokenForPermit2({ wallet, signer: admin, token: USDC });      // ERC20 approve(Permit2)
+await client.approveTokenForPermit2({ wallet, signer: admin, token: USDC });
 await client.approveSignatureChecker({ wallet, signer: admin, session, checker: PERMIT2_ADDRESS });
-
-// EIP-3009 rail (checker = the token itself):
+// eip3009 rail: the checker is the token
 await client.approveSignatureChecker({ wallet, signer: admin, session, checker: USDC });
 ```
+
+`fetchWithX402` reads both before it pays and refuses when one is missing,
+naming it. `checkX402Approvals(session, requirement)` returns the same reading
+as data — which rail, which checker, the allowance against the amount, and the
+key hash — so a UI can show it. Both are reads that cost no gas.
+
+An approval is per chain and per key, like the authorization itself: the
+account's storage is its own on each chain, and a new session starts with none.
 
 See [approveTokenForPermit2](/sdk/approve-permit2) and [approveSignatureChecker](/sdk/approve-signature-checker).
 
