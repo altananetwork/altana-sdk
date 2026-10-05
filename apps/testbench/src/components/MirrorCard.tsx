@@ -146,13 +146,15 @@ export function MirrorCard({ chainId, target, showTitle = true }: MirrorCardProp
   })();
 
   const state = reading ? mirrorState(reading) : undefined;
-  // The proof is a wallet call the admin signs, so the wallet in this browser
-  // has to be the one the key belongs to. Proving someone else's key would be
-  // signed by the wrong account and rejected by the relay, after the click.
-  const walletMatches =
-    app.wallet !== undefined && target !== undefined && sameAddress(app.wallet.address, target.user);
-  const canProve =
-    state !== undefined && canPopulate(state) && target?.publicKey !== undefined && walletMatches;
+  // Proving needs a wallet to pay the Celo gas, and nothing more: populateKey
+  // verifies a storage proof against the anchored L1 block and never looks at
+  // msg.sender, so this browser can prove a key belonging to anyone. Confirmed
+  // against the deployed cache by static-calling it from an unrelated address.
+  // That is the point worth making on stage: anyone can verify, not only the
+  // owner.
+  const provingForSomeoneElse =
+    app.wallet !== undefined && target !== undefined && !sameAddress(app.wallet.address, target.user);
+  const canProve = state !== undefined && canPopulate(state) && target?.publicKey !== undefined && app.wallet !== undefined;
 
   async function prove() {
     if (!target?.publicKey || !app.wallet) return;
@@ -163,9 +165,12 @@ export function MirrorCard({ chainId, target, showTitle = true }: MirrorCardProp
       await ensureRegistered();
       const result = await client.proveIntoMirror({
         chainId,
-        wallet: target.user,
-        signer: app.wallet.signer,
+        user: target.user,
         publicKey: target.publicKey,
+        // This browser's wallet sends it and pays the Celo gas. It does not
+        // have to own the key.
+        payer: app.wallet.address,
+        signer: app.wallet.signer,
       });
       setProofTx({ status: result.status, ...(result.transactionHash ? { hash: result.transactionHash } : {}) });
       await refresh();
@@ -262,12 +267,19 @@ export function MirrorCard({ chainId, target, showTitle = true }: MirrorCardProp
             </div>
           )}
 
-          {target.publicKey !== undefined && state && canPopulate(state) && !walletMatches && (
+          {target.publicKey !== undefined && state && canPopulate(state) && !app.wallet && (
             <div className="banner info">
-              {app.wallet
-                ? "This key belongs to another wallet, so this browser cannot prove it: the proof is a call the wallet's own admin key signs. Anyone can read it."
-                : "No wallet in this browser, so there is no admin key to sign the proof with. The read above needs none."}
+              Reading the mirror needs no wallet. Proving needs one, only to pay the Celo gas, so create or load
+              a wallet to send the proof.
             </div>
+          )}
+
+          {provingForSomeoneElse && state && canPopulate(state) && (
+            <p className="muted small">
+              This key belongs to another wallet. This browser can still prove it: populateKey checks a storage
+              proof against the anchored Ethereum block and never looks at who sent it, so anyone can put a key
+              into the mirror, paying only the Celo gas.
+            </p>
           )}
 
           {error && (

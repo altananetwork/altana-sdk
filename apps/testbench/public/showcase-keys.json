@@ -19,37 +19,6 @@
   },
   "keys": [
     {
-      "label": "passkey admin (WebAuthn P256)",
-      "user": "0xAcFDbA26e136b1Eace8D00D8437B8bA65A0C2986",
-      "keyType": 1,
-      "keyTypeName": "WebAuthnP256",
-      "isSuperAdmin": true,
-      "expiry": 0,
-      "publicKey": "0x2819e56c33d6a737101062199834785fba12f53ad2a397226f988441b5956e7cc177246d31e7917bfcfd5d11f6c9656a98a976948af8605dc56edceb6fb3491a",
-      "keyStoreKeyId": "0xc52762a88bbcd5790199ca133a6f5f8075733921afd3b8fb5a9eeec8c60e3a6b",
-      "accountKeyHash": "0x51d40fcc06e00a39bada75c9631e1814c7309f4e6d63b0d0fb781f66c9d2c627",
-      "verified": {
-        "keyStoreIsValidKey": true,
-        "accountDelegatedOn": [
-          11142220,
-          11155111
-        ],
-        "cacheEntry": "present: revoked=false, isRoot=true, sourceBlockNumber=11807900",
-        "cacheProvenVia": "test bench Celo mirror tab, 2026-09-29",
-        "keccakCachedPublicKeyMatchesKeyId": true
-      },
-      "registrationTx": null,
-      "revocationTx": null,
-      "source": "SDK PR #103",
-      "cacheProofTx": "0xd04ddeca29ec136eb60e1e285224c55a249646641a0b1c66418499e6f7e6ee32",
-      "anchoredL1Block": 11807900,
-      "role": "D-passkey-admin",
-      "demoNote": "The passkey wallet's own ADMIN key (WebAuthn P256, super-admin), registered and proven into the mirror by SDK PR #103. Kept because it is the only keyType 1 key in the set: it shows the mirror proving a P256 key, not just a secp256k1 one.",
-      "walletKind": "passkey",
-      "registrationL1Block": null,
-      "revocationCacheProofTx": null
-    },
-    {
       "label": "showcase A: valid, prove on demand",
       "role": "A-valid",
       "demoNote": "Registered and anchored well before the demo, deliberately NOT proven. The mirror card proves it live in one step, with no anchor wait.",
@@ -92,6 +61,38 @@
       "registrationTx": "0x11cc7cfcfeccdb89744dfaee5a2df1885ae9aa41dfdbf8097a951d8820d76459",
       "registrationL1Block": 11847830,
       "registrationVia": "relay",
+      "cacheProofTx": "0x11c94cfc1ec1eac8b420dc8a8f70328ccee768240892fbb3c9034be95cc3e101",
+      "anchoredL1Block": 11847854,
+      "revocationTx": "0xfcb40975344baab6ba8a9c9877a1192b1d7c7e39df11ff54945164752ecfadce",
+      "revocationL1Block": 11847934,
+      "revocationCacheProofTx": "0x37abe8ba35797eee3f664159179a00a67289ea7367bfb4dcc754ad892cf0df1a",
+      "revocationAnchoredL1Block": 11847946,
+      "verified": {
+        "keyStoreIsValidKey": true,
+        "paidInSepoliaEth": true,
+        "mirrorValidAtProof": true,
+        "keccakCachedPublicKeyMatchesKeyId": true,
+        "keyStoreValidAfterRevocation": false,
+        "mirrorRevoked": true,
+        "isCachedKeyValidAfterRevocation": false
+      }
+    },
+    {
+      "label": "showcase C: passkey wallet, registered session key",
+      "role": "C-passkey",
+      "demoNote": "A passkey wallet with a registered session key. A passkey admin cannot sign an Ethereum transaction, so the registry write went through the Sepolia relay; the leg reports via=relay. Needed SDK PR #103: without it a headless passkey wallet cannot be created on Celo Sepolia at all.",
+      "user": "0x22d7EA581F2EB9E7F6c46BdA2E6a7B1A7C961834",
+      "walletKind": "passkey",
+      "keyType": 2,
+      "keyTypeName": "Secp256k1",
+      "isSuperAdmin": false,
+      "expiry": 1793783947,
+      "publicKey": "0x042524b0e1bc9eb129cd0507fdf78c862e5166ece3ecee753c72f868f9e24cfec0696b227260792f28508a7bcdea482147ab311ea45d67228ffe892d51b3563685",
+      "keyStoreKeyId": "0x670cd279247ec7fed8553dd6aee93047fbdee2e362fe6a642cfdf03179c8f1f5",
+      "accountKeyHash": "0x2861d06ba0fb7e16b6ce50942edd3f05b4562f060d103cf380bc07acdb5f7253",
+      "registrationTx": "0x5e1edae7a5b42a734612c07e6dc0acfedc2cc8ebe54b4f0cd86a478178168989",
+      "registrationL1Block": 11847919,
+      "registrationVia": "relay",
       "cacheProofTx": null,
       "anchoredL1Block": null,
       "revocationTx": null,
@@ -101,7 +102,39 @@
       "verified": {
         "keyStoreIsValidKey": true,
         "paidInSepoliaEth": true
-      }
+      },
+      "preparedOn": "SDK PR #103 (fix/passkey-multichain-provisioning) at ac6c7ed, unmerged at the time"
+    },
+    {
+      "label": "passkey admin (WebAuthn P256)",
+      "user": "0xAcFDbA26e136b1Eace8D00D8437B8bA65A0C2986",
+      "keyType": 1,
+      "keyTypeName": "WebAuthnP256",
+      "isSuperAdmin": true,
+      "expiry": 0,
+      "publicKey": "0x2819e56c33d6a737101062199834785fba12f53ad2a397226f988441b5956e7cc177246d31e7917bfcfd5d11f6c9656a98a976948af8605dc56edceb6fb3491a",
+      "keyStoreKeyId": "0xc52762a88bbcd5790199ca133a6f5f8075733921afd3b8fb5a9eeec8c60e3a6b",
+      "accountKeyHash": "0x51d40fcc06e00a39bada75c9631e1814c7309f4e6d63b0d0fb781f66c9d2c627",
+      "verified": {
+        "keyStoreIsValidKey": true,
+        "accountDelegatedOn": [
+          11142220,
+          11155111
+        ],
+        "cacheEntry": "present: revoked=false, isRoot=true, sourceBlockNumber=11807900",
+        "cacheProvenVia": "test bench Celo mirror tab, 2026-09-29",
+        "keccakCachedPublicKeyMatchesKeyId": true
+      },
+      "registrationTx": null,
+      "revocationTx": null,
+      "source": "SDK PR #103",
+      "cacheProofTx": "0xd04ddeca29ec136eb60e1e285224c55a249646641a0b1c66418499e6f7e6ee32",
+      "anchoredL1Block": 11807900,
+      "role": "D-passkey-admin",
+      "demoNote": "The passkey wallet's own ADMIN key (WebAuthn P256, super-admin), registered and proven into the mirror by SDK PR #103. Kept because it is the only keyType 1 key in the set: it shows the mirror proving a P256 key, not just a secp256k1 one.",
+      "walletKind": "passkey",
+      "registrationL1Block": null,
+      "revocationCacheProofTx": null
     }
   ],
   "howToUse": {

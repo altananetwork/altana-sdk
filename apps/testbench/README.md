@@ -74,7 +74,9 @@ The **Celo mirror** tab loads `public/showcase-keys.json` and offers those keys 
 node scripts/copy-showcase-keys.mjs     # finds celo-harness/evidence/showcase-keys.json
 ```
 
-It refuses to copy a file whose `keyStoreKeyId` is not `keccak256(publicKey)`, because those two disagreeing makes the card read the mirror for a different key and report "never registered" in front of an audience. The tab works by hand when the file is absent, so a clean clone of altana-sdk is unaffected.
+**Any wallet can prove any key.** `populateKey` checks a storage proof against the anchored Ethereum block and never looks at who sent it, so the bench proves a showcase key from whatever wallet it holds, paying only the Celo gas. Confirmed against the deployed cache, not just its source, by static-calling it from an address with no relationship to the key. Reading needs no wallet at all.
+
+The copy script refuses a file whose `keyStoreKeyId` is not `keccak256(publicKey)`, because those two disagreeing makes the card read the mirror for a different key and report "never registered" in front of an audience. The tab works by hand when the file is absent, so a clean clone of altana-sdk is unaffected.
 
 So register the keys you want to show **ahead of time**, and keep each key's **public key**, not just its address or key hash: the card can read any key from its hash, but `populateKey` takes the public key bytes, so a key entered as a bare hash can be read and not proven. The **Celo mirror** tab takes either, and a session granted in this browser is picked from a list with its public key already attached.
 

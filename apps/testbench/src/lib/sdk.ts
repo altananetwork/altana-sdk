@@ -17,7 +17,7 @@ import {
   type SessionQuote,
   type Signer,
   type Session,
-  type SyncSessionToCacheResult,
+  buildPopulateKeyCall,
   approveSignatureChecker,
   approveTokenForPermit2,
   fetchWithX402,
@@ -30,7 +30,7 @@ import type { Address, Hex } from "viem";
 import { relayReason } from "./errors";
 import { entry, type LogEntry } from "./log";
 import type { MirrorReading } from "./mirror";
-import { cachedNetworkFor, publicClientFor, readMirror } from "./mirrorReads";
+import { cachedNetworkFor, mirrorTargetsOf, publicClientFor, readMirror } from "./mirrorReads";
 import { APPROVED_CHECKERS_ABI } from "./permit2Setup";
 
 const ALLOWANCE_ABI = [
@@ -111,13 +111,24 @@ export interface TestbenchClient {
     keyId: Hex;
     registrationL1Block?: bigint;
   }): Promise<MirrorReading>;
-  /** Sends a populateKey proof for the current anchor, as a wallet call through the relay. */
+  /**
+   * Sends a populateKey proof for the current anchor, paid by `payer`.
+   *
+   * `user` is whose key is proven and `payer` is who sends and pays, and they
+   * need not be the same: `populateKey` verifies a storage proof against the
+   * anchored L1 block and does not look at `msg.sender`. Confirmed against the
+   * deployed cache, not just its source, by static-calling it from an address
+   * with no relationship to the key (2026-10-05). That is what lets the bench
+   * prove a showcase key it does not own, which is also the honest version of
+   * the claim: anyone can verify, not just the owner.
+   */
   proveIntoMirror(opts: {
     chainId: number;
-    wallet: Address;
-    signer: Signer;
+    user: Address;
     publicKey: Hex;
-  }): Promise<SyncSessionToCacheResult>;
+    payer: Address;
+    signer: Signer;
+  }): Promise<ExecuteResult & { l1BlockNumber: bigint }>;
 }
 
 export type Logger = (e: LogEntry) => void;
@@ -244,19 +255,49 @@ export function createLiveClient(chains: NetworkConfig[], log: Logger): Testbenc
           ...(registrationL1Block !== undefined ? { registrationL1Block } : {}),
         });
       }),
-    proveIntoMirror: ({ chainId, wallet, signer, publicKey }) =>
-      call("proveIntoMirror", { chainId, wallet, publicKey }, () =>
-        client.syncSessionToCache({
-          chainId,
-          wallet: { address: wallet },
-          signer,
-          session: publicKey,
-          // The anchor is already carrying the state the card checked, so the
-          // proof goes against it now. One retry covers an anchor that moves
-          // between the card's read and the relay's simulation.
-          maxAttempts: 2,
-          anchorSettleMs: 0,
-        }),
-      ),
+    proveIntoMirror: ({ chainId, user, publicKey, payer, signer }) =>
+      call("proveIntoMirror", { chainId, user, publicKey, payer }, async () => {
+        const network = cachedNetworkFor(chainId);
+        if (!network) throw new Error(`Chain ${chainId} has no Celo-style mirror to prove into.`);
+        const { cache, registry } = mirrorTargetsOf(network);
+        const l2Client = publicClientFor(network);
+        const l1Client = publicClientFor(registry);
+
+        // The anchor moves about every 20 minutes and a proof is only accepted
+        // for the block it was built against, so a proof that misses its window
+        // is rebuilt against the new anchor rather than reported as a failure.
+        let lastError: unknown;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const populate = await buildPopulateKeyCall({
+            l1Client,
+            l2Client,
+            l1KeyStore: registry.keyStore,
+            l2Cache: cache,
+            user,
+            publicKey,
+          });
+          if (populate.provenKeySlot === 0n) {
+            throw new Error(
+              `The Ethereum block Celo anchors (${populate.l1BlockNumber}) does not carry this key yet, so ` +
+                `the proof would assert its absence and the cache would reject it. Wait for the next anchor.`,
+            );
+          }
+          try {
+            const result = await client.execute({
+              wallet: { address: payer },
+              signer,
+              chainId,
+              calls: [{ to: populate.to, value: populate.value, data: populate.data }],
+            });
+            if (result.status === "CONFIRMED") {
+              return { ...result, l1BlockNumber: populate.l1BlockNumber };
+            }
+            lastError = new Error(`The relay returned ${result.status} for the proof.`);
+          } catch (err) {
+            lastError = err;
+          }
+        }
+        throw lastError ?? new Error("The proof could not be sent.");
+      }),
   };
 }

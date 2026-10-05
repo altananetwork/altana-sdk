@@ -32,7 +32,7 @@ const CELO = CELO_SEPOLIA.chainId;
  *
  * The form says which one it got rather than failing at the relay later.
  */
-export function MirrorPanel() {
+export function MirrorPanel({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   const { state: app } = useApp();
   const [walletInput, setWalletInput] = useState("");
   const [keyInput, setKeyInput] = useState("");
@@ -46,13 +46,13 @@ export function MirrorPanel() {
   // saying "not valid".
   useEffect(() => {
     let cancelled = false;
-    void loadShowcaseKeys().then((f) => {
+    void loadShowcaseKeys(fetchImpl).then((f) => {
       if (!cancelled) setShowcase(f);
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [fetchImpl]);
 
   const sessions = app.sessions;
   const wallet = app.wallet;

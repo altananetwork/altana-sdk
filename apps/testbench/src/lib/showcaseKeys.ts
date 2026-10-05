@@ -114,8 +114,9 @@ export function parseShowcaseKeys(raw: unknown): ShowcaseFile {
 
 /** Fetches the copy in `public/`. Never throws; an absent file is not an error. */
 export async function loadShowcaseKeys(
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl: typeof fetch | undefined = typeof fetch === "function" ? fetch : undefined,
 ): Promise<ShowcaseFile | undefined> {
+  if (!fetchImpl) return undefined;
   try {
     const res = await fetchImpl("/showcase-keys.json");
     if (!res.ok) return undefined;

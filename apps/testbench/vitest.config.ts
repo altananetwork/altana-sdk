@@ -15,6 +15,12 @@ export default defineConfig({
           include: ["tests/components/**/*.test.tsx"],
           environment: "jsdom",
           setupFiles: ["./src/test/setup.ts"],
+          // The jsdom projects run in parallel and contend for the machine:
+          // tests that take under two seconds alone have exceeded the 5s
+          // default under full-suite load. The budget is generous on purpose,
+          // so a slow machine does not produce failures that are really
+          // scheduling.
+          testTimeout: 20_000,
         },
       },
     ],

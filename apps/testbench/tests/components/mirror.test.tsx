@@ -60,10 +60,7 @@ describe("MirrorCard", () => {
         callsId: "0x01" as const,
         status: "CONFIRMED" as const,
         transactionHash: "0xproof" as const,
-        cachedKey: {} as never,
         l1BlockNumber: mirrorCurrent.anchorL1Block,
-        keyStoreCache: "0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD" as const,
-        attempts: 1,
       })),
     });
     renderWith(client, <MirrorCard chainId={CELO_SEPOLIA.chainId} target={withKey} />, {
@@ -78,8 +75,9 @@ describe("MirrorCard", () => {
     await waitFor(() => expect(client.proveIntoMirror).toHaveBeenCalled());
     expect(vi.mocked(client.proveIntoMirror).mock.calls[0]![0]).toMatchObject({
       chainId: CELO_SEPOLIA.chainId,
-      wallet: TEST_ADDRESS,
+      user: TEST_ADDRESS,
       publicKey: PUBLIC_KEY,
+      payer: TEST_ADDRESS,
     });
     expect(await screen.findByText(/Proof confirmed/)).toBeInTheDocument();
     // It re-read, and the card now shows the key valid.
@@ -148,10 +146,14 @@ describe("MirrorCard", () => {
   });
 });
 
-describe("MirrorCard, proving someone else's key", () => {
+describe("MirrorCard, proving a key this browser does not own", () => {
   const OTHER = "0x6A75e80B961f7d884f9D03E5Aa0808d05e47c50d" as const;
 
-  test("a key belonging to another wallet is read but not proven, and says why", async () => {
+  test("another wallet's key can be proven, paid by this browser's wallet", async () => {
+    // populateKey verifies a storage proof against the anchored L1 block and
+    // never looks at msg.sender. Confirmed against the deployed cache by
+    // static-calling it from an unrelated address (2026-10-05), which is what
+    // makes the showcase keys provable from the bench at all.
     const client = fakeClient({
       readMirror: vi.fn(async () => ({ ...mirrorCurrent, cachedPresent: false, cachedSourceBlock: 0n })),
     });
@@ -160,35 +162,40 @@ describe("MirrorCard, proving someone else's key", () => {
       <MirrorCard chainId={CELO_SEPOLIA.chainId} target={{ ...withKey, user: OTHER }} />,
       { v: 1, walletKey: TEST_KEY, sessions: [] },
     );
-    // It still reads: anyone can.
-    await waitFor(() => expect(client.readMirror).toHaveBeenCalled());
-    expect(await screen.findByText(/belongs to another wallet/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Prove into the Celo mirror" })).toBeDisabled();
+
+    const button = await screen.findByRole("button", { name: "Prove into the Celo mirror" });
+    expect(button).toBeEnabled();
+    expect(screen.getByText(/never looks at who sent it/)).toBeInTheDocument();
+
+    await userEvent.click(button);
+    await waitFor(() => expect(client.proveIntoMirror).toHaveBeenCalled());
+    const sent = vi.mocked(client.proveIntoMirror).mock.calls[0]![0];
+    // Whose key, and who pays, are different addresses.
+    expect(sent.user).toBe(OTHER);
+    expect(sent.payer).toBe(TEST_ADDRESS);
   });
 
-  test("with no wallet at all, the read still works and the proof is off", async () => {
+  test("the browser's own key says nothing about relaying", async () => {
+    const client = fakeClient({
+      readMirror: vi.fn(async () => ({ ...mirrorCurrent, cachedPresent: false, cachedSourceBlock: 0n })),
+    });
+    renderWith(client, <MirrorCard chainId={CELO_SEPOLIA.chainId} target={withKey} />, {
+      v: 1,
+      walletKey: TEST_KEY,
+      sessions: [],
+    });
+    await screen.findByRole("button", { name: "Prove into the Celo mirror" });
+    expect(screen.queryByText(/never looks at who sent it/)).not.toBeInTheDocument();
+  });
+
+  test("with no wallet the read still works, and proving says why it needs one", async () => {
     const client = fakeClient({
       readMirror: vi.fn(async () => ({ ...mirrorCurrent, cachedPresent: false, cachedSourceBlock: 0n })),
     });
     renderWith(client, <MirrorCard chainId={CELO_SEPOLIA.chainId} target={withKey} />, { v: 1, sessions: [] });
     await waitFor(() => expect(client.readMirror).toHaveBeenCalled());
-    expect(await screen.findByText(/no admin key to sign the proof with/)).toBeInTheDocument();
+    expect(await screen.findByText(/only to pay the Celo gas/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Prove into the Celo mirror" })).toBeDisabled();
-  });
-
-  test("the wallet's own key is provable, whatever the case of the address", async () => {
-    const client = fakeClient({
-      readMirror: vi.fn(async () => ({ ...mirrorCurrent, cachedPresent: false, cachedSourceBlock: 0n })),
-    });
-    renderWith(
-      client,
-      <MirrorCard
-        chainId={CELO_SEPOLIA.chainId}
-        target={{ ...withKey, user: TEST_ADDRESS.toLowerCase() as typeof TEST_ADDRESS }}
-      />,
-      { v: 1, walletKey: TEST_KEY, sessions: [] },
-    );
-    expect(await screen.findByRole("button", { name: "Prove into the Celo mirror" })).toBeEnabled();
   });
 });
 

@@ -90,9 +90,12 @@ export function fakeClient(overrides: Partial<TestbenchClient> = {}): FakeClient
       throw new Error("fetchWithX402 not configured in this test");
     }),
     readMirror: vi.fn(async () => mirrorCurrent),
-    proveIntoMirror: vi.fn(async () => {
-      throw new Error("proveIntoMirror not configured in this test");
-    }),
+    proveIntoMirror: vi.fn(async () => ({
+      callsId: "0x01" as const,
+      status: "CONFIRMED" as const,
+      transactionHash: "0xproof" as const,
+      l1BlockNumber: 11847946n,
+    })),
     ...overrides,
   };
 }
