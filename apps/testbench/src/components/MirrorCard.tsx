@@ -13,6 +13,7 @@ import {
 } from "../lib/mirror";
 import { cachedNetworkFor, mirrorTargetsOf } from "../lib/mirrorReads";
 import { relayReason } from "../lib/errors";
+import { explainCacheRevert } from "../lib/proveMirror";
 import { sameAddress } from "../lib/format";
 import { useApp, useEnsureRegistered } from "../state/AppState";
 import { Address as Addr } from "./shared/Address";
@@ -93,7 +94,8 @@ export function MirrorCard({ chainId, target, showTitle = true }: MirrorCardProp
   const [reading, setReading] = useState<MirrorReading>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState<"reading" | "proving">();
-  const [proofTx, setProofTx] = useState<{ hash?: Hex; status: string }>();
+  const [proofTx, setProofTx] = useState<{ hash?: Hex; status: string; l1Block?: bigint; attempts?: number }>();
+  const [progress, setProgress] = useState<string>();
 
   const network = cachedNetworkFor(chainId);
   const user = target?.user;
@@ -161,9 +163,26 @@ export function MirrorCard({ chainId, target, showTitle = true }: MirrorCardProp
     setBusy("proving");
     setError(undefined);
     setProofTx(undefined);
+    setProgress(undefined);
     try {
       await ensureRegistered();
       const result = await client.proveIntoMirror({
+        onStatus: (s) => {
+          // The anchor moving is the normal way this fails, and the wait that
+          // follows is deliberate. Saying so beats a minute of silence on stage.
+          if (s.kind === "anchor-moved") {
+            setProgress(
+              `The Celo anchor moved to ${s.to}, so that proof is for a block Celo no longer anchors. ` +
+                `Re-proving against the new one in ${Math.round(s.waitingMs / 1000)} seconds.`,
+            );
+          } else if (s.kind === "building") {
+            setProgress(`Building the proof against Ethereum block ${s.anchorL1Block} (attempt ${s.attempt}).`);
+          } else if (s.kind === "sending") {
+            setProgress(`Sending the proof for Ethereum block ${s.anchorL1Block}.`);
+          } else {
+            setProgress(undefined);
+          }
+        },
         chainId,
         user: target.user,
         publicKey: target.publicKey,
@@ -172,10 +191,17 @@ export function MirrorCard({ chainId, target, showTitle = true }: MirrorCardProp
         payer: app.wallet.address,
         signer: app.wallet.signer,
       });
-      setProofTx({ status: result.status, ...(result.transactionHash ? { hash: result.transactionHash } : {}) });
+      setProofTx({
+        status: result.status,
+        ...(result.transactionHash ? { hash: result.transactionHash } : {}),
+        l1Block: result.l1BlockNumber,
+        attempts: result.attempts,
+      });
+      setProgress(undefined);
       await refresh();
     } catch (err) {
-      setError(relayReason(err));
+      setError(explainCacheRevert(relayReason(err)));
+      setProgress(undefined);
     } finally {
       setBusy(undefined);
     }
@@ -288,17 +314,30 @@ export function MirrorCard({ chainId, target, showTitle = true }: MirrorCardProp
             </div>
           )}
 
+          {progress && (
+            <div className="banner info" role="status">
+              {progress}
+            </div>
+          )}
+
           {proofTx && (
             <div className={`banner ${proofTx.status === "CONFIRMED" ? "info" : "error"}`} role="status">
-              Proof {proofTx.status.toLowerCase()}
-              {proofTx.hash && (
-                <>
-                  {" "}
-                  <a href={txUrl(chainId, proofTx.hash)} target="_blank" rel="noreferrer">
-                    view the transaction
-                  </a>
-                </>
-              )}
+              <div className="stack">
+                <span>
+                  Proof {proofTx.status.toLowerCase()}
+                  {proofTx.l1Block !== undefined && <> against Ethereum block {String(proofTx.l1Block)}</>}
+                  {proofTx.attempts !== undefined && proofTx.attempts > 1 && (
+                    <> after {proofTx.attempts} attempts, the anchor having moved</>
+                  )}
+                  .
+                </span>
+                {proofTx.hash && (
+                  <div className="row" style={{ gap: 8 }}>
+                    <span className="muted small">Transaction</span>
+                    <Addr value={proofTx.hash} href={txUrl(chainId, proofTx.hash)} short={false} />
+                  </div>
+                )}
+              </div>
             </div>
           )}
 

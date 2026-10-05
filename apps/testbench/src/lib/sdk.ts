@@ -24,6 +24,7 @@ import {
   getErc8004Agent,
   PERMIT2_ADDRESS,
   networkByChainId,
+  readL1Anchor,
   registerErc8004Agent,
 } from "@altananetwork/sdk";
 import type { Address, Hex } from "viem";
@@ -32,6 +33,7 @@ import { entry, type LogEntry } from "./log";
 import type { MirrorReading } from "./mirror";
 import { cachedNetworkFor, mirrorTargetsOf, publicClientFor, readMirror } from "./mirrorReads";
 import { APPROVED_CHECKERS_ABI } from "./permit2Setup";
+import { proveWithRetry, type ProveResult, type ProveStatus } from "./proveMirror";
 
 const ALLOWANCE_ABI = [
   {
@@ -128,7 +130,8 @@ export interface TestbenchClient {
     publicKey: Hex;
     payer: Address;
     signer: Signer;
-  }): Promise<ExecuteResult & { l1BlockNumber: bigint }>;
+    onStatus?: (s: ProveStatus) => void;
+  }): Promise<ProveResult>;
 }
 
 export type Logger = (e: LogEntry) => void;
@@ -255,7 +258,7 @@ export function createLiveClient(chains: NetworkConfig[], log: Logger): Testbenc
           ...(registrationL1Block !== undefined ? { registrationL1Block } : {}),
         });
       }),
-    proveIntoMirror: ({ chainId, user, publicKey, payer, signer }) =>
+    proveIntoMirror: ({ chainId, user, publicKey, payer, signer, onStatus }) =>
       call("proveIntoMirror", { chainId, user, publicKey, payer }, async () => {
         const network = cachedNetworkFor(chainId);
         if (!network) throw new Error(`Chain ${chainId} has no Celo-style mirror to prove into.`);
@@ -263,41 +266,36 @@ export function createLiveClient(chains: NetworkConfig[], log: Logger): Testbenc
         const l2Client = publicClientFor(network);
         const l1Client = publicClientFor(registry);
 
-        // The anchor moves about every 20 minutes and a proof is only accepted
-        // for the block it was built against, so a proof that misses its window
-        // is rebuilt against the new anchor rather than reported as a failure.
-        let lastError: unknown;
-        for (let attempt = 0; attempt < 2; attempt++) {
-          const populate = await buildPopulateKeyCall({
-            l1Client,
-            l2Client,
-            l1KeyStore: registry.keyStore,
-            l2Cache: cache,
-            user,
-            publicKey,
-          });
-          if (populate.provenKeySlot === 0n) {
-            throw new Error(
-              `The Ethereum block Celo anchors (${populate.l1BlockNumber}) does not carry this key yet, so ` +
-                `the proof would assert its absence and the cache would reject it. Wait for the next anchor.`,
-            );
-          }
-          try {
-            const result = await client.execute({
-              wallet: { address: payer },
-              signer,
-              chainId,
-              calls: [{ to: populate.to, value: populate.value, data: populate.data }],
-            });
-            if (result.status === "CONFIRMED") {
-              return { ...result, l1BlockNumber: populate.l1BlockNumber };
-            }
-            lastError = new Error(`The relay returned ${result.status} for the proof.`);
-          } catch (err) {
-            lastError = err;
-          }
-        }
-        throw lastError ?? new Error("The proof could not be sent.");
+        return proveWithRetry(
+          {
+            readAnchor: async () => (await readL1Anchor(l2Client)).number,
+            buildCall: async (anchorL1Block) => {
+              // The anchor is named explicitly so the proof and the check that
+              // follows it are about the same block, rather than two reads that
+              // can disagree.
+              const anchor = await readL1Anchor(l2Client);
+              const populate = await buildPopulateKeyCall({
+                l1Client,
+                l2Client,
+                l1KeyStore: registry.keyStore,
+                l2Cache: cache,
+                user,
+                publicKey,
+                ...(anchor.number === anchorL1Block ? { anchor } : {}),
+              });
+              return populate;
+            },
+            send: (c) =>
+              client.execute({
+                wallet: { address: payer },
+                signer,
+                chainId,
+                calls: [{ to: c.to, value: c.value, data: c.data }],
+              }),
+            sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+          },
+          { ...(onStatus ? { onStatus } : {}) },
+        );
       }),
   };
 }

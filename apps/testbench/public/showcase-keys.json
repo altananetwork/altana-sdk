@@ -94,16 +94,19 @@
       "registrationL1Block": 11847919,
       "registrationVia": "relay",
       "cacheProofTx": null,
-      "anchoredL1Block": null,
+      "anchoredL1Block": 11848101,
       "revocationTx": null,
       "revocationL1Block": null,
       "revocationCacheProofTx": null,
       "revocationAnchoredL1Block": null,
       "verified": {
         "keyStoreIsValidKey": true,
-        "paidInSepoliaEth": true
+        "paidInSepoliaEth": true,
+        "mirrorProvenByUnrelatedWallet": true,
+        "mirrorSourceBlockAtProof": 11848101
       },
-      "preparedOn": "SDK PR #103 (fix/passkey-multichain-provisioning) at ac6c7ed, unmerged at the time"
+      "preparedOn": "SDK PR #103 (fix/passkey-multichain-provisioning) at ac6c7ed, unmerged at the time",
+      "cacheProofNote": "Proven into the mirror from the test bench by an UNRELATED browser wallet (0x7AFEc44bbec63C03641f316D531bBa737aFf2E94), which demonstrates that populateKey is permissionless: the cache checks the storage proof against the anchored block and never looks at the sender. Two earlier attempts lost the anchor race first."
     },
     {
       "label": "passkey admin (WebAuthn P256)",
@@ -135,6 +138,33 @@
       "walletKind": "passkey",
       "registrationL1Block": null,
       "revocationCacheProofTx": null
+    },
+    {
+      "label": "showcase A spare 1: valid, prove on demand",
+      "role": "A-spare-1",
+      "demoNote": "Identical to A and equally unproven. Use it if A's proof loses the anchor race, because proving a key spends it and A has no second chance.",
+      "user": "0xB29A10F2C883DBb1B9A83b6A8495f98B24654132",
+      "walletKind": "secp256k1",
+      "keyType": 2,
+      "keyTypeName": "Secp256k1",
+      "isSuperAdmin": false,
+      "expiry": 1793787609,
+      "publicKey": "0x04c384049bd5f3c145e8e9423f5a1ab2af6ccef3adc98fb8ea8d770e3a89ef5d0881e7245a5c7b50bf7bc62670c9701fa8edeea5deb6192a064a1857d1e39b7f75",
+      "keyStoreKeyId": "0x79714da00244e609466fffdb400b8b9d09563b6408000c59c184b0a49e765318",
+      "accountKeyHash": "0x11a38fc5123319a4b3646b844fe4d27acb5a34f8cacde41b1c58abc625ec458e",
+      "registrationTx": "0x90e3fee9129b5d6e0a06298b4f8caaadfe1c67f011dd356495fd2941cf828747",
+      "registrationL1Block": 11848210,
+      "registrationVia": "relay",
+      "cacheProofTx": null,
+      "anchoredL1Block": null,
+      "revocationTx": null,
+      "revocationL1Block": null,
+      "revocationCacheProofTx": null,
+      "revocationAnchoredL1Block": null,
+      "verified": {
+        "keyStoreIsValidKey": true,
+        "paidInSepoliaEth": true
+      }
     }
   ],
   "howToUse": {

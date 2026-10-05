@@ -91,10 +91,10 @@ export function fakeClient(overrides: Partial<TestbenchClient> = {}): FakeClient
     }),
     readMirror: vi.fn(async () => mirrorCurrent),
     proveIntoMirror: vi.fn(async () => ({
-      callsId: "0x01" as const,
-      status: "CONFIRMED" as const,
+      status: "CONFIRMED",
       transactionHash: "0xproof" as const,
       l1BlockNumber: 11847946n,
+      attempts: 1,
     })),
     ...overrides,
   };

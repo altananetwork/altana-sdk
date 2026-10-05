@@ -57,10 +57,10 @@ describe("MirrorCard", () => {
         .mockResolvedValueOnce({ ...mirrorCurrent, cachedPresent: false, cachedSourceBlock: 0n, cacheSaysValid: false })
         .mockResolvedValue(mirrorCurrent),
       proveIntoMirror: vi.fn(async () => ({
-        callsId: "0x01" as const,
-        status: "CONFIRMED" as const,
+        status: "CONFIRMED",
         transactionHash: "0xproof" as const,
         l1BlockNumber: mirrorCurrent.anchorL1Block,
+        attempts: 1,
       })),
     });
     renderWith(client, <MirrorCard chainId={CELO_SEPOLIA.chainId} target={withKey} />, {
@@ -300,5 +300,70 @@ describe("the wait the card quotes", () => {
       await screen.findByText(/would prove its absence and the cache would reject it/),
     ).toBeInTheDocument();
     expect(screen.getByText(/normal half-hour wait, not a failure/)).toBeInTheDocument();
+  });
+});
+
+describe("what the card shows while and after proving", () => {
+  test("a moving anchor reads as progress, not as an error", async () => {
+    const client = fakeClient({
+      readMirror: vi.fn(async () => ({ ...mirrorCurrent, cachedPresent: false, cachedSourceBlock: 0n })),
+      proveIntoMirror: vi.fn(async (opts) => {
+        opts.onStatus?.({ kind: "anchor-moved", attempt: 1, from: 100n, to: 101n, waitingMs: 60_000 });
+        return { status: "CONFIRMED", transactionHash: "0xproof" as const, l1BlockNumber: 101n, attempts: 2 };
+      }),
+    });
+    renderWith(client, <MirrorCard chainId={CELO_SEPOLIA.chainId} target={withKey} />, {
+      v: 1,
+      walletKey: TEST_KEY,
+      sessions: [],
+    });
+    await userEvent.click(await screen.findByRole("button", { name: "Prove into the Celo mirror" }));
+    expect(await screen.findByText(/Proof confirmed against Ethereum block 101/)).toBeInTheDocument();
+    expect(screen.getByText(/after 2 attempts, the anchor having moved/)).toBeInTheDocument();
+    // Never an alert: the anchor moving is expected, not a failure.
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  test("the proof transaction hash is shown in full, not hidden behind a link", async () => {
+    // qa could not record the hash for the write-up: the card linked it as
+    // "view the transaction" and never showed the value.
+    const hash = "0x4f169ce080ebad5ab5ef5a571de93f91dd18e9cbc60aed8d7279d0b949f644f5" as const;
+    const client = fakeClient({
+      readMirror: vi.fn(async () => ({ ...mirrorCurrent, cachedPresent: false, cachedSourceBlock: 0n })),
+      proveIntoMirror: vi.fn(async () => ({
+        status: "CONFIRMED",
+        transactionHash: hash,
+        l1BlockNumber: 11848101n,
+        attempts: 1,
+      })),
+    });
+    renderWith(client, <MirrorCard chainId={CELO_SEPOLIA.chainId} target={withKey} />, {
+      v: 1,
+      walletKey: TEST_KEY,
+      sessions: [],
+    });
+    await userEvent.click(await screen.findByRole("button", { name: "Prove into the Celo mirror" }));
+    expect(await screen.findByTitle(hash)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: new RegExp(hash.slice(0, 10)) })).toHaveAttribute(
+      "href",
+      `https://sepolia.celoscan.io/tx/${hash}`,
+    );
+    expect(screen.getByRole("button", { name: new RegExp(`Copy ${hash}`) })).toBeInTheDocument();
+  });
+
+  test("a cache revert is explained in words, not left as a blob", async () => {
+    const client = fakeClient({
+      readMirror: vi.fn(async () => ({ ...mirrorCurrent, cachedPresent: false, cachedSourceBlock: 0n })),
+      proveIntoMirror: vi.fn(async () => {
+        throw new Error("execution reverted: Cache: cannot un-revoke");
+      }),
+    });
+    renderWith(client, <MirrorCard chainId={CELO_SEPOLIA.chainId} target={withKey} />, {
+      v: 1,
+      walletKey: TEST_KEY,
+      sessions: [],
+    });
+    await userEvent.click(await screen.findByRole("button", { name: "Prove into the Celo mirror" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/a revocation is permanent/);
   });
 });
