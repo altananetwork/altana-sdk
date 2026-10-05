@@ -48,7 +48,8 @@ export async function probeRelay(
     const reason =
       err instanceof Error && err.name === "AbortError"
         ? `no answer within ${Math.round(timeoutMs / 1000)} seconds`
-        : err instanceof Error
+        : // local-validation: a fetch failure reaching the relay at all, not a response from it.
+          err instanceof Error
           ? err.message
           : String(err);
     return { status: "unreachable", reason };

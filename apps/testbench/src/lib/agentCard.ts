@@ -95,6 +95,7 @@ export async function loadAgentRecord(
     const json = JSON.parse(text) as Record<string, unknown>;
     return { record: { ...(json as AgentRecord), raw: text } };
   } catch (err) {
+    // local-validation: decoding or parsing the card, never a relay call.
     return { problem: err instanceof Error ? err.message : String(err) };
   }
 }

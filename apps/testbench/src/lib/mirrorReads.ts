@@ -20,6 +20,7 @@ import {
   type NetworkConfig,
 } from "@altananetwork/sdk";
 import { createPublicClient, http, type Address, type Hex, type PublicClient } from "viem";
+import { relayReason } from "./errors";
 import type { MirrorReading } from "./mirror";
 
 /** The cached network's own cache address and the registry chain behind it. */
@@ -106,7 +107,7 @@ async function readSlotAtAnchor(
     const value = await l1Client.getStorageAt({ address: keyStore, slot, blockNumber });
     return BigInt(value ?? "0x0");
   } catch (err) {
-    const text = err instanceof Error ? err.message : String(err);
+    const text = relayReason(err);
     throw new Error(
       `The Ethereum Sepolia RPC would not read the KeyStore at block ${blockNumber}, the block ` +
         `Celo anchors: ${text.split("\n")[0]}. That block is 70 to 95 behind the Sepolia head and ` +

@@ -14,13 +14,26 @@ import { describe, expect, test } from "vitest";
  * the panel being demonstrated.
  */
 
-const COMPONENTS = join(__dirname, "..", "..", "src", "components");
+/**
+ * `src`, not just `src/components`.
+ *
+ * The first version of this lint covered components only, and missed the
+ * loudest instance of the bug it was written for: `lib/crossChain.ts` put the
+ * undecoded message into a step detail, which renders under the failed step
+ * *and* in the activity log. The panel's own error box, which the lint did
+ * reach, was the quiet surface (qa, 2026-10-05).
+ *
+ * A guard scoped to where the last bug was found will keep missing the next
+ * one, so this walks everything that can produce text a person reads.
+ */
+const SRC = join(__dirname, "..", "..", "src");
 
 function sources(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
+    if (name === "test") continue; // fakes and helpers, not product code
     const p = join(dir, name);
     if (statSync(p).isDirectory()) sources(p, out);
-    else if (name.endsWith(".tsx")) out.push(p);
+    else if (name.endsWith(".tsx") || name.endsWith(".ts")) out.push(p);
   }
   return out;
 }
@@ -37,7 +50,7 @@ function sources(dir: string, out: string[] = []): string[] {
 describe("every panel reports the relay's own reason", () => {
   test("a raw .message is either decoded or declared local", () => {
     const offenders: string[] = [];
-    for (const file of sources(COMPONENTS)) {
+    for (const file of sources(SRC)) {
       const lines = readFileSync(file, "utf8").split("\n");
       lines.forEach((line, i) => {
         if (!/instanceof\s+Error\s*\?\s*\w+\.message/.test(line)) return;
@@ -52,12 +65,20 @@ describe("every panel reports the relay's own reason", () => {
   });
 
   test("every component that catches from the client decodes with relayReason", () => {
-    const offenders = sources(COMPONENTS).filter((f) => {
+    const offenders = sources(SRC).filter((f) => {
       const src = readFileSync(f, "utf8");
       const catchesFromClient = /client\.\w+\(/.test(src) && /catch\s*\(/.test(src);
       return catchesFromClient && !src.includes("relayReason");
     });
     expect(offenders.map((f) => f.split("/").pop())).toEqual([]);
+  });
+
+  test("it reaches lib, which is where the loud surface was", () => {
+    // The step detail in crossChain.ts renders under the failed step and in
+    // the activity log. A components-only lint could not see it.
+    const files = sources(SRC).map((f) => f.split("/").slice(-2).join("/"));
+    expect(files).toContain("lib/crossChain.ts");
+    expect(files).toContain("lib/proveMirror.ts");
   });
 
   test("the lint would have caught the bug it was written for", () => {

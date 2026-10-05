@@ -81,4 +81,32 @@ describe("the relay's reason, not viem's wrapper", () => {
     expect(alert).not.toHaveTextContent(/Invalid parameters were provided/);
     expect(alert.textContent ?? "").not.toMatch(/0xabab/);
   });
+
+  test("no surface on the screen carries the echoed request, not just the alert", async () => {
+    // The alert was the quiet surface. The loud ones are the step detail,
+    // rendered under the failed step, and the activity log entry, and both
+    // read from crossChain.ts's onStep detail rather than from the panel
+    // (qa, 2026-10-05). Asserting the whole screen is what makes this a test
+    // of the behaviour rather than of one element.
+    const hex = `0x${"ab".repeat(400)}`;
+    const wrapped = new Error(
+      `Invalid parameters were provided to the RPC method. Request body: {"data":"${hex}"}`,
+      { cause: { code: -32602, details: "multichain functionality is disabled: interop service not configured" } },
+    );
+    const makeDeps = vi.fn(async () => {
+      throw wrapped;
+    });
+    const { container } = renderWith(fakeClient(), <CrossChainPanel makeDeps={makeDeps} />, {
+      v: 1,
+      walletKey: TEST_KEY,
+      sessions: [],
+    });
+    await userEvent.click(screen.getByRole("button", { name: /Register through the relay/ }));
+    await screen.findByRole("alert");
+
+    const onScreen = container.textContent ?? "";
+    expect(onScreen).toContain("multichain functionality is disabled");
+    expect(onScreen, "the echoed request must not reach any surface").not.toContain("0xabab");
+    expect(onScreen).not.toContain("Invalid parameters were provided");
+  });
 });

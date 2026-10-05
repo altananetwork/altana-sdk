@@ -25,6 +25,7 @@
  */
 
 import type { Address, Hex } from "viem";
+import { relayReason } from "./errors";
 
 export type ProveStatus =
   | { kind: "building"; attempt: number; anchorL1Block: bigint }
@@ -187,7 +188,11 @@ export async function proveWithRetry(deps: ProveDeps, opts: ProveOptions = {}): 
       lastReason = `the relay returned ${sent.status}`;
       if (attempt < maxAttempts) await deps.sleep(settleMs);
     } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
+      // Decoded, because this string decides whether to retry: a viem wrapper
+      // with the revert buried in its cause would read as "not the anchor
+      // race" and turn a recoverable failure into a final one. The live run
+      // retried correctly, so this is hardening rather than a known break.
+      const reason = relayReason(err);
       lastReason = reason;
       // Only the anchor race is worth another attempt. Anything else is a real
       // answer and repeating it would just waste the operator's time.

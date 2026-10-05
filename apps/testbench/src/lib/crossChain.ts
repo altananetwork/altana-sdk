@@ -1,5 +1,6 @@
 import { SEPOLIA } from "@altananetwork/sdk";
 import { keccak256, parseAbi, type Address, type Hex } from "viem";
+import { relayReason } from "./errors";
 
 /* Cross-chain registration: a wallet funded on a source chain registers its own
    key in the Sepolia KeyStore, the relay fronting the ETH. Same flow as
@@ -83,7 +84,12 @@ export async function runCrossChain(
       args.onStep({ step, state: "done", ...(detail ? { detail: detail(out) } : {}) });
       return out;
     } catch (e) {
-      args.onStep({ step, state: "failed", detail: e instanceof Error ? e.message : String(e) });
+      // The step detail is the loud surface: it renders under the failed step
+      // and again in the activity log, so an undecoded message puts a kilobyte
+      // of echoed request in front of the reader and the relay's actual
+      // sentence after it (qa, 2026-10-05). The panel's own error box was
+      // fixed first and is not the one people read.
+      args.onStep({ step, state: "failed", detail: relayReason(e) });
       throw e;
     }
   };
