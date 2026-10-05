@@ -15,16 +15,23 @@ import { describe, expect, test } from "vitest";
  */
 
 /**
- * `src`, not just `src/components`.
+ * **A guard scoped to where the last bug was found will keep missing the next
+ * one.** That is the general rule and it is not specific to this lint; it is
+ * written here because this is where it was learned and where narrowing the
+ * scope would next be tempting.
  *
- * The first version of this lint covered components only, and missed the
- * loudest instance of the bug it was written for: `lib/crossChain.ts` put the
- * undecoded message into a step detail, which renders under the failed step
- * *and* in the activity log. The panel's own error box, which the lint did
- * reach, was the quiet surface (qa, 2026-10-05).
+ * The evidence: the first version walked `src/components`, because that is
+ * where the instance that prompted it happened to be. It then missed the
+ * loudest instance of the very bug it was written for. `lib/crossChain.ts` put
+ * an undecoded message into a step detail, which renders under the failed step
+ * *and* in the activity log, while the panel's error box the lint did reach was
+ * the quiet surface nobody reads (qa, 2026-10-05). Widening it to all of `src`
+ * immediately found two more, one of which could have stopped the anchor-race
+ * retry firing at all.
  *
- * A guard scoped to where the last bug was found will keep missing the next
- * one, so this walks everything that can produce text a person reads.
+ * So this walks everything that can produce text a person reads, and a test
+ * below asserts it reaches `lib/crossChain.ts`, so narrowing it again fails
+ * loudly rather than silently.
  */
 const SRC = join(__dirname, "..", "..", "src");
 
