@@ -7,6 +7,7 @@ import { txUrl } from "../lib/explorer";
 import { entry } from "../lib/log";
 import {
   amountOf,
+  chooseRequirement,
   explainX402Failure,
   probeX402,
   railOf,
@@ -84,7 +85,7 @@ export function X402Panel() {
   const ask = () =>
     guard("x402 probe", async () => {
       setPaid(undefined);
-      const result = await probeX402(url);
+      const result = await probeX402(url, undefined, rail);
       setProbe(result);
       dispatch({ type: "log/add", entry: entry("x402 probe", { result }) });
     });
@@ -109,7 +110,14 @@ export function X402Panel() {
   // from chain, so the panel no longer infers which is missing.
   const payToken = health?.token as Address | undefined;
   const wallet = app.wallet;
-  const chosenRequirement = probe?.chosen;
+  // Re-derived from the rail the dropdown is on, not frozen at probe time, and
+  // without asking the seller again: the accepts list does not change when the
+  // preference does. This is what keeps the approval readout and the payment
+  // talking about the same rail.
+  const chosenRequirement = useMemo(
+    () => (probe?.accepts.length ? chooseRequirement(probe.accepts, rail) : undefined),
+    [probe, rail],
+  );
 
   const refreshApprovals = useCallback(async () => {
     if (!selected || !chosenRequirement) {
@@ -127,6 +135,25 @@ export function X402Panel() {
   useEffect(() => {
     void refreshApprovals();
   }, [refreshApprovals]);
+
+  // Ask once when a seller answers, so the approval state is on screen before
+  // anyone presses anything. Without it the panel shows nothing until a probe
+  // runs, and the first signal that a session cannot pay is the refusal, which
+  // on stage means it looked ready when it was not.
+  const sellerUrl = health ? settledUrl : undefined;
+  useEffect(() => {
+    if (!sellerUrl || probe) return;
+    let cancelled = false;
+    void probeX402(sellerUrl, undefined, rail).then((p) => {
+      if (!cancelled) setProbe(p);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // `rail` is deliberately absent: a rail change re-derives from the accepts
+    // already held rather than asking the seller again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sellerUrl, probe]);
 
   /**
    * Repairs a session granted before `x402Tokens` existed. A session granted

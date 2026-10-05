@@ -49,6 +49,25 @@ export type X402Payment = {
 };
 
 /**
+ * Which requirement the payment will use, for a given rail preference.
+ *
+ * Exported because the approval readout and the payment must agree on it. They
+ * did not: the readout followed whatever the probe picked while the payment
+ * followed the dropdown, so with a seller offering both rails the panel could
+ * say a session was approved and then refuse its payment, each sentence true
+ * about a different rail (qa, 2026-10-05).
+ */
+export function chooseRequirement(
+  accepts: X402Requirement[],
+  preferRail?: Rail,
+): X402Requirement | undefined {
+  return selectX402Requirement(accepts, {
+    chainId: 11142220,
+    ...(preferRail ? { preferRail } : {}),
+  });
+}
+
+/**
  * Asks the seller what it charges, without paying. A 200 here means the URL is
  * not a paid route, which is worth saying plainly rather than reporting a
  * payment that never happened.
@@ -56,6 +75,7 @@ export type X402Payment = {
 export async function probeX402(
   url: string,
   fetchImpl: typeof fetch = fetch,
+  preferRail?: Rail,
 ): Promise<X402Probe> {
   const res = await fetchImpl(url);
   if (res.status !== 402) {
@@ -76,7 +96,7 @@ export async function probeX402(
     accepts,
     ...(body.x402Version !== undefined ? { version: body.x402Version } : {}),
     ...(() => {
-      const chosen = selectX402Requirement(accepts, { chainId: 11142220 });
+      const chosen = chooseRequirement(accepts, preferRail);
       return chosen ? { chosen } : {};
     })(),
   };

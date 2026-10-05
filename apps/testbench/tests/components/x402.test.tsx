@@ -181,7 +181,9 @@ describe("X402Panel", () => {
     });
     renderWith(client, <X402Panel />, WITH_SESSION);
     await userEvent.click(screen.getByRole("button", { name: "Pay and fetch" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(/insufficient allowance/);
+    // Scoped by text: the auto-probe also reports that this URL is not a paid
+    // route, which is a second, correct alert.
+    expect(await screen.findByText(/insufficient allowance/)).toBeInTheDocument();
     expect(screen.queryByText("Paid")).not.toBeInTheDocument();
   });
 });
@@ -297,10 +299,89 @@ describe("a failed payment through the facilitator", () => {
     renderWith(client, <X402Panel />, { ...WITH_SESSION, walletKey: TEST_KEY });
     await userEvent.click(await screen.findByRole("button", { name: "Pay and fetch" }));
 
-    const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent(/not an approved signature checker/);
+    const alert = (await screen.findByText(/not an approved signature checker/)).closest(".banner")!;
     expect(alert).toHaveTextContent(/chain's answer relayed/);
     // The chain's own words are kept, not replaced.
     expect(alert).toHaveTextContent(/FiatTokenV2: invalid signature/);
+  });
+});
+
+describe("the approval readout and the payment agree on the rail", () => {
+  const eip3009Only = { ...permit2Req, extra: { ...permit2Req.extra, assetTransferMethod: "eip3009" } };
+  const HEALTH = { price: "10000", token: USDC, facilitator: null };
+
+  function sellerOfferingBoth(approvals: (req: { extra?: { assetTransferMethod?: string } }) => unknown) {
+    mockFetch((url) =>
+      url.endsWith("/health")
+        ? Response.json(HEALTH)
+        : new Response(JSON.stringify({ x402Version: 2, accepts: [permit2Req, eip3009Only] }), { status: 402 }),
+    );
+    return fakeClient({ x402Approvals: vi.fn(async ({ req }) => approvals(req) as never) });
+  }
+
+  /** The state qa hit: Permit2 approved as a checker, the token not. */
+  const byRail = (req: { extra?: { assetTransferMethod?: string } }) => {
+    const isPermit2 = req.extra?.assetTransferMethod?.startsWith("permit2");
+    return {
+      ok: isPermit2,
+      rail: isPermit2 ? "permit2" : "eip3009",
+      token: USDC,
+      checker: isPermit2 ? PERMIT2_ADDR : USDC,
+      keyHash: "0x11",
+      isSuperAdmin: false,
+      ...(isPermit2 ? { permit2Allowance: { needed: 10_000n, actual: 2n ** 256n - 1n, ok: true } } : {}),
+      checkerApproved: isPermit2,
+      missing: isPermit2 ? [] : ["approve the token as a signature checker for this key"],
+    };
+  };
+
+  test("switching the rail moves the readout with it, instead of contradicting the payment", async () => {
+    // The panel said "approved ... on the permit2 rail" while refusing an
+    // eip3009 payment, both true of different rails (qa, 2026-10-05).
+    const client = sellerOfferingBoth(byRail);
+    renderWith(client, <X402Panel />, { ...WITH_SESSION, walletKey: TEST_KEY });
+
+    expect(await screen.findByText(/on the permit2 rail/)).toBeInTheDocument();
+
+    await userEvent.selectOptions(screen.getByLabelText(/Preferred rail/), "eip3009");
+    expect(await screen.findByText(/not set up for the eip3009 rail/)).toBeInTheDocument();
+    // The approved-on-permit2 sentence is gone, not sitting beside it.
+    expect(screen.queryByText(/on the permit2 rail/)).not.toBeInTheDocument();
+  });
+
+  test("switching the rail does not ask the seller again", async () => {
+    const client = sellerOfferingBoth(byRail);
+    renderWith(client, <X402Panel />, { ...WITH_SESSION, walletKey: TEST_KEY });
+    await screen.findByText(/on the permit2 rail/);
+    const before = vi.mocked(globalThis.fetch).mock.calls.length;
+
+    await userEvent.selectOptions(screen.getByLabelText(/Preferred rail/), "eip3009");
+    await screen.findByText(/not set up for the eip3009 rail/);
+    expect(vi.mocked(globalThis.fetch).mock.calls.length).toBe(before);
+  });
+
+  test("the approval state is on screen before anything is pressed", async () => {
+    // Otherwise the first signal that a session cannot pay is the refusal, and
+    // on stage the panel looks ready when it is not.
+    const client = sellerOfferingBoth(byRail);
+    renderWith(client, <X402Panel />, { ...WITH_SESSION, walletKey: TEST_KEY });
+    expect(await screen.findByText(/on the permit2 rail/)).toBeInTheDocument();
+    expect(client.x402Approvals).toHaveBeenCalled();
+  });
+
+  test("the requirement the payment uses is the one the readout described", async () => {
+    const client = sellerOfferingBoth(byRail);
+    (client.fetchWithX402 as ReturnType<typeof vi.fn>).mockResolvedValue(Response.json({ rail: "eip3009" }));
+    renderWith(client, <X402Panel />, { ...WITH_SESSION, walletKey: TEST_KEY });
+    await screen.findByText(/on the permit2 rail/);
+
+    await userEvent.selectOptions(screen.getByLabelText(/Preferred rail/), "eip3009");
+    await screen.findByText(/not set up for the eip3009 rail/);
+    await userEvent.click(screen.getByRole("button", { name: "Pay and fetch" }));
+
+    await waitFor(() => expect(client.fetchWithX402).toHaveBeenCalled());
+    expect(vi.mocked(client.fetchWithX402).mock.calls[0]![0]).toMatchObject({ preferRail: "eip3009" });
+    const lastChecked = vi.mocked(client.x402Approvals).mock.calls.at(-1)![0].req;
+    expect(lastChecked.extra).toMatchObject({ assetTransferMethod: "eip3009" });
   });
 });
