@@ -700,7 +700,7 @@ async function prepareIntent(
   }
 
   const prepared: any = await withRelayReason(
-    () => prepareCalls(client, prepareParams),
+    () => retryInvalidNonce(() => prepareCalls(client, prepareParams)),
     "prepare the call",
     { client, network: opts.network },
     { account: walletAddress, calls: effectiveCalls, funded: Boolean(opts.requiredFunds?.length) },
@@ -787,6 +787,57 @@ async function withRelayReason<T>(
 
 /** The relay's simulation reverted with no reason bytes ("intent reverted: 0x" or a bare "0x"). */
 const EMPTY_REVERT = /(^|\s)0x$/;
+
+/** The account rejected the nonce the relay chose. */
+const INVALID_NONCE = /InvalidNonce/i;
+
+/**
+ * How long to wait before asking again, in order. One retry is enough in
+ * practice; the rest are for a slow block.
+ */
+export const NONCE_RETRY_DELAYS_MS = [2_000, 4_000, 6_000];
+
+/**
+ * Retries a prepare the account rejected for its nonce.
+ *
+ * The relay chooses an intent's nonce by reading the account's nonce on chain
+ * at `latest` and remembers nothing between requests, so a wallet's second
+ * operation is prepared against a chain state that does not yet include its
+ * first one, and the account rejects the nonce it is given. Measured on the
+ * live relay: the failure is not about how close together the calls arrive,
+ * because nothing is ever reserved
+ * (`celo-harness/evidence/2026-09-28-back-to-back-race-attribution.md`).
+ *
+ * Asking again is the whole fix. The relay re-reads the chain on every prepare,
+ * so the next attempt gets the nonce that has since become correct, and nothing
+ * has been signed or sent in between. Live on Celo Sepolia, four back-to-back
+ * operations on one wallet each succeeded on the attempt after the rejection.
+ *
+ * The SDK deliberately does **not** supply `capabilities.meta.nonce` instead,
+ * although the relay honours it: the relay's own choice of sequence key is not
+ * something a client can extend. A counterfactual wallet's first intent gets a
+ * random sequence key, and every intent after the delegation lands uses key 0,
+ * so counting up from the nonce of the previous intent is wrong exactly when it
+ * matters, and measurably so. The real fix belongs in the relay, which can
+ * allocate from `max(on-chain, in-flight) + 1` the way its precall path already
+ * does, and would fix it for every client at once.
+ */
+export async function retryInvalidNonce<T>(
+  fn: () => Promise<T>,
+  delaysMs: readonly number[] = NONCE_RETRY_DELAYS_MS,
+): Promise<T> {
+  for (const delay of delaysMs) {
+    try {
+      return await fn();
+    } catch (err) {
+      const reason = deepestRelayReason(err);
+      if (reason === undefined || !INVALID_NONCE.test(reason)) throw err;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+  // The last attempt's error is the caller's, un-swallowed.
+  return await fn();
+}
 
 /** What the SDK asked the relay to simulate, for explaining an empty revert. */
 export type IntentContext = {
