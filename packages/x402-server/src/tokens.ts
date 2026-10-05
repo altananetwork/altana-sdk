@@ -74,11 +74,24 @@ export const USDC_CELO_SEPOLIA: TokenConfig = {
 };
 
 /** USDT on Celo mainnet (42220). permit2-exact rail only (no EIP-3009). */
+/**
+ * Tether on Celo (42220). **`USD₮` names two different contracts on Celo**, and
+ * this is the one that pays x402: 6 decimals, with the EIP-3009 surface. The
+ * other is an 18-decimal contract in the FeeCurrencyDirectory that pays gas and
+ * has no EIP-3009. Both report `symbol() = "USD₮"` and `name() = "Tether USD"`,
+ * so a ticker does not identify a token here — select by address. The same
+ * split exists for `USAT`.
+ *
+ * Verified on chain 2026-10-05: symbol `USD₮`, name `Tether USD`, decimals 6,
+ * `authorizationState` answers.
+ */
 export const USDT_CELO: TokenConfig = {
   address: "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e",
   name: "Tether USD",
   version: "1",
-  symbol: "USDT",
+  // The token's own symbol(), not the plain-ASCII "USDT": the exact ticker is
+  // what a reader compares against a fee-currency list.
+  symbol: "USD₮",
   decimals: 6,
 };
 
@@ -87,6 +100,7 @@ export const USDT_CELO_SEPOLIA: TokenConfig = {
   address: "0xd077A400968890Eacc75cdc901F0356c943e4fDb",
   name: "Tether USD",
   version: "1",
-  symbol: "USDT",
+  // Its own symbol(), verified on chain 2026-10-05; see USDT_CELO.
+  symbol: "USD₮",
   decimals: 6,
 };

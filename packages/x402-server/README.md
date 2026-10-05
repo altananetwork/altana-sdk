@@ -145,6 +145,12 @@ The receipt says which route settled a payment: `settledVia` is `"facilitator"`
 or `"merchant"`, recorded by whichever one broadcast it. Read it rather than
 deriving the route from the rail, because the rail does not imply it.
 
+Tokens are named by address throughout, because a ticker does not identify one:
+on Celo, `USD₮` is both a 6-decimal contract with the EIP-3009 surface (what
+`USDT_CELO` points at, and what pays x402) and an 18-decimal contract in the
+FeeCurrencyDirectory that pays gas. They report the same `symbol()` and the same
+`name()`. `USAT` splits the same way.
+
 The rail follows from who verifies the signature.
 `Permit2.permitWitnessTransferFrom` verifies through ERC-1271, so
 `permit2-exact` carries an Altana smart account's signature with Permit2 as the
