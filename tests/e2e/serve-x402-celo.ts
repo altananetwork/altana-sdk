@@ -34,6 +34,12 @@ const PORT = Number(process.env.X402_CELO_PORT ?? 4021);
 const RPC = process.env.CELO_SEPOLIA_RPC_URL ?? "https://forno.celo-sepolia.celo-testnet.org";
 const PRICE = 10_000n; // 0.01 USDC, 6 decimals
 const API_KEY = process.env.X402_CELO_API_KEY;
+/**
+ * The rails this seller hands to the facilitator. `eip3009` only, for now,
+ * which is a choice here and not a property of the facilitator: whether it
+ * also takes Permit2 is being measured by sdk.
+ */
+const FACILITATOR_RAILS = ["eip3009"] as const;
 
 const funderKey = process.env.TEST_FUNDER_KEY as `0x${string}` | undefined;
 if (!funderKey) {
@@ -68,7 +74,7 @@ const seller = createX402Merchant({
         facilitatorService: {
           url: CELO_SEPOLIA_FACILITATOR_URL,
           apiKey: API_KEY,
-          rails: ["eip3009"] as const,
+          rails: FACILITATOR_RAILS,
         },
       }
     : {}),
@@ -117,6 +123,11 @@ Bun.serve({
           token: USDC_CELO_SEPOLIA.address,
           rails: ["permit2-exact", "eip3009"],
           facilitator: API_KEY ? CELO_SEPOLIA_FACILITATOR_URL : null,
+          // Which rails this seller routes to the facilitator. Reported rather
+          // than left for the panel to assume: it is this seller's
+          // configuration, not a limit of the facilitator, and which routes the
+          // facilitator will take is still being measured.
+          facilitatorRails: API_KEY ? FACILITATOR_RAILS : [],
         }),
       );
     }
@@ -126,7 +137,12 @@ Bun.serve({
     const { response, receipt } = await seller.guard(req);
     if (response) return withCors(response);
 
-    const settledVia = API_KEY && receipt!.rail === "eip3009" ? "facilitator" : "merchant key";
+    // TODO(sdk): infer no longer, once a merchant receipt can say which route
+    // settled it. Today this reads the seller's own configuration, which is
+    // right while that configuration decides the route and wrong the moment
+    // anything else does.
+    const settledVia =
+      API_KEY && (FACILITATOR_RAILS as readonly string[]).includes(receipt!.rail) ? "facilitator" : "merchant key";
     console.log(
       `paid ${receipt!.amount} by ${receipt!.payer} on ${receipt!.rail} via ${settledVia}: ${receipt!.txHash} (${receipt!.settlement})`,
     );

@@ -189,14 +189,20 @@ export function X402Panel() {
                   <td>{health.payTo && <Addr value={health.payTo} />}</td>
                 </tr>
                 <tr>
-                  <th scope="row">Settles EIP-3009 through</th>
+                  {/* The seller reports which rails it routes; the panel does
+                      not assume. That split is this seller's configuration and
+                      not a property of the facilitator. */}
+                  <th scope="row">Settles through the facilitator</th>
                   <td>
                     {health.facilitator ? (
                       <span>
-                        Celo&apos;s facilitator, <span className="addr">{health.facilitator}</span>
+                        {health.facilitatorRails?.length
+                          ? `${health.facilitatorRails.join(", ")} at `
+                          : "nothing, though it is configured with "}
+                        <span className="addr">{health.facilitator}</span>
                       </span>
                     ) : (
-                      "its own key, because X402_CELO_API_KEY is not set"
+                      "nothing: it settles from its own key, because X402_CELO_API_KEY is not set"
                     )}
                   </td>
                 </tr>

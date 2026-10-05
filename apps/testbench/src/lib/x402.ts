@@ -146,6 +146,8 @@ export type SellerHealth = {
   token?: string;
   rails?: string[];
   facilitator?: string | null;
+  /** Which rails this seller hands to the facilitator, as it reports them. */
+  facilitatorRails?: string[];
 };
 
 export async function readSellerHealth(

@@ -63,10 +63,33 @@ describe("X402Panel", () => {
     expect(screen.getByText(/its own key, because X402_CELO_API_KEY is not set/)).toBeInTheDocument();
   });
 
-  test("names Celo's facilitator when the seller is configured with one", async () => {
-    mockFetch(() => Response.json({ price: "10000", facilitator: "https://api.x402.sepolia.celo.org" }));
+  test("reports which rails the seller routes, rather than assuming the split", async () => {
+    // The panel used to hardcode "Settles EIP-3009 through", baking this
+    // seller's configuration into the UI as though it were a property of the
+    // facilitator.
+    mockFetch(() =>
+      Response.json({
+        price: "10000",
+        facilitator: "https://api.x402.sepolia.celo.org",
+        facilitatorRails: ["eip3009"],
+      }),
+    );
     renderWith(fakeClient(), <X402Panel />, WITH_SESSION);
     expect(await screen.findByText("https://api.x402.sepolia.celo.org")).toBeInTheDocument();
+    expect(screen.getByText(/eip3009 at/)).toBeInTheDocument();
+    expect(screen.queryByText(/Settles EIP-3009 through/)).not.toBeInTheDocument();
+  });
+
+  test("a seller routing both rails says both, with no code change here", async () => {
+    mockFetch(() =>
+      Response.json({
+        price: "10000",
+        facilitator: "https://api.x402.sepolia.celo.org",
+        facilitatorRails: ["eip3009", "permit2-exact"],
+      }),
+    );
+    renderWith(fakeClient(), <X402Panel />, WITH_SESSION);
+    expect(await screen.findByText(/eip3009, permit2-exact at/)).toBeInTheDocument();
   });
 
   test("no seller running says how to start one", async () => {
