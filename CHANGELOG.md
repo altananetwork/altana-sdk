@@ -200,6 +200,34 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
   (as used by those three) also refuses to submit a proof whose storage
   value shows the key absent: it waits for the next anchor and rebuilds it.
 
+- **An empty revert from the relay no longer reads as a balance shortfall it
+  is not.** When the relay's simulation reverted with no reason bytes (a bare
+  `0x`), the SDK read the wallet's native balances and worded the rejection as
+  a shortfall either way, so a wallet holding 1 ETH while the call sent
+  0.000376 ETH was told its balance "does not cover" the call. A bare `0x` now
+  gets its own message: it says the simulation reverted with no reason, names
+  the chain and the calls it simulated with what they send, and adds the
+  balance only as what it is. A balance below the value the calls send still
+  reads as a shortfall, with the chain's faucet where there is one; a balance
+  above it says the balance is not the cause. `shortfallMessage` is replaced
+  by `emptyRevertMessage` and `balanceClause`.
+
+- **`NoSpendPermissions` and `ExceededSpendLimit` explain themselves.** Both
+  reached callers as a bare contract error, and on the fee path as a raw
+  32-byte selector. `NoSpendPermissions` now says the session has no spend
+  limit for a token the transaction spends, that relay fees need a native
+  limit with headroom even for a session that only sends tokens, and that
+  permissions cannot be widened on an existing session. `ExceededSpendLimit`
+  names the token whose cap is exhausted and points at the decimals trap.
+  Both match the decoded name and the raw selector. (#83)
+
+- **`fundNative` is deprecated and always throws.** The relay's faucet only
+  mints ERC-20 fee tokens; a native request sent a zero-value transaction to
+  `0x0` and the helper returned its hash as if the wallet had been funded. It
+  now throws, naming the address to fund and the chain's public faucet where
+  there is one. `waitForBalance` is unchanged. Removal in a later release.
+  (#83)
+
 - **Relay rejections now lead with the relay's actual reason.** A rejected
   request (for example an unaccepted `feeToken`) used to surface only
   viem's generic `Invalid parameters were provided to the RPC method`,

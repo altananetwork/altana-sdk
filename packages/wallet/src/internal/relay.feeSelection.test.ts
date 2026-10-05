@@ -11,7 +11,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { encodeAbiParameters, numberToHex, type Address, type Hex } from "viem";
 import { BNB, CELO_SEPOLIA, NATIVE_TOKEN, SEPOLIA, type NetworkConfig } from "../config.js";
 import { createPrivateKeySigner } from "./signer.js";
-import { buildRelayClient, submitCallsDetailed, type KeyDescriptor } from "./relay.js";
+import { buildRelayClient, SEPOLIA_FAUCET_URL, submitCallsDetailed, type KeyDescriptor } from "./relay.js";
 import { submitRegistryWrite } from "./cachedRegistry.js";
 import { quoteExecute } from "../execute.js";
 import capabilities from "./fixtures/celo-sepolia-capabilities.json" with { type: "json" };
@@ -343,6 +343,40 @@ describe("registry write funded from the L2, on the wire", () => {
     };
   }
 
+  // The shortfall story is only told when the numbers tell it. qa hit the
+  // opposite (evidence/2026-09-28-s3-registry-write-reverts-0x.md): a wallet
+  // holding 133x the registry fee was told its balance "does not cover" it,
+  // which sent an hour into the funding path for a revert that had nothing to
+  // do with funding.
+  test("a wallet that can clearly pay: the bare revert is not dressed up as a shortfall", async () => {
+    const signer = createPrivateKeySigner();
+    const held = 5n * 10n ** 16n; // 0.05 ETH, against 0.0004 ETH of fees
+    mockRegistryWire({
+      balance: held,
+      activeKeys: [],
+      prepareError: "intent reverted: 0x",
+      assets: {
+        [numberToHex(SEPOLIA.chainId)]: [
+          { address: "native", balance: numberToHex(held), type: "native", metadata: { symbol: "ETH", decimals: 18 } },
+        ],
+      },
+    });
+    const thrown = await submitRegistryWrite(SEPOLIA, {
+      walletAddress: signer.address,
+      adminSigner: signer,
+      calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+    }).then(
+      () => undefined,
+      (e: unknown) => String((e as Error).message),
+    );
+    expect(thrown).toContain("its simulation reverted with no reason on Sepolia (chainId 11155111)");
+    expect(thrown).toContain("the wallet's balance is not the cause: it holds 0.05 ETH on Sepolia");
+    expect(thrown).toContain("more than the 0.0004 ETH the calls send");
+    expect(thrown).not.toContain("cannot pay");
+    expect(thrown).not.toContain("does not cover");
+    expect(thrown).not.toContain(SEPOLIA_FAUCET_URL);
+  });
+
   test("an empty wallet: the relay's bare revert becomes a message naming the balances", async () => {
     const signer = createPrivateKeySigner();
     mockRegistryWire({
@@ -362,9 +396,11 @@ describe("registry write funded from the L2, on the wire", () => {
         calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
       }),
     ).rejects.toThrow(
-      "The relay rejected the request to prepare the call because the wallet cannot pay for it: it holds 0 ETH on Sepolia " +
-        "and needs 0.0004 ETH the call sends plus the relay fee; it holds nothing on any other chain the relay " +
-        "could fund it from (relay: intent reverted: 0x)",
+      "The relay rejected the request to prepare the call: its simulation reverted with no reason on Sepolia " +
+        `(chainId 11155111), simulating 2 calls to ${SEPOLIA.keyStoreController}, sending 0.0004 ETH; ` +
+        "the wallet cannot pay for it: it holds 0 ETH on Sepolia and needs 0.0004 ETH the calls send plus the " +
+        "relay fee; it holds nothing on any other chain the relay could fund it from; fund it at " +
+        `${SEPOLIA_FAUCET_URL} (relay: intent reverted: 0x)`,
     );
   });
 

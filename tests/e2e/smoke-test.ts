@@ -67,6 +67,23 @@ async function main() {
     throw new Error("Wallet/signer address mismatch — bug in refactor");
   }
 
+  // Issue #83: before funding, the first execute must fail with a message that
+  // names the empty revert, the wallet's balance and the faucet, not a bare
+  // "0x". Costs one relay round trip and no tBNB.
+  console.log("\n[1b] execute on the unfunded wallet (expect a legible rejection)");
+  try {
+    await client.execute({ wallet, signer, calls: { to: deployer.address, value: 1n } });
+    throw new Error("unfunded execute did not throw");
+  } catch (e: any) {
+    const msg = String(e?.message ?? e);
+    const wants = ["reverted with no reason", "the wallet cannot pay for it", "holds 0 tBNB", "faucet-smart"];
+    const missing = wants.filter((w) => !msg.includes(w));
+    if (missing.length > 0) {
+      throw new Error(`unfunded execute error is missing ${missing.join(", ")}: ${msg}`);
+    }
+    console.log(`    rejected as expected: ${msg.slice(0, 140)}… [${ms(t0)}]`);
+  }
+
   // Step 3: fund from deployer
   console.log("\n[2] Fund wallet from deployer");
   const fundTx = await deployerClient.sendTransaction({
