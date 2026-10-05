@@ -78,6 +78,22 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
   the Sepolia registry and Celo Sepolia's cache, while `ALTANA_CHAIN=sepolia`
   resolves to the same registry with no L2, because several L2s are rooted in it.
   `L2_RPC_URL` overrides the L2 read RPC.
+- **A session key can pay x402 straight after it is granted.** A payment from a
+  smart account is an ERC-1271 signature, and `IthacaAccount.isValidSignature`
+  accepts a session key's only from a contract the account has approved as a
+  signature checker *for that key*; the permit2 rails additionally need the
+  token approved to Permit2, which moves it with an ordinary `transferFrom`.
+  Neither was part of granting a session, and missing either failed at
+  settlement rather than at signing, reverting with no reason naming an
+  approval, so a merchant reported
+  `settlement failed: Execution reverted for an unknown reason`.
+  `grantSession` now takes `x402Tokens`: for each token, the same intent that
+  authorizes the session approves the token to Permit2 and approves both Permit2
+  and the token as checkers for that key, per chain, in one transaction.
+  `checkX402Approvals(session, requirement)` reads the same two things and says
+  which is missing and the call that sets it; `approvedSignatureCheckers` and
+  `x402SignatureChecker` are exported alongside it, as are the
+  `buildSetCheckerApprovalCall` and `buildApproveTokenForPermit2Call` builders.
 
 - **Keystore writes funded from the L2.** `grantSession`, `revokeSession` and
   `registerSessionKey` no longer need ETH on the Keystore chain: when the wallet
@@ -206,6 +222,14 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
   of tokens does not burst-fire calls at a public RPC. (#78)
 
 ### Changed
+
+- **`fetchWithX402` reads a session's x402 approvals before paying** and refuses
+  when one is missing, naming it, rather than settling into a revert. It fails
+  open: only a read that succeeds and shows a gap stops the payment, so an
+  unreachable RPC or a chain the SDK has no config for leaves the call exactly
+  as it was. Two `eth_call`s, no gas. `checkApprovals: false` skips them —
+  worth setting if you count requests in tests, since the reads add two.
+
 - Relay rejections for an account the relay has not registered now say to create the wallet with `client.createWallet` first.
 - When the relay's simulation reverts without a reason, the SDK reads the wallet's balances through the relay and says which chain cannot pay for the call, and which chains it could not be funded from. Session quotes label such legs "could not be quoted" instead of "fee unknown".
 - Relay rejections carrying an `Error(string)` or `Panic` revert show the message ("Cache: bad storage proof") instead of the hex data.
