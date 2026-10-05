@@ -77,7 +77,7 @@ export function describeStatus(status: string, chain: string | undefined, elapse
       return (
         `Proving the Keystore entry into the cache on ${chain ?? "the chain"}${since}. ` +
         `This waits for the chain's L1 anchor to pass the Sepolia block of the Keystore write; ` +
-        `Celo Sepolia's anchor moves about every 20 minutes and runs 15 to 20 minutes behind Sepolia.`
+        `Celo Sepolia's anchor moves every 6 to 8 minutes and runs 15 to 20 minutes behind Sepolia.`
       );
     case "done":
       return "Done";

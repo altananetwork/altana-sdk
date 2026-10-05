@@ -114,7 +114,7 @@ export function MirrorPanel({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
       <h2>Celo mirror</h2>
       <p className="lead">
         A live read of the Celo KeyStoreCache for one key. The cache answers for exactly one anchored Ethereum
-        block, which moves about every 20 minutes, so a key reads as not valid after each anchor update until it
+        block, which moves every 6 to 8 minutes, so a key reads as not valid after each anchor update until it
         is proven again. Three of the states below look like failures and are not.
       </p>
 
@@ -151,7 +151,7 @@ export function MirrorPanel({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
               <span className="muted small">
                 {expectedEndState(chosenShowcase) === "revoked"
                   ? "This key was revoked on Ethereum, so revoked is the right answer here, not a failure."
-                  : "Proving moves it to valid for the current anchor. A proof lasts one anchor, about 20 minutes, so prove and read in one go."}
+                  : "Proving moves it to valid for the current anchor. A proof lasts one anchor, about 7 minutes, so prove and read in one go."}
               </span>
             </div>
           )}

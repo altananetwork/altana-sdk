@@ -250,8 +250,8 @@ export function MirrorCard({ chainId, target, showTitle = true }: MirrorCardProp
                 </>
               )}
               {state.blocksBehind === 0n
-                ? "The anchor is already at or past it, so the next anchor update should carry it. That is about every 20 minutes."
-                : `The anchor advances about every 20 minutes, so expect about ${minutesUntilProvable(state.blocksBehind)} more minutes.`}
+                ? "The anchor is already at or past it, so the next anchor update should carry it. That is every 6 to 8 minutes."
+                : `The anchor advances every 6 to 8 minutes, so expect about ${minutesUntilProvable(state.blocksBehind)} more minutes.`}
             </p>
           )}
 

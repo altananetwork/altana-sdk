@@ -140,13 +140,16 @@ describe("mirrorState", () => {
 });
 
 describe("minutesUntilProvable", () => {
-  test("rounds up to whole anchor jumps and is zero when already caught up", () => {
+  test("rounds up to whole anchor bursts and is zero when already caught up", () => {
+    // A burst is about +30 blocks every 6 to 8 minutes (qa's timestamped log,
+    // 2026-10-05), not +29 every 20: the older figure came from sampling
+    // coarsely across a quiet stretch and was three times too long.
     expect(minutesUntilProvable(0n)).toBe(0);
     expect(minutesUntilProvable(-5n)).toBe(0);
-    expect(minutesUntilProvable(1n)).toBe(20);
-    expect(minutesUntilProvable(29n)).toBe(20);
-    expect(minutesUntilProvable(30n)).toBe(40);
-    expect(minutesUntilProvable(90n)).toBe(80);
+    expect(minutesUntilProvable(1n)).toBe(7);
+    expect(minutesUntilProvable(30n)).toBe(7);
+    expect(minutesUntilProvable(31n)).toBe(14);
+    expect(minutesUntilProvable(90n)).toBe(21);
   });
 });
 
@@ -240,7 +243,7 @@ describe("how long the wait actually is", () => {
       blocksBehind: 1n,
       basis: "registration",
     });
-    expect(minutesUntilProvable(1n)).toBe(20);
+    expect(minutesUntilProvable(1n)).toBe(7);
   });
 
   test("without it, the head is the honest fallback", () => {

@@ -2,7 +2,7 @@
  * Sending a populateKey proof, and surviving the anchor moving under it.
  *
  * The cache accepts a proof only for the exact L1 block it was built against,
- * and Celo Sepolia's anchor advances about every 20 minutes. Building a proof
+ * and Celo Sepolia's anchor advances every 6 to 8 minutes. Building a proof
  * is slow (an `eth_getProof` and a header fetch), so an attempt can lose the
  * race it started, and the revert says `Cache: block header mismatch`.
  *
@@ -206,7 +206,7 @@ export async function proveWithRetry(deps: ProveDeps, opts: ProveOptions = {}): 
 
   throw new Error(
     `The proof did not land in ${maxAttempts} attempts: ${lastReason}. ` +
-      `The Celo anchor advances about every 20 minutes and a proof is only valid for the block it was built ` +
+      `The Celo anchor advances every 6 to 8 minutes and a proof is only valid for the block it was built ` +
       `against, so try again once it has settled.`,
   );
 }

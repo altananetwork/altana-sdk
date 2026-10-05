@@ -63,10 +63,10 @@ Roughly 20 minutes, plus the Celo anchor's own wait. Before you start: Settings,
 
 ### The mirror card has a clock in it, so plan around it
 
-The Celo cache only counts a key as valid while the block it was proven against is **exactly** the block Celo currently anchors. That anchor jumps about every 20 minutes and trails Ethereum by 15 to 20 minutes. Two consequences for a demo:
+The Celo cache only counts a key as valid while the block it was proven against is **exactly** the block Celo currently anchors. That anchor advances in bursts of about 30 blocks **every 6 to 8 minutes**, and trails Ethereum by 15 to 20 minutes. Two consequences for a demo:
 
 - A key registered during the demo is not provable for about half an hour. The card shows that as a wait with a rough countdown, which is the truth, not an error.
-- **Prove and read in one go.** A proof is only good until the next anchor update, about 20 minutes, after which the same key reads as not valid with nothing having changed on Ethereum. Do not prove a key, talk for half an hour, and then show the card.
+- **Prove and read in one go.** A proof is only good until the next anchor update, which is **about 7 minutes**, after which the same key reads as not valid with nothing having changed on Ethereum. Prove it and show it; do not prove a key and then talk for ten minutes.
 
 The **Celo mirror** tab loads `public/showcase-keys.json` and offers those keys in a list, so nothing is typed on stage. Regenerate it from qa's file after any re-prove:
 

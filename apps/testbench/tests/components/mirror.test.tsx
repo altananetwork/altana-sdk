@@ -38,8 +38,8 @@ describe("MirrorCard", () => {
     setup({ livePacked: packKey(), anchorPacked: 0n, cachedPresent: false, cachedSourceBlock: 0n, anchorL1Block: 11807636n, l1Head: 11807694n });
     expect(await screen.findByText("Waiting for the Celo anchor")).toBeInTheDocument();
     expect(screen.getByText(/normal half-hour wait, not a failure/)).toBeInTheDocument();
-    // 58 blocks behind is two anchor jumps, so about 40 minutes.
-    expect(screen.getByText(/about 40 more minutes/)).toBeInTheDocument();
+    // 58 blocks behind is two bursts of about 30, so about 14 minutes.
+    expect(screen.getByText(/about 14 more minutes/)).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Prove into the Celo mirror/ })).not.toBeInTheDocument();
   });
@@ -243,7 +243,7 @@ describe("the wait the card quotes", () => {
       { v: 1, walletKey: TEST_KEY, sessions: [] },
     );
     expect(await screen.findByText(/this key needs/)).toBeInTheDocument();
-    expect(screen.getByText(/about 20 more minutes/)).toBeInTheDocument();
+    expect(screen.getByText(/about 7 more minutes/)).toBeInTheDocument();
     expect(screen.queryByText(/80 more minutes/)).not.toBeInTheDocument();
     // And the headline names the block the key needs, not Ethereum's head.
     expect(screen.getByText(/has not yet anchored the block this key was registered in/)).toBeInTheDocument();

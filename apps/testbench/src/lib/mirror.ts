@@ -8,15 +8,17 @@
  *
  *     require(k.sourceBlockNumber == IL1Block(L1_BLOCK_PREDEPLOY).number())
  *
- * Celo Sepolia's anchor advances in jumps of about 28 to 30 L1 blocks roughly
- * every 20 minutes, trailing the Sepolia head by 15 to 20 minutes
- * (evidence/2026-09-29-celo-sepolia-anchor-lag.md). Two consequences shape
- * this whole module:
+ * Celo Sepolia's anchor advances in bursts of about 30 L1 blocks every 6 to 8
+ * minutes, trailing the Sepolia head by 15 to 20 minutes
+ * (qa's timestamped log, 2026-10-05; see ANCHOR_PERIOD_MINUTES below, which
+ * corrects the coarser figure in
+ * evidence/2026-09-29-celo-sepolia-anchor-lag.md). Two consequences shape this
+ * whole module:
  *
  * 1. A KeyStore write is provable about half an hour after it lands, not at
  *    once. Before that a proof built against the anchored block proves the
  *    key's *absence*, and the cache rejects it.
- * 2. A proof is good for one anchor, about 20 minutes. After the next anchor
+ * 2. A proof is good for one anchor, about 7 minutes. After the next anchor
  *    update the same key reads as not valid with nothing having changed on
  *    Ethereum, until someone proves it again.
  *
@@ -171,7 +173,7 @@ export function mirrorSummary(state: MirrorState): string {
     case "provable":
       return state.wouldBeRevoked
         ? "Celo now anchors an Ethereum block that carries the revocation. Send the proof."
-        : "Celo now anchors an Ethereum block that carries this key. Send the proof; the anchor moves about every 20 minutes, so do it now rather than later.";
+        : "Celo now anchors an Ethereum block that carries this key. Send the proof; the anchor moves every 6 to 8 minutes, so do it now rather than later.";
     case "current":
       return "Proven against the Ethereum block Celo anchors right now. Any contract on Celo reads this key as valid, from Celo state alone.";
     case "revoked":
@@ -183,9 +185,29 @@ export function mirrorSummary(state: MirrorState): string {
   }
 }
 
-/** The anchor advances in jumps of about 28 to 30 blocks, roughly every 20 minutes. */
-export const ANCHOR_PERIOD_MINUTES = 20;
-export const ANCHOR_JUMP_BLOCKS = 29n;
+/**
+ * How the Celo Sepolia anchor actually moves, from qa's timestamped log of
+ * four consecutive bursts (2026-10-05):
+ *
+ * ```
+ * 11:42:27 - 11:43:50   ~83s   +31
+ * 11:50:04 - 11:50:24   ~20s   +30
+ * 11:56:16 - 11:56:58   ~42s   +31
+ * 12:02:50 - 12:03:11   ~21s   +32
+ * ```
+ *
+ * A burst every 6 to 8 minutes, about +30 blocks each, each burst itself
+ * several updates over 20 to 85 seconds.
+ *
+ * This replaces an earlier "+28 to 30 every 20 minutes", which came from
+ * sampling coarsely across a quiet stretch and counting several bursts as one.
+ * The chain did not change; the measurement did. Getting it wrong mattered in
+ * **both** directions: the wait estimate was three times too long, and the
+ * window a proof stays valid for was three times too generous, which is the
+ * dangerous one because it told people they had slack they did not have.
+ */
+export const ANCHOR_PERIOD_MINUTES = 7;
+export const ANCHOR_JUMP_BLOCKS = 30n;
 
 /**
  * A rough wait, in minutes, before the anchor reaches the registry head. Shown
