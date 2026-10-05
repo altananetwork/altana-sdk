@@ -31,6 +31,11 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Added
 
+- **`quoteExecute`.** `client.quoteExecute` (and the standalone `quoteExecute`) takes the same
+  options as `execute` and returns the relay's quote for those exact calls without sending
+  them: the maximum fee, the token it is charged in, the native value the calls carry and any
+  shortfall. Size a "send everything" call as balance minus the quoted fee instead of guessing.
+
 - **Keystore writes funded from the L2.** `grantSession`, `revokeSession` and
   `registerSessionKey` no longer need ETH on the Keystore chain: when the wallet
   holds none there, the SDK asks the relay to fund the Sepolia write from the

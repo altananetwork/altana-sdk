@@ -94,6 +94,17 @@ type ExecuteResult = {
 
 A failed execute **returns** `status: "FAILED"`; it does not throw. Check the status rather than relying on `try/catch`. `statusCode` says which kind of failure: 300–499 is the relay rejecting the bundle before inclusion (nothing reached the chain), 500+ an on-chain failure. See [Errors](/sdk/errors) for the full code table and how to tell the failure classes apart.
 
+## Quoting first
+
+`client.quoteExecute` takes the same options as `execute` and returns the relay's quote for those exact calls without signing or sending anything: the maximum `fee` and the `feeToken` it is charged in (the zero address is native), the native `value` the calls carry, and `feeTokenDeficit`, what the wallet is short by if anything. Use it to size a send that must leave room for the fee, instead of guessing a reserve:
+
+```ts
+const calls = [{ to, value: balance, data: "0x" }];
+const q = await client.quoteExecute({ wallet, signer: wallet.signer, chainId, calls });
+const value = q.feeToken === NATIVE_TOKEN ? balance - q.fee : balance;
+await client.execute({ wallet, signer: wallet.signer, chainId, calls: [{ to, value, data: "0x" }] });
+```
+
 ## Notes
 
 - **First execute on a fresh wallet auto-registers the admin key** in [Keystore](/concepts/keystore). `initialRegisterKey` is prepended transparently in the same userOp.
