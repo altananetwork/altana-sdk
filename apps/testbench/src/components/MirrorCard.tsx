@@ -62,7 +62,9 @@ function headline(state: MirrorState): string {
     case "stale":
       return "Proven, but against an older Ethereum block";
     case "not-yet-provable":
-      return "Celo has not caught up with Ethereum yet";
+      return state.carries === "pre-revocation"
+        ? "Celo has not yet anchored the revocation"
+        : "Celo has not yet anchored the block this key was registered in";
     case "never-registered":
       return "No KeyStore entry for this key";
   }
@@ -102,14 +104,23 @@ export function MirrorCard({ chainId, target, showTitle = true }: MirrorCardProp
     setBusy("reading");
     setError(undefined);
     try {
-      setReading(await client.readMirror({ chainId, user, keyId }));
+      setReading(
+        await client.readMirror({
+          chainId,
+          user,
+          keyId,
+          ...(target?.registrationL1Block !== undefined
+            ? { registrationL1Block: target.registrationL1Block }
+            : {}),
+        }),
+      );
     } catch (err) {
       setError(relayReason(err));
       setReading(undefined);
     } finally {
       setBusy(undefined);
     }
-  }, [client, chainId, user, keyId, network]);
+  }, [client, chainId, user, keyId, network, target?.registrationL1Block]);
 
   useEffect(() => {
     void refresh();
@@ -190,10 +201,24 @@ export function MirrorCard({ chainId, target, showTitle = true }: MirrorCardProp
 
           {state?.kind === "not-yet-provable" && (
             <p className="muted">
-              Celo anchors Ethereum Sepolia block {String(reading!.anchorL1Block)}, which is{" "}
-              <span className="num">{String(state.blocksBehind)}</span> behind the Sepolia head (
-              {String(reading!.l1Head)}). The anchor advances about every 20 minutes, so expect about{" "}
-              {minutesUntilProvable(state.blocksBehind)} more minutes.
+              Celo anchors Ethereum Sepolia block <span className="num">{String(reading!.anchorL1Block)}</span>
+              {state.basis === "registration" ? (
+                <>
+                  , and this key needs{" "}
+                  <span className="num">{String(reading!.registrationL1Block)}</span>, which is{" "}
+                  <span className="num">{String(state.blocksBehind)}</span> further on.{" "}
+                </>
+              ) : (
+                <>
+                  , which is <span className="num">{String(state.blocksBehind)}</span> behind the Sepolia head (
+                  <span className="num">{String(reading!.l1Head)}</span>). The registration block for this key is
+                  not recorded, so this is the wait for Celo to reach Ethereum&apos;s head, which is the longest
+                  it could be.{" "}
+                </>
+              )}
+              {state.blocksBehind === 0n
+                ? "The anchor is already at or past it, so the next anchor update should carry it. That is about every 20 minutes."
+                : `The anchor advances about every 20 minutes, so expect about ${minutesUntilProvable(state.blocksBehind)} more minutes.`}
             </p>
           )}
 

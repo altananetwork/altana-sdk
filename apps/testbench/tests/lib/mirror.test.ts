@@ -53,7 +53,7 @@ describe("mirrorState", () => {
         l1Head: 11807700n,
       }),
     );
-    expect(state).toEqual({ kind: "not-yet-provable", carries: "absence", blocksBehind: 64n });
+    expect(state).toEqual({ kind: "not-yet-provable", carries: "absence", blocksBehind: 64n, basis: "head" });
     expect(canPopulate(state)).toBe(false);
     // The operator must read this as a wait, not a failure.
     expect(mirrorSummary(state)).toContain("normal half-hour wait");
@@ -154,8 +154,8 @@ describe("mirrorSummary", () => {
   test("every state has a sentence, and none of them is a bare no", () => {
     const states = [
       { kind: "never-registered" },
-      { kind: "not-yet-provable", carries: "absence", blocksBehind: 10n },
-      { kind: "not-yet-provable", carries: "pre-revocation", blocksBehind: 10n },
+      { kind: "not-yet-provable", carries: "absence", blocksBehind: 10n, basis: "head" },
+      { kind: "not-yet-provable", carries: "pre-revocation", blocksBehind: 10n, basis: "head" },
       { kind: "provable", wouldBeRevoked: false, everProven: false },
       { kind: "current" },
       { kind: "revoked" },
@@ -216,5 +216,65 @@ describe("targetFromInput", () => {
     const out = targetFromInput({ wallet: WALLET, key: "" });
     expect(out.target).toBeUndefined();
     expect(out.keyProblem).toBeUndefined();
+  });
+});
+
+describe("how long the wait actually is", () => {
+  const base = {
+    livePacked: packKey(),
+    anchorPacked: 0n,
+    cachedPresent: false,
+    cachedSourceBlock: 0n,
+    anchorL1Block: 11847825n,
+    l1Head: 11847917n,
+  };
+
+  test("with the registration block known, the wait is to THAT block, not to the head", () => {
+    // qa's finding: a key registered at 11847826 with the anchor at 11847825 is
+    // one block from provable. Measuring to the head said 92 blocks and eighty
+    // minutes, and the better prepared the demo the more wrong it got.
+    const state = mirrorState(reading({ ...base, registrationL1Block: 11847826n }));
+    expect(state).toEqual({
+      kind: "not-yet-provable",
+      carries: "absence",
+      blocksBehind: 1n,
+      basis: "registration",
+    });
+    expect(minutesUntilProvable(1n)).toBe(20);
+  });
+
+  test("without it, the head is the honest fallback", () => {
+    const state = mirrorState(reading(base));
+    expect(state).toMatchObject({ blocksBehind: 92n, basis: "head" });
+  });
+
+  test("an anchor already past the registration block is zero blocks to go", () => {
+    // The chain read still decides whether it is provable; this only says the
+    // next anchor update should carry it rather than quoting a long wait.
+    const state = mirrorState(reading({ ...base, registrationL1Block: 11847800n }));
+    expect(state).toMatchObject({ blocksBehind: 0n, basis: "registration" });
+    expect(minutesUntilProvable(0n)).toBe(0);
+  });
+
+  test("the registration block does not override the chain about provability", () => {
+    // Slot present at the anchor: provable, whatever the file says.
+    const state = mirrorState(
+      reading({ ...base, anchorPacked: packKey(), registrationL1Block: 11847900n }),
+    );
+    expect(state.kind).toBe("provable");
+  });
+
+  test("a revocation that has not reached the anchor keeps the basis it was given", () => {
+    const state = mirrorState(
+      reading({
+        ...base,
+        livePacked: packKey({ revoked: true }),
+        anchorPacked: packKey(),
+        cachedPresent: true,
+        cachedSourceBlock: 11847800n,
+        registrationL1Block: 11847826n,
+      }),
+    );
+    expect(state).toMatchObject({ kind: "not-yet-provable", carries: "pre-revocation", basis: "registration" });
   });
 });

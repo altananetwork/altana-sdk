@@ -73,6 +73,18 @@ export type MirrorReading = {
   cacheSaysValid: boolean;
   /** Seconds since the epoch when the reading was taken, for the expiry check. */
   readAt: number;
+  /**
+   * The registry block this key's registration landed in, when it is known.
+   *
+   * Without it the only wait that can be estimated is "when does Celo catch up
+   * with Ethereum's head", which is the wrong question: what the key needs is
+   * the anchor reaching **its own** registration block. For a key registered
+   * minutes ago the two are nearly the same, and for a showcase key registered
+   * well in advance they are an hour apart, wrong in the direction that makes
+   * a well-prepared demo look worse (qa, 2026-10-05: a key one block from
+   * provable was told to wait eighty minutes).
+   */
+  registrationL1Block?: bigint;
 };
 
 export type MirrorState =
@@ -81,9 +93,16 @@ export type MirrorState =
   /**
    * (a) The anchor does not carry the state yet. `carries` says whether it
    * still shows the key absent (a fresh registration) or still shows it live
-   * (a revocation that has not reached the anchor).
+   * (a revocation that has not reached the anchor). `basis` says what
+   * `blocksBehind` was measured against: the key's own registration block when
+   * that is known, and Ethereum's head only as a fallback.
    */
-  | { kind: "not-yet-provable"; carries: "absence" | "pre-revocation"; blocksBehind: bigint }
+  | {
+      kind: "not-yet-provable";
+      carries: "absence" | "pre-revocation";
+      blocksBehind: bigint;
+      basis: "registration" | "head";
+    }
   /** (b) A proof built now carries the current KeyStore state. Send it. */
   | { kind: "provable"; wouldBeRevoked: boolean; everProven: boolean }
   /** (c) Proven against the block Celo anchors right now, and live. */
@@ -113,10 +132,16 @@ export function mirrorState(r: MirrorReading): MirrorState {
   }
 
   // Not proven at this anchor. Can a proof built now carry the truth?
-  const blocksBehind = r.l1Head > r.anchorL1Block ? r.l1Head - r.anchorL1Block : 0n;
-  if (!atAnchor.present) return { kind: "not-yet-provable", carries: "absence", blocksBehind };
+  //
+  // The wait is measured against the block the key actually needs, not against
+  // Ethereum's head. The chain read below stays authoritative about *whether*
+  // it is provable; this only decides what number to show while it is not.
+  const basis: "registration" | "head" = r.registrationL1Block !== undefined ? "registration" : "head";
+  const target = r.registrationL1Block ?? r.l1Head;
+  const blocksBehind = target > r.anchorL1Block ? target - r.anchorL1Block : 0n;
+  if (!atAnchor.present) return { kind: "not-yet-provable", carries: "absence", blocksBehind, basis };
   if (live.revoked && !atAnchor.revoked) {
-    return { kind: "not-yet-provable", carries: "pre-revocation", blocksBehind };
+    return { kind: "not-yet-provable", carries: "pre-revocation", blocksBehind, basis };
   }
 
   if (r.cachedPresent) {
@@ -193,6 +218,8 @@ export type MirrorTarget = {
   publicKey?: Hex;
   /** Where the target came from, for the card's label. */
   label?: string;
+  /** The registry block the registration landed in, when the caller knows it. */
+  registrationL1Block?: bigint;
 };
 
 /**

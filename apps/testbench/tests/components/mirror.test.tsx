@@ -211,3 +211,87 @@ describe("the explorer links", () => {
     );
   });
 });
+
+describe("the wait the card quotes", () => {
+  /** qa's exact screen: anchor 11847825, head 11847917, A registered at 11847826. */
+  const waiting = {
+    livePacked: packKey(),
+    anchorPacked: 0n,
+    cachedPresent: false,
+    cachedSourceBlock: 0n,
+    anchorL1Block: 11847825n,
+    l1Head: 11847917n,
+  };
+
+  test("a key one block from provable is not told to wait eighty minutes", async () => {
+    const client = fakeClient({
+      readMirror: vi.fn(async () => ({ ...mirrorCurrent, ...waiting, registrationL1Block: 11847826n })),
+    });
+    renderWith(
+      client,
+      <MirrorCard
+        chainId={CELO_SEPOLIA.chainId}
+        target={{ ...withKey, registrationL1Block: 11847826n }}
+      />,
+      { v: 1, walletKey: TEST_KEY, sessions: [] },
+    );
+    expect(await screen.findByText(/this key needs/)).toBeInTheDocument();
+    expect(screen.getByText(/about 20 more minutes/)).toBeInTheDocument();
+    expect(screen.queryByText(/80 more minutes/)).not.toBeInTheDocument();
+    // And the headline names the block the key needs, not Ethereum's head.
+    expect(screen.getByText(/has not yet anchored the block this key was registered in/)).toBeInTheDocument();
+  });
+
+  test("the registration block is passed to the read, so the estimate can use it", async () => {
+    const client = fakeClient();
+    renderWith(
+      client,
+      <MirrorCard chainId={CELO_SEPOLIA.chainId} target={{ ...withKey, registrationL1Block: 11847826n }} />,
+      { v: 1, walletKey: TEST_KEY, sessions: [] },
+    );
+    await waitFor(() =>
+      expect(client.readMirror).toHaveBeenCalledWith(
+        expect.objectContaining({ registrationL1Block: 11847826n }),
+      ),
+    );
+  });
+
+  test("without a registration block it says so, rather than quoting a wait as if it knew", async () => {
+    const client = fakeClient({ readMirror: vi.fn(async () => ({ ...mirrorCurrent, ...waiting })) });
+    renderWith(client, <MirrorCard chainId={CELO_SEPOLIA.chainId} target={withKey} />, {
+      v: 1,
+      walletKey: TEST_KEY,
+      sessions: [],
+    });
+    expect(await screen.findByText(/registration block for this key is not recorded/)).toBeInTheDocument();
+    expect(screen.getByText(/longest it could be/)).toBeInTheDocument();
+  });
+
+  test("an anchor already past the registration block says the next update carries it", async () => {
+    const client = fakeClient({
+      readMirror: vi.fn(async () => ({ ...mirrorCurrent, ...waiting, registrationL1Block: 11847800n })),
+    });
+    renderWith(
+      client,
+      <MirrorCard chainId={CELO_SEPOLIA.chainId} target={{ ...withKey, registrationL1Block: 11847800n }} />,
+      { v: 1, walletKey: TEST_KEY, sessions: [] },
+    );
+    expect(await screen.findByText(/next anchor update should carry it/)).toBeInTheDocument();
+    expect(screen.queryByText(/more minutes/)).not.toBeInTheDocument();
+  });
+
+  test("the sentence that stops people thinking it is broken is untouched", async () => {
+    const client = fakeClient({
+      readMirror: vi.fn(async () => ({ ...mirrorCurrent, ...waiting, registrationL1Block: 11847826n })),
+    });
+    renderWith(
+      client,
+      <MirrorCard chainId={CELO_SEPOLIA.chainId} target={{ ...withKey, registrationL1Block: 11847826n }} />,
+      { v: 1, walletKey: TEST_KEY, sessions: [] },
+    );
+    expect(
+      await screen.findByText(/would prove its absence and the cache would reject it/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/normal half-hour wait, not a failure/)).toBeInTheDocument();
+  });
+});

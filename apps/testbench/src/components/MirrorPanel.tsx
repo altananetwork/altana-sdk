@@ -67,6 +67,11 @@ export function MirrorPanel() {
             keyId: chosenShowcase.keyStoreKeyId,
             publicKey: chosenShowcase.publicKey,
             label: chosenShowcase.label,
+            // Lets the card say how far the anchor is from THIS key's
+            // registration, rather than from Ethereum's head.
+            ...(chosenShowcase.registrationL1Block !== undefined
+              ? { registrationL1Block: BigInt(chosenShowcase.registrationL1Block) }
+              : {}),
           }
         : undefined,
     [chosenShowcase],

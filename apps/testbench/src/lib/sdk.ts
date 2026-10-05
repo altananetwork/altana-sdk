@@ -105,7 +105,12 @@ export interface TestbenchClient {
     chainId?: number;
   }): Promise<Response>;
   /** One reading of the Celo mirror, the anchor and the KeyStore slots behind it. */
-  readMirror(opts: { chainId: number; user: Address; keyId: Hex }): Promise<MirrorReading>;
+  readMirror(opts: {
+    chainId: number;
+    user: Address;
+    keyId: Hex;
+    registrationL1Block?: bigint;
+  }): Promise<MirrorReading>;
   /** Sends a populateKey proof for the current anchor, as a wallet call through the relay. */
   proveIntoMirror(opts: {
     chainId: number;
@@ -224,7 +229,7 @@ export function createLiveClient(chains: NetworkConfig[], log: Logger): Testbenc
           ...(preferRail ? { preferRail } : {}),
         }),
       ),
-    readMirror: ({ chainId, user, keyId }) =>
+    readMirror: ({ chainId, user, keyId, registrationL1Block }) =>
       call("readMirror", { chainId, user, keyId }, () => {
         const network = cachedNetworkFor(chainId);
         if (!network) {
@@ -232,7 +237,12 @@ export function createLiveClient(chains: NetworkConfig[], log: Logger): Testbenc
             `Chain ${chainId} keeps its KeyStore locally, so it has no Celo-style mirror to read.`,
           );
         }
-        return readMirror({ network, user, keyId });
+        return readMirror({
+          network,
+          user,
+          keyId,
+          ...(registrationL1Block !== undefined ? { registrationL1Block } : {}),
+        });
       }),
     proveIntoMirror: ({ chainId, wallet, signer, publicKey }) =>
       call("proveIntoMirror", { chainId, wallet, publicKey }, () =>

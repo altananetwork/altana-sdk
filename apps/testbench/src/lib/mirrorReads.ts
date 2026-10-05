@@ -47,6 +47,8 @@ export type ReadMirrorArgs = {
   l2Client?: PublicClient;
   l1Client?: PublicClient;
   now?: () => number;
+  /** The registry block the registration landed in, when the caller knows it. */
+  registrationL1Block?: bigint;
 };
 
 /**
@@ -90,6 +92,7 @@ export async function readMirror(args: ReadMirrorArgs): Promise<MirrorReading> {
     // and the card derives the reason itself, so the bool is context only.
     cacheSaysValid: cachedPresent && cached.sourceBlockNumber === anchor.number && !cached.revoked,
     readAt: now(),
+    ...(args.registrationL1Block !== undefined ? { registrationL1Block: args.registrationL1Block } : {}),
   };
 }
 
