@@ -188,4 +188,4 @@ Which path each buyer takes on Celo:
 | Plain EOA | `eip3009` on USDC | through the facilitator, or locally |
 | Altana smart account | `permit2-exact` | locally |
 
-The rail follows from who verifies the signature. `Permit2.permitWitnessTransferFrom` verifies through ERC-1271, so `permit2-exact` carries a smart account's signature; Celo's USDC verifies `transferWithAuthorization` with `ecrecover`, so the `eip3009` rail there carries EOA buyers. Since the facilitator settles the `exact` scheme over EIP-3009, that is the path it serves.
+The rail follows from who verifies the signature. `Permit2.permitWitnessTransferFrom` verifies through ERC-1271, so `permit2-exact` carries a smart account's signature with Permit2 as the approved checker; an EIP-3009 token verifies `transferWithAuthorization` in its own code, so the `eip3009` rail carries one with the token as the checker. Circle's USDC verifies through `SignatureChecker`, so both rails carry a smart account's signature. The facilitator settles the `exact` scheme over EIP-3009, which is the path it serves.

@@ -53,10 +53,9 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
   (11142220); `facilitatorSupported` reads its open `GET /supported` and
   `supportsExactOn` answers whether it serves a chain. The choice is per rail,
   because Celo's `exact` scheme settles EIP-3009: that rail goes to the
-  facilitator and Permit2 rails keep settling locally, so one route serves an
-  EOA buyer through the facilitator and an Altana smart-account buyer from the
-  merchant's key. Verification stays local either way, since the merchant's own
-  is ERC-1271-aware and a facilitator's need not be. `POST /settle` needs an
+  facilitator and Permit2 rails keep settling locally, so one route covers both
+  rails whoever the buyer is. Verification stays local either way, since the
+  merchant's own is ERC-1271-aware and a facilitator's need not be. `POST /settle` needs an
   `X-API-Key`, and a 401 says so rather than looking like a rejected payment.
 
 - **Keystore writes funded from the L2.** `grantSession`, `revokeSession` and

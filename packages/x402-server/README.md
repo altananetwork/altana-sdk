@@ -140,8 +140,11 @@ aware and a facilitator's need not be.
 
 The rail follows from who verifies the signature.
 `Permit2.permitWitnessTransferFrom` verifies through ERC-1271, so
-`permit2-exact` carries an Altana smart account's signature; Celo's USDC
-verifies `transferWithAuthorization` with `ecrecover`, so the `eip3009` rail
-there carries EOA buyers, and that is the rail the facilitator settles.
+`permit2-exact` carries an Altana smart account's signature with Permit2 as the
+approved checker; an EIP-3009 token verifies `transferWithAuthorization` in its
+own code, so the `eip3009` rail carries one with the token as the checker.
+Circle's USDC verifies through `SignatureChecker`, so both rails carry a smart
+account's signature, and `eip3009` is the rail the facilitator settles.
 `tests/e2e/live-x402-celo-facilitator.ts` checks both against the live
-facilitator.
+facilitator, and `tests/e2e/fork-eip3009-celo.ts` is the on-chain A/B for the
+token's ERC-1271 path.
