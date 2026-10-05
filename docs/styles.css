@@ -503,6 +503,17 @@ a.pathway-head:hover .pathway-title {
   padding-bottom: 12px;
 }
 
+/* External sidebar entries (llms-full.txt) read as a file link rather than
+   a page: underlined, with the Vocs arrow in the accent color. */
+.vocs_Sidebar_item[target="_blank"] {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.vocs_Sidebar_item[target="_blank"]::after {
+  color: var(--vocs-color_textAccent);
+}
+
 .altana-theme-switch {
   display: inline-flex;
   align-items: center;

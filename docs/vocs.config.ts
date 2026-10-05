@@ -106,10 +106,14 @@ export default defineConfig({
     {
       text: "Get Started",
       items: [
+        // Absolute URL on purpose: Vocs only emits llms-full.txt at build
+        // time, so a relative link 404s in dev. Absolute links also render
+        // with the external arrow and open in a new tab.
+        { text: "llms-full.txt", link: "https://docs.altana.network/llms-full.txt" },
+        { text: "Connect an AI tool", link: "/getting-started/build-with-claude" },
         { text: "Create a smart agentic wallet", link: "/getting-started/create-agentic-wallet" },
         { text: "Passkey wallet quickstart", link: "/getting-started/passkey" },
         { text: "Private key wallet quickstart", link: "/getting-started/private-key" },
-        { text: "Connect an AI tool", link: "/getting-started/build-with-claude" },
       ],
     },
     {
