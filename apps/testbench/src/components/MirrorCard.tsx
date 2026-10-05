@@ -172,7 +172,9 @@ export function MirrorCard({ chainId, target, showTitle = true }: MirrorCardProp
           // follows is deliberate. Saying so beats a minute of silence on stage.
           if (s.kind === "anchor-moved") {
             setProgress(
-              `The Celo anchor moved to ${s.to}, so that proof is for a block Celo no longer anchors. ` +
+              (s.reason === "rejected-by-cache"
+                ? `The Celo anchor moved before the relay simulated the proof, and the cache rejected it. `
+                : `The Celo anchor moved to ${s.to} while the proof was being built, so it was not sent. `) +
                 `Re-proving against the new one in ${Math.round(s.waitingMs / 1000)} seconds.`,
             );
           } else if (s.kind === "building") {

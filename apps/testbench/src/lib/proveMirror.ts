@@ -29,7 +29,27 @@ import type { Address, Hex } from "viem";
 export type ProveStatus =
   | { kind: "building"; attempt: number; anchorL1Block: bigint }
   | { kind: "sending"; attempt: number; anchorL1Block: bigint }
-  | { kind: "anchor-moved"; attempt: number; from: bigint; to: bigint; waitingMs: number }
+  /**
+   * The anchor moved and the proof has to be rebuilt. `reason` says which of
+   * the two guards caught it, and they are not the same event:
+   *
+   * - `caught-before-sending`: the re-read after building saw a new anchor, so
+   *   a doomed proof was never sent. Cheap, and the more likely one now.
+   * - `rejected-by-cache`: the proof was sent and the chain reverted with
+   *   `Cache: block header mismatch`, meaning the anchor moved after the
+   *   re-read and before the relay simulated it. A narrower window.
+   *
+   * Anyone measuring this path needs to know which fired: only the second
+   * exercises the real revert.
+   */
+  | {
+      kind: "anchor-moved";
+      attempt: number;
+      from: bigint;
+      to: bigint;
+      waitingMs: number;
+      reason: "caught-before-sending" | "rejected-by-cache";
+    }
   | { kind: "done"; anchorL1Block: bigint; transactionHash?: Hex };
 
 export type ProveResult = {
@@ -135,7 +155,14 @@ export async function proveWithRetry(deps: ProveDeps, opts: ProveOptions = {}): 
     // dead on arrival, and catching it here costs nothing.
     const anchorAfter = await deps.readAnchor();
     if (anchorAfter !== call.l1BlockNumber) {
-      onStatus({ kind: "anchor-moved", attempt, from: call.l1BlockNumber, to: anchorAfter, waitingMs: settleMs });
+      onStatus({
+        kind: "anchor-moved",
+        attempt,
+        from: call.l1BlockNumber,
+        to: anchorAfter,
+        waitingMs: settleMs,
+        reason: "caught-before-sending",
+      });
       lastReason = `the anchor moved from ${call.l1BlockNumber} to ${anchorAfter} while the proof was built`;
       if (attempt < maxAttempts) await deps.sleep(settleMs);
       continue;
@@ -165,7 +192,14 @@ export async function proveWithRetry(deps: ProveDeps, opts: ProveOptions = {}): 
       // Only the anchor race is worth another attempt. Anything else is a real
       // answer and repeating it would just waste the operator's time.
       if (!isAnchorRace(reason)) throw new Error(explainCacheRevert(reason), { cause: err });
-      onStatus({ kind: "anchor-moved", attempt, from: call.l1BlockNumber, to: call.l1BlockNumber, waitingMs: settleMs });
+      onStatus({
+        kind: "anchor-moved",
+        attempt,
+        from: call.l1BlockNumber,
+        to: call.l1BlockNumber,
+        waitingMs: settleMs,
+        reason: "rejected-by-cache",
+      });
       if (attempt < maxAttempts) await deps.sleep(settleMs);
     }
   }

@@ -52,9 +52,15 @@ describe("proveWithRetry", () => {
     // 11848101 by the time it landed. Sending it wastes a round trip and a
     // relay fee to learn what a second read tells us for nothing.
     const { d, sends } = deps({ anchors: [100n, 101n, 101n, 101n] });
-    const result = await proveWithRetry(d, { maxAttempts: 2 });
+    const seen: ProveStatus[] = [];
+    const result = await proveWithRetry(d, { maxAttempts: 2, onStatus: (s) => seen.push(s) });
     expect(result).toMatchObject({ l1BlockNumber: 101n, attempts: 2 });
     expect(sends(), "the doomed proof is never sent").toBe(1);
+    // Anyone measuring this path has to be able to tell the two triggers
+    // apart: this one never reaches the chain, so it is not the revert.
+    expect(seen.find((s) => s.kind === "anchor-moved")).toMatchObject({
+      reason: "caught-before-sending",
+    });
   });
 
   test("it waits between attempts rather than firing both into the same window", async () => {
@@ -78,7 +84,9 @@ describe("proveWithRetry", () => {
     });
     const result = await proveWithRetry(d, { maxAttempts: 3, onStatus: (s) => seen.push(s) });
     expect(result.attempts).toBe(2);
-    expect(seen.some((s) => s.kind === "anchor-moved")).toBe(true);
+    // The chain rejected it, which is the narrower of the two triggers and the
+    // only one that exercises the real revert.
+    expect(seen.find((s) => s.kind === "anchor-moved")).toMatchObject({ reason: "rejected-by-cache" });
     expect(seen.at(-1)).toMatchObject({ kind: "done", transactionHash: "0xsent" });
   });
 

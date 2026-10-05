@@ -308,7 +308,14 @@ describe("what the card shows while and after proving", () => {
     const client = fakeClient({
       readMirror: vi.fn(async () => ({ ...mirrorCurrent, cachedPresent: false, cachedSourceBlock: 0n })),
       proveIntoMirror: vi.fn(async (opts) => {
-        opts.onStatus?.({ kind: "anchor-moved", attempt: 1, from: 100n, to: 101n, waitingMs: 60_000 });
+        opts.onStatus?.({
+          kind: "anchor-moved",
+          attempt: 1,
+          from: 100n,
+          to: 101n,
+          waitingMs: 60_000,
+          reason: "caught-before-sending",
+        });
         return { status: "CONFIRMED", transactionHash: "0xproof" as const, l1BlockNumber: 101n, attempts: 2 };
       }),
     });
@@ -382,7 +389,14 @@ describe("what the operator reads during a retry, in order", () => {
       proveIntoMirror: vi.fn(async (opts) => {
         opts.onStatus?.({ kind: "building", attempt: 1, anchorL1Block: 11848161n });
         opts.onStatus?.({ kind: "sending", attempt: 1, anchorL1Block: 11848161n });
-        opts.onStatus?.({ kind: "anchor-moved", attempt: 1, from: 11848161n, to: 11848190n, waitingMs: 60_000 });
+        opts.onStatus?.({
+          kind: "anchor-moved",
+          attempt: 1,
+          from: 11848161n,
+          to: 11848190n,
+          waitingMs: 60_000,
+          reason: "caught-before-sending",
+        });
         await held;
         opts.onStatus?.({ kind: "building", attempt: 2, anchorL1Block: 11848190n });
         return { status: "CONFIRMED", transactionHash: "0xagain" as const, l1BlockNumber: 11848190n, attempts: 2 };
@@ -397,7 +411,7 @@ describe("what the operator reads during a retry, in order", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Prove into the Celo mirror" }));
 
     // Mid-flight: the wait is on screen, as a status rather than an alert.
-    const waiting = await screen.findByText(/anchor moved to 11848190/);
+    const waiting = await screen.findByText(/anchor moved to 11848190 while the proof was being built/);
     seen.push(waiting.textContent ?? "");
     expect(waiting.closest(".banner")).toHaveClass("info");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -408,6 +422,6 @@ describe("what the operator reads during a retry, in order", () => {
     release();
     expect(await screen.findByText(/Proof confirmed against Ethereum block 11848190/)).toBeInTheDocument();
     expect(screen.getByText(/after 2 attempts, the anchor having moved/)).toBeInTheDocument();
-    expect(seen[0]).toContain("so that proof is for a block Celo no longer anchors");
+    expect(seen[0]).toContain("while the proof was being built, so it was not sent");
   });
 });
