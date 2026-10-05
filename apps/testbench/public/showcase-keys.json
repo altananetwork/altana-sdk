@@ -106,7 +106,7 @@
         "mirrorSourceBlockAtProof": 11848101
       },
       "preparedOn": "SDK PR #103 (fix/passkey-multichain-provisioning) at ac6c7ed, unmerged at the time",
-      "cacheProofNote": "Proven into the mirror from the test bench by an UNRELATED browser wallet (0x7AFEc44bbec63C03641f316D531bBa737aFf2E94), which demonstrates that populateKey is permissionless: the cache checks the storage proof against the anchored block and never looks at the sender. Two earlier attempts lost the anchor race first."
+      "cacheProofNote": "Proven into the mirror from the test bench by an UNRELATED browser wallet, which demonstrates that populateKey is permissionless: the cache checks the storage proof against the anchored block and never looks at the sender. The proof transaction hash was not captured because the card did not surface it until a later commit. Attempts to recover it from the cache event logs found nothing in the most likely range and then hit RPC rate limiting, so it is left unrecorded rather than guessed. The PROVEN STATE itself is not in doubt: getCachedKey reads sourceBlock 11848101, revoked=false, directly from the cache."
     },
     {
       "label": "passkey admin (WebAuthn P256)",
