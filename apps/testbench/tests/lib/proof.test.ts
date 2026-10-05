@@ -3,7 +3,14 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { countStates, parseProof, rowsWithPublicProof, type ProofFile } from "../../src/lib/proof";
+import {
+  ageInDays,
+  countStates,
+  isStale,
+  parseProof,
+  rowsWithPublicProof,
+  type ProofFile,
+} from "../../src/lib/proof";
 
 const ROOT = join(__dirname, "..", "..");
 const GENERATOR = join(ROOT, "scripts", "build-proof.mjs");
@@ -143,5 +150,27 @@ describe("the committed proof.json", () => {
     const file = parseProof(JSON.parse(readFileSync(path, "utf8")));
     expect(file).toBeDefined();
     expect(file!.sections.length).toBeGreaterThan(0);
+  });
+});
+
+describe("staleness", () => {
+  const file = (generatedAt: string): ProofFile => ({ generatedAt, source: "x", sections: [] });
+  const NOW = new Date("2026-10-05T12:00:00Z");
+
+  test("a snapshot generated today is not stale", () => {
+    expect(isStale(file("2026-10-05T09:00:00Z"), NOW)).toBe(false);
+    expect(ageInDays(file("2026-10-05T09:00:00Z"), NOW)).toBe(0);
+  });
+
+  test("a week-old snapshot is, which is what nobody noticed on the dry run", () => {
+    expect(ageInDays(file("2026-09-29T11:00:00Z"), NOW)).toBe(6);
+    expect(isStale(file("2026-09-29T11:00:00Z"), NOW)).toBe(true);
+  });
+
+  test("an unreadable or absent timestamp is not reported as fresh", () => {
+    expect(ageInDays(file("not a date"), NOW)).toBeUndefined();
+    expect(ageInDays(file(""), NOW)).toBeUndefined();
+    // Unknown is not stale either: it says nothing rather than crying wolf.
+    expect(isStale(file(""), NOW)).toBe(false);
   });
 });

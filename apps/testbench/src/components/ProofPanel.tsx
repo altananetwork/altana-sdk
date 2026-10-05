@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import {
+  ageInDays,
   countStates,
+  isStale,
   parseProof,
   rowsWithPublicProof,
   STATE_LABELS,
@@ -48,6 +50,7 @@ export function ProofPanel({ fetchImpl = fetch }: { fetchImpl?: typeof fetch }) 
         }
         setFile(parsed);
       } catch (err) {
+        // local-validation: fetching a static file from public/, never the relay.
         if (!cancelled) setProblem(err instanceof Error ? err.message : String(err));
       }
     })();
@@ -92,10 +95,24 @@ export function ProofPanel({ fetchImpl = fetch }: { fetchImpl?: typeof fetch }) 
                   {onlyPublic ? "Show every item" : "Show only items with a public transaction"}
                 </Button>
               </div>
+              <div className="row" style={{ gap: 8 }}>
+                <span className="muted small">Matrix last updated</span>
+                <Badge tone={isStale(file) ? "warning" : undefined}>{file.matrixUpdated ?? "unstated"}</Badge>
+              </div>
               <p className="muted small">
                 Generated {file.generatedAt ? new Date(file.generatedAt).toLocaleString() : "at an unknown time"}
-                {file.matrixUpdated ? `, from a matrix last updated ${file.matrixUpdated}` : ""}.
+                {(() => {
+                  const age = ageInDays(file);
+                  return age !== undefined && age >= 1 ? `, ${age} day${age === 1 ? "" : "s"} ago` : "";
+                })()}
+                .
               </p>
+              {isStale(file) && (
+                <div className="banner info">
+                  This snapshot is a day or more old and the matrix may have moved under it. Regenerate with
+                  node scripts/build-proof.mjs, which the dev and build scripts now do for you.
+                </div>
+              )}
             </div>
           </Card>
 

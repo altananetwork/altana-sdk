@@ -69,6 +69,7 @@ export function SendPanel() {
           ];
         }
       } catch (e) {
+        // local-validation: amount parsing and call encoding, never the relay.
         setError(e instanceof Error ? e.message : String(e));
         return;
       }

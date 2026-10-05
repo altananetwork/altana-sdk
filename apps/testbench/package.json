@@ -5,11 +5,12 @@
   "type": "module",
   "scripts": {
     "build:sdk": "cd ../../packages/wallet && bun run build",
-    "dev": "bun run build:sdk && vite --port 5174",
-    "build": "vite build",
+    "dev": "bun run build:sdk && bun run refresh:data && vite --port 5174",
+    "build": "bun run refresh:data && vite build",
     "preview": "vite preview --port 5174",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "refresh:data": "node scripts/build-proof.mjs || true; node scripts/copy-showcase-keys.mjs || true"
   },
   "dependencies": {
     "@altananetwork/sdk": "workspace:*",

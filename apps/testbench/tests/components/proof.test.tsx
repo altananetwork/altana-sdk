@@ -101,7 +101,9 @@ describe("ProofPanel", () => {
 
   test("says when it was generated, so a stale checklist is not read as today", async () => {
     setup();
-    expect(await screen.findByText(/from a matrix last updated 2026-09-28/)).toBeInTheDocument();
+    // The matrix date is its own field now, not buried in a sentence.
+    expect(await screen.findByText("2026-09-28")).toBeInTheDocument();
+    expect(screen.getByText(/Matrix last updated/)).toBeInTheDocument();
   });
 
   test("a missing file says how to generate one", async () => {
@@ -113,5 +115,24 @@ describe("ProofPanel", () => {
     setup({ nope: true });
     expect(await screen.findByRole("alert")).toHaveTextContent(/not in the shape this view expects/);
     expect(screen.queryByText("Where this stands")).not.toBeInTheDocument();
+  });
+});
+
+describe("the Proof view says how old its snapshot is", () => {
+  test("a stale snapshot is flagged, with the matrix date in front of you", async () => {
+    // It showed a week-old snapshot during the dry run and nobody noticed,
+    // because a date renders just as calmly whether it is today's or last week's.
+    const old = { ...FILE, generatedAt: "2026-09-29T11:00:00.000Z", matrixUpdated: "2026-09-29" };
+    setup(old);
+    expect(await screen.findByText("2026-09-29")).toBeInTheDocument();
+    expect(screen.getByText(/days ago/)).toBeInTheDocument();
+    expect(screen.getByText(/the matrix may have moved under it/)).toBeInTheDocument();
+  });
+
+  test("a fresh snapshot shows the matrix date and no warning", async () => {
+    const fresh = { ...FILE, generatedAt: new Date().toISOString(), matrixUpdated: "2026-10-05" };
+    setup(fresh);
+    expect(await screen.findByText("2026-10-05")).toBeInTheDocument();
+    expect(screen.queryByText(/may have moved under it/)).not.toBeInTheDocument();
   });
 });

@@ -15,6 +15,7 @@ import type { Address } from "viem";
 import { txUrl } from "../lib/explorer";
 import { nativeLabel, symbolFor } from "../lib/fees";
 import { formatAmount, sameAddress } from "../lib/format";
+import { relayReason } from "../lib/errors";
 import { entry } from "../lib/log";
 import { PERIODS, buildGrant, defaultForm, describeCaps, type SessionForm } from "../lib/sessions";
 import type { StoredSession } from "../lib/storage";
@@ -101,6 +102,7 @@ export function SessionsPanel() {
       try {
         args = grantArgs();
       } catch (e) {
+        // local-validation: grantArgs throws for a bad form, never the relay.
         setError(e instanceof Error ? e.message : String(e));
         return;
       }
@@ -130,7 +132,7 @@ export function SessionsPanel() {
         try {
           setQuote(await client.quoteGrantSession(args));
         } catch (e) {
-          log("quote", { error: e instanceof Error ? e.message : String(e) });
+          log("quote", { error: relayReason(e) });
         }
         const result = await client.grantSession({
           ...args,

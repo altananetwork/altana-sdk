@@ -49,3 +49,36 @@ describe("CrossChainPanel", () => {
     await waitFor(() => expect(makeDeps).toHaveBeenCalledWith(expect.objectContaining({ source: expect.objectContaining({ chainId: 84532 }) })));
   });
 });
+
+describe("the relay's reason, not viem's wrapper", () => {
+  test("a disabled interop service reads as the gate it is, not as a parameter error", async () => {
+    // What the relay actually answers, wrapped the way viem delivers it: the
+    // generic headline plus a kilobyte of echoed request. The panel used to
+    // show the wrapper, so a known gate read as a broken bench (qa, 2026-10-05).
+    const wrapped = new Error(
+      "Invalid parameters were provided to the RPC method. Double check you have provided the correct " +
+        `parameters. URL: https://testnet-relay.altana.network Request body: {"method":"wallet_prepareCalls"` +
+        `,"params":[{"calls":[{"data":"0x${"ab".repeat(400)}"}]}]}`,
+      {
+        cause: {
+          code: -32602,
+          details: "multichain functionality is disabled: interop service not configured",
+        },
+      },
+    );
+    const makeDeps = vi.fn(async () => {
+      throw wrapped;
+    });
+    renderWith(fakeClient(), <CrossChainPanel makeDeps={makeDeps} />, {
+      v: 1,
+      walletKey: TEST_KEY,
+      sessions: [],
+    });
+    await userEvent.click(screen.getByRole("button", { name: /Register through the relay/ }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/multichain functionality is disabled/);
+    expect(alert).not.toHaveTextContent(/Invalid parameters were provided/);
+    expect(alert.textContent ?? "").not.toMatch(/0xabab/);
+  });
+});

@@ -108,6 +108,30 @@ export const STATE_LABELS: Record<ProofState, string> = {
   other: "See the status",
 };
 
+/**
+ * How old the snapshot is, in whole days.
+ *
+ * `proof.json` is generated from `MATRIX.md` and does not regenerate itself, so
+ * it drifts every time qa edits the matrix and does not re-run the script. It
+ * showed a week-old snapshot during the dry run and nobody noticed, because a
+ * date renders just as calmly whether it is today's or last week's.
+ *
+ * `dev` and `build` now regenerate it, so this is the backstop for a page left
+ * open or served from a stale build rather than the main defence.
+ */
+export function ageInDays(file: ProofFile, now: Date = new Date()): number | undefined {
+  if (!file.generatedAt) return undefined;
+  const then = new Date(file.generatedAt);
+  if (Number.isNaN(then.getTime())) return undefined;
+  return Math.floor((now.getTime() - then.getTime()) / 86_400_000);
+}
+
+/** Old enough that the matrix has probably moved under it. */
+export function isStale(file: ProofFile, now: Date = new Date()): boolean {
+  const age = ageInDays(file, now);
+  return age !== undefined && age >= 1;
+}
+
 /** How many rows are in each state, in the order the summary shows them. */
 export function countStates(file: ProofFile): { state: ProofState; count: number }[] {
   const counts = new Map<ProofState, number>();

@@ -1,7 +1,7 @@
 {
-  "generatedAt": "2026-09-29T14:04:05.030Z",
+  "generatedAt": "2026-10-05T11:23:39.861Z",
   "source": "celo-harness/MATRIX.md",
-  "matrixUpdated": "2026-09-29",
+  "matrixUpdated": "2026-10-05",
   "sections": [
     {
       "title": "Milestone 1",
@@ -252,12 +252,25 @@
         },
         {
           "item": "2b",
-          "title": "x402: Celo token registry",
-          "status": "Proven (fork)",
-          "state": "proven-fork",
-          "relay": "fork",
-          "note": "fork-celo-x402-server.ts (in CI's fork:all) settles both buyer families on chain against a real Celo merchant: an EOA over EIP-3009 USDC, and an Altana smart account over permit2 USDT with ERC-1271, with replay refused. Fork is the right level: it deploys a merchant and moves balances",
-          "links": []
+          "title": "x402: pay per request on Celo",
+          "status": "Proven (live)",
+          "state": "proven-live",
+          "relay": "local",
+          "note": "A full purchase end to end on live Celo Sepolia: HTTP 200, paid from an Altana smart account with an account-only session key and a USDC spend cap. Settlement 0xe408ad05…, to the canonical Permit2 contract 0x000000000022d473…, transferring exactly 0.01 USDC; seller payout +0.01, wallet -0.01. Rail confirmed from chain data, not the merchant's self-report. Needs two easily-missed setup calls: approveTokenForPermit2 and approveSignatureChecker(session, PERMIT2_ADDRESS); without the second, Permit2's ERC-1271 callback is refused and settlement reverts with no reason naming either. Also proven through the test bench x402 panel on a fresh wallet with neither approval: 0x4f169ce0…, same rail, seller +0.01 / wallet -0.01. SDK PR #109 now sets both approvals in the grant (x402Tokens) and checks both before paying, so the unexplained settlement revert is replaced by a refusal that names them; verified live from a fresh wallet (0xa3e2be12…). evidence/2026-09-29-x402-purchase-live.md, evidence/2026-09-29-x402-panel-purchase-live.md, evidence/2026-10-05-review-pr109.md",
+          "links": [
+            {
+              "label": "0xe408ad05…",
+              "url": "https://sepolia.celoscan.io/tx/0xe408ad0549e6162b77238d99065d3a7fffa7cbe8db4ed5173e02708443a56baf"
+            },
+            {
+              "label": "0x4f169ce0…",
+              "url": "https://sepolia.celoscan.io/tx/0x4f169ce080ebad5ab5ef5a571de93f91dd18e9cbc60aed8d7279d0b949f644f5"
+            },
+            {
+              "label": "0xa3e2be12…",
+              "url": "https://sepolia.celoscan.io/tx/0xa3e2be123e17f07488377acd1ba0c3401152cb290794ebe8e03fa5fbdf7abd39"
+            }
+          ]
         },
         {
           "item": "2b",
@@ -496,8 +509,13 @@
           "status": "Proven (live)",
           "state": "proven-live",
           "relay": "railway",
-          "note": "A key is now live in the Celo mirror: proved through the test bench on 2026-09-29, isValidKey true, sourceBlockNumber 11807900 equal to the anchor, and keccak(cached publicKey) == keyId verified on chain. The deployed cache is KeyStoreCacheOPStack 1.1.1 and isValidKey requires sourceBlockNumber == IL1Block.number() — equality, not recency. So a cached key is an assertion about one anchored L1 block, true inside a window, not a durable mirror. qa measured the anchor live 2026-09-29: 11807636 against a Sepolia head of 11807722, 86 blocks / ~17 minutes behind, matching sdk's 70-95. Consequences: a KeyStore write is provable ~30 min after it lands, and a proof is good for ~20 min. My own fork-celo-cache run already showed the equality rule from the other side — moving the anchor one block made isCachedKeyValid go false. evidence/2026-09-29-celo-sepolia-anchor-lag.md",
-          "links": []
+          "note": "A key is now live in the Celo mirror: proof tx 0xd04ddeca… on Celo Sepolia, sent through the test bench on 2026-09-29 for wallet 0xAcFDbA26…. isValidKey true, sourceBlockNumber 11807900 equal to the anchor, and keccak(cached publicKey) == keyId verified on chain. The deployed cache is KeyStoreCacheOPStack 1.1.1 and isValidKey requires sourceBlockNumber == IL1Block.number() — equality, not recency. So a cached key is an assertion about one anchored L1 block, true inside a window, not a durable mirror. qa measured the anchor live 2026-09-29: 11807636 against a Sepolia head of 11807722, 86 blocks / ~17 minutes behind, matching sdk's 70-95. Consequences: a KeyStore write is provable ~30 min after it lands, and a proof is good for ~20 min. My own fork-celo-cache run already showed the equality rule from the other side — moving the anchor one block made isCachedKeyValid go false. evidence/2026-09-29-celo-sepolia-anchor-lag.md",
+          "links": [
+            {
+              "label": "0xd04ddeca…",
+              "url": "https://sepolia.celoscan.io/tx/0xd04ddeca29ec136eb60e1e285224c55a249646641a0b1c66418499e6f7e6ee32"
+            }
+          ]
         },
         {
           "item": "S5a",
@@ -520,11 +538,24 @@
         {
           "item": "S5c",
           "title": "Revoke, then rejection, then the mirror shows revoked",
-          "status": "Proven (fork, funder check stubbed) for revoke and rejection; mirror leg not covered",
-          "state": "proven-fork",
-          "relay": "fork",
-          "note": "Revoke confirmed on both chains: account 0xdecc6e7998ed0a7be639325a4e2746e0e8487b33c821c79a71bd7225513bd72f (fork-local), registry 0x605256d97ccacf058d68f22bc1b6f46b3c534b265cb520bb66372f12c37a10d0 (fork-local), and the key was rejected afterwards. The mirror-shows-revoked half was skipped because S4 never proved the key in on that fork",
-          "links": []
+          "status": "Mirror leg now Proven (live); the zero-ETH revoke stays Proven (fork, funder check stubbed)",
+          "state": "proven-mixed",
+          "relay": "fork + live",
+          "note": "Revoke confirmed on both chains: account 0xdecc6e7998ed0a7be639325a4e2746e0e8487b33c821c79a71bd7225513bd72f (fork-local), registry 0x605256d97ccacf058d68f22bc1b6f46b3c534b265cb520bb66372f12c37a10d0 (fork-local), and the key was rejected afterwards. The mirror-shows-revoked half was skipped there because S4 never proved the key in on that fork. It has since been done live, on 2026-10-05, with showcase key B: registered, proven valid into the mirror (0x11c94cfc…, isCachedKeyValid true), then revoked on Sepolia (0xfcb40975…, KeyStore isValidKey false), then the revocation proven into the Celo mirror (0x37abe8ba…, cache revoked=true). What is still not live is the funding path, not the mirror: B's writes were paid in Sepolia ETH, so this says nothing about revoking with zero ETH, which remains blocked on the relay. evidence/2026-10-05-showcase-keys.md",
+          "links": [
+            {
+              "label": "0x11c94cfc…",
+              "url": "https://sepolia.celoscan.io/tx/0x11c94cfc1ec1eac8b420dc8a8f70328ccee768240892fbb3c9034be95cc3e101"
+            },
+            {
+              "label": "0xfcb40975…",
+              "url": "https://sepolia.etherscan.io/tx/0xfcb40975344baab6ba8a9c9877a1192b1d7c7e39df11ff54945164752ecfadce"
+            },
+            {
+              "label": "0x37abe8ba…",
+              "url": "https://sepolia.celoscan.io/tx/0x37abe8ba35797eee3f664159179a00a67289ea7367bfb4dcc754ad892cf0df1a"
+            }
+          ]
         },
         {
           "item": "S6",

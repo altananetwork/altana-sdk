@@ -6,6 +6,7 @@ import { DESTINATION_CHAIN_ID, STEPS, keyIdOf, runCrossChain, type CrossChainDep
 import { txUrl } from "../lib/explorer";
 import { nativeLabel } from "../lib/fees";
 import { formatAmount } from "../lib/format";
+import { relayReason } from "../lib/errors";
 import { entry } from "../lib/log";
 import { useApp, useEnsureRegistered } from "../state/AppState";
 import { Address } from "./shared/Address";
@@ -54,7 +55,14 @@ export function CrossChainPanel({ makeDeps = liveFactory }: { makeDeps?: DepsFac
       setResult(r);
       dispatch({ type: "log/add", entry: entry("cross-chain result", { result: r }) });
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      // The relay's own reason, not viem's wrapper. Raw, this panel showed
+      // "Invalid parameters were provided to the RPC method" followed by a
+      // kilobyte of echoed request, hiding the actual answer: "multichain
+      // functionality is disabled: interop service not configured". Same gate
+      // the walkthrough names, and it reads as a known gap there and as a
+      // broken bench here (qa, 2026-10-05). Every other panel that talks to
+      // the relay already does this.
+      setError(relayReason(e));
     } finally {
       setBusy(false);
     }

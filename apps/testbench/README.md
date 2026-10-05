@@ -102,7 +102,7 @@ It sells one paid route at 0.01 USDC on live Celo Sepolia, over Permit2 and EIP-
 
 ## The proof view
 
-`public/proof.json` is generated from qa's verification matrix:
+`public/proof.json` is generated from qa's verification matrix. **`dev` and `build` regenerate it and the showcase keys for you**, so a snapshot cannot silently drift behind the matrix; the Proof tab also shows the matrix's own date and flags a snapshot a day or more old. To do it by hand:
 
 ```sh
 node scripts/build-proof.mjs                       # finds celo-harness/MATRIX.md

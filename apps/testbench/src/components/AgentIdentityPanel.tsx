@@ -82,6 +82,7 @@ export function AgentIdentityPanel() {
         // The registry is an ERC-721, so an id nobody has minted reverts in
         // ownerOf/tokenURI. Raw, that reads as a broken call rather than the
         // plain fact that there is no such agent.
+        // local-validation: inspected to raise a better error, not displayed.
         const text = err instanceof Error ? err.message : String(err);
         if (/tokenURI|ownerOf|nonexistent|ERC721/i.test(text)) {
           throw new Error(
