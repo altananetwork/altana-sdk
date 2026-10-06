@@ -26,6 +26,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { createChecks } from "./checks.js";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -89,11 +90,12 @@ for (const name of ["buildMcpEnv", "buildSnippet"] as const) {
   }
 }
 
-const results: { id: string; what: string; pass: boolean; detail: string }[] = [];
-const record = (id: string, what: string, pass: boolean, detail = "") => {
-  results.push({ id, what, pass, detail });
-  console.log(`  ${pass ? "PASS" : "FAIL"}  ${id.padEnd(3)} ${what}${detail ? `  ${detail}` : ""}`);
-};
+/* Checks that refuse to run when the thing they are about was never created.
+   A check evaluated after the step that makes its subject failed is how a
+   passing assertion ends up printed two lines under the failure that made it
+   impossible. See tests/e2e/checks.ts. */
+const checks = createChecks();
+const record = checks.record.bind(checks);
 const step = (s: string) => console.log(`\n[${s}]`);
 
 // ── The app's side: grant, and build the snippet ────────────────────────────
@@ -297,38 +299,51 @@ try {
     stderr.split("\n").find((l) => l.includes(SESSION_NAME))?.slice(0, 110) ?? "",
   );
 
+  /* From here every check needs the session to have loaded. Without it the
+     agent does not exist, and "the agent was refused" is true of a server that
+     never had a permission at all, which is the reading that must not be
+     available. */
   step("S6  the agent acts inside its limit, by name");
-  const inside = await call("session_execute", {
-    sessionName: SESSION_NAME,
-    to: DEAD,
-    valueEth: "0.0000001",
+  await checks.step("S6", "the snippet produces a working agent", ["S3"], async () => {
+    const inside = await call("session_execute", {
+      sessionName: SESSION_NAME,
+      to: DEAD,
+      valueEth: "0.0000001",
+    });
+    const hash = inside.data?.transactionHash ?? inside.data?.txHash;
+    if (!inside.ok) console.log(`       ${inside.text.slice(0, 220)}`);
+    return { pass: inside.ok && Boolean(hash), detail: String(hash ?? inside.text.slice(0, 120)) };
   });
-  const hash = inside.data?.transactionHash ?? inside.data?.txHash;
-  if (!inside.ok) console.log(`       ${inside.text.slice(0, 220)}`);
-  record("S6", "the snippet produces a working agent", inside.ok && Boolean(hash), String(hash ?? inside.text.slice(0, 120)));
 
   step("S7  over the limit is refused");
-  const over = await call("session_execute", { sessionName: SESSION_NAME, to: DEAD, valueEth: "0.01" });
-  record(
-    "S7",
-    "the limit still binds an environment-loaded session",
-    !over.ok || !(over.data?.transactionHash ?? over.data?.txHash),
-    over.text.slice(0, 120),
-  );
+  /* Needs S6, not just S3. A refusal only proves the limit binds if a spend
+     under it was shown to land first; otherwise everything is refused and the
+     check passes for the wrong reason. */
+  await checks.step("S7", "the limit still binds an environment-loaded session", ["S6"], async () => {
+    const over = await call("session_execute", { sessionName: SESSION_NAME, to: DEAD, valueEth: "0.01" });
+    return {
+      pass: !over.ok || !(over.data?.transactionHash ?? over.data?.txHash),
+      detail: over.text.slice(0, 120),
+    };
+  });
 
   step("S8  after the app revokes, the agent is refused");
-  let revoke = await client.revokeSession({ wallet, signer: passkey, session });
-  if (revoke.status !== "revoked") {
-    revoke = await client.revokeSession({ wallet, signer: passkey, session });
-  }
-  record("S8", "the permission is revoked", revoke.status === "revoked", String(revoke.status));
-  const after = await call("session_execute", { sessionName: SESSION_NAME, to: DEAD, valueEth: "0.0000001" });
-  record(
-    "S9",
-    "the revoked agent is refused",
-    !after.ok || !(after.data?.transactionHash ?? after.data?.txHash),
-    after.text.slice(0, 120),
-  );
+  await checks.step("S8", "the permission is revoked", ["S3"], async () => {
+    let revoke = await client.revokeSession({ wallet, signer: passkey, session });
+    if (revoke.status !== "revoked") {
+      revoke = await client.revokeSession({ wallet, signer: passkey, session });
+    }
+    return { pass: revoke.status === "revoked", detail: String(revoke.status) };
+  });
+  /* Needs both: a revoke that did not happen, and a spend that never worked,
+     each produce a refusal that looks like proof the revoke bit. */
+  await checks.step("S9", "the revoked agent is refused", ["S6", "S8"], async () => {
+    const after = await call("session_execute", { sessionName: SESSION_NAME, to: DEAD, valueEth: "0.0000001" });
+    return {
+      pass: !after.ok || !(after.data?.transactionHash ?? after.data?.txHash),
+      detail: after.text.slice(0, 120),
+    };
+  });
 
   step("sweep  return the leftover to the funder");
   const left = await publicClient.getBalance({ address: wallet.address });
@@ -358,11 +373,6 @@ try {
   await rm(SANDBOX, { recursive: true, force: true }).catch(() => {});
 }
 
-console.log("\n===========================================");
-console.log(`${IS_FORK ? "FORK" : "LIVE"} snippet summary`);
-console.log("===========================================");
-for (const r of results) console.log(`  ${r.pass ? "PASS" : "FAIL"}  ${r.id.padEnd(5)} ${r.what}`);
-const failed = results.filter((r) => !r.pass);
-console.log(`\n  ${results.length - failed.length}/${results.length} passed`);
+const summaryCode = checks.summarise(`${IS_FORK ? "FORK" : "LIVE"} snippet summary`);
 console.log(`  keyHash ${keyHash}`);
-process.exit(failed.length > 0 ? 1 : exitCode);
+process.exit(summaryCode || exitCode);
