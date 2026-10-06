@@ -34,6 +34,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { createChecks } from "./checks.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -89,11 +90,11 @@ async function waitForFundingInclusion(hash: `0x${string}`): Promise<void> {
   }
 }
 
-const results: { id: string; what: string; pass: boolean; detail: string }[] = [];
-const record = (id: string, what: string, pass: boolean, detail = "") => {
-  results.push({ id, what, pass, detail });
-  console.log(`  ${pass ? "PASS" : "FAIL"}  ${id.padEnd(5)} ${what}${detail ? `  ${detail}` : ""}`);
-};
+/* Checks that skip rather than run when the thing they are about was never
+   created. See tests/e2e/checks.ts for why a passing check beside a failure it
+   depends on is worse than no check. */
+const checks = createChecks();
+const record = checks.record.bind(checks);
 const step = (s: string) => console.log(`\n[${s}]`);
 const info = (k: string, v: unknown) => console.log(`  ${k.padEnd(16)}${v}`);
 
@@ -247,28 +248,35 @@ try {
   );
 
   step("A3  the agent acts inside its limit");
-  const inside = await call("session_execute", {
-    sessionName: SESSION_NAME,
-    to: RECIPIENT,
-    valueEth: "0.0000001",
+  await checks.step("A3", "the agent's transaction lands", ["A2"], async () => {
+    const inside = await call("session_execute", {
+      sessionName: SESSION_NAME,
+      to: RECIPIENT,
+      valueEth: "0.0000001",
+    });
+    if (!inside.ok) console.log(`       ${inside.text.slice(0, 300)}`);
+    const insideHash = inside.data?.transactionHash ?? inside.data?.txHash;
+    info("tx", insideHash);
+    return {
+      pass: inside.ok && Boolean(insideHash),
+      detail: String(insideHash ?? inside.text.slice(0, 120)),
+    };
   });
-  if (!inside.ok) console.log(`       ${inside.text.slice(0, 300)}`);
-  const insideHash = inside.data?.transactionHash ?? inside.data?.txHash;
-  info("tx", insideHash);
-  record("A3", "the agent's transaction lands", inside.ok && Boolean(insideHash), String(insideHash ?? inside.text.slice(0, 120)));
 
   step("A4  a spend over the limit is refused");
-  const over = await call("session_execute", {
-    sessionName: SESSION_NAME,
-    to: RECIPIENT,
-    valueEth: "0.01",
+  /* Needs A3, not A2. On a server whose session never worked, everything is
+     refused, and this check passes for the wrong reason. */
+  await checks.step("A4", "the over-limit spend is refused", ["A3"], async () => {
+    const over = await call("session_execute", {
+      sessionName: SESSION_NAME,
+      to: RECIPIENT,
+      valueEth: "0.01",
+    });
+    return {
+      pass: !over.ok || !(over.data?.transactionHash ?? over.data?.txHash),
+      detail: over.text.slice(0, 140),
+    };
   });
-  record(
-    "A4",
-    "the over-limit spend is refused",
-    !over.ok || !(over.data?.transactionHash ?? over.data?.txHash),
-    over.text.slice(0, 140),
-  );
 
   step("A5  the app revokes, and the agent is refused");
   // Retried once, and the retry is reported rather than hidden. The live relay
@@ -290,17 +298,19 @@ try {
     String(revoke.status),
   );
 
-  const after = await call("session_execute", {
-    sessionName: SESSION_NAME,
-    to: RECIPIENT,
-    valueEth: "0.0000001",
+  /* Needs both: a revoke that did not happen and a spend that never worked each
+     produce a refusal that reads as proof the revoke bit. */
+  await checks.step("A6", "the revoked agent is refused", ["A3", "A5"], async () => {
+    const after = await call("session_execute", {
+      sessionName: SESSION_NAME,
+      to: RECIPIENT,
+      valueEth: "0.0000001",
+    });
+    return {
+      pass: !after.ok || !(after.data?.transactionHash ?? after.data?.txHash),
+      detail: after.text.slice(0, 140),
+    };
   });
-  record(
-    "A6",
-    "the revoked agent is refused",
-    !after.ok || !(after.data?.transactionHash ?? after.data?.txHash),
-    after.text.slice(0, 140),
-  );
 
   step("sweep  return the leftover tBNB to the funder");
   const leftover = await publicClient.getBalance({ address: wallet.address });
@@ -326,11 +336,6 @@ try {
   await rm(SANDBOX, { recursive: true, force: true }).catch(() => {});
 }
 
-console.log("\n==========================================");
-console.log(`${IS_FORK ? "FORK" : "LIVE"} agent-via-MCP summary`);
-console.log("==========================================");
-for (const r of results) console.log(`  ${r.pass ? "PASS" : "FAIL"}  ${r.id.padEnd(5)} ${r.what}`);
-const failed = results.filter((r) => !r.pass);
-console.log(`\n  ${results.length - failed.length}/${results.length} passed`);
+const summaryCode = checks.summarise(`${IS_FORK ? "FORK" : "LIVE"} agent-via-MCP summary`);
 if (!IS_FORK) console.log(`\n  wallet  https://testnet.bscscan.com/address/${wallet.address}`);
-process.exit(failed.length > 0 ? 1 : exitCode);
+process.exit(summaryCode || exitCode);

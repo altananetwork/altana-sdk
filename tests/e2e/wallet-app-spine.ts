@@ -56,6 +56,8 @@ const NETWORK: NetworkConfig = {
   relayUrl: RELAY_URL,
 };
 
+import { createChecks } from "./checks.js";
+
 const RECIPIENT = "0x000000000000000000000000000000000000dEaD" as const;
 
 const t0 = performance.now();
@@ -68,11 +70,10 @@ const info = (k: string, v: unknown) => console.log(`  ${k.padEnd(14)}${v}`);
 // The relay's terminal success status is CONFIRMED. Treat nothing else as landed.
 const landed = (status: unknown) => String(status).toUpperCase() === "CONFIRMED";
 
-const results: { id: string; what: string; pass: boolean; detail: string }[] = [];
-const record = (id: string, what: string, pass: boolean, detail = "") => {
-  results.push({ id, what, pass, detail });
-  console.log(`  ${pass ? "PASS" : "FAIL"}  ${id}  ${what}${detail ? `  ${detail}` : ""}`);
-};
+/* Checks that skip rather than run when the thing they are about was never
+   created. See tests/e2e/checks.ts. */
+const checks = createChecks();
+const record = checks.record.bind(checks);
 
 async function main() {
   say("altana-wallet spine on BNB Chain testnet (chain 97)");
@@ -205,25 +206,31 @@ async function main() {
   const mine = entries.find(
     (e: any) => e.keyHash?.toLowerCase() === keyHash.toLowerCase(),
   );
-  record("E5", "the agent's transaction is attributable by keyHash",
-    !!mine, mine ? `bundle ${mine.id?.slice(0, 18)} index ${mine.index}` : "no entry carried our keyHash");
+  /* Needs E4. Attribution is a statement about a transaction, so if none was
+     made this check has no subject, and QA hit exactly this shape: an
+     attribution assertion run against a page where the transaction did not
+     exist. A fail here would be honest but it would still be read as evidence
+     about attribution, which it is not. */
+  await checks.step("E5", "the agent's transaction is attributable by keyHash", ["E4"], () => ({
+    pass: !!mine,
+    detail: mine ? `bundle ${mine.id?.slice(0, 18)} index ${mine.index}` : "no entry carried our keyHash",
+  }));
 
   // E6 ---------------------------------------------------------------------
   step("E6  a spend over the limit is rejected");
-  let overLimitRejected = false;
-  let overLimitWhy = "";
-  try {
-    const over = await client.execute({
-      session,
-      calls: { to: RECIPIENT, value: parseEther("0.01"), data: "0x" },
-    });
-    overLimitRejected = !landed(over.status);
-    overLimitWhy = `status ${over.status}`;
-  } catch (err) {
-    overLimitRejected = true;
-    overLimitWhy = String((err as Error).message).slice(0, 140);
-  }
-  record("E6", "a spend above the limit is refused", overLimitRejected, overLimitWhy);
+  /* Needs E4. On a session that never worked everything is refused, and this
+     passes for the wrong reason. */
+  await checks.step("E6", "a spend above the limit is refused", ["E4"], async () => {
+    try {
+      const over = await client.execute({
+        session,
+        calls: { to: RECIPIENT, value: parseEther("0.01"), data: "0x" },
+      });
+      return { pass: !landed(over.status), detail: `status ${over.status}` };
+    } catch (err) {
+      return { pass: true, detail: String((err as Error).message).slice(0, 140) };
+    }
+  });
 
   const stillThere = await publicClient.getBalance({ address: wallet.address });
   record("E6b", "the wallet is otherwise unharmed", stillThere > 0n, `${formatEther(stillThere)} tBNB`);
@@ -238,24 +245,30 @@ async function main() {
   const keysAfter = await getKeys(publicClient, wallet.address);
   const gone = !keysAfter.keyHashes.some((h) => h.toLowerCase() === keyHash.toLowerCase());
   record("E9", "session revoked", revoke.status === "revoked", `status ${revoke.status}`);
-  record("E10a", "the key is gone from the account", gone, JSON.stringify(keysAfter.keyHashes));
+  // Needs E9: a key absent because the revoke never ran is not a revoke working.
+  await checks.step("E10a", "the key is gone from the account", ["E9"], () => ({
+    pass: gone,
+    detail: JSON.stringify(keysAfter.keyHashes),
+  }));
 
   // E10 --------------------------------------------------------------------
   step("E10  the agent is rejected after revoke");
-  let afterRevokeRejected = false;
-  let afterRevokeWhy = "";
-  try {
-    const after = await client.execute({
-      session,
-      calls: { to: RECIPIENT, value: 1n, data: "0x" },
-    });
-    afterRevokeRejected = !landed(after.status);
-    afterRevokeWhy = `status ${after.status} ${after.transactionHash ?? ""}`;
-  } catch (err) {
-    afterRevokeRejected = true;
-    afterRevokeWhy = String((err as Error).message).slice(0, 140);
-  }
-  record("E10", "the revoked session is refused", afterRevokeRejected, afterRevokeWhy);
+  /* Needs both: a revoke that did not happen and a session that never worked
+     each produce a refusal that reads as proof the revoke bit. */
+  await checks.step("E10", "the revoked session is refused", ["E4", "E9"], async () => {
+    try {
+      const after = await client.execute({
+        session,
+        calls: { to: RECIPIENT, value: 1n, data: "0x" },
+      });
+      return {
+        pass: !landed(after.status),
+        detail: `status ${after.status} ${after.transactionHash ?? ""}`,
+      };
+    } catch (err) {
+      return { pass: true, detail: String((err as Error).message).slice(0, 140) };
+    }
+  });
 
   // Sweep ------------------------------------------------------------------
   // The wallet is a throwaway owned by a headless passkey that only exists in
@@ -291,9 +304,14 @@ async function main() {
   say("\n===================================================");
   say(`${IS_FORK ? "FORK" : "LIVE"} spine summary   (+${el()})`);
   say("===================================================");
-  for (const r of results) say(`  ${r.pass ? "PASS" : "FAIL"}  ${r.id.padEnd(6)} ${r.what}`);
-  const failed = results.filter((r) => !r.pass);
-  say(`\n  ${results.length - failed.length}/${results.length} passed`);
+  for (const r of checks.results) {
+    const label = r.state === "pass" ? "PASS" : r.state === "fail" ? "FAIL" : "SKIP";
+    say(`  ${label}  ${r.id.padEnd(6)} ${r.what}`);
+  }
+  const failed = checks.results.filter((r) => r.state !== "pass");
+  const skipped = checks.results.filter((r) => r.state === "skip").length;
+  say(`\n  ${checks.results.length - failed.length}/${checks.results.length} passed` + (skipped ? `, ${skipped} skipped` : ""));
+  if (skipped) say("  a skipped check proves nothing; it was not run");
   if (!IS_FORK) {
     say(`\n  wallet   https://testnet.bscscan.com/address/${wallet.address}`);
   }
