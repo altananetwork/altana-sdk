@@ -67,6 +67,28 @@ const MCP_ENTRY = join(import.meta.dir, "..", "..", "packages", "mcp", "src", "i
 /** Throwaway key and metadata storage for this run, removed at the end. */
 const SANDBOX = await mkdtemp(join(tmpdir(), "altana-agent-mcp-"));
 
+/**
+ * Wait until the funding transfer is in a block, by either question the node
+ * will answer. Its status does not matter here: the balance check that follows
+ * is the real assertion.
+ */
+async function waitForFundingInclusion(hash: `0x${string}`): Promise<void> {
+  const deadline = Date.now() + 180_000;
+  for (;;) {
+    const receipt = await publicClient.getTransactionReceipt({ hash }).catch(() => undefined);
+    if (receipt) return;
+    const tx = await publicClient.getTransaction({ hash }).catch(() => undefined);
+    if (tx?.blockNumber != null) return;
+    if (Date.now() > deadline) {
+      throw new Error(
+        `The funding transfer ${hash} was not in a block after 180s. It may still be pending; ` +
+          `check it before re-running, because a second transfer spends real tBNB.`,
+      );
+    }
+    await new Promise((r) => setTimeout(r, 2_000));
+  }
+}
+
 const results: { id: string; what: string; pass: boolean; detail: string }[] = [];
 const record = (id: string, what: string, pass: boolean, detail = "") => {
   results.push({ id, what, pass, detail });
@@ -102,7 +124,12 @@ const wallet = await client.createWallet({ signer: passkey });
 info("wallet", wallet.address);
 
 const fundTx = await funderClient.sendTransaction({ to: wallet.address, value: parseEther("0.02") });
-await publicClient.waitForTransactionReceipt({ hash: fundTx });
+// Inclusion, not the receipt. The public RPC serves getTransactionByHash with a
+// block number while getTransactionReceipt for the same hash is still null, so a
+// receipt-only wait reports a failure for a transfer that already happened. QA
+// lost two runs to exactly that, and a run that reports failure on successful
+// work sends someone hunting a product bug that is not there.
+await waitForFundingInclusion(fundTx);
 info("funded", `0.02 tBNB  ${fundTx}`);
 
 // The session key the app generates and shows exactly once.
