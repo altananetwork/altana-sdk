@@ -23,9 +23,11 @@ import {
   type Address,
   type Hex,
   type PublicClient,
+  type Transport,
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { NATIVE_TOKEN, networkByChainId, type NetworkConfig } from "../config.js";
+import { stripEip7708AssetDiffs } from "./eip7708.js";
 import { feeTokenHint } from "./feeCurrencies.js";
 import { resolveFeeToken, type FeeTokenOption } from "./feeTokenSelection.js";
 import { hasRawPrivateKey, type Signer } from "./signer.js";
@@ -75,8 +77,31 @@ export function buildRelayClient(network: NetworkConfig) {
   }
   return createClient({
     chain: network.chain,
-    transport: http(network.relayUrl, { timeout: 60_000 }),
+    transport: sanitizingHttp(network.relayUrl),
   });
+}
+
+/**
+ * The relay transport, with EIP-7708 system-address asset diffs removed before
+ * porto sees them.
+ *
+ * Every relay call in the SDK goes through `buildRelayClient`, and the client
+ * it returns is what is handed to `porto/viem/RelayActions`, so porto
+ * validates whatever this transport returns. Sanitising in the transport is
+ * therefore strictly before porto's schema check — which is the only place it
+ * can go, since porto rejects the whole response and never hands it back.
+ * See `eip7708.ts` for why the entries are dropped rather than relabelled.
+ */
+function sanitizingHttp(url: string): Transport {
+  const inner = http(url, { timeout: 60_000 });
+  return (params) => {
+    const transport = inner(params);
+    return {
+      ...transport,
+      request: async (args: Parameters<typeof transport.request>[0]) =>
+        stripEip7708AssetDiffs(await transport.request(args)),
+    };
+  };
 }
 
 export function buildPublicClient(network: NetworkConfig): PublicClient {

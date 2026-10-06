@@ -252,6 +252,24 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Fixed
 
+- **Sepolia works again after EIP-7708.** Ethereum Sepolia activated
+  Glamsterdam at block 11856337, and every ETH transfer now also emits a real
+  ERC-20 `Transfer` log from the system address
+  `0xfffffffffffffffffffffffffffffffffffffffe`. The relay builds `assetDiffs`
+  from simulation logs, so that log arrived as
+  `{"address":"0xff..fe","type":"erc20"}` with no `symbol` — the address has no
+  code, so the relay's `decimals()`/`symbol()`/`name()` multicall reverts and
+  those fields stay absent. Every variant of porto's asset-diff schema requires
+  a `symbol`, so porto rejected the **whole** response and every
+  `grantSession` registry leg on Sepolia failed. The SDK's relay transport now
+  removes those entries before porto validates, on every response that carries
+  `assetDiffs` (`wallet_prepareCalls` and `wallet_getCallsHistory`), dropping
+  an account's entry when the system address was its only diff. They are
+  dropped rather than relabelled because the relay synthesises its own native
+  diff from `0xee..ee`: the two logs describe one movement, so mapping the
+  system address onto the native asset would double every ETH balance change.
+  A response carrying no such entry is returned unchanged, by identity.
+
 - **A passkey wallet can be created on a cached-registry network.**
   `createWallet({ signer: passkey })` refused on Celo Sepolia and Base Sepolia
   with "signer produced a different address on chain 11155111". Those networks
