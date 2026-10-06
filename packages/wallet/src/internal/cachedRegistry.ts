@@ -9,8 +9,9 @@
  *   1. Is this network cached at all, and where is its cache? (isCachedRegistry,
  *      keyStoreCacheOf)
  *   2. How does a registry write reach the registry chain? Through that
- *      chain's Altana relay when it has one (Ethereum), otherwise as a direct
- *      transaction from the admin's own key (Sepolia). (planRegistryWrite)
+ *      chain's Altana relay when it has one (Ethereum, Sepolia), paid from the
+ *      wallet's balance on the L2 being operated on; otherwise as a direct
+ *      transaction from the admin's own key. (planRegistryWrite)
  *   3. Submit it, prepending the admin's own registration on the wallet's
  *      first registry write, and report what landed. (submitRegistryCalls)
  *
@@ -157,7 +158,7 @@ export type RegistryWriteResult = {
   via: "relay" | "eoa";
   chainId: number;
   status: "CONFIRMED" | "FAILED" | "PENDING";
-  /** Set when the wallet's balance on this L2 paid for the write. */
+  /** The L2 whose balance paid for the write: every relayed write on a cached network, as the relay's receipts report it. */
   fundedFromChainId?: number;
   /** The source-chain transaction that locked the funds, when funded from an L2. */
   sourceTransactionHash?: Hex;
@@ -178,23 +179,8 @@ export type SubmitRegistryCallsArgs = {
   adminSigner: Signer;
   /** Registry calls (registerKey, revokeKey). Targets must be the registry chain's contracts. */
   calls: readonly Call[];
-  /**
-   * Relay path only. Defaults to the registry chain's native token, never the
-   * execution chain's fee token: the registry chains (Ethereum, Sepolia)
-   * accept native only today, so naming it is the fee token rule's outcome
-   * without a round trip to the relay. Revisit if a registry chain's relay
-   * ever lists other fee tokens.
-   */
-  feeToken?: Address;
   /** Public client for the registry chain. Built from the config when omitted. */
   registryClient?: PublicClient;
-  /**
-   * Relay path only. Whether the relay funds the write from the wallet's
-   * balance on an L2. Undefined decides from the wallet's balance on the
-   * registry chain: fund when it cannot cover the calls' value plus a fee
-   * allowance.
-   */
-  fundFromL2?: boolean;
 };
 
 /**
@@ -235,39 +221,22 @@ export async function submitRegistryWrite(
   if (plan.via === "relay") {
     // submitCalls prepends the admin registration itself on a local-registry
     // network, which the registry chain is.
+    // The wallet pays the write from its balance on the L2, in the registry
+    // chain's native token: the relay fronts the value and its own fee here.
     const relayClient = buildRelayClient(registry);
-    let funding = await planRegistryFunding({
+    const requiredFunds = await planRegistryFunding({
       registryClient,
       registry,
       walletAddress,
       adminPublicKey: adminSigner.publicKey,
       calls,
-      ...(args.fundFromL2 !== undefined ? { override: args.fundFromL2 } : {}),
     });
-    const submit = (f: RegistryFunding) =>
-      submitCalls(relayClient, walletAddress, adminSigner, calls, {
-        feeToken: f.fundFromL2 ? NATIVE_TOKEN : (args.feeToken ?? NATIVE_TOKEN),
-        ...(f.requiredFunds ? { requiredFunds: f.requiredFunds } : {}),
-        submittingKey: { type: "secp256k1", publicKey: adminSigner.publicKey, role: "admin" },
-        network: registry,
-      });
-    let callsId: Hex;
-    try {
-      callsId = await submit(funding);
-    } catch (err) {
-      if (funding.fundFromL2 || !isSingleLeafRejection(err)) throw err;
-      // The relay went cross-chain on its own for the fee and built a one-leaf
-      // tree. Asking for the funding explicitly takes its working path.
-      funding = await planRegistryFunding({
-        registryClient,
-        registry,
-        walletAddress,
-        adminPublicKey: adminSigner.publicKey,
-        calls,
-        override: true,
-      });
-      callsId = await submit(funding);
-    }
+    const callsId = await submitCalls(relayClient, walletAddress, adminSigner, calls, {
+      feeToken: NATIVE_TOKEN,
+      requiredFunds,
+      submittingKey: { type: "secp256k1", publicKey: adminSigner.publicKey, role: "admin" },
+      network: registry,
+    });
     const result = await waitForCalls(relayClient, callsId, undefined, undefined, { chainId: registry.chainId });
     const block =
       result.status === "CONFIRMED"
@@ -286,8 +255,8 @@ export async function submitRegistryWrite(
       ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
       ...(block?.blockNumber !== undefined ? { blockNumber: block.blockNumber } : {}),
       ...(block && "blockNumberError" in block ? { blockNumberError: block.blockNumberError } : {}),
-      ...(funding.fundFromL2 && source?.chainId !== undefined ? { fundedFromChainId: Number(source.chainId) } : {}),
-      ...(funding.fundFromL2 && source?.transactionHash ? { sourceTransactionHash: source.transactionHash } : {}),
+      ...(source?.chainId !== undefined ? { fundedFromChainId: Number(source.chainId) } : {}),
+      ...(source?.transactionHash ? { sourceTransactionHash: source.transactionHash } : {}),
     };
   }
 
@@ -335,49 +304,32 @@ export async function submitRegistryWrite(
   };
 }
 
-/** Rough gas allowance for one direct registry transaction (registerKey is ~150k gas at a few gwei). */
-/** Headroom over the calls' value for the write's gas or relay fee. */
+/** Gas headroom over the calls' value for a direct (EOA) registry transaction. */
 export const REGISTRY_FEE_ALLOWANCE_WEI = 1_000_000_000_000_000n; // 0.001 ETH
 
-export type RegistryFunding = {
-  fundFromL2: boolean;
-  /** The request to the relay when funding from an L2: the native value it must front. */
-  requiredFunds?: readonly RequiredFund[];
-};
-
 /**
- * Whether a relayed registry write must be funded from the wallet's balance on
- * an L2: when its balance on the registry chain cannot cover the calls' value
- * plus the fee allowance. The requested value is at least one wei above the
- * balance so the relay always sources it (and its own fee) from another chain.
+ * The native value a relayed registry write asks the relay to front: the
+ * calls' value, or one wei above what the wallet holds on the registry chain
+ * when that is more. The relay funds a request only when it exceeds the
+ * balance it reads itself, and then sources the value and its own fee from
+ * the wallet's balance on the L2; so the wallet always pays from its own
+ * chain and ETH it holds on the registry chain is not used. Should a deposit
+ * land there between this read and the relay's, the relay pays the write
+ * from that ETH instead and the leg carries no source chain; it still lands.
  */
-/** The relay's "Cannot generate proof for single leaf tree": it sourced the fee cross-chain by itself and failed. */
-export function isSingleLeafRejection(err: unknown): boolean {
-  return /single leaf tree/i.test(err instanceof Error ? err.message : String(err));
-}
-
-export function decideRegistryFunding(args: {
-  balance: bigint;
-  valueNeeded: bigint;
-  allowance?: bigint;
-  override?: boolean;
-}): RegistryFunding {
-  const allowance = args.allowance ?? REGISTRY_FEE_ALLOWANCE_WEI;
-  const fundFromL2 = args.override ?? args.balance < args.valueNeeded + allowance;
-  if (!fundFromL2) return { fundFromL2: false };
+export function registryFundsRequest(args: { balance: bigint; valueNeeded: bigint }): readonly RequiredFund[] {
   const value = args.valueNeeded > args.balance ? args.valueNeeded : args.balance + 1n;
-  return { fundFromL2: true, requiredFunds: [{ address: NATIVE_TOKEN, value }] };
+  return [{ address: NATIVE_TOKEN, value }];
 }
 
-/** Reads what the write costs in value and what the wallet holds, then decides. */
+/** Reads what the write costs in value and what the wallet holds on the registry chain, then builds the request. */
 export async function planRegistryFunding(args: {
   registryClient: PublicClient;
   registry: NetworkConfig;
   walletAddress: Address;
   adminPublicKey: Hex;
   calls: readonly Call[];
-  override?: boolean;
-}): Promise<RegistryFunding> {
+}): Promise<readonly RequiredFund[]> {
   // The admin's first registration is prepended inside the relay request; its fee counts here.
   const prepend = await buildFirstActionPrepend({
     publicClient: args.registryClient,
@@ -387,7 +339,7 @@ export async function planRegistryFunding(args: {
   });
   const valueNeeded = [...prepend, ...args.calls].reduce((sum, c) => sum + (c.value ?? 0n), 0n);
   const balance = await args.registryClient.getBalance({ address: args.walletAddress });
-  return decideRegistryFunding({ balance, valueNeeded, ...(args.override !== undefined ? { override: args.override } : {}) });
+  return registryFundsRequest({ balance, valueNeeded });
 }
 
 /**
