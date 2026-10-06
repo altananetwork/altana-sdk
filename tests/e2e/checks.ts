@@ -19,6 +19,30 @@
  *     await checks.step("S6", "the agent can spend", ["S3"], async () => …);
  *
  * If S3 did not pass, S6 never runs, and the summary says SKIP with the reason.
+ *
+ * ## A second rule, from the same day
+ *
+ * **A check that can emit two claims must not be able to emit contradictory
+ * ones.** QA's phrasing, and it is sharper than anything either of us had that
+ * morning. Two instances, hours apart and in different layers:
+ *
+ *  - A probe of mine printed "the race is real" while its own output two lines
+ *    above said the cap was readable. Its verdict could not tell the two causes
+ *    apart, so it picked the one it had been written expecting.
+ *  - A check of QA's reported "no name field" and passed in the same breath,
+ *    because it searched a stringified envelope for a name that was inside it as
+ *    escaped text.
+ *
+ * In both, the summary line is what gets believed and the contradicting detail is
+ * what gets scrolled past. Not mechanically preventable from here: this module
+ * cannot know that a `detail` string disagrees with its own `pass`. What it can
+ * do is make the honest shape the easy one, which is why `step` takes a function
+ * returning the verdict rather than letting a caller record a pass and a message
+ * that were computed separately.
+ *
+ * The practical version, for anyone writing a check in this directory: if the
+ * detail you are about to print would read as evidence against the verdict you
+ * are about to record, the check is wrong, not the detail.
  */
 
 export type CheckState = "pass" | "fail" | "skip";

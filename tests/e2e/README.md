@@ -22,6 +22,28 @@ unrecoverable within seconds of the process dying.
 
 Neither is theoretical and neither took more than four lines to add afterwards.
 
+## Before you write a check
+
+Three rules, each earned the same day and each by a check that passed when it
+should not have. `checks.ts` carries the long version.
+
+1. **A check whose subject was never created must not run.** Assert the
+   precondition is not enough: that still evaluates the check and prints its
+   result beside the failure as though the two were independent. Declare what a
+   step needs and let it skip.
+2. **A check that can emit two claims must not be able to emit contradictory
+   ones.** The summary line is what gets believed; a contradicting detail is what
+   gets scrolled past. If the detail you are about to print would read as evidence
+   against the verdict you are about to record, the check is wrong.
+3. **A failure only proves what it says it proves.** "Over the limit is refused"
+   returning true in a catch means a dead RPC proves the limit held. Require the
+   refusal to say what you asked it to say.
+
+And one about the setup rather than the check: **pinning a value in your own run
+is the move that stops you noticing what happens to somebody who gets it
+slightly wrong.** The MCP's chain was pinned in every run we had, so nobody asked
+what an unrecognised one did, and the answer was mainnet.
+
 ## Env
 
 Every script requires `TEST_FUNDER_KEY`: a funded Sepolia private key that bankrolls the freshly-generated admin wallet each test creates.
