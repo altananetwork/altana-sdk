@@ -21,3 +21,6 @@ tests/e2e/.live-hire-*.json
 tests/e2e/.live-erc8004-*.json
 tests/e2e/.sweep.env
 docs/pages/changelog.md
+
+# npm pack output, built on demand and never committed here
+*.tgz
