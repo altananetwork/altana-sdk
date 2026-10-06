@@ -4,6 +4,24 @@ End-to-end smoke and spike tests for `@altananetwork/sdk` and `@altananetwork/mc
 
 **Private workspace package.** Not published to npm. CI-only + manual dev use.
 
+## Before you run a script that moves funds to a new wallet
+
+Check it against both of these, every time. Two runs have stranded testnet funds
+for want of them, 0.012 and 0.05 tBNB, and in each case the money was
+unrecoverable within seconds of the process dying.
+
+1. **The credential is printed or saved before any funds move.** A throwaway
+   wallet owned by `createHeadlessPasskey()` exists only inside the process that
+   made it. Fund it first and crash, and nothing on earth can authorise a sweep.
+   Print `signer.credential` as JSON before the first transfer; `bun run sweep`
+   takes it as `SWEEP_CREDENTIAL`.
+2. **It sweeps on every exit path, not just the happy one.** A `throw` between
+   funding and the sweep at the bottom of the file is the exact shape that lost
+   both of those. Put the sweep in a `finally`, or call it before every `throw`
+   that can follow a transfer.
+
+Neither is theoretical and neither took more than four lines to add afterwards.
+
 ## Env
 
 Every script requires `TEST_FUNDER_KEY`: a funded Sepolia private key that bankrolls the freshly-generated admin wallet each test creates.
