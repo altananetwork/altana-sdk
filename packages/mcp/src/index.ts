@@ -68,6 +68,7 @@ import {
   expiryState,
   ImportSessionError,
 } from "./importSession.js";
+import { registerEnvSession, sessionFromEnv } from "./sessionFromEnv.js";
 import {
   listSessions,
   getSession,
@@ -2169,6 +2170,35 @@ prompt(
 );
 
 // ---------- boot ------------------------------------------------------------
+
+// A session handed over in the environment, so a key never has to pass through
+// the agent's chat. Pasting one into an import_session tool call sends it to
+// whichever model provider the agent runs on, which is the one place a key for
+// somebody's wallet must not go.
+//
+// Loaded before the transport connects, so the first tool call already sees it,
+// and reported on stderr because stdout is the JSON-RPC channel.
+try {
+  const fromEnv = sessionFromEnv();
+  if (fromEnv) {
+    for (const line of registerEnvSession(fromEnv)) console.error(line);
+    if (fromEnv.persist) {
+      await setSessionKey(fromEnv.name, fromEnv.privateKey);
+      await saveSession(fromEnv.session);
+      console.error(`[altana-mcp] session "${fromEnv.name}" written to the keychain and ~/.altana`);
+    }
+  }
+} catch (err) {
+  // Refuse to start rather than run without a session the operator believes they
+  // supplied. Starting anyway leaves the agent saying "no session named X" while
+  // they can see they passed one, which sends them looking in the wrong place.
+  console.error(
+    `[altana-mcp] the session in the environment could not be loaded: ${
+      err instanceof Error ? err.message : String(err)
+    }`,
+  );
+  process.exit(1);
+}
 
 const transport = new StdioServerTransport();
 await server.connect(transport);

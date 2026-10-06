@@ -41,6 +41,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { privateKeyToAccount } from "viem/accounts";
+import { heldSessionKey } from "./memorySessions.js";
 import type { Address, Hex } from "viem";
 
 const SERVICE_WALLET = "altana-wallet";
@@ -136,6 +137,20 @@ function fileBucketFor(kind: KeyKind): "wallets" | "sessions" {
 }
 
 async function getKey(kind: KeyKind, name: string): Promise<ResolvedKey> {
+  // A session key handed to this process at startup never touches the keychain
+  // or the disk, so it has to be found here or not at all.
+  if (kind === "session") {
+    const inMemory = heldSessionKey(name);
+    if (inMemory) {
+      return {
+        name,
+        address: privateKeyToAccount(inMemory).address,
+        privateKey: inMemory,
+        source: "env",
+      };
+    }
+  }
+
   // With an override in place the keychain is never consulted, so a test run
   // cannot accidentally read a real entry of the same name either.
   if (keyFileOverride()) {

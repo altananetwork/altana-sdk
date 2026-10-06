@@ -32,6 +32,7 @@ import { mkdir, readFile, writeFile, chmod } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { SerializedSession } from "@altananetwork/sdk";
+import { allHeldSessions, heldSession } from "./memorySessions.js";
 
 /**
  * Where session metadata lives.
@@ -93,17 +94,28 @@ async function writeAtomic(data: SessionsFile) {
 /** Read every stored session — names + metadata only, no private keys here. */
 export async function listSessions(): Promise<StoredSession[]> {
   const file = await readFileOrEmpty();
-  return file.sessions;
+  // Sessions supplied for this run, which were never written down, plus anything
+  // on disk. A held session of the same name wins.
+  const heldNames = new Set(allHeldSessions().map((s) => s.name));
+  return [...allHeldSessions(), ...file.sessions.filter((s) => !heldNames.has(s.name))];
 }
 
 /** Look up a session by name. Throws if missing. */
 export async function getSession(name: string): Promise<StoredSession> {
+  // Checked first: a session handed to this process at startup is the one the
+  // operator means, and it beats a stale entry of the same name left on disk by
+  // an earlier grant_session.
+  const inMemory = heldSession(name);
+  if (inMemory) return inMemory;
+
   const file = await readFileOrEmpty();
   const s = file.sessions.find((x) => x.name === name);
   if (!s) {
     throw new Error(
-      `No session named "${name}" in ${sessionsFile()}. Use grant_session ` +
-        `to create one, or list_sessions to see what's saved.`,
+      `No session named "${name}". Nothing of that name was supplied in the ` +
+        `environment for this run, and it is not in ${sessionsFile()}. ` +
+        `Pass it as ALTANA_SESSION plus ALTANA_SESSION_KEY, or use grant_session ` +
+        `to create one, or list_sessions to see what is available.`,
     );
   }
   return s;
