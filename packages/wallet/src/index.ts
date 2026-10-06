@@ -94,7 +94,14 @@ export type { AccountKey } from "./internal/account.js";
 // The safe persistence path for sessions: serializeSession stores everything
 // but the secret; deserializeSession rebuilds a signing Session from the
 // stored half plus the key the caller kept.
-export { serializeSession, deserializeSession } from "./internal/sessions.js";
+export {
+  serializeSession,
+  deserializeSession,
+  withDefaultCallPermissions,
+  // The account's "every target" wildcard, so an integrator can be explicit
+  // about an unscoped session rather than relying on omission.
+  ANY_TARGET,
+} from "./internal/sessions.js";
 
 // Lazy KeyStore registration for sessions granted with `register: false`.
 export {

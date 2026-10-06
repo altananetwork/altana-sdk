@@ -13,6 +13,20 @@ import type { Address, Hex } from "viem";
 import type { Signer } from "./signer.js";
 import type { CachedKey } from "../syncKeyToL2.js";
 
+/**
+ * The account's wildcards, from GuardedExecutor.sol in altana-account-mainnet:
+ *
+ *   address public constant ANY_TARGET = 0x3232323232323232323232323232323232323232;
+ *   bytes4  public constant ANY_FN_SEL = 0x32323232;
+ *
+ * `_canExecute` matches `(ANY_TARGET, ANY_FN_SEL)`, so a single call permission
+ * on ANY_TARGET authorizes every target. Verified on an anvil fork of chain 97:
+ * a session granted `calls: [{ to: ANY_TARGET }]` executed against two
+ * unrelated addresses, while one granted an explicit target executed against
+ * that target and was refused on the other.
+ */
+export const ANY_TARGET = "0x3232323232323232323232323232323232323232" as const;
+
 /** A single allowed call rule. AND semantics between the optional fields. */
 export type CallPermission =
   | { signature: string; to: Address }
@@ -28,11 +42,35 @@ export type SpendPermission = {
 };
 
 export type SessionPermissions = {
-  /** Allowed calls. If omitted, all targets are allowed (use carefully). */
+  /**
+   * Allowed calls.
+   *
+   * **Omitted means every target is allowed**, which `grantSession` implements
+   * by authorizing the account's ANY_TARGET wildcard. An empty array means the
+   * opposite, nothing is allowed, because that is what an empty allow-list is.
+   *
+   * This distinction used to be a silent trap: omitting `calls` authorized no
+   * target at all, so a session granted that way was refused with
+   * `UnauthorizedCall` on its first action, long after the grant succeeded.
+   */
   calls?: readonly CallPermission[];
   /** Per-token spending caps. */
   spend?: readonly SpendPermission[];
 };
+
+/**
+ * Fill in what "omitted" means before anything is signed.
+ *
+ * Only `undefined` becomes the wildcard. An explicitly empty array is left
+ * alone: a caller who passes `[]` has said "nothing", and silently widening
+ * that to "everything" would be the worst possible direction to be wrong in.
+ */
+export function withDefaultCallPermissions(
+  permissions: SessionPermissions,
+): SessionPermissions {
+  if (permissions.calls !== undefined) return permissions;
+  return { ...permissions, calls: [{ to: ANY_TARGET }] };
+}
 
 /**
  * A live session — the result of grantSession. Carries everything an agent
