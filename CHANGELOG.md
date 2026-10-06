@@ -252,6 +252,21 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Fixed
 
+- **Mirror proofs work again after Glamsterdam.** Ethereum Sepolia's block
+  headers gained `blockAccessListHash` and `slotNumber` at block 11856337, so
+  the SDK's header RLP encoder no longer reproduced the block hash and
+  `buildPopulateKeyCall` refused to build any proof against a post-fork anchor
+  ("RLP header encoding does not hash to block hash; block schema likely
+  changed"). That guard was right and is why this was a readable diagnosis
+  rather than an on-chain revert. Both fields are now encoded, appended in that
+  order and **only when present**, so pre-fork headers and anything already in
+  a cache keep verifying — three of the four chains the SDK reads do not carry
+  them yet. The deployed `KeyStoreCacheOPStack` needed no change: it hashes the
+  header's raw bytes and reads `stateRoot` at index 3 with no field-count
+  check, confirmed by static call against the live contract. Existing cache
+  entries, `isValidKey` and session registration were never affected; only
+  building a new proof was.
+
 - **Sepolia works again after EIP-7708.** Ethereum Sepolia activated
   Glamsterdam at block 11856337, and every ETH transfer now also emits a real
   ERC-20 `Transfer` log from the system address

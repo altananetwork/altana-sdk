@@ -538,7 +538,13 @@ function toHex(input: bigint | number): Hex {
  * (London baseFeePerGas, Shanghai withdrawalsRoot, Cancun blobs+parent beacon,
  * Prague requestsHash). Each is appended only when present on the supplied block.
  */
-function rlpEncodeHeader(header: any): Hex {
+/**
+ * The L1 header as the chain hashed it. Exported for tests, not from the
+ * package: the hash check in `buildPopulateKeyCall` is the only consumer, and
+ * a test that re-encodes a real header is the only thing that catches a fork
+ * adding fields.
+ */
+export function rlpEncodeHeader(header: any): Hex {
   const fields: Hex[] = [
     header.parentHash,
     header.sha3Uncles,
@@ -562,5 +568,11 @@ function rlpEncodeHeader(header: any): Hex {
   if (header.excessBlobGas != null) fields.push(toHex(BigInt(header.excessBlobGas)));
   if (header.parentBeaconBlockRoot != null) fields.push(header.parentBeaconBlockRoot);
   if (header.requestsHash != null) fields.push(header.requestsHash);
+  // Glamsterdam, Ethereum Sepolia block 11856337 (2026-10-06 13:53:36 UTC).
+  // Appended in this order, measured against the live header rather than
+  // assumed: `[…, blockAccessListHash, slotNumber]` reproduces block
+  // 11856407's hash and the reverse order does not.
+  if (header.blockAccessListHash != null) fields.push(header.blockAccessListHash);
+  if (header.slotNumber != null) fields.push(toHex(BigInt(header.slotNumber)));
   return toRlp(fields);
 }
