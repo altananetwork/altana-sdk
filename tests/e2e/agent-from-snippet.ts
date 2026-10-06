@@ -27,7 +27,7 @@
 
 import { spawn } from "node:child_process";
 import { createChecks } from "./checks.js";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -56,6 +56,10 @@ const SESSION_NAME = "trading-bot";
 const MCP_ENTRY = join(import.meta.dir, "..", "..", "packages", "mcp", "src", "index.ts");
 const MCP_ADD_STUB = join(import.meta.dir, "mcp-add-stub.ts");
 const SANDBOX = await mkdtemp(join(tmpdir(), "altana-snippet-"));
+/* Outside the sandbox on purpose: the sandbox is deleted in the finally, and a
+   log that is removed before anyone reads it is worse than no log, because the
+   path is printed and then does not exist. */
+const SANDBOX_LOG_DIR = await mkdtemp(join(tmpdir(), "altana-snippet-log-"));
 const STUB_ECHO = join(SANDBOX, "received.json");
 
 /* The app's snippet generator, imported from the wallet app rather than
@@ -361,7 +365,14 @@ try {
 } catch (err) {
   console.error("\nFAILED");
   console.error(err);
-  console.error("\n--- server stderr ---\n" + stderr.slice(-1500));
+  /* The whole server log, to a file, rather than its last 1500 characters to
+     the terminal. A tail is whatever the server said most recently, which is
+     not necessarily anything to do with the failure above, and reading one as
+     the other cost a day. Said explicitly for the same reason. */
+  const logPath = join(SANDBOX_LOG_DIR, "mcp-server.log");
+  await writeFile(logPath, stderr).catch(() => {});
+  console.error(`\n  the server's full log is at ${logPath}`);
+  console.error("  it is what the server said, not necessarily why this failed");
   exitCode = 1;
 } finally {
   // The group, not just bash: the server is two processes down from it.

@@ -85,6 +85,13 @@ export function createChecks() {
         push(id, what, pass ? "pass" : "fail", detail);
         return pass;
       } catch (err) {
+        /* The summary line is a summary, so the error itself goes to stderr in
+           full. A truncated message is how a failure gets explained by the
+           wrong text: QA spent an evening on an ExceededSpendLimit that came
+           from a different step's tail, and 120 characters of someone else's
+           message reads exactly like a cause. */
+        console.error(`\n  ${id} threw:`);
+        console.error(err);
         push(id, what, "fail", `threw: ${(err as Error).message.slice(0, 120)}`);
         return false;
       }
