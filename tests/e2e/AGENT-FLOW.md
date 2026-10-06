@@ -65,6 +65,50 @@ The live relay occasionally fails a bundle for reasons unrelated to what is
 under test. The retry is printed, because a suite that silently retries teaches
 you to distrust it, and one that fails on a blip gets ignored.
 
+## The credential screen's snippet, end to end
+
+`agent-from-snippet.ts` answers a narrower question than the flow above: does
+the command the wallet app prints, pasted by a person, produce an agent that
+works?
+
+It imports the app's own `buildMcpEnv` and `buildSnippet`, so the environment
+under test is the one the screen renders rather than a copy of it living here.
+A copy would pass forever while the screen printed something else, which is the
+state this file exists to end.
+
+```bash
+ALTANA_APP_DIR=/path/to/altana-wallet \
+  bun run tests/e2e/agent-from-snippet.ts
+
+# on a fork
+scripts/fork/start.sh --with-relay          # in the wallet app
+set -a; source .fork/fork.env.out; set +a
+AGENT_RPC_URL=$FORK_RPC_URL AGENT_RELAY_URL=$ALTANA_RELAY_URL \
+  ALTANA_APP_DIR=/path/to/altana-wallet \
+  bun run tests/e2e/agent-from-snippet.ts
+```
+
+`ALTANA_APP_DIR` points at a wallet app checkout holding `lib/agent-setup.ts`.
+Wrong or missing, the run stops and says so: it never falls back to building the
+variables itself, because that fallback is the gap.
+
+### The command runs through a shell
+
+The rendered command is executed by bash, with two substitutions and no others:
+`claude mcp add` becomes `mcp-add-stub.ts`, which does what Claude Code does
+with these arguments, and `bunx @altananetwork/mcp` becomes the server in this
+repo, since the version that can import a session is not published yet.
+
+Everything between those, every quote and every value, is the app's. That
+matters because `ALTANA_SESSION` is JSON: unquoted, a shell eats its braces and
+strips its quotes, and the server receives something that is not a session at
+all. The stand-in writes down what it received and the test compares it to
+`buildMcpEnv` byte for byte before anything else runs.
+
+A session name is text somebody typed, so it is also the one value that could
+carry a command substitution. Quoted correctly it arrives literally, and that is
+checked on the app side.
+
 ## Returning leftover tBNB
 
 ```bash

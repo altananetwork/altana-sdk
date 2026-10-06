@@ -6,18 +6,27 @@
  * asserted the text contained the key and parsed as JSON. Proving the snippet
  * works needs an agent, an MCP server and a chain in one place, which is this.
  *
- * It builds the env the screen generates, launches a real @altananetwork/mcp with
- * exactly that, and asks it to spend inside the limit, over it, and after a
- * revoke. The key is passed in the environment and never in a tool call, because
+ * It does not build the environment itself any more, because building it here
+ * was one assumption away from the screen and that gap is the whole bug. It
+ * imports the app's own `buildMcpEnv` and `buildSnippet`, renders the Claude
+ * Code command the screen prints, and runs that command through bash with
+ * `claude mcp add` replaced by a stand-in that does what Claude Code does with
+ * those arguments. So the shell quoting is exercised for real: ALTANA_SESSION is
+ * JSON, and unquoted its braces and quotes do not survive a shell.
+ *
+ * Then it asks the resulting agent to spend inside the limit, over it, and after
+ * a revoke. The key travels in the environment and never in a tool call, because
  * a key pasted into a tool call goes to the agent's model provider.
  *
  *   scripts/fork/start.sh --with-relay
  *   set -a; source .fork/fork.env.out; set +a
  *   AGENT_RPC_URL=$FORK_RPC_URL AGENT_RELAY_URL=$ALTANA_RELAY_URL bun run agent:snippet
+ *
+ * ALTANA_APP_DIR points at the wallet app checkout holding lib/agent-setup.ts.
  */
 
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -44,7 +53,41 @@ const NETWORK: NetworkConfig = { ...BNB_TESTNET, publicRpcUrl: RPC_URL, relayUrl
 const DEAD = "0x000000000000000000000000000000000000dEaD" as const;
 const SESSION_NAME = "trading-bot";
 const MCP_ENTRY = join(import.meta.dir, "..", "..", "packages", "mcp", "src", "index.ts");
+const MCP_ADD_STUB = join(import.meta.dir, "mcp-add-stub.ts");
 const SANDBOX = await mkdtemp(join(tmpdir(), "altana-snippet-"));
+const STUB_ECHO = join(SANDBOX, "received.json");
+
+/* The app's snippet generator, imported from the wallet app rather than
+   reimplemented here.
+
+   This is the point of the file. A copy of these strings living in this repo
+   would pass forever while the screen printed something else, which is the
+   state this test was written to end. The path is a pointer across two repos, so
+   it is loud when wrong rather than quietly falling back to a local copy. */
+type SetupInput = {
+  secret: string;
+  serialized: string;
+  walletAddress: string;
+  sessionName: string;
+};
+type AgentSetup = {
+  buildMcpEnv: (input: SetupInput) => Record<string, string>;
+  buildSnippet: (target: "claude-code", input: SetupInput) => string;
+};
+const APP_DIR =
+  process.env.ALTANA_APP_DIR ?? join(import.meta.dir, "..", "..", "..", "altana-wallet");
+const AGENT_SETUP = join(APP_DIR, "lib", "agent-setup.ts");
+const appSetup = (await import(AGENT_SETUP).catch((err: Error) => {
+  throw new Error(
+    `cannot read the app's snippet generator at ${AGENT_SETUP}. ` +
+      `Set ALTANA_APP_DIR to a wallet app checkout that has it. (${err.message})`,
+  );
+})) as AgentSetup;
+for (const name of ["buildMcpEnv", "buildSnippet"] as const) {
+  if (typeof appSetup[name] !== "function") {
+    throw new Error(`${AGENT_SETUP} does not export ${name}. Nothing below would be testing the app.`);
+  }
+}
 
 const results: { id: string; what: string; pass: boolean; detail: string }[] = [];
 const record = (id: string, what: string, pass: boolean, detail = "") => {
@@ -93,37 +136,69 @@ const session = await client.grantSession({
 if (session.status !== "granted") throw new Error(`grant failed: ${session.status}`);
 const keyHash = keyHashForSessionOrKey(session);
 
-/**
- * Exactly what the credential screen puts on screen. If this and the screen ever
- * disagree, the screen is wrong, and that is the bug this file exists to catch.
- */
-const SNIPPET_ENV = {
-  ALTANA_SESSION: JSON.stringify(serializeSession(session)),
-  ALTANA_SESSION_KEY: secret,
-  ALTANA_SESSION_NAME: SESSION_NAME,
+/* The screen's own inputs, and the screen's own output. Nothing below restates
+   either of them. */
+const setupInput: SetupInput = {
+  secret,
+  serialized: JSON.stringify(serializeSession(session)),
+  walletAddress: wallet.address,
+  sessionName: SESSION_NAME,
 };
+const SNIPPET_ENV = appSetup.buildMcpEnv(setupInput);
 record(
   "S1",
-  "the snippet carries the session and the key, and nothing else secret",
-  SNIPPET_ENV.ALTANA_SESSION.includes(session.publicKey) &&
-    !SNIPPET_ENV.ALTANA_SESSION.includes(secret.slice(2)),
-  `${SNIPPET_ENV.ALTANA_SESSION.length} chars of session`,
+  "the screen's environment carries the session and the key, and nothing else secret",
+  Object.values(SNIPPET_ENV).some((v) => v.includes(session.publicKey)) &&
+    Object.entries(SNIPPET_ENV).every(
+      ([k, v]) => k === "ALTANA_SESSION_KEY" || !v.includes(secret.slice(2)),
+    ),
+  Object.keys(SNIPPET_ENV).join(" "),
 );
+
+/* The Claude Code command exactly as rendered, with two substitutions and no
+   others, each one a thing that cannot exist on this machine:
+
+   - `claude mcp add` becomes the stand-in, because Claude Code is not what is
+     under test; what it does with these arguments is.
+   - `bunx @altananetwork/mcp` becomes the server in this repo, because the
+     version that can import a session is not published. That is the same gate
+     that keeps mcpSessionImportVersion null on the screen.
+
+   Everything between them, every quote and every value, is the screen's. */
+const rendered = appSetup.buildSnippet("claude-code", setupInput);
+const PUBLISHED_MCP = /bunx @altananetwork\/mcp(@[\w.-]+)?\s*$/m;
+if (!PUBLISHED_MCP.test(rendered)) {
+  throw new Error(`the rendered command does not end in a bunx @altananetwork/mcp:\n${rendered}`);
+}
+const sq = (v: string) => `'${v.split("'").join("'\\''")}'`;
+const launchCommand = rendered
+  .replace(/^claude mcp add /, `bun ${sq(MCP_ADD_STUB)} `)
+  .replace(PUBLISHED_MCP, `bun ${sq(MCP_ENTRY)}`);
+console.log(`  app    ${AGENT_SETUP}`);
 
 // ── The agent's side: a real MCP, started with that env ─────────────────────
 
-step("the agent starts an MCP with the snippet's environment and no admin key");
-const proc = spawn("bun", ["run", MCP_ENTRY], {
+step("the agent pastes the command into a shell");
+console.log(launchCommand.split("\n").map((l) => `    ${l}`).join("\n"));
+
+/* The snippet's variables are deliberately absent from this environment. They
+   reach the server only by surviving the command line, which is the thing under
+   test; inherited copies would hide a quoting failure completely. */
+const shellEnv: Record<string, string | undefined> = { ...process.env };
+for (const name of Object.keys(SNIPPET_ENV)) delete shellEnv[name];
+
+const proc = spawn("bash", ["-c", launchCommand], {
   env: {
-    ...process.env,
-    ALTANA_CHAIN: "bnb-testnet",
+    ...shellEnv,
     ...(IS_FORK ? { ALTANA_RPC_URL: RPC_URL, ALTANA_RELAY_URL: RELAY_URL } : {}),
-    ...SNIPPET_ENV,
     // No admin key, and a sandbox so the real keychain and ~/.altana are untouched.
     ALTANA_WALLET_DEFAULT_PRIVATE_KEY: "",
     ALTANA_KEY_STORE: `file:${join(SANDBOX, "keys.json")}`,
     ALTANA_HOME: SANDBOX,
+    ALTANA_STUB_ECHO: STUB_ECHO,
   },
+  // Its own group, so the shell, the stand-in and the server all go at teardown.
+  detached: true,
   stdio: ["pipe", "pipe", "pipe"],
 });
 
@@ -191,23 +266,38 @@ try {
   });
   proc.stdin!.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
 
-  step("S2  the session is there without any tool call having carried the key");
+  step("S2  what the server process received is what the screen rendered");
+  const received = JSON.parse(await readFile(STUB_ECHO, "utf8")) as {
+    env: Record<string, string>;
+    command: string[];
+  };
+  const mismatched = Object.entries(SNIPPET_ENV).filter(([k, v]) => received.env[k] !== v);
+  record(
+    "S2",
+    "every value survived the shell byte for byte",
+    mismatched.length === 0 && Object.keys(received.env).length === Object.keys(SNIPPET_ENV).length,
+    mismatched.length === 0
+      ? `${Object.keys(received.env).length} variables`
+      : `mangled: ${mismatched.map(([k]) => k).join(", ")}`,
+  );
+
+  step("S3  the session is there without any tool call having carried the key");
   const listed = await call("list_sessions", {});
   const sawIt = JSON.stringify(listed.data ?? listed.text).includes(SESSION_NAME);
-  record("S2", "list_sessions shows the session from the environment", sawIt, listed.text.slice(0, 140));
+  record("S3", "list_sessions shows the session from the environment", sawIt, listed.text.slice(0, 140));
   record(
-    "S3",
+    "S4",
     "the key never appeared in a tool call",
     !JSON.stringify(listed.data ?? listed.text).includes(secret.slice(2)),
   );
   record(
-    "S4",
+    "S5",
     "the startup log names the session without printing its key",
     stderr.includes(SESSION_NAME) && !stderr.includes(secret.slice(2)),
     stderr.split("\n").find((l) => l.includes(SESSION_NAME))?.slice(0, 110) ?? "",
   );
 
-  step("S5  the agent acts inside its limit, by name");
+  step("S6  the agent acts inside its limit, by name");
   const inside = await call("session_execute", {
     sessionName: SESSION_NAME,
     to: DEAD,
@@ -215,26 +305,26 @@ try {
   });
   const hash = inside.data?.transactionHash ?? inside.data?.txHash;
   if (!inside.ok) console.log(`       ${inside.text.slice(0, 220)}`);
-  record("S5", "the snippet produces a working agent", inside.ok && Boolean(hash), String(hash ?? inside.text.slice(0, 120)));
+  record("S6", "the snippet produces a working agent", inside.ok && Boolean(hash), String(hash ?? inside.text.slice(0, 120)));
 
-  step("S6  over the limit is refused");
+  step("S7  over the limit is refused");
   const over = await call("session_execute", { sessionName: SESSION_NAME, to: DEAD, valueEth: "0.01" });
   record(
-    "S6",
+    "S7",
     "the limit still binds an environment-loaded session",
     !over.ok || !(over.data?.transactionHash ?? over.data?.txHash),
     over.text.slice(0, 120),
   );
 
-  step("S7  after the app revokes, the agent is refused");
+  step("S8  after the app revokes, the agent is refused");
   let revoke = await client.revokeSession({ wallet, signer: passkey, session });
   if (revoke.status !== "revoked") {
     revoke = await client.revokeSession({ wallet, signer: passkey, session });
   }
-  record("S7", "the permission is revoked", revoke.status === "revoked", String(revoke.status));
+  record("S8", "the permission is revoked", revoke.status === "revoked", String(revoke.status));
   const after = await call("session_execute", { sessionName: SESSION_NAME, to: DEAD, valueEth: "0.0000001" });
   record(
-    "S8",
+    "S9",
     "the revoked agent is refused",
     !after.ok || !(after.data?.transactionHash ?? after.data?.txHash),
     after.text.slice(0, 120),
@@ -259,7 +349,12 @@ try {
   console.error("\n--- server stderr ---\n" + stderr.slice(-1500));
   exitCode = 1;
 } finally {
-  proc.kill();
+  // The group, not just bash: the server is two processes down from it.
+  try {
+    if (proc.pid) process.kill(-proc.pid, "SIGKILL");
+  } catch {
+    proc.kill("SIGKILL");
+  }
   await rm(SANDBOX, { recursive: true, force: true }).catch(() => {});
 }
 
