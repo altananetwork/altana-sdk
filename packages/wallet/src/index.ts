@@ -92,6 +92,24 @@ export type { AccountKey } from "./internal/account.js";
 export { serializeSession, deserializeSession } from "./internal/sessions.js";
 
 // Lazy KeyStore registration for sessions granted with `register: false`.
+export {
+  getCallsHistory,
+  buildHistoryParams,
+  parseHistoryEntry,
+  clampLimit,
+  isOwnerBundle,
+  hasLanded,
+  MAX_HISTORY_LIMIT,
+  ZERO_KEY_HASH,
+} from "./getCallsHistory.js";
+export type {
+  CallsHistoryEntry,
+  CallsHistoryOptions,
+  CallsHistorySort,
+  CallsHistoryTransaction,
+  AssetDiff,
+} from "./getCallsHistory.js";
+
 export { registerSessionKey } from "./registerSessionKey.js";
 export type { RegisterSessionKeyResult } from "./registerSessionKey.js";
 
