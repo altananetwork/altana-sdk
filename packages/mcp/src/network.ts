@@ -82,7 +82,10 @@ export function applyEndpointOverrides(
 
 /** Resolve ALTANA_CHAIN (name or chainId, case-insensitive) to a network. Unknown values fall back to BNB. */
 export function resolveNetwork(raw: string | undefined): ResolvedNetwork {
-  const requested = (raw || "bnb").toLowerCase();
+  /* Trimmed, because an unrecognised value is now fatal and a trailing space is
+     not a typo anybody should be refused for. `ALTANA_CHAIN=bnb-testnet ` in a
+     shell or a config file is the value they meant. A misspelling is not. */
+  const requested = (raw?.trim() || "bnb").toLowerCase();
   const base = NETWORKS[requested];
   if (!base) {
     const bnb = applyEndpointOverrides(BNB);

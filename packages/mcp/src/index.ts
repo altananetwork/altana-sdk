@@ -104,10 +104,25 @@ const resolved = resolveNetwork(process.env.ALTANA_CHAIN);
 const NETWORK = resolved.network;
 const REGISTRY = resolved.registry;
 if (!resolved.recognized) {
+  /* Fatal, not a warning.
+   *
+   * This used to log and carry on, and what it carried on to was **BNB
+   * mainnet**, where the money is real. So a misspelled ALTANA_CHAIN, say
+   * bnb_testnet for bnb-testnet, put an agent on mainnet and the only notice
+   * went to stderr, which on an MCP server is the host's log and not anywhere
+   * the person who pasted the command will ever look.
+   *
+   * An unrecognised value is not a request for a default. It is a value nobody
+   * can act on, and guessing which chain somebody meant is the one guess in this
+   * server that can cost real money. */
   console.error(
-    `[altana-mcp] Unknown ALTANA_CHAIN="${resolved.requested}". ` +
-      `Supported: ${SUPPORTED_CHAINS}. Falling back to bnb.`,
+    `[altana-mcp] Unknown ALTANA_CHAIN="${resolved.requested}".\n` +
+      `[altana-mcp] Supported: ${SUPPORTED_CHAINS}\n` +
+      `[altana-mcp] Refusing to start rather than guessing: the fallback was ` +
+      `bnb mainnet, and a typo should not put an agent on a chain where the ` +
+      `money is real.`,
   );
+  process.exit(1);
 }
 console.error(`[altana-mcp] network: ${describeNetwork(NETWORK)}`);
 
