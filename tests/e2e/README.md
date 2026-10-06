@@ -38,6 +38,22 @@ should not have. `checks.ts` carries the long version.
 3. **A failure only proves what it says it proves.** "Over the limit is refused"
    returning true in a catch means a dead RPC proves the limit held. Require the
    refusal to say what you asked it to say.
+4. **An extractor is a check.** QA's addition, and the one that is easiest to miss
+   because it is not about verdicts at all. Their row extractor kept only text
+   beginning with "sent" or "received", so when a row started carrying its subject
+   instead, every correct row was dropped before any assertion saw it and a feed
+   showing four right answers reported zero. Assertions can only ever be as right
+   as the thing feeding them, so the filters, parsers and normalisers in front of
+   them get the same three rules. Mine to watch: `normaliseLog` drops a log
+   without topics, and `fromHistoryEntry` keeps only diffs whose token is null or
+   the native address.
+
+And the one that sits above all four: **a check must be shown failing before it is
+trusted.** Point it at the thing it is meant to catch and watch it catch it. QA
+earned this twice in one day, with a contrast probe that found nothing because a
+collapsed escape made every ratio NaN and NaN is never below a threshold, and with
+a gate that exited 0 while scanning zero files. Both reported success. It costs one
+fixture and it is the only step that would have caught either.
 
 And one about the setup rather than the check: **pinning a value in your own run
 is the move that stops you noticing what happens to somebody who gets it
