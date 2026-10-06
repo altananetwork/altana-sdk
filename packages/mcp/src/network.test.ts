@@ -11,6 +11,7 @@ import {
 import {
   NETWORKS,
   SUPPORTED_CHAINS,
+  applyEndpointOverrides,
   describeNetwork,
   fundingSteps,
   networkGroup,
@@ -131,5 +132,42 @@ describe("networkGroup", () => {
 
   test("a chain outside both groups stands alone", () => {
     expect(networkGroup(SEPOLIA)).toEqual([SEPOLIA]);
+  });
+});
+
+describe("pointing the server at a fork", () => {
+  const FORK_RPC = "http://127.0.0.1:8599";
+  const FORK_RELAY = "http://127.0.0.1:9199";
+
+  test("leaves a network alone when neither override is set", () => {
+    const network = applyEndpointOverrides(BNB_TESTNET, {});
+    expect(network).toBe(BNB_TESTNET);
+  });
+
+  test("overrides the RPC and the relay", () => {
+    const network = applyEndpointOverrides(BNB_TESTNET, {
+      rpcUrl: FORK_RPC,
+      relayUrl: FORK_RELAY,
+    });
+    expect(network.publicRpcUrl).toBe(FORK_RPC);
+    expect(network.relayUrl).toBe(FORK_RELAY);
+  });
+
+  test("keeps the contract addresses, which forked state already carries", () => {
+    const network = applyEndpointOverrides(BNB_TESTNET, { rpcUrl: FORK_RPC });
+    expect(network.keyStore).toBe(BNB_TESTNET.keyStore);
+    expect(network.keyStoreController).toBe(BNB_TESTNET.keyStoreController);
+    expect(network.chainId).toBe(97);
+  });
+
+  test("ignores whitespace, rather than pointing at nowhere", () => {
+    const network = applyEndpointOverrides(BNB_TESTNET, { rpcUrl: "   ", relayUrl: "" });
+    expect(network.publicRpcUrl).toBe(BNB_TESTNET.publicRpcUrl);
+  });
+
+  test("overrides one endpoint without disturbing the other", () => {
+    const network = applyEndpointOverrides(BNB_TESTNET, { relayUrl: FORK_RELAY });
+    expect(network.relayUrl).toBe(FORK_RELAY);
+    expect(network.publicRpcUrl).toBe(BNB_TESTNET.publicRpcUrl);
   });
 });

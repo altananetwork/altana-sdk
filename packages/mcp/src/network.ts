@@ -52,14 +52,52 @@ export type ResolvedNetwork = {
   recognized: boolean;
 };
 
+/**
+ * Point a network at a local fork.
+ *
+ * `ALTANA_RPC_URL` and `ALTANA_RELAY_URL` override the chain's endpoints while
+ * leaving its contract addresses alone, which forked state already carries. This
+ * is what lets an agent flow be proven against an anvil fork, where time can be
+ * moved and nothing real is spent, rather than only against live chains.
+ *
+ * Deliberately not a per-chain setting: the server serves one chain at a time,
+ * and a partial override is a configuration nobody can reason about.
+ */
+export function applyEndpointOverrides(
+  network: NetworkConfig,
+  env: { rpcUrl?: string; relayUrl?: string } = {
+    rpcUrl: process.env.ALTANA_RPC_URL,
+    relayUrl: process.env.ALTANA_RELAY_URL,
+  },
+): NetworkConfig {
+  const rpcUrl = env.rpcUrl?.trim();
+  const relayUrl = env.relayUrl?.trim();
+  if (!rpcUrl && !relayUrl) return network;
+  return {
+    ...network,
+    ...(rpcUrl ? { publicRpcUrl: rpcUrl } : {}),
+    ...(relayUrl ? { relayUrl } : {}),
+  };
+}
+
 /** Resolve ALTANA_CHAIN (name or chainId, case-insensitive) to a network. Unknown values fall back to BNB. */
 export function resolveNetwork(raw: string | undefined): ResolvedNetwork {
   const requested = (raw || "bnb").toLowerCase();
-  const network = NETWORKS[requested];
-  if (!network) {
-    return { network: BNB, registry: BNB, requested, recognized: false };
+  const base = NETWORKS[requested];
+  if (!base) {
+    const bnb = applyEndpointOverrides(BNB);
+    return { network: bnb, registry: bnb, requested, recognized: false };
   }
-  return { network, registry: registryNetwork(network), requested, recognized: true };
+  const network = applyEndpointOverrides(base);
+  // The registry is overridden too when it is the same chain, which it is on
+  // chain 97. On a cached network the registry lives elsewhere and is left alone.
+  const registry = registryNetwork(base);
+  return {
+    network,
+    registry: registry.chainId === base.chainId ? network : registry,
+    requested,
+    recognized: true,
+  };
 }
 
 /**

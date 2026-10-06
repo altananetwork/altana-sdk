@@ -33,8 +33,21 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { SerializedSession } from "@altananetwork/sdk";
 
-const SESSIONS_DIR = join(homedir(), ".altana");
-const SESSIONS_FILE = join(SESSIONS_DIR, "sessions.json");
+/**
+ * Where session metadata lives.
+ *
+ * Resolved per call rather than at import, and honouring ALTANA_HOME, so an
+ * end-to-end test can be pointed at a temporary directory instead of writing
+ * into a real ~/.altana. Unset, nothing changes.
+ */
+function sessionsDir(): string {
+  const override = process.env.ALTANA_HOME?.trim();
+  return override && override.length > 0 ? override : join(homedir(), ".altana");
+}
+
+function sessionsFile(): string {
+  return join(sessionsDir(), "sessions.json");
+}
 
 /** Re-exported for callers that only need the permissions shape. */
 export type SessionPermissions = SerializedSession["permissions"];
@@ -56,12 +69,12 @@ type SessionsFile = {
 };
 
 async function ensureDir() {
-  await mkdir(SESSIONS_DIR, { recursive: true, mode: 0o700 });
+  await mkdir(sessionsDir(), { recursive: true, mode: 0o700 });
 }
 
 async function readFileOrEmpty(): Promise<SessionsFile> {
   try {
-    const raw = await readFile(SESSIONS_FILE, "utf8");
+    const raw = await readFile(sessionsFile(), "utf8");
     const parsed = JSON.parse(raw) as Partial<SessionsFile>;
     return { v: 1, sessions: parsed.sessions ?? [] };
   } catch {
@@ -71,11 +84,10 @@ async function readFileOrEmpty(): Promise<SessionsFile> {
 
 async function writeAtomic(data: SessionsFile) {
   await ensureDir();
-  await writeFile(SESSIONS_FILE, JSON.stringify(data, null, 2), {
-    mode: 0o600,
-  });
+  const file = sessionsFile();
+  await writeFile(file, JSON.stringify(data, null, 2), { mode: 0o600 });
   // chmod again in case writeFile didn't honor mode (some filesystems).
-  await chmod(SESSIONS_FILE, 0o600).catch(() => {});
+  await chmod(file, 0o600).catch(() => {});
 }
 
 /** Read every stored session — names + metadata only, no private keys here. */
@@ -90,7 +102,7 @@ export async function getSession(name: string): Promise<StoredSession> {
   const s = file.sessions.find((x) => x.name === name);
   if (!s) {
     throw new Error(
-      `No session named "${name}" in ${SESSIONS_FILE}. Use grant_session ` +
+      `No session named "${name}" in ${sessionsFile()}. Use grant_session ` +
         `to create one, or list_sessions to see what's saved.`,
     );
   }
