@@ -70,6 +70,25 @@ const info = (k: string, v: unknown) => console.log(`  ${k.padEnd(14)}${v}`);
 // The relay's terminal success status is CONFIRMED. Treat nothing else as landed.
 const landed = (status: unknown) => String(status).toUpperCase() === "CONFIRMED";
 
+/* Whether a thrown error is the refusal we asked for, or just an error.
+ *
+ * These checks used to return pass on **any** throw, so a dead RPC, a wrong
+ * relay URL or a typo in the call proved the limit was holding. An error that
+ * proves nothing, read as proof, is the shape that cost everyone a day, and it
+ * was sitting in two of my own assertions.
+ *
+ * Matched loosely on purpose. The relay's wording may change and a test that
+ * breaks on a reworded message is its own problem; what must not happen is a
+ * pass for a reason unrelated to the thing under test. */
+function refusedBecause(err: unknown, pattern: RegExp): { pass: boolean; detail: string } {
+  const message = String((err as Error)?.message ?? err);
+  if (pattern.test(message)) return { pass: true, detail: message.slice(0, 140) };
+  return {
+    pass: false,
+    detail: `threw, but not a refusal: ${message.slice(0, 120)}`,
+  };
+}
+
 /* Checks that skip rather than run when the thing they are about was never
    created. See tests/e2e/checks.ts. */
 const checks = createChecks();
@@ -228,7 +247,9 @@ async function main() {
       });
       return { pass: !landed(over.status), detail: `status ${over.status}` };
     } catch (err) {
-      return { pass: true, detail: String((err as Error).message).slice(0, 140) };
+      // Only an over-limit refusal counts. Anything else means this check could
+      // not be evaluated, which is not the same as the limit holding.
+      return refusedBecause(err, /exceededspendlimit|spend limit|unauthorized/i);
     }
   });
 
@@ -266,7 +287,9 @@ async function main() {
         detail: `status ${after.status} ${after.transactionHash ?? ""}`,
       };
     } catch (err) {
-      return { pass: true, detail: String((err as Error).message).slice(0, 140) };
+      // The relay refuses a revoked key by its key hash. A connection error is
+      // not evidence that revoking worked.
+      return refusedBecause(err, /key hash|unauthorized|revoked|not found/i);
     }
   });
 

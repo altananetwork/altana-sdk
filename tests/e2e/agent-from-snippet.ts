@@ -263,6 +263,26 @@ async function call(name: string, args: unknown) {
   }
 }
 
+/* Whether a tool result is the refusal we asked for, or just a failure.
+ *
+ * `call` reports every failure the same way, so `!ok` passes an "is it refused"
+ * check even when the server died, the tool name was wrong, or the request never
+ * reached a chain. A failure that proves nothing, read as proof, is the shape
+ * that cost everyone a day.
+ *
+ * Matched loosely: the relay's wording may change, and a test that breaks on a
+ * reworded message is its own problem. What must not happen is a pass for a
+ * reason unrelated to the thing under test. */
+function refusedBecause(
+  result: { ok: boolean; data?: any; text: string },
+  pattern: RegExp,
+): { pass: boolean; detail: string } {
+  const landed = result.data?.transactionHash ?? result.data?.txHash;
+  if (landed) return { pass: false, detail: `it landed: ${landed}` };
+  if (pattern.test(result.text)) return { pass: true, detail: result.text.slice(0, 120) };
+  return { pass: false, detail: `failed, but not a refusal: ${result.text.slice(0, 110)}` };
+}
+
 let exitCode = 0;
 try {
   await send("initialize", {
@@ -325,10 +345,7 @@ try {
      check passes for the wrong reason. */
   await checks.step("S7", "the limit still binds an environment-loaded session", ["S6"], async () => {
     const over = await call("session_execute", { sessionName: SESSION_NAME, to: DEAD, valueEth: "0.01" });
-    return {
-      pass: !over.ok || !(over.data?.transactionHash ?? over.data?.txHash),
-      detail: over.text.slice(0, 120),
-    };
+    return refusedBecause(over, /exceededspendlimit|spend limit|unauthorized/i);
   });
 
   step("S8  after the app revokes, the agent is refused");
@@ -343,10 +360,7 @@ try {
      each produce a refusal that looks like proof the revoke bit. */
   await checks.step("S9", "the revoked agent is refused", ["S6", "S8"], async () => {
     const after = await call("session_execute", { sessionName: SESSION_NAME, to: DEAD, valueEth: "0.0000001" });
-    return {
-      pass: !after.ok || !(after.data?.transactionHash ?? after.data?.txHash),
-      detail: after.text.slice(0, 120),
-    };
+    return refusedBecause(after, /key hash|unauthorized|revoked|not found/i);
   });
 
   step("sweep  return the leftover to the funder");
