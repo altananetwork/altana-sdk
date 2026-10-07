@@ -19,6 +19,7 @@
  * Needs TEST_FUNDER_KEY from the shared .env.testnet. The key is never printed.
  */
 
+import { logRelayIdentity } from "./relay-identity.js";
 import {
   createClient,
   createHeadlessPasskey,
@@ -99,6 +100,7 @@ async function main() {
   say("altana-wallet spine on BNB Chain testnet (chain 97)");
   say("===================================================");
   info("mode", IS_FORK ? "anvil fork" : "LIVE chain 97");
+  await logRelayIdentity(RELAY_URL);
   info("rpc", RPC_URL);
   info("relay", RELAY_URL);
 

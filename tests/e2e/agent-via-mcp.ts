@@ -33,6 +33,7 @@
  * unattended run can answer. The directory is removed when the run ends.
  */
 
+import { logRelayIdentity } from "./relay-identity.js";
 import { spawn } from "node:child_process";
 import { createChecks } from "./checks.js";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -103,6 +104,7 @@ const info = (k: string, v: unknown) => console.log(`  ${k.padEnd(16)}${v}`);
 console.log("The agent half, through the real MCP server");
 console.log("==========================================");
 info("mode", IS_FORK ? "anvil fork" : "LIVE chain 97");
+await logRelayIdentity(RELAY_URL);
 info("rpc", RPC_URL);
 info("relay", RELAY_URL);
 info("key store", `${SANDBOX} (temporary, removed at the end)`);

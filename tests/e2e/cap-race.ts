@@ -21,6 +21,7 @@
  *   bun run tests/e2e/cap-race.ts            # live chain 97
  */
 
+import { logRelayIdentity } from "./relay-identity.js";
 import {
   createClient, createHeadlessPasskey, keyHashForSessionOrKey,
   signerFromPrivateKey, BNB_TESTNET, type NetworkConfig,
@@ -68,6 +69,7 @@ async function sweep() {
 }
 
 console.log(`the spend-cap race, ${IS_FORK ? "anvil fork" : "LIVE chain 97"}`);
+await logRelayIdentity(RELAY_URL);
 
 const wallet = await client.createWallet({ signer: passkey });
 

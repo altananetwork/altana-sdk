@@ -25,6 +25,7 @@
  * ALTANA_APP_DIR points at the wallet app checkout holding lib/agent-setup.ts.
  */
 
+import { logRelayIdentity } from "./relay-identity.js";
 import { spawn } from "node:child_process";
 import { createChecks } from "./checks.js";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -106,6 +107,7 @@ const step = (s: string) => console.log(`\n[${s}]`);
 
 console.log("The credential screen's snippet, end to end");
 console.log(`  mode   ${IS_FORK ? "anvil fork" : "LIVE chain 97"}`);
+await logRelayIdentity(RELAY_URL);
 
 const client = createClient({ chains: [NETWORK] });
 const publicClient = buildPublicClient(NETWORK);

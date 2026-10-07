@@ -29,6 +29,7 @@
  * charged 0.000383804 for the first bundle and exhausted the same limit after
  * two transactions. The mechanism is identical; the gas pricing is not.
  */
+import { logRelayIdentity } from "./relay-identity.js";
 import {
   createClient, createHeadlessPasskey, keyHashForSessionOrKey,
   signerFromPrivateKey, BNB_TESTNET, type NetworkConfig,
@@ -61,6 +62,18 @@ const funder = privateKeyToAccount(FUNDER_KEY);
 const passkey = createHeadlessPasskey();
 const wallet = await client.createWallet({ signer: passkey });
 console.log(`mode   ${RPC_URL.includes("127.0.0.1") ? "fork" : "LIVE"}`);
+await logRelayIdentity(RELAY_URL);
+
+/* The credential, before a single tBNB goes anywhere.
+   
+   This file predates the rule at the top of tests/e2e/README.md and I did not go
+   back and apply it, which is how a checklist stops being one. A headless passkey
+   lives only in this process, so funding first and then throwing strands the
+   money with nothing able to authorise a sweep. Two runs have already lost funds
+   that way, 0.012 and 0.05 tBNB.
+   
+     SWEEP_CREDENTIAL='<the line below>' bun run sweep -- <wallet> */
+console.log(`  credential ${JSON.stringify((passkey as never as { credential: unknown }).credential)}`);
 console.log(`wallet ${wallet.address}`);
 
 const tx = await createWalletClient({ account: funder, chain: bscTestnet, transport: http(RPC_URL) })
@@ -78,7 +91,12 @@ const session = await client.grantSession({
   permissions: { calls: [{ to: DEAD }], spend: [{ limit: LIMIT, period: "day" }] },
   expiry: Math.floor(Date.now() / 1000) + 3600,
 });
-if (session.status !== "granted") throw new Error(`grant failed: ${session.status}`);
+if (session.status !== "granted") {
+  // Sweep before the throw. A throw between funding and the sweep at the bottom
+  // of the file is the exact shape that lost 0.05 tBNB earlier tonight.
+  await sweep();
+  throw new Error(`grant failed: ${session.status}`);
+}
 const keyHash = keyHashForSessionOrKey(session);
 console.log(`grant  limit ${formatEther(LIMIT)} tBNB/day  keyHash ${keyHash}\n`);
 
@@ -100,9 +118,18 @@ for (const amount of ["0.0000001", "0.00001", "0.0001", "0.0005"]) {
   if (!res.ok) console.log(`           ${res.detail}`);
 }
 
-const left = await pub.getBalance({ address: wallet.address });
-if (left > parseEther("0.004")) {
-  await client.execute({ wallet, signer: passkey, calls: { to: funder.address, value: left - parseEther("0.004"), data: "0x" } })
-    .then(() => console.log(`\nswept ${formatEther(left - parseEther("0.004"))} back to the funder`))
+await sweep();
+
+/** Return whatever is left, from the end of the run or from a failure. */
+async function sweep() {
+  const left = await pub.getBalance({ address: wallet.address }).catch(() => 0n);
+  const margin = parseEther("0.004");
+  if (left <= margin) {
+    console.log(`\nonly ${formatEther(left)} tBNB left, below the fee margin`);
+    return;
+  }
+  await client
+    .execute({ wallet, signer: passkey, calls: { to: funder.address, value: left - margin, data: "0x" } })
+    .then(() => console.log(`\nswept ${formatEther(left - margin)} tBNB back to the funder`))
     .catch((e: Error) => console.log(`\nsweep failed: ${e.message.slice(0, 90)}`));
 }
