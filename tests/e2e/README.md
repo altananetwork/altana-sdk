@@ -48,12 +48,39 @@ should not have. `checks.ts` carries the long version.
    without topics, and `fromHistoryEntry` keeps only diffs whose token is null or
    the native address.
 
-And the one that sits above all four: **a check must be shown failing before it is
+5. **A diagnostic is a check.** QA's addition, and it has the same failure mode
+   with none of the pressure that keeps a check honest, because nothing asserts on
+   it so nothing fails when it goes stale. Theirs: a printed row list still running
+   a prefix filter the assertions had stopped using, so the list somebody reads
+   while diagnosing a failure had been quietly lying since the copy changed. Mine,
+   found by reading theirs: `wallet-app-spine.ts` labelled a bundle "owner" when
+   its key hash was zero, which is the claim that was retracted this morning. A
+   passkey-owned wallet's admin key hashes to a real non-zero value and a zero hash
+   never appears, so the label was wrong on every row the owner signed.
+
+And the one that sits above all five: **a check must be shown failing before it is
 trusted.** Point it at the thing it is meant to catch and watch it catch it. QA
 earned this twice in one day, with a contrast probe that found nothing because a
 collapsed escape made every ratio NaN and NaN is never below a threshold, and with
 a gate that exited 0 while scanning zero files. Both reported success. It costs one
 fixture and it is the only step that would have caught either.
+
+## What all of them are
+
+One sentence, arrived at after six of these in a day across three people, and it
+is worth more than the five rules under it:
+
+> **The absence of a result must never be indistinguishable from a good one.**
+
+Every instance either of us hit is a case of it. NaN passing every comparison
+because NaN is never below a threshold. A gate exiting 0 while scanning zero
+files. A `Set` collapsing two rows into one that looks like one row. A verdict
+printed beside the detail that contradicts it. A check evaluated after the step
+that creates its subject failed. An extractor dropping every row before any
+assertion saw it.
+
+The rules above are the shapes it takes in this directory. The sentence is the
+thing to carry.
 
 And one about the setup rather than the check: **pinning a value in your own run
 is the move that stops you noticing what happens to somebody who gets it

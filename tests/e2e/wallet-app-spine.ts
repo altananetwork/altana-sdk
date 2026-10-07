@@ -27,6 +27,7 @@ import {
   serializeSession,
   deserializeSession,
   keyHashForSessionOrKey,
+  keyHashForSigner,
   BNB_TESTNET,
   type NetworkConfig,
 } from "@altananetwork/sdk";
@@ -217,9 +218,28 @@ async function main() {
   ]);
   info("entries", Array.isArray(history) ? history.length : JSON.stringify(history).slice(0, 120));
   const entries = Array.isArray(history) ? history : [];
+  /* The owner's own key hash, read from the signer rather than assumed to be
+     zero.
+     
+     This diagnostic used to say `keyHash === zero ? "owner"`, which is the exact
+     claim that was disproved this morning: a passkey-owned wallet's admin key
+     hashes to a real non-zero value and a zero hash never appears on one. This
+     wallet is passkey-owned, so the label was wrong on every row the owner
+     signed, and somebody reading this log to diagnose an attribution problem was
+     reading a classification built on a rule we had already retracted.
+     
+     Nothing asserted on it, which is why it survived. A diagnostic is a check
+     with the same failure mode and none of the pressure that keeps a check
+     honest, and QA found the same thing in their own printed row list within the
+     hour. */
+  const adminKeyHash = keyHashForSigner(passkey).toLowerCase();
   for (const e of entries) {
-    const tag = e.keyHash === "0x" + "0".repeat(64) ? "owner" :
-      e.keyHash?.toLowerCase() === keyHash.toLowerCase() ? "OUR SESSION" : "other key";
+    const hash = e.keyHash?.toLowerCase();
+    const tag =
+      hash === keyHash.toLowerCase() ? "OUR SESSION"
+      : hash === adminKeyHash ? "owner (passkey)"
+      : hash === "0x" + "0".repeat(64) ? "root key, not expected on a passkey wallet"
+      : "other key";
     info(`  #${e.index}`, `${e.transactions?.[0]?.transactionHash?.slice(0, 20)}  keyHash ${e.keyHash?.slice(0, 14)}  ${tag}`);
   }
   const mine = entries.find(
