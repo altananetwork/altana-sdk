@@ -565,6 +565,28 @@ describe("registry write funded from the L2, on the wire", () => {
     expect(wire.prepares()).toHaveLength(2);
   });
 
+  // "relay reported status FAILED" named nothing: a reader could not tell an
+  // intent that never landed from one that landed and reverted, which are
+  // different investigations. The spine printed exactly that string for the
+  // root failure on 2026-10-07 and it cost a run to learn nothing.
+  test("a root failure names the bundle, the status code and the receipts", async () => {
+    const signer = createPrivateKeySigner();
+    mockRegistryWire({ balance: 0n, activeKeys: [], failStatusAt: 0 });
+    const written = await submitRegistryWrite(SEPOLIA, {
+      walletAddress: signer.address,
+      adminSigner: signer,
+      calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+    });
+    expect(written.status).toBe("FAILED");
+    const reason = written.rootRegistration?.reason ?? "";
+    expect(reason).toContain("bundle 0xabc");
+    expect(reason).toContain("statusCode 500");
+    // The receipts the relay did return, per chain, so a reverted intent is
+    // distinguishable from one that never landed.
+    expect(reason).toContain(`chain ${SEPOLIA.chainId}`);
+    expect(reason).toContain(SEPOLIA_TX);
+  });
+
   test("each intent reports its own step, in order", async () => {
     const signer = createPrivateKeySigner();
     mockRegistryWire({ balance: 0n, activeKeys: [] });

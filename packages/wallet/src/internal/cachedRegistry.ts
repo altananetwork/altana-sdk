@@ -46,6 +46,7 @@ import {
   waitForCalls,
   type Call,
   type RequiredFund,
+  type RelayReceipt,
 } from "./relay.js";
 
 import { NATIVE_TOKEN } from "../config.js";
@@ -217,6 +218,37 @@ export async function submitRegistryCalls(
 }
 
 /**
+ * Why a relayed write did not confirm, in enough detail to chase it.
+ *
+ * `relay reported status FAILED` was the whole of it, and it is the fourth
+ * contentless diagnostic this project has lost time to: the bundle id, the
+ * numeric status and the per-chain receipts were all in hand and none of them
+ * reached the leg. A reader could not tell an intent that never landed from one
+ * that landed and reverted, and those are different investigations.
+ */
+function describeRelayFailure(
+  callsId: Hex,
+  result: { status: string; statusCode?: number; receipts?: readonly RelayReceipt[] },
+): string {
+  const parts = [`the relay reported status ${result.status}`];
+  if (result.statusCode !== undefined) parts.push(`statusCode ${result.statusCode}`);
+  parts.push(`bundle ${callsId}`);
+  const receipts = result.receipts ?? [];
+  if (receipts.length === 0) {
+    // No receipt at all: the intent never reached a block, so there is nothing
+    // on chain to inspect and the relay is where the answer is.
+    parts.push("the relay returned no receipt, so the intent did not land in a block");
+  } else {
+    for (const r of receipts) {
+      const chain = r.chainId === undefined ? "unknown chain" : `chain ${Number(r.chainId)}`;
+      const status = r.status === undefined ? "no status" : Number(r.status) === 1 ? "succeeded" : "REVERTED";
+      parts.push(`${chain}: ${status}${r.transactionHash ? ` in ${r.transactionHash}` : ""}`);
+    }
+  }
+  return parts.join("; ");
+}
+
+/**
  * One relayed registry intent, reported as a root-registration outcome.
  *
  * Used for the `initialRegisterKey` half of a first-time write.
@@ -278,7 +310,7 @@ async function submitOneRelayedWrite(args: {
       callsId,
       ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
       ...(block?.blockNumber !== undefined ? { blockNumber: block.blockNumber } : {}),
-      ...(result.status !== "CONFIRMED" ? { reason: `relay reported status ${result.status}` } : {}),
+      ...(result.status !== "CONFIRMED" ? { reason: describeRelayFailure(callsId, result) } : {}),
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -400,11 +432,13 @@ export async function submitRegistryWrite(
       ...(source?.chainId !== undefined ? { fundedFromChainId: Number(source.chainId) } : {}),
       ...(source?.transactionHash ? { sourceTransactionHash: source.transactionHash } : {}),
       ...(rootRegistration ? { rootRegistration } : {}),
-      ...(result.status !== "CONFIRMED" && rootRegistration
+      ...(result.status !== "CONFIRMED"
         ? {
-            reason:
-              `the session key's registerKey did not confirm (${result.status}). The root ` +
-              `registration DID confirm, so retrying grantSession sends registerKey only.`,
+            reason: rootHandled
+              ? `the session key's registerKey did not confirm. The root registration DID ` +
+                `confirm, so retrying grantSession sends registerKey only. ` +
+                describeRelayFailure(callsId, result)
+              : describeRelayFailure(callsId, result),
           }
         : {}),
     };
