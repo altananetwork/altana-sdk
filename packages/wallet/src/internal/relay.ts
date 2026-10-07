@@ -703,7 +703,13 @@ async function prepareIntent(
     () => retryInvalidNonce(() => prepareCalls(client, prepareParams)),
     "prepare the call",
     { client, network: opts.network },
-    { account: walletAddress, calls: effectiveCalls, funded: Boolean(opts.requiredFunds?.length) },
+    {
+      account: walletAddress,
+      calls: effectiveCalls,
+      funded: Boolean(opts.requiredFunds?.length),
+      // Only for a session: an admin has no spend cap to be over.
+      ...(!isAdmin && signingKeyForPorto?.hash ? { sessionKeyHash: signingKeyForPorto.hash as Hex } : {}),
+    },
   );
 
   return { prepared, signingKeyForPorto, isAdmin, effectiveCalls, feeToken: chosenFeeToken };
@@ -846,6 +852,17 @@ export type IntentContext = {
   calls: readonly Call[];
   /** Whether the request asked the relay to fund the intent from another chain. */
   funded: boolean;
+  /**
+   * The account key hash of the signing session, when a session signed.
+   *
+   * Only for explaining an empty revert. The relay stopped naming
+   * ExceededSpendLimit on chain 97 at some point on 2026-10-06: a session spend
+   * over its cap now comes back as a simulation that reverted with no reason,
+   * while UnauthorizedCall on the same session still names itself. So the cause
+   * a client most wants is the one the response no longer carries, and the cap
+   * can be read instead of guessed.
+   */
+  sessionKeyHash?: Hex;
 };
 
 /** A wallet's native balance on one chain, as the relay reports it. */
@@ -890,11 +907,71 @@ async function describeEmptyRevert(
     const holdings = await Promise.race([readNativeHoldings(relay, intent.account), timeout]);
     const here = holdings.find((h) => h.chainId === network.chainId) ?? { ...where, balance: 0n };
     const elsewhere = intent.funded ? holdings.filter((h) => h.chainId !== network.chainId) : [];
-    return emptyRevertMessage(where, intent.calls, { here, elsewhere });
+    const cap = await readNativeSpendCap(network, intent, here);
+    return emptyRevertMessage(where, intent.calls, { here, elsewhere }, cap);
   } catch {
     return emptyRevertMessage(where, intent.calls);
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/** The spendInfos tuple the account returns, in its on-chain order. */
+const SPEND_INFOS_ABI = [
+  {
+    type: "function",
+    name: "spendInfos",
+    stateMutability: "view",
+    inputs: [{ name: "keyHash", type: "bytes32" }],
+    outputs: [
+      {
+        name: "results",
+        type: "tuple[]",
+        components: [
+          { name: "token", type: "address" },
+          { name: "period", type: "uint8" },
+          { name: "limit", type: "uint256" },
+          { name: "spent", type: "uint256" },
+          { name: "lastUpdated", type: "uint256" },
+          { name: "currentSpent", type: "uint256" },
+          { name: "current", type: "uint256" },
+        ],
+      },
+    ],
+  },
+] as const;
+
+const NATIVE_TOKEN_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+/**
+ * The signing session's native spend cap, or nothing.
+ *
+ * Returns undefined for an admin, for a session with no native cap, and for any
+ * read that fails or times out: a cause we could not read is not a cause, and an
+ * error message is the wrong place to turn a failed read into a claim.
+ *
+ * `currentSpent` rather than `spent`, because `spent` is the last period the key
+ * touched and may have ended, so reporting it would describe last week's usage
+ * against this week's cap.
+ */
+async function readNativeSpendCap(
+  network: NetworkConfig,
+  intent: IntentContext,
+  here: NativeHolding,
+): Promise<SpendCapReading | undefined> {
+  if (!intent.sessionKeyHash) return undefined;
+  try {
+    const rows = (await buildPublicClient(network).readContract({
+      address: intent.account,
+      abi: SPEND_INFOS_ABI,
+      functionName: "spendInfos",
+      args: [intent.sessionKeyHash],
+    })) as readonly { token: Address; limit: bigint; currentSpent: bigint }[];
+    const native = rows.find((r) => r.token.toLowerCase() === NATIVE_TOKEN_ADDRESS);
+    if (!native) return undefined;
+    return { limit: native.limit, spent: native.currentSpent, symbol: here.symbol, decimals: here.decimals };
+  } catch {
+    return undefined;
   }
 }
 
@@ -911,9 +988,38 @@ export function emptyRevertMessage(
   where: IntentChain,
   calls: readonly Call[],
   balances?: { here: NativeHolding; elsewhere: readonly NativeHolding[] },
+  cap?: SpendCapReading,
 ): string {
   const lead = `its simulation reverted with no reason on ${where.chain} (chainId ${where.chainId})${describeCalls(where, calls)}`;
-  return balances === undefined ? lead : `${lead}; ${balanceClause(balances.here, totalValue(calls), balances.elsewhere)}`;
+  const parts = [lead];
+  if (balances !== undefined) {
+    parts.push(balanceClause(balances.here, totalValue(calls), balances.elsewhere));
+  }
+  if (cap !== undefined) parts.push(spendCapClause(cap, totalValue(calls)));
+  return parts.join("; ");
+}
+
+/** What the account says about a session's native spend cap. */
+export type SpendCapReading = { limit: bigint; spent: bigint; symbol: string; decimals: number };
+
+/**
+ * The clause for a session's spend cap.
+ *
+ * Read rather than guessed, and stated as what it is rather than as a verdict,
+ * which is the same rule the balance clause follows. The cap pays the relay fee
+ * as well as the value the calls send, so "spent plus value is under the limit"
+ * does not prove the cap is innocent, and this says so rather than clearing it.
+ */
+export function spendCapClause(cap: SpendCapReading, value: bigint): string {
+  const left = cap.limit > cap.spent ? cap.limit - cap.spent : 0n;
+  const amount = (v: bigint) => `${formatUnits(v, cap.decimals)} ${cap.symbol}`;
+  if (left === 0n) {
+    return `the signing session's spend cap is exhausted for this period (${amount(cap.spent)} of ${amount(cap.limit)} used), which is a cause the relay no longer names`;
+  }
+  if (value > left) {
+    return `the signing session has ${amount(left)} left of its ${amount(cap.limit)} cap this period and these calls send ${amount(value)}, so the cap is short`;
+  }
+  return `the signing session has ${amount(left)} left of its ${amount(cap.limit)} cap this period, which these calls fit inside before fees; the cap also pays the relay fee, so it is not ruled out`;
 }
 
 /** How many calls the relay simulated, where they went, and what they send. */

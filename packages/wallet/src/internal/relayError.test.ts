@@ -8,6 +8,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   balanceClause,
+  spendCapClause,
   decodeRevertText,
   deepestRelayReason,
   emptyRevertMessage,
@@ -216,5 +217,51 @@ describe("decodeRevertText", () => {
   test("a Panic reads as its code; other data is left alone", () => {
     expect(decodeRevertText("0x4e487b71" + "11".padStart(64, "0"))).toBe("panic code 17");
     expect(decodeRevertText("intent reverted: 0xf3dd7004")).toBe("intent reverted: 0xf3dd7004");
+  });
+});
+
+describe("a session's spend cap on an empty revert", () => {
+  /* Why this exists: the relay stopped naming ExceededSpendLimit on chain 97 at
+     some point on 2026-10-06. QA measured it across four runs, with two
+     controls: it happens for scoped and unscoped sessions alike, and
+     UnauthorizedCall on the same session in the same run still names itself. So
+     a spend over its cap now arrives as a simulation that reverted with no
+     reason, and the cause a client most wants is the one the response no longer
+     carries.
+
+     The cap can be read instead, which turns a guess into a fact. That is below
+     the relay to fix properly; this restores the diagnosability without touching
+     it. */
+  const cap = (limit: bigint, spent: bigint) => ({ limit, spent, symbol: "tBNB", decimals: 18 });
+
+  test("an exhausted cap is named as a cause the relay no longer gives", () => {
+    const text = spendCapClause(cap(1_000n, 1_000n), 10n);
+    expect(text).toContain("exhausted");
+    expect(text).toContain("the relay no longer names");
+  });
+
+  test("a cap with less left than the calls send is called short", () => {
+    const text = spendCapClause(cap(1_000n, 900n), 500n);
+    expect(text).toContain("short");
+    expect(text).toContain("100 wei".replace("100 wei", "0.0000000000000001 tBNB"));
+  });
+
+  test("a cap the calls fit inside is not cleared, because it pays the fee too", () => {
+    /* The honest half. Spent plus value being under the limit does not prove the
+       cap is innocent: the relay fee comes out of the same allowance, measured
+       at about 0.0000265 tBNB a bundle on chain 97. Saying "the cap is fine"
+       here would be the message inventing a result it does not have. */
+    const text = spendCapClause(cap(1_000_000n, 0n), 10n);
+    expect(text).toContain("not ruled out");
+    expect(text).not.toContain("exhausted");
+  });
+
+  test("it never claims a cap it could not read", () => {
+    // emptyRevertMessage without a cap says nothing about one.
+    const text = emptyRevertMessage(
+      { chainId: 97, chain: "BNB Smart Chain Testnet" } as never,
+      [],
+    );
+    expect(text).not.toContain("cap");
   });
 });
