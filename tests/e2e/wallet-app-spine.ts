@@ -60,6 +60,13 @@ const NETWORK: NetworkConfig = {
 
 import { createChecks } from "./checks.js";
 
+/* Set as soon as the wallet exists and before it is funded, so the top-level
+   catch can print how to get the money back. QA's instance of the same bug was a
+   credential read that referenced an undefined binding, which node --check
+   accepts and which would have silently saved nothing, so this is declared where
+   it is used rather than assumed into existence. */
+let recovery: string | undefined;
+
 const RECIPIENT = "0x000000000000000000000000000000000000dEaD" as const;
 
 const t0 = performance.now();
@@ -126,6 +133,22 @@ async function main() {
   step("E1  create the wallet with a headless passkey");
   const passkey = createHeadlessPasskey();
   info("passkey", `${passkey.type}  ${passkey.credential.kind}`);
+  /* The credential itself, before a single tBNB goes anywhere.
+     
+     This printed only the credential's *kind*, which is not recoverable with, so
+     a throw between the funding below and the sweep at the end stranded the
+     money: a headless passkey lives only in this process. diagnose-first-bundle
+     has done this properly since it was written, so I knew the pattern and
+     applied it in one file and not this one, which is the shape QA named.
+     
+       SWEEP_CREDENTIAL='<the line below>' bun run sweep -- <wallet> */
+  info("credential", JSON.stringify(passkey.credential));
+  /* And the recovery line, so a throw does not leave somebody reading scrollback
+     for it. The sweep at the end of main() does not run on a throw, and
+     restructuring main() at this hour is riskier than printing the command. */
+  recovery =
+    `SWEEP_CREDENTIAL='${JSON.stringify(passkey.credential)}' ` +
+    `bun run sweep -- ${wallet.address}`;
   const wallet = await client.createWallet({ signer: passkey });
   info("address", wallet.address);
   // createWallet is counterfactual: the address is derived and the passkey is
@@ -379,5 +402,12 @@ async function relayCall(url: string, method: string, params: unknown[]) {
 main().catch((err) => {
   console.error("\nFAILED");
   console.error(err);
+  if (recovery) {
+    /* The funds are still in the throwaway wallet, because the sweep lives at the
+       end of main() and we did not get there. Recoverable rather than stranded,
+       which is the whole reason the credential is printed before funding. */
+    console.error("\nThe throwaway wallet still holds its funding. To return it:");
+    console.error(`  ${recovery}`);
+  }
   process.exit(1);
 });
