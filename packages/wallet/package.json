@@ -41,7 +41,11 @@
     "clean": "rm -rf dist",
     "prepublishOnly": "node ../../scripts/check-publishable.mjs && bun run clean && bun run build",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.typetests.json",
-    "test": "bun test"
+    "test": "bun test",
+    "stamp": "node ../../scripts/stamp-build.mjs packages/wallet/src/buildStamp.ts",
+    "prebuild": "bun run stamp",
+    "pretypecheck": "bun run stamp",
+    "pretest": "bun run stamp"
   },
   "dependencies": {
     "ox": "^0.14.0",

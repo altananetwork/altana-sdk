@@ -21,3 +21,7 @@ tests/e2e/.live-hire-*.json
 tests/e2e/.live-erc8004-*.json
 tests/e2e/.sweep.env
 docs/pages/changelog.md
+
+# Generated per build by scripts/stamp-build.mjs; a committed copy would be
+# stale for every build but the one that wrote it.
+packages/*/src/buildStamp.ts

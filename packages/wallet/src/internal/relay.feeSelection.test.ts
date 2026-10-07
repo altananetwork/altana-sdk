@@ -306,6 +306,8 @@ describe("registry write funded from the L2, on the wire", () => {
     failPrepareAt?: number;
     /** Reports the Nth (0-based) send as not confirmed. */
     failStatusAt?: number;
+    /** The 17:22 shape: the source leg landed, the destination never ran. */
+    sourceReceiptOnly?: boolean;
   }) {
     let prepares = 0;
     let sends = 0;
@@ -345,7 +347,19 @@ describe("registry write funded from the L2, on the wire", () => {
           return ok({
             id: "0xabc",
             status: o.failStatusAt === sends++ ? 500 : 200,
-            receipts: [
+            receipts: (o.sourceReceiptOnly
+              ? [
+                  {
+                    chainId: numberToHex(CELO_SEPOLIA.chainId),
+                    blockNumber: "0x10",
+                    blockHash: "0x" + "11".repeat(32),
+                    gasUsed: "0x73c17",
+                    status: "0x1",
+                    transactionHash: CELO_TX,
+                    logs: [],
+                  },
+                ]
+              : undefined) ?? [
               { chainId: numberToHex(CELO_SEPOLIA.chainId), blockNumber: "0x10", blockHash: "0x" + "11".repeat(32), gasUsed: "0x5208", status: "0x1", transactionHash: CELO_TX, logs: [] },
               { chainId: numberToHex(SEPOLIA.chainId), blockNumber: "0xb2944d", blockHash: "0x" + "22".repeat(32), gasUsed: "0x5208", status: "0x1", transactionHash: SEPOLIA_TX, logs: [] },
             ],
@@ -585,6 +599,29 @@ describe("registry write funded from the L2, on the wire", () => {
     // distinguishable from one that never landed.
     expect(reason).toContain(`chain ${SEPOLIA.chainId}`);
     expect(reason).toContain(SEPOLIA_TX);
+  });
+
+  // infra's trace of the real 17:22 bundle: status 300, ONE receipt, on Celo
+  // (the source), succeeded, and no Sepolia receipt. My first version of this
+  // message had two branches, "no receipt" and "receipt, reverted", and this
+  // is neither: there is a successful receipt and the registry chain has no
+  // transaction at all. It also leaves a funded escrow open, which is how four
+  // of them accumulated.
+  test("a source leg that landed with no destination receipt is its own case", async () => {
+    const signer = createPrivateKeySigner();
+    mockRegistryWire({ balance: 0n, activeKeys: [], failStatusAt: 0, sourceReceiptOnly: true });
+    const written = await submitRegistryWrite(SEPOLIA, {
+      walletAddress: signer.address,
+      adminSigner: signer,
+      calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+    });
+    const reason = written.rootRegistration?.reason ?? "";
+    expect(reason).toContain(`chain ${CELO_SEPOLIA.chainId}: succeeded`);
+    expect(reason).toContain(`nothing was mined on the registry chain (${SEPOLIA.chainId})`);
+    expect(reason).toContain("escrow");
+    // Not the no-receipt branch: there IS one, and saying otherwise sends the
+    // reader to the relay when a successful source transaction exists.
+    expect(reason).not.toContain("no receipt at all");
   });
 
   test("each intent reports its own step, in order", async () => {

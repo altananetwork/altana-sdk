@@ -272,3 +272,5 @@ export type {
   RegisterAgentResult,
   SetAgentUriParams,
 } from "./erc8004.js";
+
+export { sdkBuild, type SdkBuild } from "./buildInfo.js";

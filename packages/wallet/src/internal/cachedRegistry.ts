@@ -226,24 +226,48 @@ export async function submitRegistryCalls(
  * reached the leg. A reader could not tell an intent that never landed from one
  * that landed and reverted, and those are different investigations.
  */
+const STATUS_CODE_MEANING: Record<number, string> = {
+  // altana-relay-mainnet src/types/rpc/calls.rs:633. The relay distinguishes
+  // these three and the distinction is the whole answer: 300 means the revert
+  // was caught before broadcast, so no destination gas was spent and no
+  // destination transaction exists to look up.
+  300: " (Failed: caught offchain, never broadcast)",
+  400: " (Reverted: fully onchain)",
+  500: " (PartiallyReverted)",
+};
+
 function describeRelayFailure(
   callsId: Hex,
+  chainId: number,
   result: { status: string; statusCode?: number; receipts?: readonly RelayReceipt[] },
 ): string {
   const parts = [`the relay reported status ${result.status}`];
-  if (result.statusCode !== undefined) parts.push(`statusCode ${result.statusCode}`);
+  if (result.statusCode !== undefined) {
+    parts.push(`statusCode ${result.statusCode}${STATUS_CODE_MEANING[result.statusCode] ?? ""}`);
+  }
   parts.push(`bundle ${callsId}`);
   const receipts = result.receipts ?? [];
+  const onThisChain = receipts.some((r) => r.chainId !== undefined && Number(r.chainId) === chainId);
+  for (const r of receipts) {
+    const chain = r.chainId === undefined ? "unknown chain" : `chain ${Number(r.chainId)}`;
+    const status = r.status === undefined ? "no status" : Number(r.status) === 1 ? "succeeded" : "REVERTED";
+    parts.push(`${chain}: ${status}${r.transactionHash ? ` in ${r.transactionHash}` : ""}`);
+  }
   if (receipts.length === 0) {
-    // No receipt at all: the intent never reached a block, so there is nothing
-    // on chain to inspect and the relay is where the answer is.
-    parts.push("the relay returned no receipt, so the intent did not land in a block");
-  } else {
-    for (const r of receipts) {
-      const chain = r.chainId === undefined ? "unknown chain" : `chain ${Number(r.chainId)}`;
-      const status = r.status === undefined ? "no status" : Number(r.status) === 1 ? "succeeded" : "REVERTED";
-      parts.push(`${chain}: ${status}${r.transactionHash ? ` in ${r.transactionHash}` : ""}`);
-    }
+    parts.push("the relay returned no receipt at all, so nothing was mined on any chain");
+  } else if (!onThisChain) {
+    // The case the first version of this function missed, and the one the
+    // 17:22 run actually was: a funded cross-chain write whose SOURCE leg
+    // landed and succeeded while the destination never reached a block. There
+    // is a successful receipt, so "no receipt" is wrong, and the registry
+    // chain has no transaction to inspect, so "it reverted on chain" is wrong
+    // too. It also leaves a funded escrow open on the source chain, which is
+    // how four of them accumulated (infra, 2026-10-07).
+    parts.push(
+      `nothing was mined on the registry chain (${chainId}) itself, so its leg never ran; ` +
+        `a source-chain leg that succeeded will have locked funds in escrow, refundable ` +
+        `permissionlessly after the escrow's timeout`,
+    );
   }
   return parts.join("; ");
 }
@@ -310,7 +334,7 @@ async function submitOneRelayedWrite(args: {
       callsId,
       ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
       ...(block?.blockNumber !== undefined ? { blockNumber: block.blockNumber } : {}),
-      ...(result.status !== "CONFIRMED" ? { reason: describeRelayFailure(callsId, result) } : {}),
+      ...(result.status !== "CONFIRMED" ? { reason: describeRelayFailure(callsId, registry.chainId, result) } : {}),
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -437,8 +461,8 @@ export async function submitRegistryWrite(
             reason: rootHandled
               ? `the session key's registerKey did not confirm. The root registration DID ` +
                 `confirm, so retrying grantSession sends registerKey only. ` +
-                describeRelayFailure(callsId, result)
-              : describeRelayFailure(callsId, result),
+                describeRelayFailure(callsId, registry.chainId, result)
+              : describeRelayFailure(callsId, registry.chainId, result),
           }
         : {}),
     };
