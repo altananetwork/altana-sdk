@@ -4,6 +4,89 @@ End-to-end smoke and spike tests for `@altananetwork/sdk` and `@altananetwork/mc
 
 **Private workspace package.** Not published to npm. CI-only + manual dev use.
 
+## Before you run a script that moves funds to a new wallet
+
+Check it against both of these, every time. Two runs have stranded testnet funds
+for want of them, 0.012 and 0.05 tBNB, and in each case the money was
+unrecoverable within seconds of the process dying.
+
+1. **The credential is printed or saved before any funds move.** A throwaway
+   wallet owned by `createHeadlessPasskey()` exists only inside the process that
+   made it. Fund it first and crash, and nothing on earth can authorise a sweep.
+   Print `signer.credential` as JSON before the first transfer; `bun run sweep`
+   takes it as `SWEEP_CREDENTIAL`.
+2. **It sweeps on every exit path, not just the happy one.** A `throw` between
+   funding and the sweep at the bottom of the file is the exact shape that lost
+   both of those. Put the sweep in a `finally`, or call it before every `throw`
+   that can follow a transfer.
+
+Neither is theoretical and neither took more than four lines to add afterwards.
+
+## Before you write a check
+
+Three rules, each earned the same day and each by a check that passed when it
+should not have. `checks.ts` carries the long version.
+
+1. **A check whose subject was never created must not run.** Assert the
+   precondition is not enough: that still evaluates the check and prints its
+   result beside the failure as though the two were independent. Declare what a
+   step needs and let it skip.
+2. **A check that can emit two claims must not be able to emit contradictory
+   ones.** The summary line is what gets believed; a contradicting detail is what
+   gets scrolled past. If the detail you are about to print would read as evidence
+   against the verdict you are about to record, the check is wrong.
+3. **A failure only proves what it says it proves.** "Over the limit is refused"
+   returning true in a catch means a dead RPC proves the limit held. Require the
+   refusal to say what you asked it to say.
+4. **An extractor is a check.** QA's addition, and the one that is easiest to miss
+   because it is not about verdicts at all. Their row extractor kept only text
+   beginning with "sent" or "received", so when a row started carrying its subject
+   instead, every correct row was dropped before any assertion saw it and a feed
+   showing four right answers reported zero. Assertions can only ever be as right
+   as the thing feeding them, so the filters, parsers and normalisers in front of
+   them get the same three rules. Mine to watch: `normaliseLog` drops a log
+   without topics, and `fromHistoryEntry` keeps only diffs whose token is null or
+   the native address.
+
+5. **A diagnostic is a check.** QA's addition, and it has the same failure mode
+   with none of the pressure that keeps a check honest, because nothing asserts on
+   it so nothing fails when it goes stale. Theirs: a printed row list still running
+   a prefix filter the assertions had stopped using, so the list somebody reads
+   while diagnosing a failure had been quietly lying since the copy changed. Mine,
+   found by reading theirs: `wallet-app-spine.ts` labelled a bundle "owner" when
+   its key hash was zero, which is the claim that was retracted this morning. A
+   passkey-owned wallet's admin key hashes to a real non-zero value and a zero hash
+   never appears, so the label was wrong on every row the owner signed.
+
+And the one that sits above all five: **a check must be shown failing before it is
+trusted.** Point it at the thing it is meant to catch and watch it catch it. QA
+earned this twice in one day, with a contrast probe that found nothing because a
+collapsed escape made every ratio NaN and NaN is never below a threshold, and with
+a gate that exited 0 while scanning zero files. Both reported success. It costs one
+fixture and it is the only step that would have caught either.
+
+## What all of them are
+
+One sentence, arrived at after six of these in a day across three people, and it
+is worth more than the five rules under it:
+
+> **The absence of a result must never be indistinguishable from a good one.**
+
+Every instance either of us hit is a case of it. NaN passing every comparison
+because NaN is never below a threshold. A gate exiting 0 while scanning zero
+files. A `Set` collapsing two rows into one that looks like one row. A verdict
+printed beside the detail that contradicts it. A check evaluated after the step
+that creates its subject failed. An extractor dropping every row before any
+assertion saw it.
+
+The rules above are the shapes it takes in this directory. The sentence is the
+thing to carry.
+
+And one about the setup rather than the check: **pinning a value in your own run
+is the move that stops you noticing what happens to somebody who gets it
+slightly wrong.** The MCP's chain was pinned in every run we had, so nobody asked
+what an unrecognised one did, and the answer was mainnet.
+
 ## Env
 
 Every script requires `TEST_FUNDER_KEY`: a funded Sepolia private key that bankrolls the freshly-generated admin wallet each test creates.

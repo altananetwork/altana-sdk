@@ -33,6 +33,7 @@ import {
   launchCacheProofs,
   type CacheGate,
 } from "./internal/sessionLegs.js";
+import { withDefaultCallPermissions } from "./internal/sessions.js";
 import type {
   GrantSessionOptions,
   GrantSessionResult,
@@ -136,9 +137,14 @@ export async function runGrantSession(
   // cap, or the relay rejects its transactions later. Each named fee token
   // gets a daily cap unless the caller capped it already; the returned
   // Session carries these effective permissions, which execute must match.
+  // Omitting `calls` promises every target, so turn that promise into the
+  // account's ANY_TARGET wildcard before anything is signed. Without this the
+  // session is authorized for no target at all and is refused with
+  // UnauthorizedCall the first time the agent acts, with nothing connecting the
+  // failure back to the grant.
   const permissions = await permissionsWithFeeCaps(
     networks,
-    opts.permissions,
+    withDefaultCallPermissions(opts.permissions),
     feeTokenList(feeToken),
     opts.feeSpendLimit,
   );

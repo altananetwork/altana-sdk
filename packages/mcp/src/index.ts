@@ -33,6 +33,7 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import {
   createClient,
   deserializeSession,
+  keyHashForSessionOrKey,
   serializeSession,
   signerFromPrivateKey,
   fetchWithX402,
@@ -62,6 +63,12 @@ import {
   deleteSessionKey,
   sessionKeyExists,
 } from "./keys.js";
+import {
+  parseImport,
+  expiryState,
+  ImportSessionError,
+} from "./importSession.js";
+import { registerEnvSession, sessionFromEnv } from "./sessionFromEnv.js";
 import {
   listSessions,
   getSession,
@@ -97,10 +104,25 @@ const resolved = resolveNetwork(process.env.ALTANA_CHAIN);
 const NETWORK = resolved.network;
 const REGISTRY = resolved.registry;
 if (!resolved.recognized) {
+  /* Fatal, not a warning.
+   *
+   * This used to log and carry on, and what it carried on to was **BNB
+   * mainnet**, where the money is real. So a misspelled ALTANA_CHAIN, say
+   * bnb_testnet for bnb-testnet, put an agent on mainnet and the only notice
+   * went to stderr, which on an MCP server is the host's log and not anywhere
+   * the person who pasted the command will ever look.
+   *
+   * An unrecognised value is not a request for a default. It is a value nobody
+   * can act on, and guessing which chain somebody meant is the one guess in this
+   * server that can cost real money. */
   console.error(
-    `[altana-mcp] Unknown ALTANA_CHAIN="${resolved.requested}". ` +
-      `Supported: ${SUPPORTED_CHAINS}. Falling back to bnb.`,
+    `[altana-mcp] Unknown ALTANA_CHAIN="${resolved.requested}".\n` +
+      `[altana-mcp] Supported: ${SUPPORTED_CHAINS}\n` +
+      `[altana-mcp] Refusing to start rather than guessing: the fallback was ` +
+      `bnb mainnet, and a typo should not put an agent on a chain where the ` +
+      `money is real.`,
   );
+  process.exit(1);
 }
 console.error(`[altana-mcp] network: ${describeNetwork(NETWORK)}`);
 
@@ -907,6 +929,148 @@ tool(
     };
   },
 );
+
+// import_session — take a session somebody else granted and make it usable
+// here. The mirror image of grant_session: there, this server mints the key and
+// holds it; here, the key arrives from outside.
+//
+// This is what an agent wallet app needs. The wallet's owner is a passkey in a
+// browser, the app generates the session key and shows it exactly once, and the
+// person pastes it into their agent. There is no admin key on this machine and
+// there never will be, which is why nothing here asks for a wallet name.
+//
+// The session private key goes into the OS keychain, exactly as grant_session's
+// does. The metadata goes in ~/.altana/sessions.json. After this, session_execute
+// works by name and cannot tell the difference between a granted session and an
+// imported one.
+tool(
+  "import_session",
+  {
+    title: "Import a session granted elsewhere",
+    description:
+      "Take a session key granted by an Altana wallet app (or any other holder) " +
+      "and store it here under a name, so session_execute can use it. Needs both " +
+      "halves: the serialized session, which carries the permissions and expiry " +
+      "that were registered on-chain, and the private key that signs. Neither " +
+      "works alone. Nothing is sent on-chain: the grant already happened.",
+    inputSchema: {
+      sessionName: z
+        .string()
+        .describe("What to call this session here. Used by session_execute."),
+      bundle: z
+        .string()
+        .optional()
+        .describe(
+          "The whole thing the app gave you, as one JSON blob: " +
+            '{ "v": 1, "session": { ... }, "privateKey": "0x..." }.',
+        ),
+      session: z
+        .string()
+        .optional()
+        .describe(
+          "The serialized session as JSON, if you have the two halves separately. " +
+            "It has walletAddress, publicKey, permissions and expiry, and no key material.",
+        ),
+      privateKey: z
+        .string()
+        .optional()
+        .describe(
+          "The session private key. The app shows it once when the permission is created.",
+        ),
+    },
+  },
+  async ({
+    sessionName,
+    bundle,
+    session: sessionText,
+    privateKey,
+  }: {
+    sessionName: string;
+    bundle?: string;
+    session?: string;
+    privateKey?: string;
+  }) => {
+    // Same guard as grant_session: never silently replace a session somebody is
+    // already using. Sessions live in their own keychain namespace, so this can
+    // only collide with another session, never with an admin wallet.
+    if (await sessionKeyExists(sessionName)) {
+      throw new Error(
+        `A session named "${sessionName}" already exists. Pick a different name, ` +
+          `or remove the existing one first with revoke_session.`,
+      );
+    }
+
+    const parsed = parseImport({ bundle, session: sessionText, privateKey });
+
+    // deserializeSession is the real check: it refuses a key whose public half
+    // does not match the session's. Doing it before anything is written means a
+    // mismatched paste leaves no half-imported state behind.
+    const signer = signerFromPrivateKey(parsed.privateKey);
+    let rebuilt;
+    try {
+      rebuilt = deserializeSession(parsed.session, signer);
+    } catch (err) {
+      throw new ImportSessionError(
+        "That private key does not belong to that session: its public key does not " +
+          "match the session's. Check that both halves came from the same permission. " +
+          `(${err instanceof Error ? err.message : String(err)})`,
+      );
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    const { expired, secondsLeft } = expiryState(parsed.session, now);
+
+    await setSessionKey(sessionName, parsed.privateKey);
+    await saveSession({
+      name: sessionName,
+      // Imported sessions have no admin wallet here: the owner is a passkey in
+      // someone's browser. session_execute only needs the session half and the
+      // key, so this is a label and never a lookup.
+      walletName: "imported",
+      walletAddress: parsed.session.walletAddress,
+      publicKey: parsed.session.publicKey,
+      permissions: parsed.session.permissions,
+      expiry: parsed.session.expiry,
+      createdAt: new Date().toISOString(),
+    });
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              sessionName,
+              walletAddress: parsed.session.walletAddress,
+              sessionAddress: signer.address,
+              sessionPublicKey: parsed.session.publicKey,
+              // The identifier the relay matches a transaction against. Worth
+              // returning: it is how the wallet app attributes this agent's
+              // transactions in its activity feed.
+              keyHash: keyHashForSessionOrKey(rebuilt),
+              keyId: keccak256(parsed.session.publicKey),
+              permissions: parsed.session.permissions,
+              expiry: parsed.session.expiry,
+              expiresAt: new Date(parsed.session.expiry * 1000).toISOString(),
+              expired,
+              ...(expired
+                ? {
+                    warning:
+                      "This session has already expired, so it is stored but cannot act. " +
+                      "Ask for a fresh permission from the wallet that granted it.",
+                  }
+                : { secondsLeft }),
+              note: `Stored. Use it with session_execute by the name "${sessionName}". Nothing was sent on-chain: the grant already happened.`,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
+  },
+);
+
 
 // revoke_session — admin pulls authority on-chain. Local artifacts (keychain
 // entry + metadata file) are deleted after the on-chain tx confirms.
@@ -2021,6 +2185,35 @@ prompt(
 );
 
 // ---------- boot ------------------------------------------------------------
+
+// A session handed over in the environment, so a key never has to pass through
+// the agent's chat. Pasting one into an import_session tool call sends it to
+// whichever model provider the agent runs on, which is the one place a key for
+// somebody's wallet must not go.
+//
+// Loaded before the transport connects, so the first tool call already sees it,
+// and reported on stderr because stdout is the JSON-RPC channel.
+try {
+  const fromEnv = sessionFromEnv();
+  if (fromEnv) {
+    for (const line of registerEnvSession(fromEnv)) console.error(line);
+    if (fromEnv.persist) {
+      await setSessionKey(fromEnv.name, fromEnv.privateKey);
+      await saveSession(fromEnv.session);
+      console.error(`[altana-mcp] session "${fromEnv.name}" written to the keychain and ~/.altana`);
+    }
+  }
+} catch (err) {
+  // Refuse to start rather than run without a session the operator believes they
+  // supplied. Starting anyway leaves the agent saying "no session named X" while
+  // they can see they passed one, which sends them looking in the wrong place.
+  console.error(
+    `[altana-mcp] the session in the environment could not be loaded: ${
+      err instanceof Error ? err.message : String(err)
+    }`,
+  );
+  process.exit(1);
+}
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
