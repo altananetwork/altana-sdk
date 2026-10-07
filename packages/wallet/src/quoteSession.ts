@@ -52,6 +52,11 @@ export type QuoteLine = {
    * later write, which is one intent.
    */
   rootRegistration?: Pick<QuoteLine, "fee" | "feeToken" | "value" | "needed" | "neededFromRelay" | "fundedFromChainId">;
+  /**
+   * The gas budget the relay quoted this leg. The number that decides whether
+   * the leg fits; see `CallsQuote.combinedGas`.
+   */
+  combinedGas?: bigint;
   /** Why the fee could not be quoted. */
   reason?: string;
   /**
@@ -329,8 +334,11 @@ export async function withBalances(
 }
 
 /** The quote fields a line keeps: fee, value, and the native amount needed. */
-function pickQuote(q: CallsQuote): Pick<QuoteLine, "fee" | "feeToken" | "value" | "needed" | "neededFromRelay" | "fundedFromChainId"> {
+function pickQuote(
+  q: CallsQuote,
+): Pick<QuoteLine, "fee" | "feeToken" | "value" | "needed" | "neededFromRelay" | "fundedFromChainId" | "combinedGas"> {
   return {
+    ...(q.combinedGas !== undefined ? { combinedGas: q.combinedGas } : {}),
     fee: q.fee,
     feeToken: q.feeToken,
     value: q.value,

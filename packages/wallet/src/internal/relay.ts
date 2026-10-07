@@ -505,6 +505,18 @@ export async function submitCallsDetailed(
 export type CallsQuote = {
   /** Set when the relay quoted a second chain to fund this intent from: that chain. */
   fundedFromChainId?: number;
+  /**
+   * The gas budget the relay quoted this intent, summed over its quotes.
+   *
+   * This is the number that decides whether an intent fits: the relay bounds
+   * execution by it, and a call sequence needing more runs out of gas and
+   * reverts with no reason, which the Orchestrator reports as `CallError()` —
+   * naming neither gas nor the call. On 2026-10-07 that cost three escrowed
+   * runs and five revisions of the relay's intent buffer to establish a number
+   * the quote already contained. Absent when the relay's quote did not carry
+   * it.
+   */
+  combinedGas?: bigint;
   /** Maximum fee the intent pays, in `feeToken` base units, summed over the relay's quotes. */
   fee: bigint;
   /** The token the relay is charging its fee in (the zero address is native). */
@@ -541,8 +553,10 @@ export async function quoteCalls(
   // The token the relay quoted in; the one the rule named when the quote does not say.
   const feeToken = paymentTokenFromPrepared(prepared) ?? named ?? NATIVE_TOKEN;
   const fundedFromChainId = fundedFromChainIdOf(prepared, client.chain?.id);
+  const combinedGas = combinedGasFromPrepared(prepared);
   return {
     ...(fundedFromChainId !== undefined ? { fundedFromChainId } : {}),
+    ...(combinedGas !== undefined ? { combinedGas } : {}),
     fee,
     feeTokenDeficit,
     feeToken,
@@ -592,6 +606,25 @@ export function nativeNeededFromPrepared(
   }
   if (reported && fromRelay >= estimate) return { nativeNeeded: fromRelay, nativeNeededFromRelay: true };
   return { nativeNeeded: estimate, nativeNeededFromRelay: false };
+}
+
+/**
+ * The gas budget the relay quoted, summed over the response's quotes.
+ *
+ * Undefined rather than 0n when no quote carries it: 0 would read as "the relay
+ * quoted no gas", which is a different claim from "the relay did not say".
+ */
+export function combinedGasFromPrepared(prepared: any): bigint | undefined {
+  const quotes: any[] = prepared?.context?.quote?.quotes ?? [];
+  let total = 0n;
+  let seen = false;
+  for (const q of quotes) {
+    const g = q?.intent?.combinedGas;
+    if (g === undefined || g === null || g === "") continue;
+    total += toBigInt(g);
+    seen = true;
+  }
+  return seen ? total : undefined;
 }
 
 /** Reads the fee out of a prepareCalls response (porto decodes the quote's hex amounts). */
