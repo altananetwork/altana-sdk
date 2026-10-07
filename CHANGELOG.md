@@ -252,6 +252,31 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Fixed
 
+- **A wallet's first session key registers reliably again.** That first
+  registry write is two KeyStore calls, `initialRegisterKey` then
+  `registerKey`, and they were bundled into one relayed intent.
+  `initialRegisterKey` alone costs about 1.08M gas on a cold account, which
+  left `registerKey` too little of the intent's budget: it ran out of gas and
+  the Orchestrator returned `CallError()`, surfacing as a failed
+  `grantSession` with nothing naming gas. The two calls now go as two
+  sequential intents, each quoted for its own gas. They do not need to be
+  atomic — the direct (no-relay) registry path has always sent one
+  transaction per call — and if the first lands and the second fails, a retry
+  of `grantSession` reads KeyStore, finds the admin key, and sends only
+  `registerKey`. `SessionLeg` gains an optional `rootRegistration` carrying
+  the first intent's outcome; the leg's own `transactionHash` and
+  `blockNumber` still describe the session key's write, so cache proofs
+  anchor where they did before. `onStatus("registry-write", detail)` now
+  carries `detail.step` of `"root"` or `"session"` on a first write; the
+  event name is unchanged, so a consumer ignoring `step` simply sees it
+  twice. `quoteSession` prices both intents and sums them, and a registry
+  line gains `rootRegistration` with the first intent's own share.
+
+- **A failed registry write says what went wrong.** The leg's `reason` was
+  `registry write status FAILED`, which named neither the chain's revert nor
+  the relay's message, both of which were available one layer down. It now
+  carries the write's own words.
+
 - **A registration fee quoted a moment ago is no longer refused at inclusion.**
   `KeyStoreController.getRegistrationFeeInWei()` is oracle-priced — a USD fee
   converted through Chainlink's ETH/USD feed — so the wei amount moves with
