@@ -12,7 +12,7 @@
 import { describe, expect, test } from "bun:test";
 import { encodeFunctionData, parseEther, type Address } from "viem";
 import { BNB, BNB_TESTNET, CELO, CELO_SEPOLIA, ETHEREUM, SEPOLIA } from "../config.js";
-import { buildAdditionalRegisterCall, buildRevokeKeyCall } from "./keystore.js";
+import { buildAdditionalRegisterCall, buildRevokeKeyCall, registrationValueFor } from "./keystore.js";
 import {
   BNB_TESTNET_FAUCET_URL,
   CELO_SEPOLIA_FAUCET_URL,
@@ -66,7 +66,12 @@ describe("assertNoRegistryTargets", () => {
       /KeyStoreController address of Sepolia \(chainId 11155111\)/,
     );
     expect(() => assertNoRegistryTargets(CELO_SEPOLIA, [registerOnSepolia])).toThrow(
-      /plain transfer to a codeless address and burn its value \(200000000000000 wei here\)/,
+      // The margined value, because that is what would actually be burned.
+      new RegExp(
+        `plain transfer to a codeless address and burn its value \\(${registrationValueFor(
+          parseEther("0.0002"),
+        )} wei here\\)`,
+      ),
     );
     expect(() => assertNoRegistryTargets(CELO_SEPOLIA, [registerOnSepolia])).toThrow(
       /grantSession, revokeSession or registerSessionKey/,

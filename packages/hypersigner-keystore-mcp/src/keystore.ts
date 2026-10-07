@@ -12,6 +12,7 @@
  * It does NOT store spend limits or scope — `isValidKey` answers
  * "exists AND not revoked AND not expired", nothing more.
  */
+import { registrationValueFor } from "@altananetwork/sdk";
 import {
   type Address,
   type Chain,
@@ -325,7 +326,12 @@ export function buildRegisterCall(args: {
   });
   return {
     to: args.chain.controller,
-    value: args.fee,
+    // The quoted fee plus headroom for oracle drift; the controller refunds the
+    // excess to msg.sender. Imported from the SDK rather than recomputed here,
+    // for the same reason `cache.ts` imports the storage layout: the rule
+    // should be written down once, and a second copy of it is the fragile kind
+    // of duplication.
+    value: registrationValueFor(args.fee),
     data,
     chainId: args.chain.chainId,
   };

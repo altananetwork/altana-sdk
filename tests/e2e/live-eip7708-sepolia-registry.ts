@@ -137,6 +137,24 @@ async function main() {
   console.log(`funded ${formatUnits(CELO_FUNDING, 18)} CELO; Sepolia ETH before: ${formatUnits(sepBefore, 18)}`);
   assert(sepBefore === 0n, "the wallet holds no Sepolia ETH before the write");
 
+  // Capture the relay's own words for the registry bundle. The leg reports
+  // "status FAILED" without a reason, and a gas-config problem and a schema
+  // problem need telling apart.
+  const wire: { method: string; body: string }[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: any, init?: RequestInit) => {
+    const res = await realFetch(url as any, init);
+    try {
+      const req = JSON.parse(String(init?.body ?? "{}"));
+      const method = Array.isArray(req) ? req.map((r: any) => r.method).join(",") : req.method;
+      if (String(url).includes("railway") && /sendPrepared|getCallsStatus|prepareCalls/.test(String(method))) {
+        const clone = res.clone();
+        wire.push({ method: String(method), body: (await clone.text()).slice(0, 700) });
+      }
+    } catch {}
+    return res;
+  }) as typeof fetch;
+
   console.log("\ngrantSession with a registry leg on Sepolia");
   const granted = await client.grantSession({
     wallet,
@@ -148,7 +166,19 @@ async function main() {
   });
 
   for (const leg of granted.legs) {
-    console.log(`  ${leg.kind} on ${leg.chainId}: ${leg.status}${leg.transactionHash ? ` ${leg.transactionHash}` : ""}${(leg as any).via ? ` via ${(leg as any).via}` : ""}`);
+    const l = leg as any;
+    console.log(`  ${leg.kind} on ${leg.chainId}: ${leg.status}${leg.transactionHash ? ` ${leg.transactionHash}` : ""}${l.via ? ` via ${l.via}` : ""}`);
+    // A failing leg has to say why: "FAILED" alone cannot be told apart from a
+    // relay gas-config problem, and those have different owners.
+    for (const k of ["statusCode", "error", "reason", "detail", "skipped"]) {
+      if (l[k] !== undefined) console.log(`      ${k}: ${typeof l[k] === "object" ? JSON.stringify(l[k]) : l[k]}`);
+    }
+  }
+  console.log(`\n  full legs: ${JSON.stringify(granted.legs, (_k, v) => (typeof v === "bigint" ? v.toString() : v))}`);
+  globalThis.fetch = realFetch;
+  console.log("\n  --- relay wire, status and submit calls ---");
+  for (const w of wire.filter((x) => /sendPrepared|getCallsStatus/.test(x.method))) {
+    console.log(`  ${w.method}: ${w.body}`);
   }
   assert(granted.status === "granted", `the grant succeeded (${granted.status})`);
 

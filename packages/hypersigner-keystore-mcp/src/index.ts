@@ -237,10 +237,31 @@ export function buildServer(): McpServer {
         role,
         expiry,
       });
+      const quotedAtBlock = await publicClient.getBlockNumber();
       return jsonText({
         ...call,
         value: call.value,
         valueHex: toHex(call.value),
+        // This payload has a shelf life, and saying so is the point.
+        //
+        // The fee is oracle-priced, so `value` was correct for the oracle round
+        // it was quoted in and the controller requires `msg.value >= fee` at
+        // INCLUSION. `value` already carries headroom for ordinary drift
+        // (Chainlink ETH/USD steps at most ~1.4% per round on Sepolia), but
+        // headroom is not a substitute for a fresh quote: the 5.49% shortfall
+        // that prompted this was a 21-hour-old payload, not market movement.
+        //
+        // Checkable rather than advisory: call `keystore_registration_quote`
+        // again and compare `feeWei` with `quotedFeeWei` below. If it differs,
+        // re-encode instead of sending this.
+        quotedFeeWei: fee,
+        quotedFeeWeiHex: toHex(fee),
+        quotedAtBlock,
+        validity:
+          "Re-encode before sending if keystore_registration_quote no longer " +
+          "reports feeWei === quotedFeeWei: the fee is oracle-priced and the " +
+          "controller checks msg.value >= fee at inclusion. Never send a " +
+          "registry payload built in an earlier oracle round.",
         decoded: {
           function: role === "root" ? "initialRegisterKey" : "registerKey",
           keyId: deriveKeyId(pk),

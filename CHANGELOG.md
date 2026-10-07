@@ -252,6 +252,24 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Fixed
 
+- **A registration fee quoted a moment ago is no longer refused at inclusion.**
+  `KeyStoreController.getRegistrationFeeInWei()` is oracle-priced — a USD fee
+  converted through Chainlink's ETH/USD feed — so the wei amount moves with
+  every oracle round, while the controller requires `msg.value >= fee` at
+  **inclusion**. A registration call now carries the quoted fee plus **10%**,
+  via the exported `registrationValueFor`, and `requiredFunds` and the quote
+  line follow it because both sum the calls' own `value`. Overpaying costs
+  nothing: the controller refunds the excess to `msg.sender` with a full-gas
+  `call`, which an EIP-7702 delegated account can receive, and the refund is
+  `require`d so a failure reverts loudly rather than keeping the change.
+  10% is sized against the measurement rather than the symptom: Chainlink
+  ETH/USD steps at most ~1.4% per round on Sepolia, so this is about six times
+  the worst step. It is deliberately not large enough to absorb a stale
+  payload, because that is a lifecycle problem rather than a pricing one —
+  `keystore_encode_register_key` now returns `quotedFeeWei` and `quotedAtBlock`
+  with it, so a caller can compare against `keystore_registration_quote` and
+  re-encode rather than send a payload built in an earlier oracle round.
+
 - **Mirror proofs work again after Glamsterdam.** Ethereum Sepolia's block
   headers gained `blockAccessListHash` and `slotNumber` at block 11856337, so
   the SDK's header RLP encoder no longer reproduced the block hash and

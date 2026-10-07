@@ -11,6 +11,7 @@ import {
   buildInitialRegisterCall,
   buildAdditionalRegisterCall,
   buildRevokeKeyCall,
+  registrationValueFor,
 } from "./keystore.js";
 
 const CONTROLLER_ABI = [
@@ -68,7 +69,9 @@ test("buildAdditionalRegisterCall encodes registerKey(keyId=keccak256(pub), 0x0,
   });
 
   expect(call.to).toBe(BNB.keyStoreController);
-  expect(call.value).toBe(FEE);
+  // The call carries the fee plus the oracle-drift margin, refunded by the
+  // controller; expressed through the helper so it tracks the constant.
+  expect(call.value).toBe(registrationValueFor(FEE));
 
   const { functionName, args } = decodeFunctionData({
     abi: CONTROLLER_ABI,
@@ -102,7 +105,9 @@ test("buildInitialRegisterCall encodes initialRegisterKey with expiry forced to 
   const call = buildInitialRegisterCall({ publicKey: PUBKEY, fee: FEE, network: BNB });
 
   expect(call.to).toBe(BNB.keyStoreController);
-  expect(call.value).toBe(FEE);
+  // The call carries the fee plus the oracle-drift margin, refunded by the
+  // controller; expressed through the helper so it tracks the constant.
+  expect(call.value).toBe(registrationValueFor(FEE));
 
   const { functionName, args } = decodeFunctionData({
     abi: CONTROLLER_ABI,

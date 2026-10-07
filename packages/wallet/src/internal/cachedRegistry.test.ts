@@ -21,6 +21,7 @@ import { NATIVE_TOKEN } from "../config.js";
 import { createHeadlessPasskey } from "./passkey.js";
 import { createPrivateKeySigner, signerFromPrivateKey } from "./signer.js";
 import { assertRegistryFunding, isCachedRegistry, keyStoreCacheOf, planRegistryWrite, provisioningNetworks, registryFundsRequest, planRegistryFunding } from "./cachedRegistry.js";
+import { registrationValueFor } from "./keystore.js";
 
 const DEPLOYED_CACHE: Address = "0x37ebf8F17c3705568a03fB3A1629AcE7B3D95FFf";
 
@@ -208,7 +209,15 @@ describe("planRegistryFunding", () => {
       adminPublicKey: ("0x04" + "aa".repeat(64)) as Hex,
       calls: [call],
     });
-    expect(funding).toEqual([{ address: NATIVE_TOKEN, value: fee * 2n }]);
+    // Two values, and deliberately not the same one: `call` above is a
+    // hand-built fixture carrying the bare fee, while the prepended admin
+    // registration comes from `buildInitialRegisterCall` and so carries the
+    // oracle-drift margin. That planRegistryFunding returns their sum is the
+    // propagation property -- it adds up whatever `value` the calls declare
+    // rather than recomputing a fee of its own.
+    expect(funding).toEqual([
+      { address: NATIVE_TOKEN, value: fee + registrationValueFor(fee) },
+    ]);
   });
 
   test("no prepend once the wallet has keys; ETH it holds there does not stop the funding", async () => {

@@ -327,7 +327,8 @@ test("registerSessionKey registers an unregistered key: one registerKey call wit
   expect(feeReads).toBe(1);
   expect(submitted!.calls.length).toBe(1);
   expect(submitted!.calls[0].to).toBe(BNB.keyStoreController);
-  expect(submitted!.calls[0].value).toBe(FEE);
+  // registerSessionKey builds the call, so it carries the oracle-drift margin.
+  expect(submitted!.calls[0].value).toBe(realKeystore.registrationValueFor(FEE));
 
   const { functionName, args } = decodeFunctionData({
     abi: CONTROLLER_ABI,

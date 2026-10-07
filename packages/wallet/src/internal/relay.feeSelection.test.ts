@@ -15,6 +15,7 @@ import { buildRelayClient, SEPOLIA_FAUCET_URL, submitCallsDetailed, type KeyDesc
 import { submitRegistryWrite } from "./cachedRegistry.js";
 import { quoteExecute } from "../execute.js";
 import { quotingDeps } from "../quoteSession.js";
+import { registrationValueFor } from "./keystore.js";
 import capabilities from "./fixtures/celo-sepolia-capabilities.json" with { type: "json" };
 import prepared from "./fixtures/celo-sepolia-prepare-calls.json" with { type: "json" };
 
@@ -352,7 +353,10 @@ describe("registry write funded from the L2, on the wire", () => {
   // do with funding.
   test("a wallet that can clearly pay: the bare revert is not dressed up as a shortfall", async () => {
     const signer = createPrivateKeySigner();
-    const held = 5n * 10n ** 16n; // 0.05 ETH, against 0.0004 ETH of fees
+    // 0.05 ETH held, against 0.00042 ETH the calls send: the hand-built call
+    // carries the bare FEE and the prepended admin registration carries the
+    // oracle-drift margin, so the total is FEE + registrationValueFor(FEE).
+    const held = 5n * 10n ** 16n;
     mockRegistryWire({
       balance: held,
       activeKeys: [],
@@ -373,7 +377,7 @@ describe("registry write funded from the L2, on the wire", () => {
     );
     expect(thrown).toContain("its simulation reverted with no reason on Sepolia (chainId 11155111)");
     expect(thrown).toContain("the wallet's balance is not the cause: it holds 0.05 ETH on Sepolia");
-    expect(thrown).toContain("more than the 0.0004 ETH the calls send");
+    expect(thrown).toContain("more than the 0.00042 ETH the calls send");
     expect(thrown).not.toContain("cannot pay");
     expect(thrown).not.toContain("does not cover");
     expect(thrown).not.toContain(SEPOLIA_FAUCET_URL);
@@ -391,6 +395,7 @@ describe("registry write funded from the L2, on the wire", () => {
       },
     });
     // Both registration fees: the admin key is registered in the same intent.
+    // 0.00042 = the hand-built call's bare FEE plus the margined admin prepend.
     await expect(
       submitRegistryWrite(SEPOLIA, {
         walletAddress: signer.address,
@@ -399,8 +404,8 @@ describe("registry write funded from the L2, on the wire", () => {
       }),
     ).rejects.toThrow(
       "The relay rejected the request to prepare the call: its simulation reverted with no reason on Sepolia " +
-        `(chainId 11155111), simulating 2 calls to ${SEPOLIA.keyStoreController}, sending 0.0004 ETH; ` +
-        "the wallet cannot pay for it: it holds 0 ETH on Sepolia and needs 0.0004 ETH the calls send plus the " +
+        `(chainId 11155111), simulating 2 calls to ${SEPOLIA.keyStoreController}, sending 0.00042 ETH; ` +
+        "the wallet cannot pay for it: it holds 0 ETH on Sepolia and needs 0.00042 ETH the calls send plus the " +
         "relay fee; it holds nothing on any other chain the relay could fund it from; fund it at " +
         `${SEPOLIA_FAUCET_URL} (relay: intent reverted: 0x)`,
     );
@@ -415,7 +420,10 @@ describe("registry write funded from the L2, on the wire", () => {
       calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
     });
     const p = wire.prepare();
-    expect(p.capabilities.requiredFunds).toEqual([{ address: NATIVE_TOKEN, value: numberToHex(FEE * 2n) }]);
+    // FEE from the hand-built call plus the margined admin prepend.
+    expect(p.capabilities.requiredFunds).toEqual([
+      { address: NATIVE_TOKEN, value: numberToHex(FEE + registrationValueFor(FEE)) },
+    ]);
     expect(wire.prepares()).toHaveLength(1);
     expect(String(p.capabilities.meta.feeToken).toLowerCase()).toBe(NATIVE_TOKEN);
     expect(written.status).toBe("CONFIRMED");
