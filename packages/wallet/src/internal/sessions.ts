@@ -88,7 +88,30 @@ export type SessionLeg = {
   l1BlockNumber?: bigint;
   /** Cache legs: the cache entry after the proof, when one was read. */
   cachedKey?: CachedKey;
+  /**
+   * Registry legs: the first-time root registration, when the write needed one.
+   *
+   * A first registry write is two sequential intents, `initialRegisterKey` then
+   * `registerKey`, because the pair exceeds the gas one intent is quoted for.
+   * The leg's own fields always describe the SESSION write (`registerKey`), so
+   * `blockNumber` stays the block a cache proof must be anchored at or past;
+   * the root write's outcome lives here.
+   *
+   * `status: "CONFIRMED"` on a FAILED leg is the recoverable case: the root
+   * landed, so a retry of grantSession sends only `registerKey`.
+   */
+  rootRegistration?: RootRegistrationLeg;
   /** Why the leg was skipped or failed. */
+  reason?: string;
+};
+
+/** The root (`initialRegisterKey`) half of a first-time registry write. */
+export type RootRegistrationLeg = {
+  status: "CONFIRMED" | "FAILED";
+  transactionHash?: Hex;
+  blockNumber?: bigint;
+  /** Relay bundle id, on the relay path. */
+  callsId?: Hex;
   reason?: string;
 };
 
@@ -173,7 +196,16 @@ export type RevokeSessionStatus =
   | "done";
 
 /** The chain a per-chain progress event is about. */
-export type SessionStatusDetail = { chainId: number };
+export type SessionStatusDetail = {
+  chainId: number;
+  /**
+   * `registry-write` only, and only on a wallet's first registry write, which
+   * is two sequential intents: `root` is `initialRegisterKey`, `session` is
+   * `registerKey`. The event name is unchanged, so a consumer that ignores
+   * `step` simply sees `registry-write` twice, which is what happened.
+   */
+  step?: "root" | "session";
+};
 
 /** Options for grantSession. */
 export type GrantSessionOptions = {

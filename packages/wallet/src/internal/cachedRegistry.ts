@@ -36,6 +36,7 @@ import {
 import { hasRawPrivateKey, type Signer } from "./signer.js";
 import { isPasskeySigner } from "./passkey.js";
 import { buildFirstActionPrepend } from "./keystore.js";
+import type { RootRegistrationLeg } from "./sessions.js";
 import {
   blockNumberOfWrite,
   buildPublicClient,
@@ -170,6 +171,13 @@ export type RegistryWriteResult = {
   blockNumberError?: string;
   /** Relay bundle id on the relay path. */
   callsId?: Hex;
+  /**
+   * The root (`initialRegisterKey`) intent of a first-time write, when one was
+   * needed. This result's own fields always describe the session write.
+   */
+  rootRegistration?: RootRegistrationLeg;
+  /** Why the write failed, in the relay's or the chain's own words. */
+  reason?: string;
 };
 
 export type SubmitRegistryCallsArgs = {
@@ -181,6 +189,11 @@ export type SubmitRegistryCallsArgs = {
   calls: readonly Call[];
   /** Public client for the registry chain. Built from the config when omitted. */
   registryClient?: PublicClient;
+  /**
+   * Called before each intent of the write. A wallet's FIRST registry write is
+   * two intents, `root` then `session`; every later write is `session` only.
+   */
+  onStep?: (step: "root" | "session") => void;
 };
 
 /**
@@ -204,6 +217,79 @@ export async function submitRegistryCalls(
 }
 
 /**
+ * One relayed registry intent, reported as a root-registration outcome.
+ *
+ * Used for the `initialRegisterKey` half of a first-time write.
+ *
+ * It throws when the intent cannot be submitted, exactly as a single-intent
+ * write always has: the fee-selection code builds a careful diagnosis for that
+ * case (a bare revert must not be dressed up as a shortfall, see
+ * `relay.feeSelection.test.ts`), and `realSessionLegDeps.submitRegistry`
+ * already turns a throw into a FAILED leg carrying the message. Returning an
+ * outcome here instead would have made the same underlying failure throw or
+ * not depending on which of the two intents hit it.
+ *
+ * A submitted intent that the relay reports as not CONFIRMED is a different
+ * thing and comes back as a FAILED outcome, because then the caller has a
+ * bundle id and a reason to report.
+ */
+async function submitOneRelayedWrite(args: {
+  relayClient: ReturnType<typeof buildRelayClient>;
+  registryClient: PublicClient;
+  registry: NetworkConfig;
+  walletAddress: Address;
+  adminSigner: Signer;
+  calls: readonly Call[];
+}): Promise<RootRegistrationLeg> {
+  const { registry, walletAddress, adminSigner, calls, registryClient } = args;
+  try {
+    const requiredFunds = await planRegistryFunding({
+      registryClient,
+      registry,
+      walletAddress,
+      adminPublicKey: adminSigner.publicKey,
+      calls,
+      // `calls` is the registration itself, so its fee is counted once.
+      skipFirstActionPrepend: true,
+    });
+    const callsId = await submitCalls(args.relayClient, walletAddress, adminSigner, calls, {
+      feeToken: NATIVE_TOKEN,
+      requiredFunds,
+      submittingKey: { type: "secp256k1", publicKey: adminSigner.publicKey, role: "admin" },
+      network: registry,
+      // These calls ARE the first-action registration, so submitCalls must not
+      // prepend it again: it would register the admin key twice in one intent
+      // and pay the fee twice.
+      skipFirstActionPrepend: true,
+    });
+    const result = await waitForCalls(args.relayClient, callsId, undefined, undefined, {
+      chainId: registry.chainId,
+    });
+    const block =
+      result.status === "CONFIRMED"
+        ? await blockNumberOfWrite({
+            relayBlockNumber: result.blockNumber,
+            transactionHash: result.transactionHash,
+            publicClient: registryClient,
+          })
+        : undefined;
+    return {
+      status: result.status === "CONFIRMED" ? "CONFIRMED" : "FAILED",
+      callsId,
+      ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
+      ...(block?.blockNumber !== undefined ? { blockNumber: block.blockNumber } : {}),
+      ...(result.status !== "CONFIRMED" ? { reason: `relay reported status ${result.status}` } : {}),
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `The root registration (initialRegisterKey) could not be submitted, so the session ` +
+        `key's registerKey was not attempted. ${message}`,
+    );
+  }
+}
+
+/**
  * Submits registry calls on a registry chain directly: through its relay when
  * it has one, otherwise as transactions from the admin key. Used for a
  * registry chain that is not itself one of the networks being operated on
@@ -219,19 +305,75 @@ export async function submitRegistryWrite(
   const plan = planRegistryWrite(registry, adminSigner, walletAddress);
 
   if (plan.via === "relay") {
-    // submitCalls prepends the admin registration itself on a local-registry
-    // network, which the registry chain is.
     // The wallet pays the write from its balance on the L2, in the registry
     // chain's native token: the relay fronts the value and its own fee here.
     const relayClient = buildRelayClient(registry);
+
+    // A wallet's FIRST registry write is two calls, initialRegisterKey then
+    // registerKey, and submitCalls would bundle them into one intent. Measured
+    // on Celo Sepolia at the 1,500,000 intent buffer, initialRegisterKey alone
+    // costs 1,077,101 gas cold (KeyStore.initialRegisterKey 1,008,273), which
+    // leaves registerKey 44,555 of the intent's budget: it runs out of gas and
+    // the Orchestrator returns CallError() (infra, 2026-10-07). So send them as
+    // two sequential intents, each quoted for its own gas.
+    //
+    // They do not need to be atomic, and the EOA path below has always worked
+    // this way: one transaction per call, each confirmed before the next. What
+    // orders them is the sequence, not the bundling — KeyStore requires a root
+    // key before registerKey, and confirming the root intent first satisfies
+    // that across two intents exactly as within one.
+    const prepend = await buildFirstActionPrepend({
+      publicClient: registryClient,
+      network: registry,
+      walletAddress,
+      adminPublicKey: adminSigner.publicKey,
+    });
+
+    let rootRegistration: RootRegistrationLeg | undefined;
+    if (prepend.length > 0) {
+      args.onStep?.("root");
+      rootRegistration = await submitOneRelayedWrite({
+        relayClient,
+        registryClient,
+        registry,
+        walletAddress,
+        adminSigner,
+        calls: prepend,
+      });
+      if (rootRegistration.status !== "CONFIRMED") {
+        return {
+          via: "relay",
+          chainId: registry.chainId,
+          status: "FAILED",
+          rootRegistration,
+          reason:
+            `the root registration (initialRegisterKey) did not confirm, so the session ` +
+            `key's registerKey was not attempted: ${rootRegistration.reason ?? "no reason reported"}`,
+        };
+      }
+      // The session intent must NOT prepend the registration again. Leaving
+      // submitCalls to work that out from its own KeyStore read would make
+      // this depend on read-after-write consistency on the registry chain: a
+      // lagging or load-balanced RPC still answering `getKeys() == []` would
+      // prepend initialRegisterKey a second time and pay its fee twice. We
+      // just confirmed the root ourselves, so we say so instead of asking.
+    }
+    const rootHandled = prepend.length > 0;
+
+    args.onStep?.("session");
     const requiredFunds = await planRegistryFunding({
       registryClient,
       registry,
       walletAddress,
       adminPublicKey: adminSigner.publicKey,
       calls,
+      // Counted in the root intent already, when there was one.
+      ...(rootHandled ? { skipFirstActionPrepend: true } : {}),
     });
     const callsId = await submitCalls(relayClient, walletAddress, adminSigner, calls, {
+      // Only when we registered the root ourselves. With no root intent the
+      // prepend stays submitCalls's job, as it has always been.
+      ...(rootHandled ? { skipFirstActionPrepend: true } : {}),
       feeToken: NATIVE_TOKEN,
       requiredFunds,
       submittingKey: { type: "secp256k1", publicKey: adminSigner.publicKey, role: "admin" },
@@ -257,6 +399,14 @@ export async function submitRegistryWrite(
       ...(block && "blockNumberError" in block ? { blockNumberError: block.blockNumberError } : {}),
       ...(source?.chainId !== undefined ? { fundedFromChainId: Number(source.chainId) } : {}),
       ...(source?.transactionHash ? { sourceTransactionHash: source.transactionHash } : {}),
+      ...(rootRegistration ? { rootRegistration } : {}),
+      ...(result.status !== "CONFIRMED" && rootRegistration
+        ? {
+            reason:
+              `the session key's registerKey did not confirm (${result.status}). The root ` +
+              `registration DID confirm, so retrying grantSession sends registerKey only.`,
+          }
+        : {}),
     };
   }
 
@@ -277,8 +427,14 @@ export async function submitRegistryWrite(
     transport: http(registry.publicRpcUrl),
   });
 
+  // One transaction per call, each confirmed before the next: the same two-step
+  // shape the relay path above now uses. `last` is the SESSION write, so the
+  // returned blockNumber stays the one a cache proof must be anchored at.
   let last: { hash: Hex; blockNumber: bigint } | undefined;
-  for (const call of allCalls) {
+  let eoaRoot: RootRegistrationLeg | undefined;
+  for (const [i, call] of allCalls.entries()) {
+    const isRoot = prepend.length > 0 && i === 0;
+    args.onStep?.(isRoot ? "root" : "session");
     const hash = await walletClient.sendTransaction({
       to: call.to,
       value: call.value ?? 0n,
@@ -286,21 +442,42 @@ export async function submitRegistryWrite(
     });
     const receipt = await registryClient.waitForTransactionReceipt({ hash });
     if (receipt.status !== "success") {
+      const failed: RootRegistrationLeg = {
+        status: "FAILED",
+        transactionHash: hash,
+        blockNumber: receipt.blockNumber,
+        reason: "the transaction reverted",
+      };
       return {
         via: "eoa",
         chainId: registry.chainId,
         status: "FAILED",
         transactionHash: hash,
         blockNumber: receipt.blockNumber,
+        ...(isRoot ? { rootRegistration: failed } : eoaRoot ? { rootRegistration: eoaRoot } : {}),
+        reason: isRoot
+          ? "the root registration (initialRegisterKey) reverted, so registerKey was not attempted"
+          : eoaRoot
+            ? "the session key's registerKey reverted. The root registration DID confirm, " +
+              "so retrying grantSession sends registerKey only."
+            : "the registry transaction reverted",
       };
     }
-    last = { hash, blockNumber: receipt.blockNumber };
+    if (isRoot) eoaRoot = { status: "CONFIRMED", transactionHash: hash, blockNumber: receipt.blockNumber };
+    else last = { hash, blockNumber: receipt.blockNumber };
   }
+  // `last` is the session write. With no session call to make (an empty
+  // `calls`, which no caller does today) fall back to the root's receipt
+  // rather than returning CONFIRMED with no block for a proof to anchor at.
+  const reported = last ?? (eoaRoot?.transactionHash && eoaRoot.blockNumber !== undefined
+    ? { hash: eoaRoot.transactionHash, blockNumber: eoaRoot.blockNumber }
+    : undefined);
   return {
     via: "eoa",
+    ...(eoaRoot ? { rootRegistration: eoaRoot } : {}),
     chainId: registry.chainId,
     status: "CONFIRMED",
-    ...(last ? { transactionHash: last.hash, blockNumber: last.blockNumber } : {}),
+    ...(reported ? { transactionHash: reported.hash, blockNumber: reported.blockNumber } : {}),
   };
 }
 
@@ -329,14 +506,22 @@ export async function planRegistryFunding(args: {
   walletAddress: Address;
   adminPublicKey: Hex;
   calls: readonly Call[];
+  /**
+   * Set when `calls` IS the first-action registration, so its fee is not
+   * counted twice. The root intent of a first-time write passes it, matching
+   * `submitCalls`'s option of the same name.
+   */
+  skipFirstActionPrepend?: boolean;
 }): Promise<readonly RequiredFund[]> {
   // The admin's first registration is prepended inside the relay request; its fee counts here.
-  const prepend = await buildFirstActionPrepend({
-    publicClient: args.registryClient,
-    network: args.registry,
-    walletAddress: args.walletAddress,
-    adminPublicKey: args.adminPublicKey,
-  });
+  const prepend = args.skipFirstActionPrepend
+    ? []
+    : await buildFirstActionPrepend({
+        publicClient: args.registryClient,
+        network: args.registry,
+        walletAddress: args.walletAddress,
+        adminPublicKey: args.adminPublicKey,
+      });
   const valueNeeded = [...prepend, ...args.calls].reduce((sum, c) => sum + (c.value ?? 0n), 0n);
   const balance = await args.registryClient.getBalance({ address: args.walletAddress });
   return registryFundsRequest({ balance, valueNeeded });

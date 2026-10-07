@@ -384,6 +384,16 @@ export type SubmitCallsOptions = {
    * from an L2 balance.
    */
   requiredFunds?: readonly RequiredFund[];
+  /**
+   * Skips this intent's first-action KeyStore registration.
+   *
+   * Set only by `submitRegistryWrite` when the calls it passes ARE that
+   * registration: a first-time registry write is two sequential intents, and
+   * the first one carries `initialRegisterKey` itself. Without this, the
+   * prepend fires on that intent too and registers the admin key twice in one
+   * intent, paying the fee twice.
+   */
+  skipFirstActionPrepend?: boolean;
   submittingKey: KeyDescriptor;
   authorizeKeys?: readonly KeyDescriptor[];
   revokeKeys?: readonly KeyDescriptor[];
@@ -639,7 +649,7 @@ async function prepareIntent(
   // skipped here: the admin registers lazily on the registry chain inside the
   // wallet's first registry write (see submitRegistryCalls).
   let effectiveCalls: readonly Call[] = calls;
-  if (needsFirstActionPrepend(opts.network, opts.submittingKey.role)) {
+  if (!opts.skipFirstActionPrepend && needsFirstActionPrepend(opts.network, opts.submittingKey.role)) {
     const publicClient = buildPublicClient(opts.network);
     const prepend = await buildFirstActionPrepend({
       publicClient,

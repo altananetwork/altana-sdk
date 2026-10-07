@@ -22,7 +22,7 @@ import {
   type Call,
   type KeyDescriptor,
 } from "./relay.js";
-import type { CacheSyncReport, SessionLeg } from "./sessions.js";
+import type { CacheSyncReport, RootRegistrationLeg, SessionLeg } from "./sessions.js";
 import type { Signer } from "./signer.js";
 import type { Wallet } from "./types.js";
 import { readCachedKey } from "../syncKeyToL2.js";
@@ -40,6 +40,8 @@ export type IntentOutcome = {
   blockNumber?: bigint;
   /** Set when a block number was asked for, the intent confirmed, and the block stayed unknown. */
   blockNumberError?: string;
+  /** Registry writes: the root (`initialRegisterKey`) intent of a first-time write. */
+  rootRegistration?: RootRegistrationLeg;
   reason?: string;
 };
 
@@ -66,7 +68,13 @@ export type SessionLegDeps = {
   /** Registry calls on a registry chain that is not one of the account legs. Never throws. */
   submitRegistry(
     registry: NetworkConfig,
-    args: { wallet: Wallet; adminSigner: Signer; calls: readonly Call[] },
+    args: {
+      wallet: Wallet;
+      adminSigner: Signer;
+      calls: readonly Call[];
+      /** Called before each intent: `root` then `session` on a first-time write. */
+      onStep?: (step: "root" | "session") => void;
+    },
   ): Promise<IntentOutcome & { via: "relay" | "eoa" }>;
   proveIntoCache(
     wallet: Wallet,
@@ -148,6 +156,7 @@ export const realSessionLegDeps: SessionLegDeps = {
         walletAddress: args.wallet.address,
         adminSigner: args.adminSigner,
         calls: args.calls,
+        ...(args.onStep ? { onStep: args.onStep } : {}),
       });
       return {
         via: written.via,
@@ -157,7 +166,13 @@ export const realSessionLegDeps: SessionLegDeps = {
         ...(written.blockNumberError ? { blockNumberError: written.blockNumberError } : {}),
         ...(written.fundedFromChainId !== undefined ? { fundedFromChainId: written.fundedFromChainId } : {}),
         ...(written.sourceTransactionHash ? { sourceTransactionHash: written.sourceTransactionHash } : {}),
-        ...(written.status !== "CONFIRMED" ? { reason: `registry write status ${written.status}` } : {}),
+        ...(written.rootRegistration ? { rootRegistration: written.rootRegistration } : {}),
+        // Prefer the write's own words. `registry write status FAILED` names
+        // nothing: it is what the spine report printed for a failure whose
+        // cause was known one layer down.
+        ...(written.status !== "CONFIRMED"
+          ? { reason: written.reason ?? `registry write status ${written.status}` }
+          : {}),
       };
     } catch (err) {
       return { via, status: "FAILED", reason: errorMessage(err) };
@@ -229,6 +244,7 @@ export function legFromOutcome(
     ...(outcome.blockNumber !== undefined ? { blockNumber: outcome.blockNumber } : {}),
     ...(outcome.fundedFromChainId !== undefined ? { fundedFromChainId: outcome.fundedFromChainId } : {}),
     ...(outcome.sourceTransactionHash ? { sourceTransactionHash: outcome.sourceTransactionHash } : {}),
+    ...(outcome.rootRegistration ? { rootRegistration: outcome.rootRegistration } : {}),
     ...(outcome.reason ? { reason: outcome.reason } : {}),
   };
 }

@@ -217,6 +217,9 @@ export async function runGrantSession(
       bundled.add(r.chainId);
       return;
     }
+    // Unchanged: the write for this chain is starting. Kept unconditional so a
+    // consumer still sees the event when the write fails before any intent is
+    // attempted, or when a dep reports no steps at all.
     onStatus?.("registry-write", { chainId: r.chainId });
     const done = (async () => {
       let fee: bigint;
@@ -225,7 +228,15 @@ export async function runGrantSession(
       } catch (err) {
         return { via: r.relayUrl ? "relay" : "eoa", status: "FAILED", reason: `could not read the registration fee: ${errorMessage(err)}` } as const;
       }
-      return deps.submitRegistry(r, { wallet, adminSigner, calls: [registerCall(r, fee)] });
+      // A first-time write is two intents; the step says which one is running.
+      // The event name is unchanged, so a consumer ignoring `step` sees
+      // `registry-write` twice, which is what actually happens.
+      return deps.submitRegistry(r, {
+        wallet,
+        adminSigner,
+        calls: [registerCall(r, fee)],
+        onStep: (step) => onStatus?.("registry-write", { chainId: r.chainId, step }),
+      });
     })();
     registryDone.set(r.chainId, done);
     registryLegs.push(done.then((o) => legFromOutcome(r.chainId, "registry", o, o.via)));
