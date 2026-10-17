@@ -503,8 +503,13 @@ async function relayCallsStatus(callsId: Hex): Promise<string> {
 
 /** Where this run's JSON goes: one file per shape, so neither overwrites the other. */
 function runFile(): URL {
+  // Dated and stamped: three runs of this script overwrote each other's record
+  // in a single afternoon, and an evidence file ended up pointing at a run it
+  // was not describing.
   const shape = record.walletWasFresh ? "fresh" : "rootregistered";
-  return new URL(`./celo-first-grant-run-${shape}.json`, import.meta.url);
+  const day = new Date().toISOString().slice(0, 10);
+  const build = String(record.sdkBuild ?? "nostamp").replace(/[^a-zA-Z0-9]/g, "");
+  return new URL(`./celo-first-grant-run-${shape}-${day}-${build}.json`, import.meta.url);
 }
 
 const GETKEYS_ABI = [

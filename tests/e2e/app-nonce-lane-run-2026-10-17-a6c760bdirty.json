@@ -1,0 +1,38 @@
+{
+  "relay": "https://relay-staging-production-2657.up.railway.app",
+  "startedAt": "2026-10-17T09:56:34.602Z",
+  "txCount": 3,
+  "sdkBuild": "a6c760b+dirty",
+  "wallet": "0xA1632491dC6DC046DE06c48F01Af3f4E29187C97",
+  "statusEvents": [
+    "t+10.0s account-authorization chain 11142220",
+    "t+14.1s registry-write chain 11155111",
+    "t+14.5s registry-write chain 11155111 (root)",
+    "t+26.1s done",
+    "t+52.2s registry-write chain 11155111 (session)",
+    "t+64.5s cache-sync chain 11142220"
+  ],
+  "grantReturnedAt": "t+26.1s",
+  "allSettledSeconds": 9,
+  "failures": [],
+  "appTxs": [
+    "0x7bc37da5da26282e1f2f93b548c6bac75b24af360256c74aca95dfad5b091f7c",
+    "0xd0c51e4c7f4390085855a94d3a39a08e8dea49bbb81f56f023fe403ac80cce81",
+    "0x1ab64bcb7814ebb52a970abcd37806716635d24d6128c25df51eb41561e396f1"
+  ],
+  "appLaneCounters": [
+    "0",
+    "1",
+    "2"
+  ],
+  "registryLeg": {
+    "status": "CONFIRMED",
+    "tx": "0xd541c13b7d16f74fb61c886e77a23cd940919be802fc56e1b95fec91a162fca6"
+  },
+  "registrationSourceLane": "LANE 0 (the relay's)",
+  "swept": {
+    "value": "1.384391041954242183",
+    "tx": "0x3af7d4c0bd00c2bb45388934d43f1dbdc70edc08ee816b2dc920fd0dfeeefe9d"
+  },
+  "verdict": "PASS: 3 app transactions during a live registration, no InvalidNonce, app lane vs lane 0"
+}

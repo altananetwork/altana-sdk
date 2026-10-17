@@ -39,7 +39,8 @@
     "check:header-rlp": "bun run check-header-rlp-live.ts",
     "build:x402": "cd ../../packages/x402-server && bun run build",
     "serve:x402-celo": "bun run build:x402 && bun run serve-x402-celo.ts",
-    "live:celo-first": "bun run live-celo-first-grant.ts"
+    "live:celo-first": "bun run live-celo-first-grant.ts",
+    "live:app-lane": "bun run live-app-nonce-lane.ts"
   },
   "dependencies": {
     "@altananetwork/hypersigner-keystore-mcp": "workspace:*",
