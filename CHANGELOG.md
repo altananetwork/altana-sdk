@@ -37,6 +37,13 @@ version may contain breaking changes.
   approvals that no MCP tool could make. x402 payments are signed rather than
   sent by the session, so its daily spend caps do not bound them.
 
+- **`fetchWithX402` discovers canonical x402 v2 header challenges.** A present
+  `PAYMENT-REQUIRED` header supplies the complete version, resource and payment
+  options, even with an empty or non-JSON response body. Malformed or unsupported
+  header challenges fail before signing instead of falling back to conflicting
+  body instructions. When the header is absent, legacy v1, v2 and B402 body
+  challenges keep working. Each call still signs and retries at most once.
+
 ### Fixed
 
 - **`@altananetwork/mcp`: `grant_session` stores the session key before it
