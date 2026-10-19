@@ -134,8 +134,21 @@ async function onChainCounter(
 }
 
 /**
- * Runs `send` with the nonce it should use on the app lane, one intent at a
- * time per wallet and chain.
+ * What `send` hands back: its own result, and optionally the work that must
+ * finish before the lane is free again.
+ *
+ * `settled` exists for a caller that returns before its intent is mined
+ * (`execute`'s `noWait`). The lane is **not** released when the intent is sent,
+ * only when it settles, because a lane's counter does not advance until the
+ * intent executes: handing the next nonce out at submission time gives the
+ * second intent a number the account has not reached, and the relay drops it
+ * (qa, 2026-10-19: 8 of 10 failures on the live testnet relay).
+ */
+export type LaneOutcome<T> = { result: T; settled?: Promise<unknown> };
+
+/**
+ * Runs `send` with the nonce it should use, one intent at a time per wallet,
+ * chain and lane, and holds the lane until that intent is **mined**.
  *
  * Why it queues: a lane's counter is strictly sequential, so counter N+1 cannot
  * execute before N. Handing out N and N+1 concurrently would not avoid a
@@ -145,22 +158,30 @@ async function onChainCounter(
  * transactions, which were always going to be ordered; it is not a wait on the
  * relay's background work, which is the thing that must never block an app.
  *
+ * Why it holds until mined rather than until sent: the account's counter for a
+ * lane advances when the intent executes, not when the relay accepts it, so
+ * until then the next nonce is still the one in flight. That is how a single
+ * EOA behaves, and it is the whole rule.
+ *
  * `send` is given `undefined` when the account cannot be asked for a counter
- * (an undelegated wallet), meaning "send this without a nonce of ours".
+ * (an undelegated wallet), meaning "send this without a nonce of ours", and
+ * the lane it was given, so a caller can report or drop it without re-deriving
+ * it.
  *
  * On `InvalidNonce` this process's belief is dropped, so the retry re-reads the
  * chain rather than insisting on a number the account has already refused.
  */
 export async function withAppLaneNonce<T>(
   args: { publicClient: PublicClient; wallet: Address; chainId: number; keyHash: Hex },
-  send: (nonce: bigint | undefined) => Promise<T>,
+  send: (nonce: bigint | undefined, lane: bigint) => Promise<LaneOutcome<T>>,
 ): Promise<T> {
   const lane = laneForKeyHash(args.keyHash);
   const key = stateKey(args.chainId, args.wallet, lane);
   const previous = queue.get(key);
 
-  const run = (async (): Promise<T> => {
-    // Wait for the intent before this one ON THIS LANE, however it ended.
+  const run = (async (): Promise<LaneOutcome<T>> => {
+    // Wait for the intent before this one ON THIS LANE to be MINED, however it
+    // ended.
     // Another key's intents are on another lane and queue separately.
     if (previous) await previous.catch(() => undefined);
 
@@ -168,7 +189,7 @@ export async function withAppLaneNonce<T>(
     if (chainCounter === undefined) {
       // Undelegated: no lane, let the relay choose.
       forgetAppLane(args.chainId, args.wallet, lane);
-      return await send(undefined);
+      return await send(undefined, lane);
     }
 
     // The chain is the authority; this process's belief only ever runs ahead of
@@ -177,18 +198,27 @@ export async function withAppLaneNonce<T>(
     const counter = believed !== undefined && believed > chainCounter ? believed : chainCounter;
 
     try {
-      const result = await send(laneNonce(lane, counter));
+      const outcome = await send(laneNonce(lane, counter), lane);
       intended.set(key, counter + 1n);
-      return result;
+      return outcome;
     } catch (err) {
       forgetAppLane(args.chainId, args.wallet, lane);
       throw err;
     }
   })();
 
-  queue.set(key, run);
-  void run.catch(() => undefined).then(() => {
-    if (queue.get(key) === run) queue.delete(key);
+  // The queue's tail is "mined", not "sent": a caller that returns before its
+  // intent lands hands back `settled`, and the next intent on this lane waits
+  // for that too.
+  const held = run
+    .then(
+      (outcome) => outcome.settled,
+      () => undefined,
+    )
+    .catch(() => undefined);
+  queue.set(key, held);
+  void held.then(() => {
+    if (queue.get(key) === held) queue.delete(key);
   });
-  return run;
+  return run.then((outcome) => outcome.result);
 }

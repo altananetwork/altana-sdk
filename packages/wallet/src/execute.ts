@@ -14,7 +14,7 @@ import {
 } from "./internal/relay.js";
 import type { ExecuteResult, Wallet } from "./internal/types.js";
 import type { Session } from "./internal/sessions.js";
-import { withAppLaneNonce } from "./internal/appNonceLane.js";
+import { forgetAppLane, withAppLaneNonce } from "./internal/appNonceLane.js";
 import { keyHashForSigner } from "./internal/erc1271.js";
 
 export type ExecuteOptions = {
@@ -135,36 +135,94 @@ export async function executeWithReceipts(
   // collision, not remove it. It passes `undefined` for a wallet that is not
   // delegated yet, where there is no account to ask and the relay's own choice
   // is the right one.
-  const { callsId, feeToken } = await withAppLaneNonce(
-    {
-      publicClient: buildPublicClient(network),
-      wallet: walletAddress,
-      chainId: network.chainId,
-      keyHash: keyHashForSigner(signer),
-    },
-    (nonce) =>
-      submitCallsDetailed(relayClient, walletAddress, signer, userCalls, {
+  const lane = {
+    publicClient: buildPublicClient(network),
+    wallet: walletAddress,
+    chainId: network.chainId,
+    keyHash: keyHashForSigner(signer),
+  };
+
+  return await withAppLaneNonce<ExecuteWithReceiptsResult>(lane, async (nonce, laneSeqKey) => {
+    const { callsId, feeToken } = await submitCallsDetailed(
+      relayClient,
+      walletAddress,
+      signer,
+      userCalls,
+      {
         ...(opts.feeToken ? { feeToken: opts.feeToken } : {}),
         ...(nonce !== undefined ? { nonce } : {}),
         submittingKey,
         network,
-      }),
+      },
+    );
+    const charged = feeToken ? { feeToken } : {};
+    /** The chain is the authority once an intent of ours did not land. */
+    const dropLane = () => forgetAppLane(lane.chainId, lane.wallet, laneSeqKey);
+
+    if (opts?.noWait) {
+      // The caller wanted to get on with it, so it gets PENDING now -- but the
+      // LANE is held until the bundle settles. The account's counter does not
+      // advance until the intent executes, so releasing here would hand the
+      // next transaction a nonce the account has not reached.
+      const settled = (async () => {
+        const seen = await waitForCalls(relayClient, callsId).catch(() => undefined);
+        if (!seen || seen.status !== "CONFIRMED") dropLane();
+      })();
+      return { result: { callsId, status: "PENDING" as const, ...charged }, settled };
+    }
+
+    const result = await waitForCalls(relayClient, callsId);
+    if (result.status !== "CONFIRMED") dropLane();
+
+    // A FAILED bundle with no receipt never reached a block: the relay refused
+    // it at its own simulation and reports a bare status code, naming neither
+    // the call nor the reason. Returned as a status it was indistinguishable
+    // from an intent that landed and reverted, which is a different
+    // investigation, and it is the shape a dropped nonce arrives in.
+    if (result.status === "FAILED" && (result.receipts?.length ?? 0) === 0) {
+      throw new Error(silentlyDroppedMessage({ callsId, nonce, lane: laneSeqKey, chainId: network.chainId, statusCode: result.statusCode }));
+    }
+
+    return {
+      result: {
+        callsId,
+        status: result.status as ExecuteResult["status"],
+        ...charged,
+        ...(result.statusCode !== undefined ? { statusCode: result.statusCode } : {}),
+        ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
+        ...(result.receipts ? { receipts: result.receipts } : {}),
+      },
+    };
+  });
+}
+
+/**
+ * What to say when the relay reports a bundle FAILED with no receipt anywhere.
+ *
+ * The status alone names nothing, and this is the exact shape a nonce the
+ * account never reached arrives in, so the nonce and its lane belong in the
+ * message: a reader can check `getNonce(lane)` against it in one call.
+ */
+function silentlyDroppedMessage(args: {
+  callsId: Hex;
+  nonce: bigint | undefined;
+  lane: bigint;
+  chainId: number;
+  statusCode?: number;
+}): string {
+  const code = args.statusCode !== undefined ? ` (status code ${args.statusCode})` : "";
+  const noncePart =
+    args.nonce === undefined
+      ? "the relay chose this intent's nonce, so the SDK cannot say which it was"
+      : `nonce ${args.nonce} — counter ${args.nonce & ((1n << 64n) - 1n)} on lane 0x${args.lane.toString(16)}`;
+  return (
+    `The relay reported this transaction FAILED${code} with no receipt on any chain, so it never ` +
+    `reached a block: it was refused before being broadcast, not reverted on chain. ` +
+    `Bundle ${args.callsId} on chain ${args.chainId}, ${noncePart}. ` +
+    `If the counter is ahead of what \`getNonce\` reports for that lane, the account never ` +
+    `reached this nonce and the intent was dropped for it; the SDK has already discarded its ` +
+    `view of the lane, so retrying re-reads the chain.`
   );
-  const charged = feeToken ? { feeToken } : {};
-
-  if (opts?.noWait) {
-    return { callsId, status: "PENDING", ...charged };
-  }
-
-  const result = await waitForCalls(relayClient, callsId);
-  return {
-    callsId,
-    status: result.status as ExecuteResult["status"],
-    ...charged,
-    ...(result.statusCode !== undefined ? { statusCode: result.statusCode } : {}),
-    ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
-    ...(result.receipts ? { receipts: result.receipts } : {}),
-  };
 }
 
 /**

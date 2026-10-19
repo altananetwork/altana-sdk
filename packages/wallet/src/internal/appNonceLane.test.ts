@@ -46,6 +46,17 @@ function fakeClient(counters: Record<string, bigint> | "undelegated") {
   };
 }
 
+/**
+ * `withAppLaneNonce` with the old one-value callback, for the tests that do not
+ * care about the hold-until-mined part. `settled` is covered on its own below.
+ */
+function withLane<T>(
+  args: { publicClient: PublicClient; wallet: Address; chainId: number; keyHash: Hex },
+  send: (nonce: bigint | undefined) => Promise<T>,
+): Promise<T> {
+  return withAppLaneNonce(args, async (nonce) => ({ result: await send(nonce) }));
+}
+
 describe("the lane a key signs on", () => {
   test("is derived from the key hash, is never 0 and never the multichain prefix", () => {
     for (const label of ["a", "b", "c", "session-1", "admin", ""]) {
@@ -88,7 +99,7 @@ describe("the nonce an app transaction is given", () => {
     const lane = laneForKeyHash(kh);
     const fake = fakeClient({ [lane.toString(16)]: 5n });
     const seen: (bigint | undefined)[] = [];
-    await withAppLaneNonce({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: kh }, async (n) => {
+    await withLane({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: kh }, async (n) => {
       seen.push(n);
     });
     expect(seen).toEqual([laneNonce(lane, 5n)]);
@@ -103,7 +114,7 @@ describe("the nonce an app transaction is given", () => {
     const kh = keyHash("k12");
     const fake = fakeClient("undelegated");
     const seen: (bigint | undefined)[] = [];
-    await withAppLaneNonce({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: kh }, async (n) => {
+    await withLane({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: kh }, async (n) => {
       seen.push(n);
     });
     expect(seen).toEqual([undefined]);
@@ -120,7 +131,7 @@ describe("the nonce an app transaction is given", () => {
     const seen: (bigint | undefined)[] = [];
     const body = async (n: bigint | undefined) => void seen.push(n);
     for (let i = 0; i < 3; i++) {
-      await withAppLaneNonce({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: kh }, body);
+      await withLane({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: kh }, body);
     }
     expect(seen).toEqual([laneNonce(lane, 0n), laneNonce(lane, 1n), laneNonce(lane, 2n)]);
   });
@@ -134,12 +145,12 @@ describe("the nonce an app transaction is given", () => {
     let releaseFirst!: () => void;
     const inFlight = new Promise<void>((r) => (releaseFirst = r));
 
-    const first = withAppLaneNonce({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: kh }, async (n) => {
+    const first = withLane({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: kh }, async (n) => {
       order.push(`first:${n! & ((1n << 64n) - 1n)}`);
       await inFlight;
       order.push("first:done");
     });
-    const second = withAppLaneNonce({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: kh }, async (n) => {
+    const second = withLane({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: kh }, async (n) => {
       order.push(`second:${n! & ((1n << 64n) - 1n)}`);
     });
 
@@ -166,11 +177,11 @@ describe("the nonce an app transaction is given", () => {
     let releaseA!: () => void;
     const aInFlight = new Promise<void>((r) => (releaseA = r));
 
-    const runA = withAppLaneNonce({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: a }, async (n) => {
+    const runA = withLane({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: a }, async (n) => {
       order.push(`A:${n! >> 64n === laneA ? "ownLane" : "wrongLane"}:${n! & ((1n << 64n) - 1n)}`);
       await aInFlight;
     });
-    const runB = withAppLaneNonce({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: b }, async (n) => {
+    const runB = withLane({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: b }, async (n) => {
       order.push(`B:${n! >> 64n === laneB ? "ownLane" : "wrongLane"}:${n! & ((1n << 64n) - 1n)}`);
       return n;
     });
@@ -199,7 +210,7 @@ describe("the nonce an app transaction is given", () => {
     const laneB = laneForKeyHash(b);
     const fake = fakeClient({ [laneA.toString(16)]: 0n, [laneB.toString(16)]: 0n });
     const fire = (kh: Hex) =>
-      withAppLaneNonce({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: kh }, async (n) => n);
+      withLane({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: kh }, async (n) => n);
 
     await fire(a);
     await fire(b);
@@ -223,13 +234,13 @@ describe("the nonce an app transaction is given", () => {
     const kh = keyHash("k16");
     const lane = laneForKeyHash(kh);
     const fake = fakeClient({ [lane.toString(16)]: 0n });
-    await withAppLaneNonce({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: kh }, async () => {});
+    await withLane({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: kh }, async () => {});
     expect(intendedAppLaneCounter(CELO, w, lane)).toBe(1n);
 
     // Another process used this key's lane: the account is further along.
     fake.set(lane, 9n);
     const seen: (bigint | undefined)[] = [];
-    await withAppLaneNonce({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: kh }, async (n) => {
+    await withLane({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: kh }, async (n) => {
       seen.push(n);
     });
     expect(seen).toEqual([laneNonce(lane, 9n)]);
@@ -241,14 +252,14 @@ describe("the nonce an app transaction is given", () => {
     const lane = laneForKeyHash(kh);
     const fake = fakeClient({ [lane.toString(16)]: 4n });
     await expect(
-      withAppLaneNonce({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: kh }, async () => {
+      withLane({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: kh }, async () => {
         throw new Error("InvalidNonce(InvalidNonce)");
       }),
     ).rejects.toThrow("InvalidNonce");
     expect(intendedAppLaneCounter(CELO, w, lane)).toBeUndefined();
 
     const seen: (bigint | undefined)[] = [];
-    await withAppLaneNonce({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: kh }, async (n) => {
+    await withLane({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: kh }, async (n) => {
       seen.push(n);
     });
     expect(seen).toEqual([laneNonce(lane, 4n)]);
@@ -259,10 +270,10 @@ describe("the nonce an app transaction is given", () => {
     const kh = keyHash("k18");
     const lane = laneForKeyHash(kh);
     const fake = fakeClient({ [lane.toString(16)]: 0n });
-    const failing = withAppLaneNonce({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: kh }, async () => {
+    const failing = withLane({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: kh }, async () => {
       throw new Error("relay down");
     });
-    const after = withAppLaneNonce({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: kh }, async (n) => n);
+    const after = withLane({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: kh }, async (n) => n);
     await expect(failing).rejects.toThrow("relay down");
     expect(await after).toBe(laneNonce(lane, 0n));
   });
@@ -274,7 +285,7 @@ describe("the nonce an app transaction is given", () => {
     const lane = laneForKeyHash(kh);
     const fake = fakeClient({ [lane.toString(16)]: 0n });
     const nonceFor = (w: Address, chainId: number) =>
-      withAppLaneNonce({ publicClient: fake.client, wallet: w, chainId, keyHash: kh }, async (n) => n);
+      withLane({ publicClient: fake.client, wallet: w, chainId, keyHash: kh }, async (n) => n);
 
     expect(await nonceFor(a, CELO)).toBe(laneNonce(lane, 0n));
     expect(await nonceFor(a, CELO)).toBe(laneNonce(lane, 1n));
@@ -288,12 +299,12 @@ describe("the nonce an app transaction is given", () => {
     const kh = keyHash("k1b");
     const lane = laneForKeyHash(kh);
     const fake = fakeClient({ [lane.toString(16)]: 0n });
-    await withAppLaneNonce({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: kh }, async () => {});
+    await withLane({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: kh }, async () => {});
     expect(intendedAppLaneCounter(CELO, w, lane)).toBe(1n);
     forgetAppLane(CELO, w, lane);
     expect(intendedAppLaneCounter(CELO, w, lane)).toBeUndefined();
     expect(
-      await withAppLaneNonce({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: kh }, async (n) => n),
+      await withLane({ publicClient: fake.client, wallet: w, chainId: CELO, keyHash: kh }, async (n) => n),
     ).toBe(laneNonce(lane, 0n));
   });
 });
