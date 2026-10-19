@@ -2,6 +2,7 @@ import type { Address, Hex } from "viem";
 import { type NetworkConfig } from "./config.js";
 import { type Signer } from "./internal/signer.js";
 import {
+  buildPublicClient,
   buildRelayClient,
   quoteCalls,
   submitCallsDetailed,
@@ -13,6 +14,8 @@ import {
 } from "./internal/relay.js";
 import type { ExecuteResult, Wallet } from "./internal/types.js";
 import type { Session } from "./internal/sessions.js";
+import { withAppLaneNonce } from "./internal/appNonceLane.js";
+import { keyHashForSigner } from "./internal/erc1271.js";
 
 export type ExecuteOptions = {
   /** Which chain to run on. Resolved by the client from a chainId. */
@@ -120,16 +123,32 @@ export async function executeWithReceipts(
         role: "admin",
       };
 
-  const { callsId, feeToken } = await submitCallsDetailed(
-    relayClient,
-    walletAddress,
-    signer,
-    userCalls,
+  // An app transaction runs on the lane of the key that signs it, so it never
+  // contends for a nonce with the relay's background work on lane 0 -- a
+  // grant's KeyStore registration pays for the L1 write with an intent from
+  // this same account, and the relay reserves no nonce for one it has not
+  // mined (evidence/2026-10-17-nonce-lanes.md) -- nor with another key acting
+  // on the same wallet, which is on a lane of its own.
+  //
+  // `withAppLaneNonce` queues this key's own back-to-back transactions, because
+  // a lane's counter is sequential: handing out two at once would move the
+  // collision, not remove it. It passes `undefined` for a wallet that is not
+  // delegated yet, where there is no account to ask and the relay's own choice
+  // is the right one.
+  const { callsId, feeToken } = await withAppLaneNonce(
     {
-      ...(opts.feeToken ? { feeToken: opts.feeToken } : {}),
-      submittingKey,
-      network,
+      publicClient: buildPublicClient(network),
+      wallet: walletAddress,
+      chainId: network.chainId,
+      keyHash: keyHashForSigner(signer),
     },
+    (nonce) =>
+      submitCallsDetailed(relayClient, walletAddress, signer, userCalls, {
+        ...(opts.feeToken ? { feeToken: opts.feeToken } : {}),
+        ...(nonce !== undefined ? { nonce } : {}),
+        submittingKey,
+        network,
+      }),
   );
   const charged = feeToken ? { feeToken } : {};
 

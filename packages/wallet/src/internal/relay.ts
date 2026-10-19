@@ -394,6 +394,16 @@ export type SubmitCallsOptions = {
    * intent, paying the fee twice.
    */
   skipFirstActionPrepend?: boolean;
+  /**
+   * The nonce for this intent, when the caller is choosing it.
+   *
+   * Set only by `execute` for an app transaction, which runs on a lane of the
+   * SDK's own (`appNonceLane.ts`). Every other intent leaves it unset so the
+   * relay keeps choosing from lane 0 -- including the grant's account legs, the
+   * registry write and the cache proof, none of which the caller fires and all
+   * of which the relay already sequences for itself.
+   */
+  nonce?: bigint;
   submittingKey: KeyDescriptor;
   authorizeKeys?: readonly KeyDescriptor[];
   revokeKeys?: readonly KeyDescriptor[];
@@ -421,12 +431,26 @@ export function buildPrepareParams(args: {
   calls: readonly Call[];
   feeToken?: Address;
   requiredFunds?: readonly RequiredFund[];
-}): { account: unknown; calls: readonly Call[]; feeToken?: Address; requiredFunds?: readonly RequiredFund[] } {
+  /**
+   * The intent's nonce, when the caller is choosing it. Porto passes it to the
+   * relay as `capabilities.meta.nonce`, which the relay uses verbatim. Omitted,
+   * the relay reads the account's lane-0 nonce itself, which is the behaviour
+   * every intent except an app transaction still wants.
+   */
+  nonce?: bigint;
+}): {
+  account: unknown;
+  calls: readonly Call[];
+  feeToken?: Address;
+  requiredFunds?: readonly RequiredFund[];
+  nonce?: bigint;
+} {
   return {
     account: args.account,
     calls: args.calls,
     ...(args.feeToken ? { feeToken: args.feeToken } : {}),
     ...(args.requiredFunds?.length ? { requiredFunds: args.requiredFunds } : {}),
+    ...(args.nonce !== undefined ? { nonce: args.nonce } : {}),
   };
 }
 
@@ -767,6 +791,7 @@ async function prepareIntent(
     calls: effectiveCalls,
     ...(chosenFeeToken ? { feeToken: chosenFeeToken } : {}),
     ...(opts.requiredFunds?.length ? { requiredFunds: opts.requiredFunds } : {}),
+    ...(opts.nonce !== undefined ? { nonce: opts.nonce } : {}),
   });
   // Tell Porto which key will sign whenever it's not the implicit admin EOA
   // (i.e. session path always, and passkey path always — there's no EOA for
@@ -895,14 +920,22 @@ export const NONCE_RETRY_DELAYS_MS = [2_000, 4_000, 6_000];
  * has been signed or sent in between. Live on Celo Sepolia, four back-to-back
  * operations on one wallet each succeeded on the attempt after the rejection.
  *
- * The SDK deliberately does **not** supply `capabilities.meta.nonce` instead,
- * although the relay honours it: the relay's own choice of sequence key is not
- * something a client can extend. A counterfactual wallet's first intent gets a
- * random sequence key, and every intent after the delegation lands uses key 0,
- * so counting up from the nonce of the previous intent is wrong exactly when it
- * matters, and measurably so. The real fix belongs in the relay, which can
+ * The SDK does not supply `capabilities.meta.nonce` to extend **the relay's**
+ * lane, and that part of this note still holds: the relay's own choice of
+ * sequence key is not something a client can predict. A counterfactual wallet's
+ * first intent gets a random sequence key, and every intent after the
+ * delegation lands uses key 0, so counting up from the previous intent's nonce
+ * on that lane is wrong exactly when it matters, and measurably so.
+ *
+ * Since 2026-10-17 an app transaction does carry a nonce, on a lane nothing
+ * else writes to (`appNonceLane.ts`), which is a different claim: on its own
+ * lane the next counter IS predictable, and the undelegated case this note
+ * names is handled by sending no nonce at all until the account can be asked.
+ * This retry still guards everything on lane 0, where the relay allocates.
+ *
+ * The relay-side fix is still the one that would help every client at once:
  * allocate from `max(on-chain, in-flight) + 1` the way its precall path already
- * does, and would fix it for every client at once.
+ * does (`QUESTIONS/sdk.md`, 2026-10-17).
  */
 export async function retryInvalidNonce<T>(
   fn: () => Promise<T>,
