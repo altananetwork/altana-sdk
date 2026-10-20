@@ -851,15 +851,35 @@ async function refund() {
         // is honest about the fee and silent about the headroom the relay
         // wants on top of it.
         const margin = attempt === 1 ? 12n : 15n;
-        const reserve =
-          quote && quote.feeToken.toLowerCase() === usdcAddress.toLowerCase()
-            ? (quote.fee * margin) / 10n
-            : held / 2n;
+        const quoted =
+          quote && quote.feeToken.toLowerCase() === usdcAddress.toLowerCase() ? quote.fee : undefined;
+        const reserve = quoted !== undefined ? (quoted * margin) / 10n : held / 2n;
         const send = held > reserve ? held - reserve : 0n;
         if (send === 0n) {
           console.log(
             `    ${w.what}: ${formatUnits(held, decimals)} USDC left, below the ` +
               `${formatUnits(reserve, decimals)} the fee needs`,
+          );
+          break;
+        }
+        // Only sweep when the sweep is worth its own fee. The relay charges
+        // the fee in the same token it is returning, so on a balance this
+        // size it costs more than it recovers — the run that proved the sweep
+        // works spent 0.265 USDC to return 0.032. The shared-wallet rule
+        // takes either outcome: funds back to the funder, or the key saved to
+        // the funder file so someone can take them later. When the sweep is a
+        // losing trade, the key is the better half of that rule.
+        //
+        // Without a quote there is no price, and an unpriced sweep of a
+        // wallet holding no native token is the one that strands it.
+        if (quoted === undefined || send <= quoted) {
+          console.log(
+            `    ${w.what}: left ${formatUnits(held, decimals)} USDC in the wallet — ` +
+              (quoted === undefined
+                ? "the relay would not quote the sweep"
+                : `a sweep returns ${formatUnits(send, decimals)} and costs up to ` +
+                  `${formatUnits(quoted, decimals)}`) +
+              "; its key is in the funder file",
           );
           break;
         }
