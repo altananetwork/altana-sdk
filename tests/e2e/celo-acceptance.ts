@@ -334,6 +334,39 @@ async function erc20Balance(token: Address, who: Address): Promise<bigint> {
   return pub.readContract({ address: token, abi: erc20Abi, functionName: "balanceOf", args: [who] }) as Promise<bigint>;
 }
 
+/**
+ * An ERC-20 balance that has settled, polled.
+ *
+ * One read taken straight after a transfer lands is the trap this script fell
+ * into twice in a day: forno is load-balanced, a node that has not seen the
+ * block yet answers with the old value, and the number is then wrong in either
+ * direction. It printed a fee of "-1 USDC" — a zero read before the funding,
+ * a full read after the charge — and it had the refund quote a sweep against a
+ * balance the wallet no longer held, which the relay rejected as an asset
+ * deficit, stranding the token. Same trap as the lane counters, same cure.
+ *
+ * With `settled`, it polls until the balance is one the caller can explain.
+ * Without, it polls until two reads in a row agree. Either way it gives up
+ * after about twelve seconds and returns the last thing it saw, because a
+ * refund that cannot read a balance should still try.
+ */
+async function erc20BalanceSettled(
+  token: Address,
+  who: Address,
+  settled?: (v: bigint) => boolean,
+): Promise<bigint> {
+  let last: bigint | undefined;
+  for (let i = 0; i < 8; i++) {
+    const v = await erc20Balance(token, who).catch(() => undefined);
+    if (v !== undefined) {
+      if (settled ? settled(v) : last === v) return v;
+      last = v;
+    }
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  return last ?? 0n;
+}
+
 function isRegistered(wallet: Address, keyId: Hex): Promise<boolean> {
   return l1
     .readContract({ address: sepolia.keyStore, abi: KEYSTORE_ABI, functionName: "isValidKey", args: [wallet, keyId] })
@@ -477,7 +510,8 @@ async function main() {
     must(native === 0n, `this wallet must hold no CELO, holds ${formatEther(native)}`);
     note(s, `wallet ${wallet.address} holds ${FUND_USDC} USDC and 0 CELO`);
 
-    const before = await erc20Balance(usdc!.address as Address, wallet.address);
+    // The wallet was empty and has just been funded: anything else is a stale read.
+    const before = await erc20BalanceSettled(usdc!.address as Address, wallet.address, (v) => v === amount);
     // Name no feeToken: the relay has to pick the only token the wallet holds.
     const r = await runExecute({ wallet, signer, calls: { to: funder.address, value: 0n, data: "0x" } });
     tx(s, "execute paying USDC", r.hash);
@@ -487,8 +521,15 @@ async function main() {
       feeToken.toLowerCase() === usdc!.address.toLowerCase(),
       `expected the fee in USDC (${usdc!.address}), the relay charged ${feeToken}`,
     );
-    const after = await erc20Balance(usdc!.address as Address, wallet.address);
-    note(s, `charged ${formatUnits(before - after, usdc!.decimals)} USDC; the wallet still holds 0 CELO`);
+    const after = await erc20BalanceSettled(usdc!.address as Address, wallet.address, (v) => v < before);
+    const charged = before - after;
+    must(
+      charged > 0n,
+      `the wallet's USDC balance did not fall after the execute: ${formatUnits(before, usdc!.decimals)} before, ` +
+        `${formatUnits(after, usdc!.decimals)} after. The fee was charged in USDC, so this is a stale read, ` +
+        "and the charge this step reports would be meaningless",
+    );
+    note(s, `charged ${formatUnits(charged, usdc!.decimals)} USDC; the wallet still holds 0 CELO`);
   });
 
   // ---- 3. the grant: usable at once, registration behind it ---------------
@@ -772,18 +813,28 @@ async function refund() {
     const signer = signerFromPrivateKey(w.key);
     // Tokens first: a relayed call needs the wallet to still hold its fee.
     if (S.usdc) {
-      const held = await erc20Balance(S.usdc.address as Address, w.address).catch(() => 0n);
-      if (held > 0n) {
-        // Two things this got wrong before, both of which stranded the token
-        // in a wallet with no CELO to pay a second attempt with:
-        //
-        //   - calldata built by string concatenation rather than viem's
-        //     encoder, which threw;
-        //   - sending the WHOLE balance, which leaves nothing to pay the fee
-        //     in, and the relay answers "quote has asset deficits".
-        //
-        // So: quote the transfer in the token, then send what the fee leaves.
-        const usdcAddress = S.usdc.address as Address;
+      const usdcAddress = S.usdc.address as Address;
+      const decimals = S.usdc.decimals;
+      // Three things this got wrong before, each of which stranded the token
+      // in a wallet with no CELO to pay a second attempt with:
+      //
+      //   - calldata built by string concatenation rather than viem's
+      //     encoder, which threw;
+      //   - sending the WHOLE balance, which leaves nothing to pay the fee
+      //     in, and the relay answers "quote has asset deficits";
+      //   - reading the balance once, straight after the fee was charged, and
+      //     quoting a sweep against a balance the wallet no longer had. The
+      //     relay answered "quote has asset deficits" to that too, which reads
+      //     like the same bug and is not: the arithmetic was right and the
+      //     input was stale.
+      //
+      // So: a settled balance, quote the transfer in the token, send what the
+      // fee leaves, and if the relay still refuses, read again and keep more
+      // back — a sweep that returns a little is worth more than one that
+      // returns nothing.
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        const held = await erc20BalanceSettled(usdcAddress, w.address);
+        if (held === 0n) break;
         const quote = await client
           .quoteExecute({
             wallet: { address: w.address },
@@ -796,15 +847,21 @@ async function refund() {
             },
           })
           .catch(() => undefined);
+        // 1.2x the quoted fee on the first try, 1.5x on the second: the quote
+        // is honest about the fee and silent about the headroom the relay
+        // wants on top of it.
+        const margin = attempt === 1 ? 12n : 15n;
         const reserve =
-          quote && quote.feeToken.toLowerCase() === usdcAddress.toLowerCase() ? (quote.fee * 12n) / 10n : held / 2n;
+          quote && quote.feeToken.toLowerCase() === usdcAddress.toLowerCase()
+            ? (quote.fee * margin) / 10n
+            : held / 2n;
         const send = held > reserve ? held - reserve : 0n;
         if (send === 0n) {
           console.log(
-            `    ${w.what}: ${formatUnits(held, S.usdc.decimals)} USDC left, below the ` +
-              `${formatUnits(reserve, S.usdc.decimals)} the fee needs`,
+            `    ${w.what}: ${formatUnits(held, decimals)} USDC left, below the ` +
+              `${formatUnits(reserve, decimals)} the fee needs`,
           );
-          continue;
+          break;
         }
         const data = encodeFunctionData({ abi: erc20Abi, functionName: "transfer", args: [funder.address, send] });
         const r = await runExecute({
@@ -816,10 +873,24 @@ async function refund() {
           calls: { to: usdcAddress, data, value: 0n },
         });
         console.log(
-          `    ${w.what}: ${formatUnits(send, S.usdc.decimals)} USDC back of ${formatUnits(held, S.usdc.decimals)} ` +
-            `(${r.status}, ${formatUnits(reserve, S.usdc.decimals)} kept for the fee)` +
+          `    ${w.what}: ${formatUnits(send, decimals)} USDC back of ${formatUnits(held, decimals)} ` +
+            `(${r.status}, ${formatUnits(reserve, decimals)} kept for the fee)` +
             (r.ok ? "" : ` — ${JSON.stringify(r.raw)}`),
         );
+        if (r.ok) {
+          // What the sweep cost, measured rather than quoted. The reserve is
+          // 1.2x the QUOTED fee and the relay charges less than it quotes, so
+          // a sweep leaves a remainder every time; say how much, so nobody has
+          // to reconstruct it from two explorer pages.
+          const left = await erc20BalanceSettled(usdcAddress, w.address, (v) => v < held);
+          console.log(
+            `    ${w.what}: it cost ${formatUnits(held - send - left, decimals)} USDC to return ` +
+              `${formatUnits(send, decimals)}, and ${formatUnits(left, decimals)} stays in the wallet; ` +
+              "its key is in the funder file",
+          );
+          break;
+        }
+        if (attempt === 2) console.log(`    ${w.what}: left the USDC in the wallet; its key is in the funder file`);
       }
     }
     let bal = 0n;
