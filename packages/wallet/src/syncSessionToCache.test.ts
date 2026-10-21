@@ -76,3 +76,37 @@ describe("proof that shows the key absent", () => {
     expect(result.status).toBe("CONFIRMED");
   });
 });
+
+describe("relay rejects the proof with a block header mismatch", () => {
+  // Browsers have no Node Buffer. The mismatch check must not need one, or the
+  // first rejection throws "Buffer is not defined" and the key never reaches the cache.
+  async function withoutBuffer<T>(fn: () => Promise<T>): Promise<T> {
+    const saved = (globalThis as any).Buffer;
+    delete (globalThis as any).Buffer;
+    try {
+      return await fn();
+    } finally {
+      (globalThis as any).Buffer = saved;
+    }
+  }
+
+  for (const [label, message] of [
+    ["as decoded text", "execution reverted: Cache: block header mismatch"],
+    // Error(string) ABI encoding of "Cache: block header mismatch" (28 bytes).
+    ["as the raw Error(string) payload", "execution reverted: 0x08c379a0" + "0".repeat(62) + "20" + "0".repeat(62) + "1c" + "43616368653a20626c6f636b20686561646572206d69736d61746368".padEnd(64, "0")],
+  ] as const) {
+    test(`${label}: retried without Buffer, then submitted`, async () => {
+      const { deps, log } = fakeDeps([1n]);
+      let rejected = 0;
+      const submit = deps.submitProof;
+      deps.submitProof = async (args) => {
+        if (rejected++ === 0) throw new Error(message);
+        return submit(args);
+      };
+      const result = await withoutBuffer(() => run(deps));
+      expect(rejected).toBe(2);
+      expect(log.submitted).toBe(1);
+      expect(result.status).toBe("CONFIRMED");
+    });
+  }
+});

@@ -14,7 +14,7 @@
  * The submission is retried against the new anchor up to `maxAttempts`.
  */
 
-import { keccak256, type Address, type Hex, type PublicClient } from "viem";
+import { keccak256, stringToHex, type Address, type Hex, type PublicClient } from "viem";
 import { type NetworkConfig } from "./config.js";
 import { isCachedRegistry, keyStoreCacheOf } from "./internal/cachedRegistry.js";
 import {
@@ -354,7 +354,7 @@ function isHeaderMismatch(err: unknown): boolean {
   // The relay renders the revert either as decoded text or as the raw
   // Error(string) payload (selector 0x08c379a0) for "Cache: block header mismatch".
   if (/block header mismatch/i.test(text)) return true;
-  const hexReason = Buffer.from("Cache: block header mismatch", "utf8").toString("hex");
+  const hexReason = stringToHex("Cache: block header mismatch").slice(2);
   return text.replace(/\s+/g, "").toLowerCase().includes(hexReason);
 }
 
