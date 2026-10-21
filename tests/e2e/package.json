@@ -19,6 +19,7 @@
     "fork:native-receive": "bun run fork-native-receive.ts",
     "demo:b402": "bun run demo-b402.ts",
     "typecheck": "tsc --noEmit",
+    "acceptance": "bun run celo-acceptance.ts",
     "fork:x402-server": "bun run fork-x402-server.ts",
     "fork:erc8183-buyer": "bun run fork-erc8183.ts",
     "fork:erc8004": "bun run fork-erc8004.ts",
