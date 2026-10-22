@@ -1,0 +1,80 @@
+{
+  "relay": "https://relay-staging-production-2657.up.railway.app",
+  "startedAt": "2026-10-20T16:59:28.802Z",
+  "sdkBuild": "d65bdfc+dirty",
+  "feeTokens": [
+    {
+      "symbol": "S-CELO",
+      "address": "0x0000000000000000000000000000000000000000",
+      "isNative": true
+    },
+    {
+      "symbol": "EURm",
+      "address": "0xA99dC247d6b7B2E3ab48a1fEE101b83cD6aCd82a",
+      "isNative": false
+    },
+    {
+      "symbol": "KESm",
+      "address": "0xC7e4635651E3e3Af82b61d3E23c159438daE3BbF",
+      "isNative": false
+    },
+    {
+      "symbol": "USDC",
+      "address": "0x01C5C0122039549AD1493B8220cABEdD739BC44E",
+      "isNative": false
+    },
+    {
+      "symbol": "USDm",
+      "address": "0xdE9e4C3ce781b4bA68120d6261cbad65ce0aB00b",
+      "isNative": false
+    },
+    {
+      "symbol": "USD₮",
+      "address": "0xd077A400968890Eacc75cdc901F0356c943e4fDb",
+      "isNative": false
+    }
+  ],
+  "wallet": "0x1BaE5BEAE6D040128c71004C8238FFb1E7f37732",
+  "heldAssets": [
+    {
+      "address": "native",
+      "balance": "0x0"
+    },
+    {
+      "address": "0xc7e4635651e3e3af82b61d3e23c159438dae3bbf",
+      "balance": "0x0"
+    },
+    {
+      "address": "0xa99dc247d6b7b2e3ab48a1fee101b83cd6acd82a",
+      "balance": "0x0"
+    },
+    {
+      "address": "0xd077a400968890eacc75cdc901f0356c943e4fdb",
+      "balance": "0x0"
+    },
+    {
+      "address": "0x01c5c0122039549ad1493b8220cabedd739bc44e",
+      "balance": "0x0"
+    },
+    {
+      "address": "0xde9e4c3ce781b4ba68120d6261cbad65ce0ab00b",
+      "balance": "0x0"
+    }
+  ],
+  "before": {
+    "paymentToken": "0xde9e4c3ce781b4ba68120d6261cbad65ce0ab00b",
+    "symbol": "USDm",
+    "deficits": [
+      "USDm: 0x74fed26d5dac7e"
+    ]
+  },
+  "after": {
+    "feeToken": "0x0000000000000000000000000000000000000000",
+    "symbol": "S-CELO",
+    "fee": "398990410003989939",
+    "feeTokenDeficit": "398990410003989939",
+    "nativeNeeded": "398990410003989939",
+    "nativeNeededFromRelay": true
+  },
+  "verdict": "PASS"
+}
