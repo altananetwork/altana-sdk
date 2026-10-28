@@ -55,6 +55,11 @@ export type Anvil = {
  * that needs different ones (fork-native-receive wants `--hardfork prague`).
  */
 export function startAnvil(forkUrl: string, port: number, args: readonly string[] = ["--silent"]): Anvil {
+  // Said here, because `Bun.spawn` answers a missing binary with an ENOENT
+  // stack trace pointing at this file, which reads like a bug in the harness.
+  if (!Bun.which("anvil")) {
+    throw new Error("anvil is not on PATH: the fork tests need foundry (https://getfoundry.sh)");
+  }
   const proc = Bun.spawn(["anvil", "--fork-url", forkUrl, "--port", String(port), ...args], {
     stdout: "ignore",
     stderr: "pipe",

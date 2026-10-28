@@ -8,6 +8,14 @@
 import { describe, expect, test } from "bun:test";
 import { startAnvil, waitForAnvil, withoutUrls } from "./anvil.js";
 
+/**
+ * CI's unit-test job has no foundry — only the fork job installs it — so the
+ * one case that needs a real anvil says it was skipped rather than failing on
+ * a missing binary. Every other case here is pure and runs everywhere.
+ */
+const anvilOnPath = !!Bun.which("anvil");
+if (!anvilOnPath) console.log("anvil is not on PATH: skipping the one case that starts a real one");
+
 describe("withoutUrls", () => {
   test("takes out the URL anvil quotes back, key and all", () => {
     const said = "- Error #0: error sending request for url (https://base-mainnet.nodereal.io/v1/0ab1cd2ef3)";
@@ -68,7 +76,7 @@ describe("waitForAnvil", () => {
    * in the error rather than thirty seconds of silence. No network — the URL
    * resolves to nothing, which is a failure anvil reports in its first second.
    */
-  test("a real anvil told to fork nothing explains itself", async () => {
+  test.skipIf(!anvilOnPath)("a real anvil told to fork nothing explains itself", async () => {
     const anvil = startAnvil("http://127.0.0.1:1/unreachable-fork-url", 8599);
     try {
       const err = await waitForAnvil(anvil, undefined, { attempts: 40, everyMs: 250 }).catch((e: Error) => e);

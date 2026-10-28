@@ -101,6 +101,11 @@ jobs:
           bun run --filter '@altananetwork/sdk' build
           bun run --filter '@altananetwork/x402-server' build
 
+      # Here as well as in build-and-check: this is the only job with anvil on
+      # PATH, so it is the only one where the case that starts a real one runs.
+      - name: Harness unit tests, including the real-anvil case
+        run: bun run --filter '@altananetwork/e2e' test
+
       # No Base: unsupported until we have RPCs (Doris 2026-10-28). fork-eip3009
       # still exists and still runs by name (fork:eip3009), just not here.
       - name: Run fork tests (ERC-1271, permit2, permit2-witness, ERC-8004, ERC-8183, native-receive, x402-server, Celo Sepolia cache, Celo Sepolia x402-server)
