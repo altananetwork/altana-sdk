@@ -59,6 +59,7 @@ import {
   type AgentClient,
 } from "./agents.js";
 import { readLink } from "./link.js";
+import { storeHandedOverSession } from "./storeSession.js";
 import {
   getWalletKey,
   setWalletKey,
@@ -1157,48 +1158,17 @@ tool(
     session?: string;
     privateKey?: string;
   }) => {
-    // Same guard as grant_session: never silently replace a session somebody is
-    // already using. Sessions live in their own keychain namespace, so this can
-    // only collide with another session, never with an admin wallet.
-    if (await sessionKeyExists(sessionName)) {
-      throw new Error(
-        `A session named "${sessionName}" already exists. Pick a different name, ` +
-          `or remove the existing one first with revoke_session.`,
-      );
-    }
-
     const parsed = parseImport({ bundle, session: sessionText, privateKey });
 
-    // deserializeSession is the real check: it refuses a key whose public half
-    // does not match the session's. Doing it before anything is written means a
-    // mismatched paste leaves no half-imported state behind.
-    const signer = signerFromPrivateKey(parsed.privateKey);
-    let rebuilt;
-    try {
-      rebuilt = deserializeSession(parsed.session, signer);
-    } catch (err) {
-      throw new ImportSessionError(
-        "That private key does not belong to that session: its public key does not " +
-          "match the session's. Check that both halves came from the same permission. " +
-          `(${err instanceof Error ? err.message : String(err)})`,
-      );
-    }
-
-    const now = Math.floor(Date.now() / 1000);
-    const { expired, secondsLeft } = expiryState(parsed.session, now);
-
-    await setSessionKey(sessionName, parsed.privateKey);
-    await saveSession({
-      name: sessionName,
-      // Imported sessions have no admin wallet here: the owner is a passkey in
-      // someone's browser. session_execute only needs the session half and the
-      // key, so this is a label and never a lookup.
-      walletName: "imported",
-      walletAddress: parsed.session.walletAddress,
-      publicKey: parsed.session.publicKey,
-      permissions: parsed.session.permissions,
-      expiry: parsed.session.expiry,
-      createdAt: new Date().toISOString(),
+    // The writing itself lives in storeSession.ts, because the extension's
+    // sendSession and answerRequest have to leave exactly the same state behind
+    // as this tool does. If they ever diverged, session_execute would work for a
+    // session that was pasted in and not for one the extension pushed, and the
+    // contract promises those are the same thing.
+    const stored = await storeHandedOverSession({
+      sessionName,
+      session: parsed.session,
+      privateKey: parsed.privateKey,
     });
 
     return {
@@ -1207,26 +1177,14 @@ tool(
           type: "text",
           text: JSON.stringify(
             {
-              sessionName,
-              walletAddress: parsed.session.walletAddress,
-              sessionAddress: signer.address,
-              sessionPublicKey: parsed.session.publicKey,
-              // The identifier the relay matches a transaction against. Worth
-              // returning: it is how the wallet app attributes this agent's
-              // transactions in its activity feed.
-              keyHash: keyHashForSessionOrKey(rebuilt),
-              keyId: keccak256(parsed.session.publicKey),
-              permissions: parsed.session.permissions,
-              expiry: parsed.session.expiry,
-              expiresAt: new Date(parsed.session.expiry * 1000).toISOString(),
-              expired,
-              ...(expired
+              ...stored,
+              ...(stored.expired
                 ? {
                     warning:
                       "This session has already expired, so it is stored but cannot act. " +
                       "Ask for a fresh permission from the wallet that granted it.",
                   }
-                : { secondsLeft }),
+                : {}),
               note: `Stored. Use it with session_execute by the name "${sessionName}". Nothing was sent on-chain: the grant already happened.`,
             },
             null,

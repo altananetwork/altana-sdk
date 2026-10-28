@@ -160,15 +160,23 @@ describe("answering every request", () => {
   });
 
   test("a type that a later milestone owns says which one, so it does not look like a typo", async () => {
+    // sendSession is gone from this list now that M6 has landed, which is the
+    // list doing its job.
     const { responses } = await talk([
-      { id: "n1", type: "sendSession" },
-      { id: "n2", type: "listRequests" },
+      { id: "n1", type: "listRequests" },
+      { id: "n2", type: "answerRequest" },
       { id: "n3", type: "revokeSession" },
     ]);
-    expect((responses[0] as { error: { message: string } }).error.message).toContain("M6");
+    expect((responses[0] as { error: { message: string } }).error.message).toContain("M7");
     expect((responses[1] as { error: { message: string } }).error.message).toContain("M7");
     expect((responses[2] as { error: { message: string } }).error.message).toContain("M8");
     for (const r of responses) expect(r.ok).toBe(false);
+  });
+
+  test("sendSession is implemented, so an empty one is a BAD_REQUEST about its shape", async () => {
+    const { responses } = await talk([{ id: "n4", type: "sendSession" }]);
+    expect(responses[0]).toMatchObject({ ok: false, error: { code: "BAD_REQUEST" } });
+    expect((responses[0] as { error: { message: string } }).error.message).toContain("object");
   });
 
   test("a request with no type is BAD_REQUEST, with its id", async () => {

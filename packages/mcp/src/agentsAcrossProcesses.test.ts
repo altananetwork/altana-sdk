@@ -3,6 +3,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { generatePrivateKey } from "viem/accounts";
+import { signerFromPrivateKey, type SerializedSession } from "@altananetwork/sdk";
 import { encodeFrame, FrameDecoder } from "./nativeFraming.js";
 
 /**
@@ -247,5 +249,148 @@ describe("an agent the MCP wrote is an agent the host reports", () => {
     } finally {
       await agent.stop();
     }
+  }, 40_000);
+});
+
+
+/**
+ * A handover the extension could really have sent.
+ *
+ * Built here with no chain involved, because what makes one storable is that
+ * its publicKey is the public half of the key beside it.
+ */
+function handoff(name: string, expirySeconds = 604800) {
+  const privateKey = generatePrivateKey();
+  const signer = signerFromPrivateKey(privateKey);
+  const wallet = "0x1111111111111111111111111111111111111111";
+  const session: SerializedSession = {
+    walletAddress: wallet,
+    publicKey: signer.publicKey,
+    permissions: {
+      calls: [{ to: "0x2222222222222222222222222222222222222222" }],
+      spend: [{ limit: "1000000000000000", period: "day" }],
+    },
+    expiry: Math.floor(Date.now() / 1000) + expirySeconds,
+  };
+  return {
+    privateKey,
+    session,
+    payload: {
+      name,
+      chainId: 97,
+      walletAddress: wallet,
+      serializedSession: JSON.stringify(session),
+      sessionPrivateKey: privateKey,
+    },
+  };
+}
+
+describe("a permission the host stores is a permission the MCP can use (M6)", () => {
+  test("list_sessions sees it on the next call, from a process started afterwards", async () => {
+    // The contract's actual promise. The host writes, the MCP reads, and there
+    // is no restart or handshake between them other than ~/.altana.
+    const { payload, session } = handoff("trading-bot");
+    const frames = await askHost([{ id: "s1", type: "sendSession", payload }]);
+    const answer = answerTo(frames, "s1");
+    expect(answer.ok).toBe(true);
+    expect(answer.result).toMatchObject({ stored: true, name: "trading-bot" });
+
+    const agent = await startAgent("claude-code");
+    try {
+      const listed = await agent.call("tools/call", { name: "list_sessions", arguments: {} });
+      const text = JSON.stringify(listed);
+      expect(text).toContain("trading-bot");
+      expect(text).toContain(session.publicKey);
+    } finally {
+      await agent.stop();
+    }
+  }, 40_000);
+
+  test("an agent already running sees it on its next call, with no restart", async () => {
+    // "without restarting" is in G3 word for word, so it gets its own test:
+    // the agent starts first, the permission arrives second.
+    const agent = await startAgent("claude-code");
+    try {
+      const before = await agent.call("tools/call", { name: "list_sessions", arguments: {} });
+      expect(JSON.stringify(before)).not.toContain("late-arrival");
+
+      const { payload } = handoff("late-arrival");
+      const frames = await askHost([{ id: "s2", type: "sendSession", payload }]);
+      expect(answerTo(frames, "s2").ok).toBe(true);
+
+      const after = await agent.call("tools/call", { name: "list_sessions", arguments: {} });
+      expect(JSON.stringify(after)).toContain("late-arrival");
+    } finally {
+      await agent.stop();
+    }
+  }, 40_000);
+
+  test("session_execute finds it and rebuilds it, rather than saying there is no such session", async () => {
+    // How far this can go without a chain: the proof is that the failure is
+    // about the network and not about a missing or unrebuildable session.
+    const { payload } = handoff("executable");
+    await askHost([{ id: "s3", type: "sendSession", payload }]);
+
+    const agent = await startAgent("claude-code");
+    try {
+      const executed = await agent.call("tools/call", {
+        name: "session_execute",
+        arguments: {
+          sessionName: "executable",
+          to: "0x2222222222222222222222222222222222222222",
+          valueEth: "0",
+        },
+      });
+      const text = JSON.stringify(executed);
+      expect(text).not.toContain("No session named");
+      expect(text).not.toContain("does not belong to that session");
+    } finally {
+      await agent.stop();
+    }
+  }, 40_000);
+
+  test("the key reaches the key store and nothing else", async () => {
+    const { payload, privateKey } = handoff("secret-bot");
+    const frames = await askHost([{ id: "s4", type: "sendSession", payload }]);
+
+    // Not in the answer, which is what the extension logs.
+    expect(JSON.stringify(frames)).not.toContain(privateKey.slice(2));
+    // Not in the session metadata, which is world readable to this user.
+    const sessions = await Bun.file(join(home, "sessions.json")).text();
+    expect(sessions).not.toContain(privateKey.slice(2));
+    // In the key store, because session_execute has to be able to sign.
+    const keys = await Bun.file(join(home, "keys.json")).text();
+    expect(keys).toContain(privateKey);
+  }, 40_000);
+
+  test("a second permission of the same name is NAME_TAKEN, and the first survives", async () => {
+    const first = handoff("only-one");
+    const second = handoff("only-one");
+    await askHost([{ id: "s5", type: "sendSession", payload: first.payload }]);
+    const frames = await askHost([{ id: "s6", type: "sendSession", payload: second.payload }]);
+
+    expect(answerTo(frames, "s6")).toMatchObject({
+      ok: false,
+      error: { code: "NAME_TAKEN" },
+    });
+    const sessions = await Bun.file(join(home, "sessions.json")).text();
+    expect(sessions).toContain(first.session.publicKey);
+    expect(sessions).not.toContain(second.session.publicKey);
+  }, 40_000);
+
+  test("a mismatched pair is BAD_REQUEST and stores nothing", async () => {
+    const { payload } = handoff("mismatched");
+    const frames = await askHost([
+      {
+        id: "s7",
+        type: "sendSession",
+        payload: { ...payload, sessionPrivateKey: generatePrivateKey() },
+      },
+      { id: "s8", type: "listAgents" },
+    ]);
+    expect(answerTo(frames, "s7")).toMatchObject({ ok: false, error: { code: "BAD_REQUEST" } });
+    // The port is still usable afterwards: a refused handover is not a crash.
+    expect(answerTo(frames, "s8").ok).toBe(true);
+    expect(await Bun.file(join(home, "sessions.json")).exists()).toBe(false);
   }, 40_000);
 });
