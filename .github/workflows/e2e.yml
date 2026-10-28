@@ -60,6 +60,10 @@ jobs:
           cd ../..
           bun run --filter '@altananetwork/x402-server' test
           bun run --filter '@altananetwork/mcp' test
+          # The acceptance run's verdict rule. The run itself needs a funded
+          # wallet and 25 minutes, so only the rule is tested here — it is the
+          # part that decides what the run claims.
+          bun run --filter '@altananetwork/e2e' test
 
   fork-tests:
     name: On-chain fork tests (anvil)
