@@ -19,23 +19,28 @@ The same key is set as a GitHub Actions secret of the same name for CI runs.
 
 ### Fork RPC endpoints
 
-The fork tests fork BNB Smart Chain and Base. They read dedicated RPC endpoints
-from env, falling back to public nodes when unset (fine locally, rate-limited in
-CI). Point these at a dedicated provider (Alchemy/QuickNode/Ankr, key in the URL)
-for reliable runs:
+The fork tests in CI fork BNB Smart Chain, BSC testnet and Celo Sepolia. They
+read dedicated RPC endpoints from env, falling back to public nodes when unset
+(fine locally, rate-limited in CI). Point these at a dedicated provider
+(Alchemy/QuickNode/Ankr, key in the URL) for reliable runs:
 
 ```bash
 # .env at repo root (gitignored)
 BSC_FORK_RPC_URL=https://.../<KEY>          # fork-x402, fork-x402-witness, fork-erc1271, fork-bep677
-BASE_FORK_RPC_URL=https://.../<KEY>         # fork-eip3009
+BASE_FORK_RPC_URL=https://.../<KEY>         # fork-eip3009 (run by hand; not in CI)
 BSC_TESTNET_FORK_RPC_URL=https://.../<KEY>  # fork-erc8004, fork-erc8183
 CELO_SEPOLIA_FORK_RPC_URL=https://.../<KEY> # fork-celo-cache, fork-celo-x402-server (public fallback: rpc.ankr.com/celo_sepolia)
 SEPOLIA_RPC_URL=https://.../<KEY>           # fork-celo-cache, smoke:celo-sepolia: optional override of SEPOLIA.publicRpcUrl
                                             # (must serve eth_getProof for the block Celo Sepolia anchors, about 100 behind head)
 ```
 
-All five are set as GitHub Actions secrets of the same names and passed to the
-"On-chain fork tests" job.
+`fork-eip3009` forks Base and is deliberately not in `fork:all`: Base is
+unsupported until we have RPCs (Doris 2026-10-28). The test is kept and runs on
+demand with `fork:eip3009`, which is the only thing BASE_FORK_RPC_URL is for.
+
+All five are set as GitHub Actions secrets of the same names; the four the CI
+set needs are passed to the "On-chain fork tests" job, BASE_FORK_RPC_URL being
+the exception.
 
 ## ERC-8004: what runs where
 
