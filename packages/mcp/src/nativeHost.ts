@@ -359,6 +359,20 @@ function signatureOf(agents: Agent[]): string {
 }
 
 /**
+ * Pause briefly without an await, for the EAGAIN retry above.
+ *
+ * Synchronous on purpose: that write path cannot become async without becoming
+ * buffered again, which is the whole thing it exists to avoid. A full pipe
+ * clears in microseconds, so this spins for a very short time or not at all.
+ */
+function waitABit(): void {
+  const until = Date.now() + 1;
+  while (Date.now() < until) {
+    /* spin */
+  }
+}
+
+/**
  * Where the host leaves a breadcrumb, so somebody can tell whether Chrome
  * started it at all.
  *
@@ -415,12 +429,31 @@ export async function runNativeHostOnStdio(): Promise<void> {
       // writeSync on fd 1, not process.stdout.write. Chrome keeps the port's
       // stdin open for the life of the connection, so nothing ever flushes a
       // buffered stream on exit, and a frame still sitting in a buffer is a
-      // request the extension waits on forever. A partial write is possible on
-      // a pipe, so this loops until the frame is out.
+      // request the extension waits on forever.
+      //
+      // Two things a pipe does that a naive write would get wrong. It can
+      // accept only part of a frame, so this loops until the frame is out. And
+      // if the fd happens to be non-blocking it can refuse with EAGAIN when its
+      // buffer is full, which is not an error but a "not yet"; letting that
+      // escape would kill the host over a full pipe, dropping the port and
+      // every pending request with it.
       write: (bytes) => {
         let written = 0;
         while (written < bytes.byteLength) {
-          written += writeSync(1, bytes, written, bytes.byteLength - written);
+          try {
+            written += writeSync(1, bytes, written, bytes.byteLength - written);
+          } catch (err) {
+            const code = (err as NodeJS.ErrnoException)?.code;
+            if (code === "EAGAIN" || code === "EWOULDBLOCK") {
+              // Chrome is reading as fast as it can; give it a moment. Busy
+              // waiting is acceptable here because the alternative is an async
+              // write, and an async write is what reintroduces buffering.
+              waitABit();
+              continue;
+            }
+            if (code === "EINTR") continue;
+            throw err;
+          }
         }
       },
       log,
