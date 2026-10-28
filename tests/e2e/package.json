@@ -41,7 +41,12 @@
     "build:x402": "cd ../../packages/x402-server && bun run build",
     "serve:x402-celo": "bun run build:x402 && bun run serve-x402-celo.ts",
     "live:celo-first": "bun run live-celo-first-grant.ts",
-    "live:app-lane": "bun run live-app-nonce-lane.ts"
+    "live:app-lane": "bun run live-app-nonce-lane.ts",
+    "agent:mcp": "bun run agent-via-mcp.ts",
+    "spine:wallet": "bun run wallet-app-spine.ts",
+    "sweep": "bun run sweep-to-funder.ts",
+    "fork:calls-omitted": "bun run fork-calls-omitted.ts",
+    "agent:snippet": "bun run agent-from-snippet.ts"
   },
   "dependencies": {
     "@altananetwork/hypersigner-keystore-mcp": "workspace:*",
