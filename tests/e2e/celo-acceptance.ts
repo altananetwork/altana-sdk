@@ -20,6 +20,16 @@
  * at an anchored block, so proving "valid" after revoking would prove the
  * revocation instead.
  *
+ * A subset run never reports PASS for something it did not see. Step 3 starts
+ * the proof that carries the key into the Celo mirror and returns without it,
+ * and that proof cannot land before the Celo anchor passes the registration's
+ * Sepolia block, 15 to 20 minutes later. A run of `1,2b,3` printed PASS on
+ * 2026-10-28 and was killed before the proof landed, so a key that reached
+ * Ethereum Sepolia and never reached Celo was reported as a pass. When step 5
+ * is not in the run, that proof is now waited for (the default) or declared
+ * NOT CHECKED, and NOT CHECKED makes the verdict PARTIAL. The rule itself is
+ * in `celo-acceptance-verdict.ts`, with the tests for it.
+ *
  * Relay: relay-staging, because the background registration needs interop,
  * which the live testnet relay does not have (R1). The report says which relay
  * it ran against and which SDK build, both as facts of the run rather than
@@ -32,6 +42,11 @@
  *   ACCEPT_RELAY           optional relay override
  *   ACCEPT_FUND_CELO       CELO given to the main wallet (default 8)
  *   ACCEPT_STEPS           subset of 1,2a,2b,3,4,5,6 (default all)
+ *   ACCEPT_MIRROR          what to do about the mirror proof step 3 starts
+ *                          when step 5 is not in the run: `wait` (default) or
+ *                          `skip`, which reports the mirror NOT CHECKED and
+ *                          the run PARTIAL
+ *   ACCEPT_MIRROR_WAIT_MIN how long `wait` waits (default 35)
  *   ACCEPT_EVIDENCE_DIR    where the report lands (default: the harness's
  *                          evidence folder when this is a harness worktree,
  *                          otherwise next to this script)
@@ -76,6 +91,7 @@ import { celoSepolia } from "viem/chains";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { testnetEnvFile } from "./testnet-env.js";
+import { verdictOf, type MirrorState } from "./celo-acceptance-verdict.js";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -101,6 +117,20 @@ const FUND_USDC = process.env.ACCEPT_FUND_USDC ?? "1";
 /** What a probe transaction sends, so it moves value rather than only status. */
 const PROBE = parseEther("0.001");
 const ONLY = process.env.ACCEPT_STEPS?.split(",").map((s) => s.trim().toLowerCase());
+/**
+ * What to do about the Celo mirror when step 5 is not in the run.
+ *
+ * `wait` is the default because the proof is already running by then: the
+ * choice is not whether to make it happen but whether anybody watches it, and
+ * walking away from it is what produced a PASS for a key that was not on Celo.
+ * `skip` is for a run on a clock shorter than the anchor — it says NOT CHECKED
+ * and takes PARTIAL rather than claiming the mirror.
+ */
+const MIRROR_WAIT = (process.env.ACCEPT_MIRROR ?? "wait").trim().toLowerCase() !== "skip";
+// A mistyped number must not turn into a zero-length wait that reports NOT
+// CHECKED on a proof that was about to land.
+const MIRROR_WAIT_MIN = Number(process.env.ACCEPT_MIRROR_WAIT_MIN ?? 35);
+const MIRROR_WAIT_MS = (Number.isFinite(MIRROR_WAIT_MIN) && MIRROR_WAIT_MIN > 0 ? MIRROR_WAIT_MIN : 35) * 60_000;
 // The harness keeps its evidence four levels up from tests/e2e; a plain
 // clone of the SDK has no such folder, and a report nobody can find is a
 // run wasted, so it lands beside this script instead.
@@ -257,6 +287,19 @@ type Step = {
 };
 const steps: Step[] = [];
 const wallets: { address: Address; key: Hex; what: string }[] = [];
+
+/**
+ * The proof into the Celo mirror that step 3 leaves in flight, and whether
+ * anybody saw it land. `launched` is read from the grant's own cache leg
+ * rather than assumed: `PENDING` there means a proof is running.
+ */
+const MIRROR: {
+  launched: boolean;
+  landed: boolean;
+  proof?: Promise<GrantLeg | undefined>;
+  line: string;
+} = { launched: false, landed: false, line: "no proof into the mirror was started" };
+const mirrorState = (): MirrorState => (!MIRROR.launched ? "none" : MIRROR.landed ? "checked" : "pending");
 
 class Fail extends Error {}
 function must(cond: boolean, message: string) {
@@ -560,6 +603,21 @@ async function main() {
       },
     });
     S.sessionA = grant;
+    // The proof into the Celo mirror is running by the time this returns and
+    // it outlives the step. Keep a handle on it that cannot become an
+    // unhandled rejection, so the end of the run can wait for it when step 5
+    // is not there to.
+    const cacheAtReturn = grant.legs.find((l: GrantLeg) => l.kind === "cache" && l.chainId === celo.chainId);
+    MIRROR.launched = cacheAtReturn?.status === "PENDING";
+    if (MIRROR.launched) {
+      MIRROR.line = "a proof is in flight";
+      MIRROR.proof = grant.cacheSync
+        .then((legs: GrantLeg[]) => legs.find((l) => l.chainId === celo.chainId))
+        .catch(
+          (e: unknown) =>
+            ({ chainId: celo.chainId, kind: "cache", status: "FAILED", reason: String(e) }) as GrantLeg,
+        );
+    }
     const account = grant.legs.find((l: GrantLeg) => l.kind === "account" && l.chainId === celo.chainId);
     const registryAtReturn = grant.legs.find((l: GrantLeg) => l.kind === "registry");
     tx(s, "session authorized on the Celo account", account?.transactionHash as Hex | undefined);
@@ -731,6 +789,8 @@ async function main() {
     const leg = caches.find((l: GrantLeg) => l.chainId === celo.chainId);
     tx(s, "cache proof into the Celo mirror", leg?.transactionHash as Hex | undefined);
     must(leg?.status === "CONFIRMED", `the cache proof came back ${leg?.status}: ${leg?.reason ?? ""}`);
+    MIRROR.landed = true;
+    MIRROR.line = `the proof landed in step 5 (${leg?.transactionHash ?? "no hash"})`;
 
     let cached = await readCachedKey(pub, CACHE, S.wallet!.address, grant!.keyId);
     for (let i = 0; i < 20 && (!cached.publicKey || cached.publicKey === "0x"); i++) {
@@ -797,8 +857,79 @@ async function main() {
 }
 
 // ---------------------------------------------------------------------------
-// Refund, report
+// The mirror when step 5 is not in the run, refund, report
 // ---------------------------------------------------------------------------
+
+/**
+ * Step 3 starts a proof into the Celo mirror and returns without it; step 5 is
+ * what waits for it. Without step 5 the proof is still in flight when the
+ * steps are done, and a run that walks away from it can neither say the key
+ * reached Celo nor leave the process holding the connection open until
+ * something kills it. So: wait for it, or say plainly that nobody did.
+ *
+ * Before the refund, deliberately — the proof is a relayed intent the wallet
+ * pays for, and the refund is what empties the wallet.
+ */
+async function settleMirror() {
+  const five = steps.find((s) => s.id === "5");
+  if (!MIRROR.launched || MIRROR.landed || (five && five.status !== "SKIPPED")) return;
+  const minutes = Math.round(MIRROR_WAIT_MS / 60_000);
+  const say = (line: string) => {
+    MIRROR.line = line;
+    five?.detail.push(`mirror: ${line}`);
+  };
+  if (!MIRROR_WAIT) {
+    say("NOT CHECKED — step 3 left a proof in flight and ACCEPT_MIRROR=skip told this run not to wait for it");
+    console.log("\n[mirror] Celo mirror: NOT CHECKED (step 5 did not run, ACCEPT_MIRROR=skip)");
+    console.log("         the proof step 3 started may still land; this run does not know whether it did");
+    return;
+  }
+  console.log("\n[mirror] step 5 did not run and step 3 left a proof into the Celo mirror in flight.");
+  console.log("         It cannot land before the Celo anchor passes the registration's Sepolia block (15-20 min).");
+  console.log(`         Waiting up to ${minutes} min; ACCEPT_MIRROR=skip reports NOT CHECKED instead.`);
+  const timedOut = Symbol("the wait ran out");
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const leg = await Promise.race([
+    MIRROR.proof!,
+    new Promise<typeof timedOut>((r) => {
+      timer = setTimeout(() => r(timedOut), MIRROR_WAIT_MS);
+    }),
+  ]).finally(() => clearTimeout(timer));
+  if (leg === timedOut) {
+    say(`NOT CHECKED — the proof was still running after ${minutes} min`);
+    console.log(`         Celo mirror: NOT CHECKED, the proof was still running after ${minutes} min`);
+    return;
+  }
+  if (leg?.status === "CONFIRMED") {
+    MIRROR.landed = true;
+    say(`the proof landed after the steps, without step 5 (${leg.transactionHash ?? "no hash"})`);
+    console.log(`         Celo mirror: the proof landed — ${EXPLORER}/tx/${leg.transactionHash}`);
+    return;
+  }
+  // A proof that came back FAILED in a run that was not asked to check the
+  // mirror is still not a failed acceptance; it is a mirror nobody proved.
+  say(`NOT CHECKED — the proof came back ${leg?.status ?? "undecided"}${leg?.reason ? `: ${leg.reason}` : ""}`);
+  console.log(`         Celo mirror: NOT CHECKED, the proof came back ${leg?.status}${leg?.reason ? ` — ${leg.reason}` : ""}`);
+}
+
+/**
+ * Stop, rather than wait for whatever is still open.
+ *
+ * The relay's keep-alive connections, and any proof this run decided not to
+ * wait for, hold the loop open long after the last line is printed. A run that
+ * prints its verdict and then hangs gets killed by whatever timeout is
+ * watching it, and a killed run is read as the verdict it printed — which is
+ * how a PASS was read off a run whose key never reached Celo. The output is
+ * flushed first, and the flush is bounded, because an exit that eats the
+ * report is no better than a hang.
+ */
+async function exitCleanly(code: number): Promise<never> {
+  await Promise.race([
+    new Promise<void>((r) => process.stdout.write("", () => r())),
+    new Promise<void>((r) => setTimeout(r, 500)),
+  ]);
+  process.exit(code);
+}
 
 /**
  * Everything back to the funder. A relayed sweep is tried first and an EOA
@@ -959,7 +1090,7 @@ function table(): string {
 function writeReport(kind: "partial" | "final") {
   const passed = steps.filter((s) => s.status === "PASS").length;
   const failed = steps.filter((s) => s.status === "FAIL").length;
-  const verdict = failed === 0 && kind === "final" ? "PASS" : failed > 0 ? "FAIL" : "PARTIAL";
+  const verdict = verdictOf({ steps, kind, mirror: mirrorState() });
   const lines: string[] = [];
   lines.push(`# Celo acceptance run, ${startedAt.slice(0, 10)}`);
   lines.push("");
@@ -972,6 +1103,7 @@ function writeReport(kind: "partial" | "final") {
   lines.push(
     `- Relay calls: ${wire.length}, of which ${wire.filter((w) => w.method === "wallet_prepareCalls").length} prepares`,
   );
+  lines.push(`- Celo mirror: ${MIRROR.line}`);
   lines.push("");
   lines.push(table());
   lines.push("");
@@ -1007,10 +1139,12 @@ main()
     steps.push({ id: "-", title: "the run stopped before finishing", status: "FAIL", detail: [String(e)], txs: [] });
   })
   .finally(async () => {
+    await settleMirror().catch((e) => console.log(`the mirror wait failed: ${(e as Error).message}`));
     await refund().catch((e) => console.log(`refund failed: ${(e as Error).message}`));
     const verdict = writeReport("final");
     console.log("\n=================================================");
     console.log(table());
     console.log(`\nVerdict: ${verdict}`);
-    process.exitCode = verdict === "PASS" ? 0 : 1;
+    if (mirrorState() === "pending") console.log("Celo mirror: NOT CHECKED");
+    await exitCleanly(verdict === "PASS" ? 0 : 1);
   });
