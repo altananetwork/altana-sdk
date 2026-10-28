@@ -706,7 +706,8 @@ async function main() {
     );
 
     // Two back to back on one key, which is the strictly sequential case.
-    const seq: typeof burst = [];
+    // `burst` is a four-tuple, so the element type is what this list holds.
+    const seq: (typeof burst)[number][] = [];
     for (let i = 0; i < 2; i++) {
       seq.push(
         await runExecute({
