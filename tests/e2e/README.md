@@ -111,3 +111,13 @@ bun run --filter '@altananetwork/e2e' smoke:celo-passkey
 ```bash
 bun run --filter '@altananetwork/e2e' smoke:celo-fee-currency
 ```
+
+`live-many-wallets-mirror-then-use.ts` runs the session flow for several wallets at once (default 5) and uses each session only after its key is mirrored on Celo. For each wallet it funds 2.5 CELO, creates the wallet and grants a session on Celo Sepolia with the Sepolia KeyStore registration. It then waits for the mirror proof, waits until `KeyStoreCacheOPStack.isValidKey` is true and the explorer shows "Key populated … Celo", and only then sends one transaction signed by the session key. Nothing is revoked and nothing is swept: the sessions stay active (default 7 days) and every admin and session key is written to the shared `.env.testnet` before any funding. The mirror proof waits for Celo to anchor the Sepolia block, about 20 minutes, so do not run it under a timeout. It writes a JSON run record (`RUN_RECORD` to choose the path).
+
+```bash
+set -a; source <path to the shared .env.testnet>; set +a   # TEST_FUNDER_KEY, CELO_SEPOLIA_RPC_URL, SEPOLIA_RPC_URL
+ALTANA_RELAY_URL=https://testnet-relay.altana.network WALLETS=5 \
+  bun run --filter '@altananetwork/e2e' live:mirror-then-use
+```
+
+Options: `WALLETS`, `FUND_EACH` (CELO, default 2.5), `SESSION_DAYS` (default 7), `EXPLORER_WAIT_S` (default 900), `RUN_RECORD`, `TESTNET_ENV_FILE`.
