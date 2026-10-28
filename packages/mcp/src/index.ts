@@ -54,6 +54,12 @@ import {
 } from "@altananetwork/sdk";
 import type { Signer, Wallet } from "@altananetwork/sdk";
 import {
+  writeHeartbeat,
+  removeHeartbeatSync,
+  type AgentClient,
+} from "./agents.js";
+import { readLink } from "./link.js";
+import {
   getWalletKey,
   setWalletKey,
   walletKeyExists,
@@ -278,9 +284,154 @@ const server = new McpServer(
 // which compounds and exceeds TS's inference depth (TS2589). Casting the
 // server reference here trades inference for compile-ability — runtime
 // behavior is identical, and we hand-validate inputs anyway.
-const tool = (server as unknown as {
+const registerTool = (server as unknown as {
   registerTool: (name: string, config: any, cb: any) => unknown;
 }).registerTool.bind(server);
+
+// ---------- not connected yet --------------------------------------------
+
+/**
+ * The sentence `packages/contracts/native-messaging.md` requires when this
+ * agent has no wallet of its own and no link from the extension.
+ *
+ * The keychain error it replaces reads as a fault ("no wallet key named default
+ * found in OS keychain, ~/.altana/keys.json, or env var ..."), and it sends
+ * somebody looking for a broken keychain. The truth is simpler: nobody has
+ * connected a wallet yet, and there is one thing to do about it.
+ */
+export const NOT_CONNECTED =
+  "This agent is not connected to an Altana wallet yet. Open the Altana extension " +
+  "and click Connect to your agent.";
+
+class NotConnectedError extends Error {
+  constructor(detail?: string) {
+    super(detail ? `${NOT_CONNECTED} ${detail}` : NOT_CONNECTED);
+    this.name = "NotConnectedError";
+  }
+}
+
+/**
+ * A wallet admin key, or the contract's answer.
+ *
+ * Every wallet tool goes through here instead of calling getWalletKey directly,
+ * so the wording cannot drift tool by tool. The underlying error is deliberately
+ * not attached: it names a keychain service and a file path, which is exactly
+ * the detail that misdirects.
+ */
+async function requireWalletKey(name: string) {
+  try {
+    return await getWalletKey(name);
+  } catch (err) {
+    const link = await readLink();
+    if (link) {
+      // There is a link, so somebody has connected. This is the other failure:
+      // the extension holds the key and the agent is being asked to sign as an
+      // admin, which it cannot do and never will.
+      throw new NotConnectedError(
+        `This agent is linked to ${link.address} on chain ${link.chainId}, but that ` +
+          `wallet's own key stays in the extension, so this agent cannot act as its ` +
+          `admin. Ask the extension for a permission instead, and use session_execute.`,
+      );
+    }
+    // A name that was asked for specifically is worth echoing: it separates
+    // "nothing is connected" from "that is not the one that is connected".
+    throw new NotConnectedError(
+      name && name !== "default" ? `Nothing named "${name}" is set up here either.` : undefined,
+    );
+  }
+}
+
+/**
+ * The wallet the extension connected this agent to.
+ *
+ * Read fresh every time, never cached: the extension can unlink and relink
+ * while this process runs, and an agent reporting a stale address is reporting
+ * somebody else's balance.
+ */
+async function linkedWallet(): Promise<{ name: string; address: Address }> {
+  const link = await readLink();
+  if (!link) throw new NotConnectedError();
+  if (link.chainId !== NETWORK.chainId) {
+    // Silently reading the wrong chain's balance is worse than refusing: the
+    // number looks plausible and is simply not the one being asked about.
+    throw new Error(
+      `The Altana extension linked ${link.address} on chain ${link.chainId}, but this ` +
+        `agent is running on chain ${NETWORK.chainId}. Start the agent with ` +
+        `ALTANA_CHAIN set to the chain the extension is using, or relink in the extension.`,
+    );
+  }
+  return { name: "linked", address: link.address };
+}
+
+// ---------- the agent heartbeat ------------------------------------------
+
+// Fixed for the life of this process, so refreshing the file does not keep
+// moving the moment the agent started.
+const AGENT_STARTED_AT = new Date().toISOString();
+
+// Remembered so an exit handler can delete the right file: by then the
+// transport is closing and the client info may no longer be readable.
+let heartbeatClient: AgentClient | undefined;
+
+/**
+ * Write this process's heartbeat, so the extension can show this agent by its
+ * own name.
+ *
+ * The name comes from the MCP initialize handshake, which is the only
+ * agent-agnostic source there is: "claude-code", "Claude Desktop", "Cursor",
+ * whatever the client calls itself.
+ *
+ * Never allowed to fail a tool call. A full disk or a read-only ALTANA_HOME
+ * should cost the extension its agent list, not cost the person their
+ * transaction.
+ */
+async function touchHeartbeat(): Promise<void> {
+  const info = server.server.getClientVersion();
+  if (!info?.name) return;
+  heartbeatClient = { name: info.name, ...(info.version ? { version: info.version } : {}) };
+  try {
+    await writeHeartbeat({ client: heartbeatClient, startedAt: AGENT_STARTED_AT });
+  } catch (err) {
+    console.error(
+      `[altana-mcp] the agent heartbeat could not be written, so the Altana extension ` +
+        `will not list this agent: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+/**
+ * Every tool goes through here, which is what makes "on every tool call" one
+ * line rather than a line per tool that somebody forgets on the next one.
+ *
+ * Awaited rather than fired and forgotten: it is one small file, and a write
+ * that races the tool's own answer would let the extension see an agent as
+ * idle while it is working.
+ */
+const tool = (name: string, config: unknown, cb: (...args: any[]) => any) =>
+  registerTool(name, config, async (...args: any[]) => {
+    await touchHeartbeat();
+    return await cb(...args);
+  });
+
+// The write at start. initialize is the first thing a client sends, and this
+// fires as soon as it has, so an agent appears in the extension without
+// waiting for somebody to ask it to do something.
+server.server.oninitialized = () => {
+  void touchHeartbeat();
+};
+
+// A heartbeat for a process that has ended is what makes a dead agent look
+// alive. The host's pid check is the backstop for a hard kill; this covers the
+// ordinary case, which is stdin closing when the agent quits.
+process.on("exit", () => {
+  if (heartbeatClient) removeHeartbeatSync(heartbeatClient.name);
+});
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+  process.on(signal, () => {
+    if (heartbeatClient) removeHeartbeatSync(heartbeatClient.name);
+    process.exit(0);
+  });
+}
 
 // Prompts are slash commands the user invokes explicitly (e.g.
 // `/altana-agentic-wallet:create-wallet` in Claude Code). Same generic-
@@ -424,22 +575,38 @@ tool(
       "`display` value is scaled by uiMultiplier automatically (raw amounts " +
       "stay unscaled). Use `tokens` or `discover`, not both.",
     inputSchema: {
-      name: z.string(),
+      name: z
+        .string()
+        .optional()
+        .describe(
+          "Which wallet, by name. Leave it out to read the wallet the Altana " +
+            "extension connected this agent to, which needs no key here.",
+        ),
       tokens: z.array(z.string()).optional(),
       discover: z.boolean().optional(),
     },
   },
-  async ({ name, tokens, discover }: { name: string; tokens?: string[]; discover?: boolean }) => {
+  async ({ name, tokens, discover }: { name?: string; tokens?: string[]; discover?: boolean }) => {
     if (discover && tokens !== undefined) {
       throw new Error(
         "wallet_balance: pass either `tokens` (explicit ERC-20 list) or `discover: true` (list what the wallet holds), not both.",
       );
     }
-    const key = await getWalletKey(name);
+    // No name means the linked wallet. Reading a balance needs an address and
+    // nothing else, so this is the one wallet tool that works with no key on
+    // this machine at all, which is the normal state for an agent whose wallet
+    // lives in the extension.
+    // The spread would otherwise put the resolved key's own `name` back over
+    // the one that was asked for, and they are not always the same string.
+    const resolved =
+      name === undefined
+        ? await linkedWallet()
+        : { ...(await requireWalletKey(name)), name };
+    const key = resolved;
     const payload = discover
       ? await client.holdings({ wallet: key.address }).then((res) =>
           formatBalance({
-            name,
+            name: resolved.name,
             address: key.address,
             native: res.native,
             tokens: res.tokens,
@@ -453,7 +620,7 @@ tool(
           })
           .then((res) =>
             formatBalance({
-              name,
+              name: resolved.name,
               address: key.address,
               native: res.native,
               ...(res.tokens !== undefined ? { tokens: res.tokens } : {}),
@@ -490,7 +657,7 @@ tool(
       const payload = feeCurrenciesPayload(listed, nativeSymbol);
       return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
     }
-    const key = await getWalletKey(name);
+    const key = await requireWalletKey(name);
     const tokens = listed.currencies.filter((c) => !c.isNative).map((c) => c.address);
     const balances = await client.balances({ wallet: key.address, tokens });
     const payload = {
@@ -683,7 +850,7 @@ tool(
     data?: string;
     feeToken?: string | string[];
   }) => {
-    const key = await getWalletKey(name);
+    const key = await requireWalletKey(name);
     const recipient = assertAddress(to);
     const dataHex = data ? assertHexBytes(data) : ("0x" as Hex);
     const signer = signerFromPrivateKey(key.privateKey);
@@ -833,7 +1000,7 @@ tool(
           `name, or revoke the existing one first with revoke_session.`,
       );
     }
-    const admin = await getWalletKey(walletName);
+    const admin = await requireWalletKey(walletName);
     const adminSigner = signerFromPrivateKey(admin.privateKey);
     await ensureRegistered(adminSigner);
     const recipientAddr = assertAddress(recipient);
@@ -1095,7 +1262,7 @@ tool(
   },
   async ({ sessionName, feeToken }: { sessionName: string; feeToken?: string | string[] }) => {
     const stored = await getSession(sessionName);
-    const admin = await getWalletKey(stored.walletName);
+    const admin = await requireWalletKey(stored.walletName);
     const adminSigner = signerFromPrivateKey(admin.privateKey);
     await ensureRegistered(adminSigner);
     const wallet: Wallet = {

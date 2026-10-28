@@ -18,6 +18,7 @@
  */
 
 import { mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
+import { unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { altanaHome } from "./keys.js";
 
@@ -98,6 +99,22 @@ export async function writeHeartbeat(args: {
 /** Remove this process's heartbeat on a clean exit. Never throws. */
 export async function removeHeartbeat(clientName: string, pid?: number): Promise<void> {
   await unlink(heartbeatPath(clientName, pid ?? process.pid)).catch(() => {});
+}
+
+/**
+ * Remove this process's heartbeat from an exit handler.
+ *
+ * Synchronous because `process.on("exit")` cannot await, and that is the one
+ * handler that runs for an ordinary end of stdin. Without it the file lingers
+ * until the host next reaps it, and for those few seconds the extension shows
+ * an agent that has already gone.
+ */
+export function removeHeartbeatSync(clientName: string, pid?: number): void {
+  try {
+    unlinkSync(heartbeatPath(clientName, pid ?? process.pid));
+  } catch {
+    /* already gone, or never written */
+  }
 }
 
 /**
