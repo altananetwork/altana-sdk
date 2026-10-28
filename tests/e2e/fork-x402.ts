@@ -34,6 +34,7 @@ import {
   PERMIT2_ADDRESS,
 } from "@altananetwork/sdk";
 import type { Session } from "@altananetwork/sdk";
+import { startAnvil, waitForAnvil } from "./anvil.js";
 
 const ITHACA_ACCOUNT_IMPL: Address =
   "0x4B5d20CD8a3927B500540d9BcCDDc27385c9fA79";
@@ -135,28 +136,12 @@ function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error(`ASSERT FAILED: ${msg}`);
 }
 
-async function waitForAnvil(): Promise<void> {
-  const probe = createPublicClient({ transport: http(ANVIL_URL) });
-  for (let i = 0; i < 60; i++) {
-    try {
-      await probe.getBlockNumber();
-      return;
-    } catch {
-      await new Promise((r) => setTimeout(r, 500));
-    }
-  }
-  throw new Error("anvil did not become ready");
-}
-
 async function main() {
   console.log(`Forking BNB via anvil on ${ANVIL_URL} ...`);
-  const proc = Bun.spawn(
-    ["anvil", "--fork-url", BSC_RPC, "--port", String(ANVIL_PORT), "--silent"],
-    { stdout: "ignore", stderr: "ignore" },
-  );
+  const proc = startAnvil(BSC_RPC, ANVIL_PORT);
 
   try {
-    await waitForAnvil();
+    await waitForAnvil(proc);
     const test = createTestClient({
       mode: "anvil",
       chain: bsc,

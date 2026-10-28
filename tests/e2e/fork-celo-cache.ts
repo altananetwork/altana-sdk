@@ -72,6 +72,7 @@ import {
 import { buildRelayClient, submitCalls } from "../../packages/wallet/src/internal/relay.js";
 import { buildAdditionalRegisterCall } from "../../packages/wallet/src/internal/keystore.js";
 import cacheArtifact from "./fixtures/KeyStoreCacheOPStack-1.1.1.json" with { type: "json" };
+import { startAnvil, waitForAnvil } from "./anvil.js";
 
 // `||`, not `??`: an unset GitHub Actions secret arrives as an empty string.
 const CELO_RPC = process.env.CELO_SEPOLIA_FORK_RPC_URL || "https://forno.celo-sepolia.celo-testnet.org";
@@ -115,18 +116,12 @@ const l1: PublicClient = createPublicClient({ chain: SEPOLIA.chain, transport: h
 
 function log(msg: string) { console.log(msg); }
 function assert(cond: boolean, msg: string) { if (!cond) throw new Error(`ASSERT FAILED: ${msg}`); }
-async function waitForAnvil() {
-  for (let i = 0; i < 60; i++) {
-    try { await l2.getBlockNumber(); return; } catch { await new Promise((r) => setTimeout(r, 500)); }
-  }
-  throw new Error("anvil not ready");
-}
 
 async function main() {
   log(`\n▶ Booting anvil Celo Sepolia fork (${ANVIL_URL}) from ${CELO_RPC.replace(/\/[^/]*$/, "/…")} ...`);
-  const anvil = Bun.spawn(["anvil", "--fork-url", CELO_RPC, "--port", String(ANVIL_PORT), "--silent"], { stdout: "ignore", stderr: "ignore" });
+  const anvil = startAnvil(CELO_RPC, ANVIL_PORT);
   try {
-    await waitForAnvil();
+    await waitForAnvil(anvil);
     assert((await l2.getChainId()) === CELO_SEPOLIA.chainId, "fork is Celo Sepolia (11142220)");
     const liveAnchor = await readL1Anchor(l2);
     log(`  fork block ${await l2.getBlockNumber()}, L1Block anchors Sepolia #${liveAnchor.number}`);

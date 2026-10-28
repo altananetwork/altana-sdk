@@ -51,6 +51,7 @@ import {
 } from "@altananetwork/sdk";
 import type { Session } from "@altananetwork/sdk";
 import { createX402Merchant, USDC_CELO_SEPOLIA, USDT_CELO_SEPOLIA } from "@altananetwork/x402-server";
+import { startAnvil, waitForAnvil } from "./anvil.js";
 
 /** Testnet account implementation (same address on BNB testnet and Celo Sepolia). */
 const ACCOUNT_IMPL: Address = "0x33aD2F49ab9f122f5F0FDF579f575724EfF353DE";
@@ -78,13 +79,6 @@ const publicClient = createPublicClient({ chain: celoSepolia, transport: http(AN
 
 function log(msg: string) { console.log(msg); }
 function assert(cond: boolean, msg: string) { if (!cond) throw new Error(`ASSERT FAILED: ${msg}`); }
-async function waitForAnvil() {
-  const probe = createPublicClient({ transport: http(ANVIL_URL) });
-  for (let i = 0; i < 60; i++) {
-    try { await probe.getBlockNumber(); return; } catch { await new Promise((r) => setTimeout(r, 500)); }
-  }
-  throw new Error("anvil not ready");
-}
 async function dealToken(token: Address, holder: Address, amount: bigint) {
   for (let slot = 0; slot < 60; slot++) {
     const key = keccak256(encodeAbiParameters([{ type: "address" }, { type: "uint256" }], [holder, BigInt(slot)]));
@@ -103,11 +97,11 @@ async function main() {
   assert(networkToChainId("celo-sepolia") === CHAIN_ID && networkToChainId(`eip155:${CHAIN_ID}`) === CHAIN_ID, "SDK resolves the Celo Sepolia network aliases");
 
   log(`\n▶ Booting anvil Celo Sepolia fork (${ANVIL_URL}) ...`);
-  const anvil = Bun.spawn(["anvil", "--fork-url", CELO_RPC, "--port", String(ANVIL_PORT), "--silent"], { stdout: "ignore", stderr: "ignore" });
+  const anvil = startAnvil(CELO_RPC, ANVIL_PORT);
   let server: ReturnType<typeof Bun.serve> | undefined;
 
   try {
-    await waitForAnvil();
+    await waitForAnvil(anvil);
     assert((await publicClient.getChainId()) === CHAIN_ID, "fork is Celo Sepolia");
     for (const t of [USDC_CELO_SEPOLIA, USDT_CELO_SEPOLIA]) {
       const dec = await publicClient.readContract({ address: t.address, abi: ERC20_ABI, functionName: "decimals" });
