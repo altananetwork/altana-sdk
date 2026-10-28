@@ -81,8 +81,17 @@ describe("waitForAnvil", () => {
     try {
       const err = await waitForAnvil(anvil, undefined, { attempts: 40, everyMs: 250 }).catch((e: Error) => e);
       expect(err).toBeInstanceOf(Error);
+      expect(err.message).toContain("anvil did not become ready");
+      // That it noticed the exit rather than waiting out the clock: 40 * 250ms
+      // is 10s, and this comes back in about one.
+      expect(err.message).toContain("it exited with code");
+      // The sentence is anvil's own and moves between versions — 1.5.1 says
+      // "failed to get fork block number", the version in CI says "failed to
+      // fetch network chain ID" — so this asserts that a cause came through,
+      // not which words carried it. The wording is pinned in the pure cases
+      // above, where the text is ours.
       expect(err.message).toContain("anvil said:");
-      expect(err.message).toContain("fork block number");
+      expect(err.message).toMatch(/Error:/);
       expect(err.message).not.toContain("unreachable-fork-url");
     } finally {
       anvil.kill();
