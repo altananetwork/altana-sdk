@@ -31,7 +31,7 @@
 import { execFile } from "node:child_process";
 import { access, chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -213,6 +213,100 @@ export async function resolveBun(explicit?: string): Promise<string> {
   );
 }
 
+// ---------- what we replaced ------------------------------------------------
+
+/**
+ * Where install remembers an `altana` entry that was already there.
+ *
+ * An install has to be able to put somebody's configuration back. These files
+ * are shared with other servers and may already hold an `altana` entry pointing
+ * at a published build; replacing it with a dev launcher and then uninstalling
+ * would leave them with neither.
+ */
+export function backupPath(home = altanaHomeDir()): string {
+  return join(home, "install-backup.json");
+}
+
+type Backup = {
+  v: 1;
+  /** Keyed by config path. null means there was genuinely no entry before. */
+  replaced: Record<string, { name: string; previous: unknown; replacedAt: string }>;
+};
+
+async function readBackup(): Promise<Backup> {
+  const parsed = await readJsonObject(backupPath()).catch(() => ({}) as Record<string, unknown>);
+  const replaced = isRecord(parsed.replaced) ? parsed.replaced : {};
+  return { v: 1, replaced: replaced as Backup["replaced"] };
+}
+
+/**
+ * Record what was at `name` in that config before we touched it.
+ *
+ * Only the first time. A second install would otherwise record our own dev
+ * entry as the thing to restore, which is exactly the configuration the person
+ * wanted undone, and the real previous value would be lost for good.
+ */
+async function rememberReplaced(args: {
+  path: string;
+  name: string;
+  previous: unknown;
+  dryRun?: boolean;
+}): Promise<void> {
+  const backup = await readBackup();
+  if (args.path in backup.replaced) return;
+  backup.replaced[args.path] = {
+    name: args.name,
+    previous: args.previous ?? null,
+    replacedAt: new Date().toISOString(),
+  };
+  if (!args.dryRun) {
+    await writeFileAtomic(backupPath(), `${JSON.stringify(backup, null, 2)}\n`, 0o600);
+  }
+}
+
+/** What was replaced at that config, if anything was. */
+export async function replacedEntry(path: string): Promise<unknown | undefined> {
+  const backup = await readBackup();
+  return path in backup.replaced ? backup.replaced[path]?.previous : undefined;
+}
+
+/** How many replaced entries are still waiting to be put back. */
+export async function replacedEntryCount(): Promise<number> {
+  return Object.keys((await readBackup()).replaced).length;
+}
+
+async function forgetReplaced(path: string, dryRun?: boolean): Promise<void> {
+  const backup = await readBackup();
+  if (!(path in backup.replaced)) return;
+  delete backup.replaced[path];
+  if (!dryRun) {
+    await writeFileAtomic(backupPath(), `${JSON.stringify(backup, null, 2)}\n`, 0o600);
+  }
+}
+
+/** A one line description of an MCP entry, for telling somebody what changed. */
+export function describeEntry(entry: unknown): string {
+  if (!isRecord(entry)) return "something this installer does not recognise";
+  const command = typeof entry.command === "string" ? entry.command : undefined;
+  const url = typeof entry.url === "string" ? entry.url : undefined;
+  return command ?? url ?? "an entry with neither a command nor a url";
+}
+
+/**
+ * Is ALTANA_HOME inside the system temp directory?
+ *
+ * A test run points ALTANA_HOME at a temp directory on purpose. An install from
+ * inside one then writes a real Chrome manifest, in the real Chrome directory,
+ * naming a launcher that will be deleted, and nothing says so until the port
+ * will not open. QA hit exactly that
+ * (`evidence/2026-10-28-g1-install-home-trap.md`), so it gets said out loud.
+ */
+export function homeIsTemporary(home = altanaHomeDir()): boolean {
+  const temp = resolve(tmpdir());
+  const resolved = resolve(home);
+  return resolved === temp || resolved.startsWith(`${temp}/`) || resolved.startsWith("/private/tmp/") || resolved.startsWith("/tmp/");
+}
+
 // ---------- writing ---------------------------------------------------------
 
 export type Step = { did: string; path?: string };
@@ -287,31 +381,65 @@ export async function upsertMcpServer(args: {
   name: string;
   entry: unknown;
   dryRun?: boolean;
-}): Promise<"added" | "replaced"> {
+}): Promise<{ how: "added" | "replaced" | "unchanged"; previous?: unknown }> {
   const config = await readJsonObject(args.path);
   const servers = isRecord(config.mcpServers) ? { ...config.mcpServers } : {};
   const existed = args.name in servers;
+  const previous = existed ? servers[args.name] : undefined;
+
+  if (existed && JSON.stringify(previous) === JSON.stringify(args.entry)) {
+    return { how: "unchanged" };
+  }
+  // Remembered before the write, and only ever the first value, so uninstall
+  // can put back what was really there rather than our own dev entry.
+  if (existed) {
+    await rememberReplaced({ path: args.path, name: args.name, previous, dryRun: args.dryRun });
+  }
+
   servers[args.name] = args.entry;
   if (!args.dryRun) {
     await writeFileAtomic(args.path, `${JSON.stringify({ ...config, mcpServers: servers }, null, 2)}\n`, 0o600);
   }
-  return existed ? "replaced" : "added";
+  return existed ? { how: "replaced", previous } : { how: "added" };
 }
 
 export async function removeMcpServer(args: {
   path: string;
   name: string;
   dryRun?: boolean;
-}): Promise<boolean> {
+}): Promise<{ how: "removed" | "restored"; previous?: unknown } | false> {
   if (!(await exists(args.path))) return false;
   const config = await readJsonObject(args.path);
-  if (!isRecord(config.mcpServers) || !(args.name in config.mcpServers)) return false;
+  if (!isRecord(config.mcpServers) || !(args.name in config.mcpServers)) {
+    // Nothing of ours to take out, but a remembered entry still has to go back:
+    // somebody may have deleted our entry by hand after an install.
+    const remembered = await replacedEntry(args.path);
+    if (remembered === undefined || remembered === null) return false;
+    const base = isRecord(config.mcpServers) ? config.mcpServers : {};
+    const servers = { ...base, [args.name]: remembered };
+    if (!args.dryRun) {
+      await writeFileAtomic(args.path, `${JSON.stringify({ ...config, mcpServers: servers }, null, 2)}\n`, 0o600);
+      await forgetReplaced(args.path);
+    }
+    return { how: "restored", previous: remembered };
+  }
+
   const servers = { ...config.mcpServers };
-  delete servers[args.name];
+  const remembered = await replacedEntry(args.path);
+  // Uninstall means "leave this machine as it was", which is a restore when
+  // there was something here before and a delete when there was not.
+  if (remembered !== undefined && remembered !== null) {
+    servers[args.name] = remembered;
+  } else {
+    delete servers[args.name];
+  }
   if (!args.dryRun) {
     await writeFileAtomic(args.path, `${JSON.stringify({ ...config, mcpServers: servers }, null, 2)}\n`, 0o600);
+    await forgetReplaced(args.path);
   }
-  return true;
+  return remembered !== undefined && remembered !== null
+    ? { how: "restored", previous: remembered }
+    : { how: "removed" };
 }
 
 async function readJsonObject(path: string): Promise<Record<string, unknown>> {
@@ -360,18 +488,32 @@ export async function registerClaudeCode(args: {
 }): Promise<Step> {
   const path = claudeCodeConfigPath(args.home);
   if (args.dryRun) return { did: "Claude Code (dry run)", path };
+
+  // Read before the CLI gets a chance to write, because `claude mcp add` goes
+  // around upsertMcpServer and would take an existing entry with it.
+  const before = await readJsonObject(path).catch(() => ({}) as Record<string, unknown>);
+  const existing = isRecord(before.mcpServers) ? before.mcpServers[SERVER_NAME] : undefined;
+
   try {
     await exec("claude", ["mcp", "add", "-s", "user", SERVER_NAME, "--", args.launcher], {
       env: { ...process.env, PATH: `${process.env.PATH ?? ""}:/usr/local/bin:/opt/homebrew/bin` },
     });
+    if (existing !== undefined) {
+      await rememberReplaced({ path, name: SERVER_NAME, previous: existing });
+      return {
+        did: `Claude Code, through its CLI, replacing ${describeEntry(existing)}`,
+        path,
+      };
+    }
     return { did: "Claude Code, through its CLI" };
   } catch {
-    const how = await upsertMcpServer({
+    const { how, previous } = await upsertMcpServer({
       path,
       name: SERVER_NAME,
       entry: mcpServerEntry(args.launcher),
     });
-    return { did: `Claude Code, by editing its config (${how})`, path };
+    const note = how === "replaced" ? `${how}, was ${describeEntry(previous)}` : how;
+    return { did: `Claude Code, by editing its config (${note})`, path };
   }
 }
 
@@ -457,14 +599,30 @@ async function install(parsed: Parsed): Promise<Step[]> {
   const extensionId = resolveExtensionId(parsed.extensionId);
   const bun = await resolveBun(parsed.bun);
   const entry = cliEntryPath();
-  const steps: Step[] = [
+  const steps: Step[] = [];
+
+  // Said before anything is written, because the thing that goes wrong here is
+  // a real Chrome manifest naming a launcher inside a directory that is about
+  // to be deleted, and nothing complains until the port will not open.
+  if (homeIsTemporary()) {
+    steps.push({
+      did:
+        "warning: ALTANA_HOME is inside the system temp directory, so the launcher " +
+        "this writes will disappear when that directory is cleaned up, while the " +
+        "Chrome manifest naming it stays in the real Chrome directory. If this is a " +
+        "test run, point the manifest somewhere else or run uninstall afterwards",
+      path: altanaHomeDir(),
+    });
+  }
+
+  steps.push(
     ...(await writeLaunchers({ bun, entry, dryRun: parsed.dryRun })),
     ...(await writeHostManifests({
       extensionId,
       hostLauncher: hostLauncherPath(),
       dryRun: parsed.dryRun,
     })),
-  ];
+  );
 
   const wanted = parsed.clients.length > 0 ? parsed.clients : ALL_CLIENTS;
   const launcher = serverLauncherPath();
@@ -482,13 +640,21 @@ async function install(parsed: Parsed): Promise<Step[]> {
       steps.push({ did: `${client}: not installed, skipped` });
       continue;
     }
-    const how = await upsertMcpServer({
+    const { how, previous } = await upsertMcpServer({
       path,
       name: SERVER_NAME,
       entry: mcpServerEntry(launcher),
       dryRun: parsed.dryRun,
     });
-    steps.push({ did: `${client} (${how})`, path });
+    // Saying what was there is the point: an entry silently swapped for a dev
+    // launcher is the kind of thing somebody finds out about a week later.
+    steps.push({
+      did:
+        how === "replaced"
+          ? `${client} (replaced ${describeEntry(previous)}, kept in ${backupPath()} for uninstall)`
+          : `${client} (${how})`,
+      path,
+    });
   }
   return steps;
 }
@@ -507,8 +673,23 @@ async function uninstall(parsed: Parsed): Promise<Step[]> {
     steps.push({ did: "removed a launcher", path });
   }
   for (const path of [claudeCodeConfigPath(), claudeDesktopConfigPath(), cursorConfigPath()]) {
-    if (await removeMcpServer({ path, name: SERVER_NAME, dryRun: parsed.dryRun })) {
-      steps.push({ did: `removed the ${SERVER_NAME} entry`, path });
+    const result = await removeMcpServer({ path, name: SERVER_NAME, dryRun: parsed.dryRun });
+    if (!result) continue;
+    steps.push({
+      did:
+        result.how === "restored"
+          ? `put back the ${SERVER_NAME} entry that was here before: ${describeEntry(result.previous)}`
+          : `removed the ${SERVER_NAME} entry`,
+      path,
+    });
+  }
+  // Only once every config has been dealt with, so a failure part way through
+  // does not throw away what is still needed to put things back.
+  if (!parsed.dryRun && (await exists(backupPath()))) {
+    const left = await replacedEntryCount();
+    if (left === 0) {
+      await unlink(backupPath()).catch(() => {});
+      steps.push({ did: "removed the record of what was replaced", path: backupPath() });
     }
   }
   if (steps.length === 0) steps.push({ did: "nothing of ours was installed" });

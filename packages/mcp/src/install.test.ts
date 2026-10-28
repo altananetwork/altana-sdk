@@ -3,10 +3,13 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+  backupPath,
   browserManifestDirs,
   claudeDesktopConfigPath,
   cliEntryPath,
   cursorConfigPath,
+  describeEntry,
+  homeIsTemporary,
   hostLauncherPath,
   hostManifest,
   HOST_NAME,
@@ -15,6 +18,7 @@ import {
   mcpServerEntry,
   parseArgs,
   removeMcpServer,
+  replacedEntry,
   resolveBun,
   resolveExtensionId,
   serverLauncherPath,
@@ -172,7 +176,9 @@ describe("upsertMcpServer", () => {
       path,
       JSON.stringify({ somethingElse: true, mcpServers: { theirs: { type: "http", url: "https://x" } } }),
     );
-    expect(await upsertMcpServer({ path, name: SERVER_NAME, entry: mcpServerEntry("/abs/launcher") })).toBe("added");
+    expect(await upsertMcpServer({ path, name: SERVER_NAME, entry: mcpServerEntry("/abs/launcher") })).toEqual({
+      how: "added",
+    });
 
     const after = JSON.parse(await readFile(path, "utf8"));
     expect(after.somethingElse).toBe(true);
@@ -183,7 +189,9 @@ describe("upsertMcpServer", () => {
   test("a second install replaces our entry rather than duplicating it", async () => {
     const path = join(home, "config.json");
     await upsertMcpServer({ path, name: SERVER_NAME, entry: mcpServerEntry("/one") });
-    expect(await upsertMcpServer({ path, name: SERVER_NAME, entry: mcpServerEntry("/two") })).toBe("replaced");
+    const second = await upsertMcpServer({ path, name: SERVER_NAME, entry: mcpServerEntry("/two") });
+    expect(second.how).toBe("replaced");
+    expect(second.previous).toEqual(mcpServerEntry("/one"));
     const after = JSON.parse(await readFile(path, "utf8"));
     expect(after.mcpServers[SERVER_NAME].command).toBe("/two");
   });
@@ -218,7 +226,7 @@ describe("removeMcpServer", () => {
     await writeFile(path, JSON.stringify({ mcpServers: { theirs: { url: "https://x" } } }));
     await upsertMcpServer({ path, name: SERVER_NAME, entry: mcpServerEntry("/abs") });
 
-    expect(await removeMcpServer({ path, name: SERVER_NAME })).toBe(true);
+    expect(await removeMcpServer({ path, name: SERVER_NAME })).toEqual({ how: "removed" });
     const after = JSON.parse(await readFile(path, "utf8"));
     expect(after.mcpServers.theirs).toEqual({ url: "https://x" });
     expect(after.mcpServers[SERVER_NAME]).toBeUndefined();
@@ -290,5 +298,105 @@ describe("the paths an install touches", () => {
   test("the entry point is this package's cli.ts, as an absolute path", () => {
     expect(cliEntryPath().endsWith("/src/cli.ts")).toBe(true);
     expect(cliEntryPath().startsWith("/")).toBe(true);
+  });
+});
+
+describe("keeping what was already there", () => {
+  test("an existing altana entry is remembered, and uninstall puts it back", async () => {
+    // The case QA raised: somebody already runs a published altana MCP, an
+    // install points it at a dev launcher, and an uninstall would otherwise
+    // leave them with neither.
+    const path = join(home, "config.json");
+    const theirs = { type: "stdio", command: "/usr/local/bin/altana-mcp", args: [] };
+    await writeFile(path, JSON.stringify({ mcpServers: { [SERVER_NAME]: theirs } }));
+
+    const first = await upsertMcpServer({ path, name: SERVER_NAME, entry: mcpServerEntry("/dev/launcher") });
+    expect(first.how).toBe("replaced");
+    expect(first.previous).toEqual(theirs);
+    expect(await replacedEntry(path)).toEqual(theirs);
+
+    expect(await removeMcpServer({ path, name: SERVER_NAME })).toEqual({ how: "restored", previous: theirs });
+    expect(JSON.parse(await readFile(path, "utf8")).mcpServers[SERVER_NAME]).toEqual(theirs);
+  });
+
+  test("a second install does not overwrite the remembered entry with our own", async () => {
+    // Otherwise the thing uninstall restores is the dev launcher the person
+    // wanted undone, and the real previous value is gone for good.
+    const path = join(home, "config.json");
+    const theirs = { type: "stdio", command: "/usr/local/bin/altana-mcp", args: [] };
+    await writeFile(path, JSON.stringify({ mcpServers: { [SERVER_NAME]: theirs } }));
+
+    await upsertMcpServer({ path, name: SERVER_NAME, entry: mcpServerEntry("/dev/one") });
+    await upsertMcpServer({ path, name: SERVER_NAME, entry: mcpServerEntry("/dev/two") });
+    expect(await replacedEntry(path)).toEqual(theirs);
+  });
+
+  test("an unchanged entry is reported as unchanged and remembers nothing", async () => {
+    const path = join(home, "config.json");
+    const ours = mcpServerEntry("/dev/launcher");
+    await upsertMcpServer({ path, name: SERVER_NAME, entry: ours });
+    expect(await upsertMcpServer({ path, name: SERVER_NAME, entry: ours })).toEqual({ how: "unchanged" });
+    expect(await replacedEntry(path)).toBeUndefined();
+  });
+
+  test("with nothing there before, uninstall removes rather than restores", async () => {
+    const path = join(home, "config.json");
+    await upsertMcpServer({ path, name: SERVER_NAME, entry: mcpServerEntry("/dev/launcher") });
+    expect(await removeMcpServer({ path, name: SERVER_NAME })).toEqual({ how: "removed" });
+    expect(JSON.parse(await readFile(path, "utf8")).mcpServers[SERVER_NAME]).toBeUndefined();
+  });
+
+  test("a remembered entry goes back even if our entry was deleted by hand", async () => {
+    const path = join(home, "config.json");
+    const theirs = { type: "http", url: "https://mcp.altana.network" };
+    await writeFile(path, JSON.stringify({ mcpServers: { [SERVER_NAME]: theirs } }));
+    await upsertMcpServer({ path, name: SERVER_NAME, entry: mcpServerEntry("/dev/launcher") });
+
+    await writeFile(path, JSON.stringify({ mcpServers: {} }));
+    expect(await removeMcpServer({ path, name: SERVER_NAME })).toEqual({ how: "restored", previous: theirs });
+    expect(JSON.parse(await readFile(path, "utf8")).mcpServers[SERVER_NAME]).toEqual(theirs);
+  });
+
+  test("the record lives in ALTANA_HOME, so a test run keeps its own", () => {
+    expect(backupPath()).toBe(join(process.env.ALTANA_HOME!, "install-backup.json"));
+  });
+
+  test("a dry run remembers nothing and changes nothing", async () => {
+    const path = join(home, "config.json");
+    const theirs = { type: "stdio", command: "/usr/local/bin/altana-mcp", args: [] };
+    await writeFile(path, JSON.stringify({ mcpServers: { [SERVER_NAME]: theirs } }));
+    await upsertMcpServer({ path, name: SERVER_NAME, entry: mcpServerEntry("/dev/x"), dryRun: true });
+    expect(await replacedEntry(path)).toBeUndefined();
+    expect(JSON.parse(await readFile(path, "utf8")).mcpServers[SERVER_NAME]).toEqual(theirs);
+  });
+});
+
+describe("describeEntry", () => {
+  test("names a command or a url, so the person recognises what changed", () => {
+    expect(describeEntry({ type: "stdio", command: "/usr/local/bin/altana-mcp" })).toBe(
+      "/usr/local/bin/altana-mcp",
+    );
+    expect(describeEntry({ type: "http", url: "https://mcp.altana.network" })).toBe(
+      "https://mcp.altana.network",
+    );
+  });
+
+  test("says something sensible about an entry it does not understand", () => {
+    expect(describeEntry({ odd: true })).toContain("neither a command nor a url");
+    expect(describeEntry("nonsense")).toContain("does not recognise");
+  });
+});
+
+describe("homeIsTemporary", () => {
+  test("spots an ALTANA_HOME inside the system temp directory", () => {
+    // QA's trap: a real Chrome manifest naming a launcher that is about to be
+    // deleted, with nothing saying so until the port will not open.
+    expect(homeIsTemporary(join(tmpdir(), "altana-test-123"))).toBe(true);
+    expect(homeIsTemporary("/tmp/altana")).toBe(true);
+    expect(homeIsTemporary("/private/tmp/altana")).toBe(true);
+  });
+
+  test("leaves a real home alone", () => {
+    expect(homeIsTemporary("/Users/someone/.altana")).toBe(false);
   });
 });
