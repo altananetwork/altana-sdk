@@ -25,6 +25,9 @@
  *   never comes hangs with nothing to show the person.
  */
 
+import { appendFile, mkdir, stat, writeFile } from "node:fs/promises";
+import { writeSync } from "node:fs";
+import { join } from "node:path";
 import { readAgents, reapDeadAgents, type Agent } from "./agents.js";
 import { altanaHome } from "./keys.js";
 import { clearLink, writeLink, LinkError } from "./link.js";
@@ -422,11 +425,78 @@ function signatureOf(agents: Agent[]): string {
   return agents.map((a) => `${a.client.name}\u0000${a.pid}\u0000${a.running ? 1 : 0}`).join("\u0001");
 }
 
+/**
+ * Where the host leaves a breadcrumb, so somebody can tell whether Chrome
+ * started it at all.
+ *
+ * Chrome swallows a native host's stderr, which makes "the port is open but
+ * nothing answers" impossible to attribute: the host may never have started,
+ * may have started and died, or may be answering into a void. One appended line
+ * per port settles it, and settling it is the difference between looking at the
+ * extension and looking at the host.
+ *
+ * Everything written here has already been through redact().
+ */
+export function hostLogPath(): string {
+  return join(altanaHome(), "host.log");
+}
+
+/** Keep the breadcrumb file from growing without bound. */
+const HOST_LOG_MAX_BYTES = 64 * 1024;
+
+async function appendToHostLog(line: string): Promise<void> {
+  try {
+    const path = hostLogPath();
+    await mkdir(altanaHome(), { recursive: true, mode: 0o700 });
+    // Truncating beats rotating here: this is a breadcrumb trail for the last
+    // few runs, not a record anybody needs to keep.
+    const size = await stat(path).then((s) => s.size, () => 0);
+    if (size > HOST_LOG_MAX_BYTES) await writeFile(path, "", { mode: 0o600 });
+    await appendFile(path, line, { mode: 0o600 });
+  } catch {
+    // A host that cannot write its own diagnostics still has a job to do.
+  }
+}
+
 /** Wire the host to this process's stdio. The `native-host` entry point. */
 export async function runNativeHostOnStdio(): Promise<void> {
-  await runNativeHost({
-    input: process.stdin,
-    write: (bytes) => void process.stdout.write(bytes),
-    log: (line) => void process.stderr.write(`${line}\n`),
-  });
+  const stamp = () => new Date().toISOString();
+
+  // Chrome appends the calling origin, and on some platforms a window handle,
+  // after the arguments the launcher already passed. Recorded because a wrong
+  // origin here is one of the few ways this fails silently.
+  const chromeArgs = process.argv.slice(3);
+  void appendToHostLog(
+    `${stamp()} start pid=${process.pid} altanaHome=${altanaHome()} ` +
+      `args=${JSON.stringify(chromeArgs)}\n`,
+  );
+
+  const log = (line: string) => {
+    process.stderr.write(`${line}\n`);
+    void appendToHostLog(`${stamp()} ${line}\n`);
+  };
+
+  try {
+    await runNativeHost({
+      input: process.stdin,
+      // writeSync on fd 1, not process.stdout.write. Chrome keeps the port's
+      // stdin open for the life of the connection, so nothing ever flushes a
+      // buffered stream on exit, and a frame still sitting in a buffer is a
+      // request the extension waits on forever. A partial write is possible on
+      // a pipe, so this loops until the frame is out.
+      write: (bytes) => {
+        let written = 0;
+        while (written < bytes.byteLength) {
+          written += writeSync(1, bytes, written, bytes.byteLength - written);
+        }
+      },
+      log,
+    });
+    void appendToHostLog(`${stamp()} end pid=${process.pid} the port closed\n`);
+  } catch (err) {
+    // Chrome shows a host that died as a disconnect with no reason, so the
+    // reason has to be written down somewhere before this process goes.
+    await appendToHostLog(`${stamp()} died pid=${process.pid} ${redactedMessage(err)}\n`);
+    throw err;
+  }
 }

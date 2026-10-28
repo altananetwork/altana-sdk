@@ -161,3 +161,100 @@ describe("altana-mcp argv dispatch", () => {
     expect(exitCode).toBe(2);
   }, 20_000);
 });
+
+
+describe("answering while the port is still open", () => {
+  /**
+   * The case Chrome actually exercises, and the one a probe misses.
+   *
+   * Chrome holds the port's stdin open for the whole life of the connection.
+   * So nothing ever flushes a buffered stream on exit, and a frame sitting in a
+   * buffer is a request the extension waits on forever: the port looks healthy,
+   * the host looks alive, and hello never comes back.
+   *
+   * Every other test here closes stdin, which flushes on exit and would pass
+   * even if the host only ever answered at the end.
+   */
+  test("hello comes back with stdin left open, and quickly", async () => {
+    const child = Bun.spawn([process.execPath, "run", CLI, "native-host"], {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, ALTANA_HOME: home },
+    });
+    try {
+      child.stdin.write(encodeFrame({ id: "open", type: "hello", payload: {} }));
+      await child.stdin.flush();
+      // Deliberately not closed. That is the whole point.
+
+      const reader = (child.stdout as ReadableStream<Uint8Array>).getReader();
+      const started = Date.now();
+      const first = await Promise.race([
+        reader.read(),
+        Bun.sleep(8000).then(() => undefined),
+      ]);
+      expect(first).toBeDefined();
+      expect(Date.now() - started).toBeLessThan(8000);
+
+      const decoder = new FrameDecoder();
+      const frames = decoder.push(Buffer.from(first!.value!));
+      expect(frames[0]).toMatchObject({ ok: true });
+      const value = (frames[0] as { value: any }).value;
+      expect(value.id).toBe("open");
+      expect(value.ok).toBe(true);
+    } finally {
+      child.kill();
+      await child.exited;
+    }
+  }, 30_000);
+
+  test("it leaves a breadcrumb saying it started, since Chrome swallows stderr", async () => {
+    // Without this, "the port is open and nothing answers" cannot be
+    // attributed: the host may never have started, may have died, or may be
+    // answering into a void.
+    const child = Bun.spawn([process.execPath, "run", CLI, "native-host", "chrome-extension://abc/"], {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, ALTANA_HOME: home },
+    });
+    try {
+      child.stdin.write(encodeFrame({ id: "crumb", type: "hello", payload: {} }));
+      await child.stdin.flush();
+      await Bun.sleep(1200);
+
+      const log = await readFile(join(home, "host.log"), "utf8");
+      expect(log).toContain(`start pid=${child.pid}`);
+      expect(log).toContain(home);
+      // The origin Chrome appends is recorded, because a wrong one here is one
+      // of the few ways this fails with nothing to look at.
+      expect(log).toContain("chrome-extension://abc/");
+    } finally {
+      child.kill();
+      await child.exited;
+    }
+  }, 30_000);
+
+  test("a session key never reaches the breadcrumb file either", async () => {
+    const key = `0x${"ef".repeat(32)}`;
+    const child = Bun.spawn([process.execPath, "run", CLI, "native-host"], {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, ALTANA_HOME: home },
+    });
+    try {
+      child.stdin.write(
+        encodeFrame({ id: "k", type: "sendSession", payload: { name: "b", sessionPrivateKey: key } }),
+      );
+      await child.stdin.flush();
+      await Bun.sleep(1200);
+      const log = await readFile(join(home, "host.log"), "utf8").catch(() => "");
+      expect(log).not.toContain(key);
+      expect(log).not.toContain("efef");
+    } finally {
+      child.kill();
+      await child.exited;
+    }
+  }, 30_000);
+});
