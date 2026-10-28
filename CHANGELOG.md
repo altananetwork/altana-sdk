@@ -252,6 +252,20 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Fixed
 
+- **An empty wallet is told to fund the chain's native token, not a
+  stablecoin it cannot get.** On a relay that accepts several fee tokens, a
+  wallet holding none of them had its fee quoted in whichever token the relay
+  picked — on Celo Sepolia that is USDm, which no faucet supplies and which
+  has no Mento route from USDC — and `nativeNeeded` came back 0, so a "top up,
+  then retry" flow built on that field read zero for a wallet that needed
+  0.4 CELO. When no `feeToken` is named and the wallet's balance in every fee
+  token the relay offers is zero, the SDK now names the native token, so the
+  quote, the deficit and `nativeNeeded` all describe the token a faucet can
+  supply. A wallet holding any accepted token is unchanged: the relay still
+  chooses, so a USDC-only wallet still pays in USDC. Costs one
+  `wallet_getCapabilities` and one `wallet_getAssets` on that path, both read
+  from the relay, never a public RPC.
+
 - **A wallet's first session key registers reliably again.** That first
   registry write is two KeyStore calls, `initialRegisterKey` then
   `registerKey`, and they were bundled into one relayed intent.

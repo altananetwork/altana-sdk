@@ -10,7 +10,9 @@
  *   1. `feeToken` is one address: use it, any key.
  *   2. `feeToken` is a list: the first of the list that the relay accepts on
  *      the chain and the wallet holds. An empty list names nothing.
- *   3. Nothing named, wallet key: send none; the relay picks.
+ *   3. Nothing named, wallet key: send none; the relay picks — except when
+ *      the wallet holds none of the tokens the relay offers, where the SDK
+ *      names the native token (see `nativeWhenNothingToPayWith`).
  *   4. Nothing named, session key: among the tokens of the session's spend
  *      permission (native included when the cap is native), those the relay
  *      accepts, the one the wallet holds the most of in the relay's own
@@ -202,6 +204,53 @@ function malformedAssets(address: Address, chainId: number, what: string): Error
 }
 
 /**
+ * The fee token for a wallet key that named none, when there is nothing to
+ * pay with.
+ *
+ * Naming nothing means "the relay picks", which is what a wallet holding one
+ * of its fee tokens wants. For a wallet that holds none of them the relay
+ * still picks one, and on a multi-token relay that can be a token the user
+ * has no way to get: an empty Celo Sepolia wallet is quoted in USDm with
+ * `nativeNeeded` 0, so the deficit names a token the faucet cannot supply and
+ * the one field a "top up, then retry" flow reads says zero
+ * (`evidence/2026-09-28-empty-wallet-quoted-in-usdm.md`; Doris decided the
+ * native token, 2026-10-20).
+ *
+ * So when every fee token the relay offers reads zero, name the chain's
+ * native token. The quote then fails on native — the token a faucet can
+ * supply, and the one every other message already talks about.
+ *
+ * Undefined, leaving the choice to the relay, when the wallet holds any of
+ * them, when native is the only fee token (the relay would pick it anyway),
+ * when the relay offers no native fee token, and when either read fails.
+ * This decides a message, so it must never turn into a new failure.
+ *
+ * Balances come from the relay's own `wallet_getAssets` — the same source the
+ * relay's own choice uses, so the two cannot disagree about what is held.
+ */
+export async function nativeWhenNothingToPayWith(args: {
+  relay: Client;
+  network: NetworkConfig;
+  walletAddress: Address;
+}): Promise<Address | undefined> {
+  try {
+    const { currencies } = await fetchFeeCurrencies(args.relay, args.network);
+    const native = currencies.find((c) => c.isNative);
+    if (!native || currencies.length <= 1) return undefined;
+    const held = await readHeldBalances(
+      args.relay,
+      args.network,
+      args.walletAddress,
+      currencies.map((c) => c.address),
+    );
+    for (const raw of held.values()) if (raw > 0n) return undefined;
+    return native.address;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Applies the rule above for one submission. Returns the token to name in
  * the request, or undefined to let the relay pick.
  */
@@ -222,11 +271,18 @@ export async function resolveFeeToken(args: {
   } else if (args.submittingKey.role === "session") {
     candidates = feeTokenCandidatesOf(args.submittingKey.permissions);
     source = "session";
-    // A session with no spend cap has nothing porto could guess from; the
-    // relay picks, as for a wallet key.
+    // A session with no spend cap has nothing porto could guess from, so the
+    // relay picks. Deliberately not the empty-wallet rule above: a session
+    // with no cap cannot spend anything, so it cannot pay a fee in native
+    // either, and naming one would change the message without changing the
+    // outcome.
     if (candidates.length === 0) return undefined;
   } else {
-    return undefined;
+    return nativeWhenNothingToPayWith({
+      relay: args.relay,
+      network: args.network,
+      walletAddress: args.walletAddress,
+    });
   }
   const { currencies: accepted } = await fetchFeeCurrencies(args.relay, args.network);
   const eligible = rankFeeCandidates(candidates, accepted, new Map()).map((r) => r.currency.address);

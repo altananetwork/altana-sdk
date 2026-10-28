@@ -234,11 +234,53 @@ describe("fee token on the wire", () => {
     expect(wire.wireFeeToken()?.toLowerCase()).toBe(USDC.toLowerCase());
   });
 
-  test("wallet key with nothing named: no fee token on the wire, the relay picks", async () => {
+  test("wallet key with nothing named, wallet holds a fee token: no fee token on the wire, the relay picks", async () => {
     const signer = createPrivateKeySigner();
     const wire = mockWire({
       network: CELO_SEPOLIA,
       capabilities: chainCapabilities(CELO_SEPOLIA.chainId, [feeToken("usdc", USDC, 6, "USDC")]),
+      assets: assetsAnswer(CELO_SEPOLIA.chainId, 0n, { [USDC]: 3_000_000n }),
+    });
+    await submitCallsDetailed(buildRelayClient(CELO_SEPOLIA), WALLET, signer, CALLS, {
+      submittingKey: adminKey(signer),
+      network: CELO_SEPOLIA,
+    });
+    expect(wire.wireFeeToken()).toBeUndefined();
+    // The balances were read to establish that, and nothing was named.
+    expect(wire.methods()).toEqual([
+      "wallet_getCapabilities",
+      "wallet_getAssets",
+      "wallet_getCapabilities",
+      "wallet_prepareCalls",
+      "wallet_sendPreparedCalls",
+    ]);
+  });
+
+  test("wallet key with nothing named, wallet holds NOTHING: the request names native, not a stablecoin", async () => {
+    const signer = createPrivateKeySigner();
+    const wire = mockWire({
+      network: CELO_SEPOLIA,
+      capabilities: chainCapabilities(CELO_SEPOLIA.chainId, [
+        feeToken("usdc", USDC, 6, "USDC"),
+        feeToken("usdm", USDM, 18, "USDm"),
+      ]),
+      assets: assetsAnswer(CELO_SEPOLIA.chainId, 0n, { [USDC]: 0n, [USDM]: 0n }),
+    });
+    await submitCallsDetailed(buildRelayClient(CELO_SEPOLIA), WALLET, signer, CALLS, {
+      submittingKey: adminKey(signer),
+      network: CELO_SEPOLIA,
+    });
+    // Left blank, relay-staging quotes an empty wallet in USDm with
+    // nativeNeeded 0 (evidence/2026-09-28-empty-wallet-quoted-in-usdm.md).
+    expect(wire.wireFeeToken()?.toLowerCase()).toBe(NATIVE_TOKEN);
+    expect(wire.publicRpcRequests()).toEqual([]);
+  });
+
+  test("a one-fee-token relay: nothing named, and no balance read", async () => {
+    const signer = createPrivateKeySigner();
+    const wire = mockWire({
+      network: CELO_SEPOLIA,
+      capabilities: chainCapabilities(CELO_SEPOLIA.chainId, []),
       assets: assetsAnswer(CELO_SEPOLIA.chainId, 0n, {}),
     });
     await submitCallsDetailed(buildRelayClient(CELO_SEPOLIA), WALLET, signer, CALLS, {
@@ -246,8 +288,29 @@ describe("fee token on the wire", () => {
       network: CELO_SEPOLIA,
     });
     expect(wire.wireFeeToken()).toBeUndefined();
-    // No balance lookup either: the relay decides.
-    expect(wire.methods()).toEqual(["wallet_getCapabilities", "wallet_prepareCalls", "wallet_sendPreparedCalls"]);
+    // The accepted list is read, which is enough to know there is nothing to
+    // choose; the balances are not. The second capabilities call is porto's.
+    expect(wire.methods()).toEqual([
+      "wallet_getCapabilities",
+      "wallet_getCapabilities",
+      "wallet_prepareCalls",
+      "wallet_sendPreparedCalls",
+    ]);
+  });
+
+  test("an empty wallet quoting with quoteExecute is quoted in native too", async () => {
+    const signer = createPrivateKeySigner();
+    const wire = mockWire({
+      network: CELO_SEPOLIA,
+      capabilities: chainCapabilities(CELO_SEPOLIA.chainId, [
+        feeToken("usdc", USDC, 6, "USDC"),
+        feeToken("usdm", USDM, 18, "USDm"),
+      ]),
+      assets: assetsAnswer(CELO_SEPOLIA.chainId, 0n, {}),
+    });
+    await quoteExecute({ address: WALLET }, signer, CALLS, { network: CELO_SEPOLIA });
+    expect(wire.wireFeeToken()?.toLowerCase()).toBe(NATIVE_TOKEN);
+    expect(wire.methods()).not.toContain("wallet_sendPreparedCalls");
   });
 
   test("feeToken named: sent as is, for a session too", async () => {
