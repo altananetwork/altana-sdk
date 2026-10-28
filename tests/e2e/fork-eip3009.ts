@@ -15,7 +15,10 @@
  * `USDC.transferWithAuthorization(...bytes signature)` and assert the recipient
  * received the funds.
  *
- * Run: bun tests/e2e/fork-eip3009.ts
+ * Not in CI's fork set: Base is unsupported until we have RPCs (Doris
+ * 2026-10-28). The test is kept and still runs on demand.
+ *
+ * Run: bun run --filter '@altananetwork/e2e' fork:eip3009
  */
 
 import {
