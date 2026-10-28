@@ -38,6 +38,13 @@ import {
   type DecodedFrame,
 } from "./nativeFraming.js";
 import { redact, redactedMessage } from "./redact.js";
+import {
+  parseHandoff,
+  sessionFromHandoff,
+  storeHandedOverSession,
+  SessionHandoverError,
+  SessionNameTakenError,
+} from "./storeSession.js";
 import { VERSION } from "./version.js";
 
 /** The protocol version in the contract. Bumped only by a contract change. */
@@ -95,7 +102,6 @@ export type HostHandler = (payload: unknown, ctx: HostContext) => Promise<unknow
  * PM would rather have a distinct code for it, that is a contracts change.
  */
 const NOT_YET: Record<string, string> = {
-  sendSession: "M6",
   revokeSession: "M8",
   listRequests: "M7",
   answerRequest: "M7",
@@ -147,6 +153,67 @@ export const handlers: Record<string, HostHandler> = {
   unlink: async () => {
     await clearLink();
     return { linked: false };
+  },
+
+  /**
+   * A permission the extension granted on chain, handed over so the agent can
+   * use it.
+   *
+   * The payload carries a private key, which makes this the one handler where
+   * every line has to assume that anything it touches could end up in a log.
+   * Nothing here echoes the payload, the error paths say what is wrong without
+   * saying what the value was, and the result carries only what is safe to
+   * show.
+   *
+   * It writes through the same function `import_session` uses, so the contract's
+   * promise holds: the MCP's next `list_sessions` and `session_execute` see this
+   * session, with no restart and no difference from one pasted in by hand.
+   */
+  sendSession: async (payload, ctx) => {
+    let name = "(unnamed)";
+    try {
+      const handoff = parseHandoff(payload);
+      name = handoff.name;
+      const session = sessionFromHandoff(handoff);
+      const stored = await storeHandedOverSession({
+        sessionName: handoff.name,
+        session,
+        privateKey: handoff.sessionPrivateKey,
+      });
+      // Named, never with any part of the key. Somebody watching the host's
+      // output should be able to see that a permission arrived.
+      ctx.say(`[altana-host] stored the permission "${stored.sessionName}" for ${stored.walletAddress}`);
+      return {
+        stored: true,
+        name: stored.sessionName,
+        walletAddress: stored.walletAddress,
+        sessionAddress: stored.sessionAddress,
+        keyHash: stored.keyHash,
+        expiresAt: stored.expiresAt,
+        expired: stored.expired,
+      };
+    } catch (err) {
+      if (err instanceof SessionNameTakenError) {
+        throw new HostError("NAME_TAKEN", err.message);
+      }
+      if (err instanceof SessionHandoverError) {
+        throw new HostError("BAD_REQUEST", err.message);
+      }
+      // Anything else got as far as the key store or the sessions file. The
+      // keychain is worth separating because a refusal there is somebody
+      // clicking Deny on a dialog, which is not a bug to go looking for.
+      const message = redactedMessage(err);
+      if (/keychain|denied|security|authoriz/i.test(message)) {
+        throw new HostError(
+          "KEYCHAIN_DENIED",
+          `The permission "${name}" could not be saved because the keychain refused: ${message}`,
+        );
+      }
+      throw new HostError(
+        "STORE_FAILED",
+        `The permission "${name}" could not be saved: ${message}`,
+      );
+    }
   },
 };
 
