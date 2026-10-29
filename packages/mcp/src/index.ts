@@ -33,6 +33,7 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import {
   createClient,
   deserializeSession,
+  keyHashForSessionOrKey,
   serializeSession,
   signerFromPrivateKey,
   fetchWithX402,
@@ -53,6 +54,13 @@ import {
 } from "@altananetwork/sdk";
 import type { Signer, Wallet } from "@altananetwork/sdk";
 import {
+  writeHeartbeat,
+  removeHeartbeatSync,
+  type AgentClient,
+} from "./agents.js";
+import { readLink } from "./link.js";
+import { storeHandedOverSession } from "./storeSession.js";
+import {
   getWalletKey,
   setWalletKey,
   walletKeyExists,
@@ -62,6 +70,12 @@ import {
   deleteSessionKey,
   sessionKeyExists,
 } from "./keys.js";
+import {
+  parseImport,
+  expiryState,
+  ImportSessionError,
+} from "./importSession.js";
+import { registerEnvSession, sessionFromEnv } from "./sessionFromEnv.js";
 import {
   listSessions,
   getSession,
@@ -97,10 +111,25 @@ const resolved = resolveNetwork(process.env.ALTANA_CHAIN);
 const NETWORK = resolved.network;
 const REGISTRY = resolved.registry;
 if (!resolved.recognized) {
+  /* Fatal, not a warning.
+   *
+   * This used to log and carry on, and what it carried on to was **BNB
+   * mainnet**, where the money is real. So a misspelled ALTANA_CHAIN, say
+   * bnb_testnet for bnb-testnet, put an agent on mainnet and the only notice
+   * went to stderr, which on an MCP server is the host's log and not anywhere
+   * the person who pasted the command will ever look.
+   *
+   * An unrecognised value is not a request for a default. It is a value nobody
+   * can act on, and guessing which chain somebody meant is the one guess in this
+   * server that can cost real money. */
   console.error(
-    `[altana-mcp] Unknown ALTANA_CHAIN="${resolved.requested}". ` +
-      `Supported: ${SUPPORTED_CHAINS}. Falling back to bnb.`,
+    `[altana-mcp] Unknown ALTANA_CHAIN="${resolved.requested}".\n` +
+      `[altana-mcp] Supported: ${SUPPORTED_CHAINS}\n` +
+      `[altana-mcp] Refusing to start rather than guessing: the fallback was ` +
+      `bnb mainnet, and a typo should not put an agent on a chain where the ` +
+      `money is real.`,
   );
+  process.exit(1);
 }
 console.error(`[altana-mcp] network: ${describeNetwork(NETWORK)}`);
 
@@ -256,9 +285,175 @@ const server = new McpServer(
 // which compounds and exceeds TS's inference depth (TS2589). Casting the
 // server reference here trades inference for compile-ability — runtime
 // behavior is identical, and we hand-validate inputs anyway.
-const tool = (server as unknown as {
+const registerTool = (server as unknown as {
   registerTool: (name: string, config: any, cb: any) => unknown;
 }).registerTool.bind(server);
+
+// ---------- not connected yet --------------------------------------------
+
+/**
+ * The sentence `packages/contracts/native-messaging.md` requires when this
+ * agent has no wallet of its own and no link from the extension.
+ *
+ * The keychain error it replaces reads as a fault ("no wallet key named default
+ * found in OS keychain, ~/.altana/keys.json, or env var ..."), and it sends
+ * somebody looking for a broken keychain. The truth is simpler: nobody has
+ * connected a wallet yet, and there is one thing to do about it.
+ */
+export const NOT_CONNECTED =
+  "This agent is not connected to an Altana wallet yet. Open the Altana extension " +
+  "and click Connect to your agent.";
+
+class NotConnectedError extends Error {
+  constructor(detail?: string) {
+    super(detail ? `${NOT_CONNECTED} ${detail}` : NOT_CONNECTED);
+    this.name = "NotConnectedError";
+  }
+}
+
+/**
+ * A wallet admin key, or the contract's answer.
+ *
+ * Every wallet tool goes through here instead of calling getWalletKey directly,
+ * so the wording cannot drift tool by tool. The underlying error is deliberately
+ * not attached: it names a keychain service and a file path, which is exactly
+ * the detail that misdirects.
+ */
+async function requireWalletKey(name: string) {
+  try {
+    return await getWalletKey(name);
+  } catch (err) {
+    const link = await readLink();
+    if (link) {
+      // There is a link, so somebody has connected. This is the other failure:
+      // the extension holds the key and the agent is being asked to sign as an
+      // admin, which it cannot do and never will.
+      throw new NotConnectedError(
+        `This agent is linked to ${link.address} on chain ${link.chainId}, but that ` +
+          `wallet's own key stays in the extension, so this agent cannot act as its ` +
+          `admin. Ask the extension for a permission instead, and use session_execute.`,
+      );
+    }
+    // A name that was asked for specifically is worth echoing: it separates
+    // "nothing is connected" from "that is not the one that is connected".
+    throw new NotConnectedError(
+      name && name !== "default" ? `Nothing named "${name}" is set up here either.` : undefined,
+    );
+  }
+}
+
+/**
+ * The wallet the extension connected this agent to.
+ *
+ * Read fresh every time, never cached: the extension can unlink and relink
+ * while this process runs, and an agent reporting a stale address is reporting
+ * somebody else's balance.
+ */
+async function linkedWallet(): Promise<{ name: string; address: Address }> {
+  const link = await readLink();
+  if (!link) throw new NotConnectedError();
+  await assertLinkedChain();
+  return { name: "linked", address: link.address };
+}
+
+/**
+ * Refuse when the extension's chain and this agent's chain are not the same.
+ *
+ * This is the sharp edge QA found, and it has real money behind it. With
+ * `ALTANA_CHAIN` unset the MCP picks its own default, which is a mainnet, so an
+ * extension granting a permission on testnet 97 while the agent spends on 56
+ * would be a live transaction nobody meant to send. It surfaced as what looked
+ * like a funding problem, which is the worst possible disguise for it.
+ *
+ * Every tool that acts with a session goes through here. Reading is left alone:
+ * `list_sessions` on the wrong chain is harmless and is how somebody works out
+ * what went wrong.
+ *
+ * Only a mismatch refuses. No link at all is a different answer, given by
+ * NotConnectedError, and a session supplied directly in the environment is
+ * still allowed, since nobody linked anything and the operator chose both ends.
+ */
+async function assertLinkedChain(): Promise<void> {
+  const link = await readLink();
+  if (!link || link.chainId === NETWORK.chainId) return;
+  throw new Error(
+    `The Altana extension is on chain ${link.chainId} and this agent is running on ` +
+      `chain ${NETWORK.chainId}, so acting now would send a transaction on the wrong ` +
+      `chain. Nothing has been sent. Start the agent with ALTANA_CHAIN=${link.chainId} ` +
+      `to match the extension, or relink in the extension to chain ${NETWORK.chainId}. ` +
+      `The wallet the extension linked is ${link.address}.`,
+  );
+}
+
+// ---------- the agent heartbeat ------------------------------------------
+
+// Fixed for the life of this process, so refreshing the file does not keep
+// moving the moment the agent started.
+const AGENT_STARTED_AT = new Date().toISOString();
+
+// Remembered so an exit handler can delete the right file: by then the
+// transport is closing and the client info may no longer be readable.
+let heartbeatClient: AgentClient | undefined;
+
+/**
+ * Write this process's heartbeat, so the extension can show this agent by its
+ * own name.
+ *
+ * The name comes from the MCP initialize handshake, which is the only
+ * agent-agnostic source there is: "claude-code", "Claude Desktop", "Cursor",
+ * whatever the client calls itself.
+ *
+ * Never allowed to fail a tool call. A full disk or a read-only ALTANA_HOME
+ * should cost the extension its agent list, not cost the person their
+ * transaction.
+ */
+async function touchHeartbeat(): Promise<void> {
+  const info = server.server.getClientVersion();
+  if (!info?.name) return;
+  heartbeatClient = { name: info.name, ...(info.version ? { version: info.version } : {}) };
+  try {
+    await writeHeartbeat({ client: heartbeatClient, startedAt: AGENT_STARTED_AT });
+  } catch (err) {
+    console.error(
+      `[altana-mcp] the agent heartbeat could not be written, so the Altana extension ` +
+        `will not list this agent: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+/**
+ * Every tool goes through here, which is what makes "on every tool call" one
+ * line rather than a line per tool that somebody forgets on the next one.
+ *
+ * Awaited rather than fired and forgotten: it is one small file, and a write
+ * that races the tool's own answer would let the extension see an agent as
+ * idle while it is working.
+ */
+const tool = (name: string, config: unknown, cb: (...args: any[]) => any) =>
+  registerTool(name, config, async (...args: any[]) => {
+    await touchHeartbeat();
+    return await cb(...args);
+  });
+
+// The write at start. initialize is the first thing a client sends, and this
+// fires as soon as it has, so an agent appears in the extension without
+// waiting for somebody to ask it to do something.
+server.server.oninitialized = () => {
+  void touchHeartbeat();
+};
+
+// A heartbeat for a process that has ended is what makes a dead agent look
+// alive. The host's pid check is the backstop for a hard kill; this covers the
+// ordinary case, which is stdin closing when the agent quits.
+process.on("exit", () => {
+  if (heartbeatClient) removeHeartbeatSync(heartbeatClient.name);
+});
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+  process.on(signal, () => {
+    if (heartbeatClient) removeHeartbeatSync(heartbeatClient.name);
+    process.exit(0);
+  });
+}
 
 // Prompts are slash commands the user invokes explicitly (e.g.
 // `/altana-agentic-wallet:create-wallet` in Claude Code). Same generic-
@@ -402,22 +597,38 @@ tool(
       "`display` value is scaled by uiMultiplier automatically (raw amounts " +
       "stay unscaled). Use `tokens` or `discover`, not both.",
     inputSchema: {
-      name: z.string(),
+      name: z
+        .string()
+        .optional()
+        .describe(
+          "Which wallet, by name. Leave it out to read the wallet the Altana " +
+            "extension connected this agent to, which needs no key here.",
+        ),
       tokens: z.array(z.string()).optional(),
       discover: z.boolean().optional(),
     },
   },
-  async ({ name, tokens, discover }: { name: string; tokens?: string[]; discover?: boolean }) => {
+  async ({ name, tokens, discover }: { name?: string; tokens?: string[]; discover?: boolean }) => {
     if (discover && tokens !== undefined) {
       throw new Error(
         "wallet_balance: pass either `tokens` (explicit ERC-20 list) or `discover: true` (list what the wallet holds), not both.",
       );
     }
-    const key = await getWalletKey(name);
+    // No name means the linked wallet. Reading a balance needs an address and
+    // nothing else, so this is the one wallet tool that works with no key on
+    // this machine at all, which is the normal state for an agent whose wallet
+    // lives in the extension.
+    // The spread would otherwise put the resolved key's own `name` back over
+    // the one that was asked for, and they are not always the same string.
+    const resolved =
+      name === undefined
+        ? await linkedWallet()
+        : { ...(await requireWalletKey(name)), name };
+    const key = resolved;
     const payload = discover
       ? await client.holdings({ wallet: key.address }).then((res) =>
           formatBalance({
-            name,
+            name: resolved.name,
             address: key.address,
             native: res.native,
             tokens: res.tokens,
@@ -431,7 +642,7 @@ tool(
           })
           .then((res) =>
             formatBalance({
-              name,
+              name: resolved.name,
               address: key.address,
               native: res.native,
               ...(res.tokens !== undefined ? { tokens: res.tokens } : {}),
@@ -468,7 +679,7 @@ tool(
       const payload = feeCurrenciesPayload(listed, nativeSymbol);
       return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
     }
-    const key = await getWalletKey(name);
+    const key = await requireWalletKey(name);
     const tokens = listed.currencies.filter((c) => !c.isNative).map((c) => c.address);
     const balances = await client.balances({ wallet: key.address, tokens });
     const payload = {
@@ -661,7 +872,7 @@ tool(
     data?: string;
     feeToken?: string | string[];
   }) => {
-    const key = await getWalletKey(name);
+    const key = await requireWalletKey(name);
     const recipient = assertAddress(to);
     const dataHex = data ? assertHexBytes(data) : ("0x" as Hex);
     const signer = signerFromPrivateKey(key.privateKey);
@@ -811,7 +1022,7 @@ tool(
           `name, or revoke the existing one first with revoke_session.`,
       );
     }
-    const admin = await getWalletKey(walletName);
+    const admin = await requireWalletKey(walletName);
     const adminSigner = signerFromPrivateKey(admin.privateKey);
     await ensureRegistered(adminSigner);
     const recipientAddr = assertAddress(recipient);
@@ -908,6 +1119,105 @@ tool(
   },
 );
 
+// import_session — take a session somebody else granted and make it usable
+// here. The mirror image of grant_session: there, this server mints the key and
+// holds it; here, the key arrives from outside.
+//
+// This is what an agent wallet app needs. The wallet's owner is a passkey in a
+// browser, the app generates the session key and shows it exactly once, and the
+// person pastes it into their agent. There is no admin key on this machine and
+// there never will be, which is why nothing here asks for a wallet name.
+//
+// The session private key goes into the OS keychain, exactly as grant_session's
+// does. The metadata goes in ~/.altana/sessions.json. After this, session_execute
+// works by name and cannot tell the difference between a granted session and an
+// imported one.
+tool(
+  "import_session",
+  {
+    title: "Import a session granted elsewhere",
+    description:
+      "Take a session key granted by an Altana wallet app (or any other holder) " +
+      "and store it here under a name, so session_execute can use it. Needs both " +
+      "halves: the serialized session, which carries the permissions and expiry " +
+      "that were registered on-chain, and the private key that signs. Neither " +
+      "works alone. Nothing is sent on-chain: the grant already happened.",
+    inputSchema: {
+      sessionName: z
+        .string()
+        .describe("What to call this session here. Used by session_execute."),
+      bundle: z
+        .string()
+        .optional()
+        .describe(
+          "The whole thing the app gave you, as one JSON blob: " +
+            '{ "v": 1, "session": { ... }, "privateKey": "0x..." }.',
+        ),
+      session: z
+        .string()
+        .optional()
+        .describe(
+          "The serialized session as JSON, if you have the two halves separately. " +
+            "It has walletAddress, publicKey, permissions and expiry, and no key material.",
+        ),
+      privateKey: z
+        .string()
+        .optional()
+        .describe(
+          "The session private key. The app shows it once when the permission is created.",
+        ),
+    },
+  },
+  async ({
+    sessionName,
+    bundle,
+    session: sessionText,
+    privateKey,
+  }: {
+    sessionName: string;
+    bundle?: string;
+    session?: string;
+    privateKey?: string;
+  }) => {
+    const parsed = parseImport({ bundle, session: sessionText, privateKey });
+
+    // The writing itself lives in storeSession.ts, because the extension's
+    // sendSession and answerRequest have to leave exactly the same state behind
+    // as this tool does. If they ever diverged, session_execute would work for a
+    // session that was pasted in and not for one the extension pushed, and the
+    // contract promises those are the same thing.
+    const stored = await storeHandedOverSession({
+      sessionName,
+      session: parsed.session,
+      privateKey: parsed.privateKey,
+    });
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              ...stored,
+              ...(stored.expired
+                ? {
+                    warning:
+                      "This session has already expired, so it is stored but cannot act. " +
+                      "Ask for a fresh permission from the wallet that granted it.",
+                  }
+                : {}),
+              note: `Stored. Use it with session_execute by the name "${sessionName}". Nothing was sent on-chain: the grant already happened.`,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
+  },
+);
+
+
 // revoke_session — admin pulls authority on-chain. Local artifacts (keychain
 // entry + metadata file) are deleted after the on-chain tx confirms.
 tool(
@@ -930,8 +1240,11 @@ tool(
     },
   },
   async ({ sessionName, feeToken }: { sessionName: string; feeToken?: string | string[] }) => {
+    // Before anything is signed or sent. A chain mismatch here would be a
+    // real transaction on a chain nobody meant to touch.
+    await assertLinkedChain();
     const stored = await getSession(sessionName);
-    const admin = await getWalletKey(stored.walletName);
+    const admin = await requireWalletKey(stored.walletName);
     const adminSigner = signerFromPrivateKey(admin.privateKey);
     await ensureRegistered(adminSigner);
     const wallet: Wallet = {
@@ -1015,6 +1328,9 @@ tool(
     data?: string;
     feeToken?: string | string[];
   }) => {
+    // Before anything is signed or sent. A chain mismatch here would be a
+    // real transaction on a chain nobody meant to touch.
+    await assertLinkedChain();
     const stored = await getSession(sessionName);
     const key = await getSessionKey(sessionName);
     const recipient = assertAddress(to);
@@ -1092,6 +1408,9 @@ tool(
     method?: string;
     body?: string;
   }) => {
+    // Before anything is signed or sent. A chain mismatch here would be a
+    // real transaction on a chain nobody meant to touch.
+    await assertLinkedChain();
     const stored = await getSession(sessionName);
     const key = await getSessionKey(sessionName);
 
@@ -1137,6 +1456,9 @@ tool(
 
 /** Rebuild the runtime Session from persisted metadata + the keychain key. */
 async function sessionFromName(sessionName: string) {
+  // Before anything is signed or sent. A chain mismatch here would be a
+  // real transaction on a chain nobody meant to touch.
+  await assertLinkedChain();
   const stored = await getSession(sessionName);
   const key = await getSessionKey(sessionName);
   return {
@@ -2021,6 +2343,35 @@ prompt(
 );
 
 // ---------- boot ------------------------------------------------------------
+
+// A session handed over in the environment, so a key never has to pass through
+// the agent's chat. Pasting one into an import_session tool call sends it to
+// whichever model provider the agent runs on, which is the one place a key for
+// somebody's wallet must not go.
+//
+// Loaded before the transport connects, so the first tool call already sees it,
+// and reported on stderr because stdout is the JSON-RPC channel.
+try {
+  const fromEnv = sessionFromEnv();
+  if (fromEnv) {
+    for (const line of registerEnvSession(fromEnv)) console.error(line);
+    if (fromEnv.persist) {
+      await setSessionKey(fromEnv.name, fromEnv.privateKey);
+      await saveSession(fromEnv.session);
+      console.error(`[altana-mcp] session "${fromEnv.name}" written to the keychain and ~/.altana`);
+    }
+  }
+} catch (err) {
+  // Refuse to start rather than run without a session the operator believes they
+  // supplied. Starting anyway leaves the agent saying "no session named X" while
+  // they can see they passed one, which sends them looking in the wrong place.
+  console.error(
+    `[altana-mcp] the session in the environment could not be loaded: ${
+      err instanceof Error ? err.message : String(err)
+    }`,
+  );
+  process.exit(1);
+}
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
