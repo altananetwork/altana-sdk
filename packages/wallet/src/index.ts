@@ -85,13 +85,43 @@ export {
   keyHashForSessionOrKey,
   keyIdForSessionOrKey,
 } from "./internal/account.js";
+// The account key hash of any signer, including a passkey admin key. Needed to
+// tell the wallet owner's own transactions apart from an agent's: on a
+// passkey-owned wallet the owner's key hash is NOT zero, so "non-zero means an
+// agent" is wrong and would credit the person's own spending to an agent.
+export { keyHashForSigner } from "./internal/erc1271.js";
 export type { AccountKey } from "./internal/account.js";
 // The safe persistence path for sessions: serializeSession stores everything
 // but the secret; deserializeSession rebuilds a signing Session from the
 // stored half plus the key the caller kept.
-export { serializeSession, deserializeSession } from "./internal/sessions.js";
+export {
+  serializeSession,
+  deserializeSession,
+  withDefaultCallPermissions,
+  // The account's "every target" wildcard, so an integrator can be explicit
+  // about an unscoped session rather than relying on omission.
+  ANY_TARGET,
+} from "./internal/sessions.js";
 
 // Lazy KeyStore registration for sessions granted with `register: false`.
+export {
+  getCallsHistory,
+  buildHistoryParams,
+  parseHistoryEntry,
+  clampLimit,
+  isOwnerBundle,
+  hasLanded,
+  MAX_HISTORY_LIMIT,
+  ZERO_KEY_HASH,
+} from "./getCallsHistory.js";
+export type {
+  CallsHistoryEntry,
+  CallsHistoryOptions,
+  CallsHistorySort,
+  CallsHistoryTransaction,
+  AssetDiff,
+} from "./getCallsHistory.js";
+
 export { registerSessionKey } from "./registerSessionKey.js";
 export type { RegisterSessionKeyResult } from "./registerSessionKey.js";
 
