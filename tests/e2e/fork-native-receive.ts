@@ -48,6 +48,7 @@ import {
 } from "viem";
 import { bsc } from "viem/chains";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
+import { startAnvil, waitForAnvil } from "./anvil.js";
 
 // `||`, not `??`: an unset GitHub Actions secret arrives as an empty string,
 // which would be handed to `anvil --fork-url` verbatim.
@@ -107,12 +108,6 @@ const publicClient = createPublicClient({ chain: bsc, transport: http(ANVIL_URL)
 function assert(cond: boolean, msg: string) {
   if (!cond) throw new Error(`ASSERT FAILED: ${msg}`);
 }
-async function waitForAnvil() {
-  for (let i = 0; i < 60; i++) {
-    try { await publicClient.getBlockNumber(); return; } catch { await new Promise((r) => setTimeout(r, 500)); }
-  }
-  throw new Error("anvil not ready");
-}
 
 /** Send from `from` with explicit gas (skips estimation so reverts land as mined receipts). */
 async function sendAs(from: Address, tx: { to: Address; data?: Hex; value?: bigint }) {
@@ -152,12 +147,9 @@ async function dealVTokens(owner: Address, amount: bigint): Promise<boolean> {
 
 async function main() {
   console.log(`▶ Booting anvil BSC-mainnet fork (${ANVIL_URL}) ...`);
-  const anvil = Bun.spawn(["anvil", "--fork-url", RPC, "--port", String(ANVIL_PORT), "--hardfork", "prague"], {
-    stdout: "ignore",
-    stderr: "ignore",
-  });
+  const anvil = startAnvil(RPC, ANVIL_PORT, ["--hardfork", "prague"]);
   try {
-    await waitForAnvil();
+    await waitForAnvil(anvil);
 
     const proxy = await accountProxyAddress();
     const proxyCode = await publicClient.getCode({ address: proxy.address });

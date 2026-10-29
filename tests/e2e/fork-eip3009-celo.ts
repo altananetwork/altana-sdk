@@ -45,6 +45,7 @@ import {
   buildEip3009TypedData,
 } from "@altananetwork/sdk";
 import type { Session } from "@altananetwork/sdk";
+import { startAnvil, waitForAnvil } from "./anvil.js";
 
 // Read from the delegation of 0x957550A7…, provisioned on Celo Sepolia for the
 // PR #109 live proof. Not the 0x4B5d20CD… address the other chains share.
@@ -141,28 +142,12 @@ function assert(cond: boolean, msg: string): void {
   console.log(`  ok: ${msg}`);
 }
 
-async function waitForAnvil(): Promise<void> {
-  const probe = createPublicClient({ transport: http(ANVIL_URL) });
-  for (let i = 0; i < 60; i++) {
-    try {
-      await probe.getBlockNumber();
-      return;
-    } catch {
-      await new Promise((r) => setTimeout(r, 500));
-    }
-  }
-  throw new Error("anvil did not become ready");
-}
-
 async function main() {
   console.log(`Forking Celo Sepolia via anvil on ${ANVIL_URL} ...`);
-  const proc = Bun.spawn(
-    ["anvil", "--fork-url", FORK_RPC, "--port", String(ANVIL_PORT), "--silent"],
-    { stdout: "ignore", stderr: "ignore" },
-  );
+  const proc = startAnvil(FORK_RPC, ANVIL_PORT);
 
   try {
-    await waitForAnvil();
+    await waitForAnvil(proc);
     const test = createTestClient({
       mode: "anvil",
       chain: CHAIN,

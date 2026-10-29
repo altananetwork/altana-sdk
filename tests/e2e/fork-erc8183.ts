@@ -47,6 +47,7 @@ import {
   JOB_STATUS,
   type Erc8183DeliverableManifest,
 } from "@altananetwork/sdk";
+import { startAnvil, waitForAnvil } from "./anvil.js";
 
 const A = erc8183Addresses(97);
 // `||`, not `??`: an unset GitHub Actions secret arrives as an empty string,
@@ -75,12 +76,6 @@ const network = { chain: bscTestnet, chainId: 97, publicRpcUrl: ANVIL_URL } as n
 
 function assert(cond: boolean, msg: string) {
   if (!cond) throw new Error(`ASSERT FAILED: ${msg}`);
-}
-async function waitForAnvil() {
-  for (let i = 0; i < 60; i++) {
-    try { await publicClient.getBlockNumber(); return; } catch { await new Promise((r) => setTimeout(r, 500)); }
-  }
-  throw new Error("anvil not ready");
 }
 async function dealToken(token: Address, holder: Address, amount: bigint) {
   for (let slot = 0; slot < 60; slot++) {
@@ -125,9 +120,9 @@ async function hireJob(asBuyer: ReturnType<typeof createWalletClient>, buyer: Ad
 
 async function main() {
   console.log(`\n▶ Booting anvil BSC-testnet fork (${ANVIL_URL}) ...`);
-  const anvil = Bun.spawn(["anvil", "--fork-url", RPC, "--port", String(ANVIL_PORT), "--silent"], { stdout: "ignore", stderr: "ignore" });
+  const anvil = startAnvil(RPC, ANVIL_PORT);
   try {
-    await waitForAnvil();
+    await waitForAnvil(anvil);
 
     const buyer = privateKeyToAccount(generatePrivateKey());
     const seller = privateKeyToAccount(generatePrivateKey());

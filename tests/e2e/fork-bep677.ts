@@ -40,6 +40,7 @@ import {
 } from "viem";
 import { bsc } from "viem/chains";
 import { createClient, BNB, UI_MULTIPLIER_ONE } from "@altananetwork/sdk";
+import { startAnvil, waitForAnvil } from "./anvil.js";
 
 const BSC_RPC = process.env.BSC_FORK_RPC_URL ?? "https://bsc-rpc.publicnode.com";
 const ANVIL_PORT = 8550;
@@ -60,28 +61,12 @@ function assert(cond: unknown, msg: string): asserts cond {
   if (!cond) throw new Error(`ASSERT FAILED: ${msg}`);
 }
 
-async function waitForAnvil(): Promise<void> {
-  const probe = createPublicClient({ transport: http(ANVIL_URL) });
-  for (let i = 0; i < 60; i++) {
-    try {
-      await probe.getBlockNumber();
-      return;
-    } catch {
-      await new Promise((r) => setTimeout(r, 500));
-    }
-  }
-  throw new Error("anvil did not become ready");
-}
-
 async function main() {
   console.log(`Forking BSC via anvil on ${ANVIL_URL} ...`);
-  const proc = Bun.spawn(
-    ["anvil", "--fork-url", BSC_RPC, "--port", String(ANVIL_PORT), "--silent"],
-    { stdout: "ignore", stderr: "ignore" },
-  );
+  const proc = startAnvil(BSC_RPC, ANVIL_PORT);
 
   try {
-    await waitForAnvil();
+    await waitForAnvil(proc);
     const test = createTestClient({
       mode: "anvil",
       chain: bsc,

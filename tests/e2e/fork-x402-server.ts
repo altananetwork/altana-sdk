@@ -45,6 +45,7 @@ import {
 } from "@altananetwork/sdk";
 import type { Session } from "@altananetwork/sdk";
 import { createX402Merchant, U_TOKEN, USDT_BSC } from "@altananetwork/x402-server";
+import { startAnvil, waitForAnvil } from "./anvil.js";
 
 const ITHACA_ACCOUNT_IMPL: Address = "0x4B5d20CD8a3927B500540d9BcCDDc27385c9fA79";
 const U = U_TOKEN[56];
@@ -74,13 +75,6 @@ function log(msg: string) {
 function assert(cond: boolean, msg: string) {
   if (!cond) throw new Error(`ASSERT FAILED: ${msg}`);
 }
-async function waitForAnvil() {
-  const probe = createPublicClient({ transport: http(ANVIL_URL) });
-  for (let i = 0; i < 60; i++) {
-    try { await probe.getBlockNumber(); return; } catch { await new Promise((r) => setTimeout(r, 500)); }
-  }
-  throw new Error("anvil not ready");
-}
 async function dealToken(token: Address, holder: Address, amount: bigint) {
   for (let slot = 0; slot < 60; slot++) {
     const key = keccak256(encodeAbiParameters([{ type: "address" }, { type: "uint256" }], [holder, BigInt(slot)]));
@@ -97,12 +91,12 @@ const balanceOf = (token: Address, a: Address) =>
 
 async function main() {
   log(`\n▶ Booting anvil BNB fork (${ANVIL_URL}) ...`);
-  const anvil = Bun.spawn(["anvil", "--fork-url", BSC_RPC, "--port", String(ANVIL_PORT), "--silent"], { stdout: "ignore", stderr: "ignore" });
+  const anvil = startAnvil(BSC_RPC, ANVIL_PORT);
   let server: ReturnType<typeof Bun.serve> | undefined;
   let proxy: ReturnType<typeof Bun.serve> | undefined;
 
   try {
-    await waitForAnvil();
+    await waitForAnvil(anvil);
 
     // ── The merchant: payout address + funded facilitator settler. ──
     const facilitator = privateKeyToAccount(generatePrivateKey());

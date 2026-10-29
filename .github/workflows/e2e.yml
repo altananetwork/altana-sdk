@@ -60,6 +60,9 @@ jobs:
           cd ../..
           bun run --filter '@altananetwork/x402-server' test
           bun run --filter '@altananetwork/mcp' test
+          # The e2e harness's own pure pieces — the anvil error path and the
+          # redaction that keeps a fork URL's key out of this log.
+          bun run --filter '@altananetwork/e2e' test
 
   fork-tests:
     name: On-chain fork tests (anvil)
@@ -97,6 +100,11 @@ jobs:
         run: |
           bun run --filter '@altananetwork/sdk' build
           bun run --filter '@altananetwork/x402-server' build
+
+      # Here as well as in build-and-check: this is the only job with anvil on
+      # PATH, so it is the only one where the case that starts a real one runs.
+      - name: Harness unit tests, including the real-anvil case
+        run: bun run --filter '@altananetwork/e2e' test
 
       # No Base: unsupported until we have RPCs (Doris 2026-10-28). fork-eip3009
       # still exists and still runs by name (fork:eip3009), just not here.
