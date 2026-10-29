@@ -94,6 +94,30 @@ describe("launcherScript", () => {
     expect(script).toContain(`run '/e.ts' 'native-host' "$@"`);
   });
 
+  test("the host launcher moves the protocol off fd 1, and tells the host where it went", () => {
+    // Chrome closes the port the instant it reads a length prefix it cannot
+    // believe, so anything the runtime or a library prints to stdout lands in
+    // the middle of a frame and is indistinguishable from a host that answered
+    // nothing. Moving stdout to fd 3 and pointing fd 1 at stderr removes the
+    // whole class.
+    const script = launcherScript({
+      bun: "/b/bun",
+      entry: "/e.ts",
+      argv: ["native-host"],
+      protectStdout: true,
+    });
+    expect(script).toContain("exec 3>&1 1>&2");
+    expect(script).toContain(`'--frames-fd' '3'`);
+    // The redirection has to come before the exec that replaces the shell.
+    expect(script.indexOf("exec 3>&1")).toBeLessThan(script.indexOf("exec '/b/bun'"));
+  });
+
+  test("the server launcher leaves stdout alone, because that is its JSON-RPC channel", () => {
+    const script = launcherScript({ bun: "/b/bun", entry: "/e.ts" });
+    expect(script).not.toContain("3>&1");
+    expect(script).not.toContain("--frames-fd");
+  });
+
   test("quotes a path with a space in it", () => {
     const script = launcherScript({ bun: "/opt/my bun/bun", entry: "/a b/cli.ts" });
     expect(script).toContain(`exec '/opt/my bun/bun' run '/a b/cli.ts'`);
@@ -125,7 +149,12 @@ describe("writeLaunchers", () => {
     for (const path of [serverLauncherPath(), hostLauncherPath()]) {
       expect((await stat(path)).mode & 0o777).toBe(0o700);
     }
-    expect(await readFile(hostLauncherPath(), "utf8")).toContain("'native-host'");
+    const host = await readFile(hostLauncherPath(), "utf8");
+    expect(host).toContain("'native-host'");
+    // What install actually writes is the protected form, since this is the
+    // launcher Chrome runs.
+    expect(host).toContain("exec 3>&1 1>&2");
+    expect(host).toContain(`'--frames-fd' '3'`);
     expect(await readFile(serverLauncherPath(), "utf8")).not.toContain("'native-host'");
   });
 
