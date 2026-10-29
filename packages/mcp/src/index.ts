@@ -446,12 +446,38 @@ const tool = (name: string, config: unknown, cb: (...args: any[]) => any) =>
     return await cb(...args);
   });
 
-// The write at start. initialize is the first thing a client sends, and this
-// fires as soon as it has, so an agent appears in the extension without
-// waiting for somebody to ask it to do something.
+// The write at start, by two routes, because one of them is not guaranteed.
+//
+// `oninitialized` fires on the `notifications/initialized` notification. A
+// conforming client sends it, but nothing makes it, and a client that answers
+// the initialize request and then sits waiting for work sends nothing else at
+// all. Such an agent was invisible to the extension until it was asked to do
+// something, which fails G2: the extension is supposed to show a running agent
+// within ten seconds of it starting, and "starting" is not "being used".
+//
+// The client's name is known earlier than that, as soon as the SDK has handled
+// the initialize request, so the second route watches for it. There is no hook
+// for that moment, hence the poll; it stops the instant it succeeds, and gives
+// up well before it could keep a process alive.
 server.server.oninitialized = () => {
   void touchHeartbeat();
 };
+
+const HEARTBEAT_WAIT_MS = 100;
+const HEARTBEAT_GIVE_UP_MS = 30_000;
+const heartbeatDeadline = Date.now() + HEARTBEAT_GIVE_UP_MS;
+const awaitingClient = setInterval(() => {
+  if (!server.server.getClientVersion()) {
+    // A client that never handshakes at all is not an agent, so there is
+    // nothing to report and no reason to keep looking.
+    if (Date.now() > heartbeatDeadline) clearInterval(awaitingClient);
+    return;
+  }
+  clearInterval(awaitingClient);
+  void touchHeartbeat();
+}, HEARTBEAT_WAIT_MS);
+// Never the reason this process cannot exit.
+awaitingClient.unref?.();
 
 // A heartbeat for a process that has ended is what makes a dead agent look
 // alive. The host's pid check is the backstop for a hard kill; this covers the
