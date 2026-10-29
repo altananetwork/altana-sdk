@@ -25,8 +25,8 @@
  *   never comes hangs with nothing to show the person.
  */
 
-import { appendFile, mkdir, stat, writeFile } from "node:fs/promises";
-import { writeSync } from "node:fs";
+import { appendFileSync, mkdirSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { createReadStream } from "node:fs";
 import { join } from "node:path";
 import { readAgents, reapDeadAgents, type Agent } from "./agents.js";
 import { altanaHome } from "./keys.js";
@@ -224,6 +224,17 @@ async function handleFrame(
   ctx: HostContext,
   say: (line: string) => void,
 ): Promise<void> {
+  /**
+   * Every refusal leaves through here, redacted.
+   *
+   * A handler's message is not necessarily a string this file wrote. A
+   * handover failure carries the SDK's own error text, and the SDK is under no
+   * obligation to keep key material out of it. Redacting at the one point
+   * everything leaves by is the only version of this that stays true as
+   * handlers are added.
+   */
+  const fail = (id: string, code: ErrorCode, message: string) =>
+    send({ id, ok: false, error: { code, message: redact(message) } });
   if (!frame.ok) {
     // No id to answer with, so this can only be logged. The extension's own
     // timeout is what surfaces it there.
@@ -237,32 +248,30 @@ async function handleFrame(
   }
   const id = request.id;
   if (typeof request.type !== "string" || !request.type) {
-    send({ id, ok: false, error: { code: "BAD_REQUEST", message: "That request has no type." } });
+    fail(id, "BAD_REQUEST", "That request has no type.");
     return;
   }
   const type = request.type;
   const handler = handlers[type];
   if (!handler) {
     const milestone = NOT_YET[type];
-    send({
-      id,
-      ok: false,
-      error: milestone
-        ? {
-            code: "INTERNAL",
-            message:
-              `This build of the host does not implement ${type} yet. It lands in ` +
-              `milestone ${milestone}. The request itself was well formed.`,
-          }
-        : { code: "BAD_REQUEST", message: `No request type called ${type}.` },
-    });
+    if (milestone) {
+      fail(
+        id,
+        "INTERNAL",
+        `This build of the host does not implement ${type} yet. It lands in ` +
+          `milestone ${milestone}. The request itself was well formed.`,
+      );
+    } else {
+      fail(id, "BAD_REQUEST", `No request type called ${type}.`);
+    }
     return;
   }
   try {
     send({ id, ok: true, result: await handler(request.payload, ctx) });
   } catch (err) {
     if (err instanceof HostError) {
-      send({ id, ok: false, error: { code: err.code, message: err.message } });
+      fail(id, err.code, err.message);
       return;
     }
     // Everything unplanned lands here, redacted, with one code. A handler that
@@ -270,7 +279,7 @@ async function handleFrame(
     // error message that goes back over the wire and into a log.
     const message = redactedMessage(err);
     say(`[altana-host] ${type} failed: ${message}`);
-    send({ id, ok: false, error: { code: "INTERNAL", message } });
+    fail(id, "INTERNAL", message);
   }
 }
 
@@ -391,15 +400,30 @@ export function hostLogPath(): string {
 /** Keep the breadcrumb file from growing without bound. */
 const HOST_LOG_MAX_BYTES = 64 * 1024;
 
-async function appendToHostLog(line: string): Promise<void> {
+/**
+ * Append a breadcrumb synchronously.
+ *
+ * Synchronous because of how this file is read. The lines that matter most are
+ * the last ones before the process goes, and an async append that has been
+ * handed to the event loop is simply lost if the process exits first. QA's
+ * first host.log had a start line and nothing else, which is exactly what a
+ * lost end line looks like, so the difference between "it is still running"
+ * and "it exited and we did not catch it" was unreadable.
+ */
+function appendToHostLog(line: string): void {
   try {
     const path = hostLogPath();
-    await mkdir(altanaHome(), { recursive: true, mode: 0o700 });
+    mkdirSync(altanaHome(), { recursive: true, mode: 0o700 });
     // Truncating beats rotating here: this is a breadcrumb trail for the last
     // few runs, not a record anybody needs to keep.
-    const size = await stat(path).then((s) => s.size, () => 0);
-    if (size > HOST_LOG_MAX_BYTES) await writeFile(path, "", { mode: 0o600 });
-    await appendFile(path, line, { mode: 0o600 });
+    let size = 0;
+    try {
+      size = statSync(path).size;
+    } catch {
+      size = 0;
+    }
+    if (size > HOST_LOG_MAX_BYTES) writeFileSync(path, "", { mode: 0o600 });
+    appendFileSync(path, line, { mode: 0o600 });
   } catch {
     // A host that cannot write its own diagnostics still has a job to do.
   }
@@ -413,19 +437,36 @@ export async function runNativeHostOnStdio(): Promise<void> {
   // after the arguments the launcher already passed. Recorded because a wrong
   // origin here is one of the few ways this fails silently.
   const chromeArgs = process.argv.slice(3);
-  void appendToHostLog(
+  appendToHostLog(
     `${stamp()} start pid=${process.pid} altanaHome=${altanaHome()} ` +
+      `runtime=${process.versions.bun ? `bun ${process.versions.bun}` : `node ${process.versions.node}`} ` +
       `args=${JSON.stringify(chromeArgs)}\n`,
   );
 
   const log = (line: string) => {
     process.stderr.write(`${line}\n`);
-    void appendToHostLog(`${stamp()} ${line}\n`);
+    appendToHostLog(`${stamp()} ${line}\n`);
   };
 
+  // A host that dies without saying why is the hardest thing to chase here,
+  // because Chrome reports it as a disconnect with no reason and swallows
+  // stderr. These three are the only way the last moment gets written down.
+  process.on("uncaughtException", (err) => {
+    appendToHostLog(`${stamp()} uncaught pid=${process.pid} ${redactedMessage(err)}\n`);
+    process.exit(1);
+  });
+  process.on("unhandledRejection", (reason) => {
+    appendToHostLog(`${stamp()} unhandled pid=${process.pid} ${redactedMessage(reason)}\n`);
+    process.exit(1);
+  });
+  process.on("exit", (code) => {
+    appendToHostLog(`${stamp()} exit pid=${process.pid} code=${code}\n`);
+  });
+
   try {
+    appendToHostLog(`${stamp()} reading stdin pid=${process.pid}\n`);
     await runNativeHost({
-      input: process.stdin,
+      input: stdinFrames(),
       // writeSync on fd 1, not process.stdout.write. Chrome keeps the port's
       // stdin open for the life of the connection, so nothing ever flushes a
       // buffered stream on exit, and a frame still sitting in a buffer is a
@@ -458,11 +499,45 @@ export async function runNativeHostOnStdio(): Promise<void> {
       },
       log,
     });
-    void appendToHostLog(`${stamp()} end pid=${process.pid} the port closed\n`);
+    appendToHostLog(`${stamp()} end pid=${process.pid} stdin ended, so the port closed\n`);
   } catch (err) {
     // Chrome shows a host that died as a disconnect with no reason, so the
     // reason has to be written down somewhere before this process goes.
-    await appendToHostLog(`${stamp()} died pid=${process.pid} ${redactedMessage(err)}\n`);
+    appendToHostLog(`${stamp()} died pid=${process.pid} ${redactedMessage(err)}\n`);
     throw err;
+  }
+}
+
+/**
+ * Read framed bytes from fd 0, rather than from `process.stdin`.
+ *
+ * Chrome hands a native host the connection as a file descriptor, and on macOS
+ * it is not always the kind of pipe `process.stdin` expects: a stream built for
+ * a pipe can report end of file immediately on a socket, which looks exactly
+ * like Chrome closing the port the instant it opened it. Reading fd 0 through
+ * a descriptor the runtime did not pre-wrap avoids guessing which it is, and it
+ * is the same reasoning as writing frames with writeSync on fd 1.
+ *
+ * Each chunk is logged by size only, never by content: the bytes here are the
+ * ones that carry a session key.
+ */
+async function* stdinFrames(): AsyncGenerator<Buffer> {
+  const stream = createReadStream("", { fd: 0, autoClose: false });
+  let chunks = 0;
+  try {
+    for await (const chunk of stream) {
+      chunks += 1;
+      const bytes = Buffer.from(chunk as Buffer);
+      if (chunks === 1) {
+        appendToHostLog(
+          `${new Date().toISOString()} first chunk pid=${process.pid} bytes=${bytes.byteLength}\n`,
+        );
+      }
+      yield bytes;
+    }
+  } finally {
+    appendToHostLog(
+      `${new Date().toISOString()} stdin closed pid=${process.pid} chunks=${chunks}\n`,
+    );
   }
 }
