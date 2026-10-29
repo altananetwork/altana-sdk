@@ -1245,6 +1245,12 @@ tool(
       );
     }
 
+    // Before the request is written. Asking for a permission on a chain the
+    // extension is not on would have the person approve something for the
+    // wrong network, which is worse than refusing: they would have agreed to
+    // it.
+    await assertLinkedChain();
+
     const client = server.server.getClientVersion();
     const ask: PermissionAsk = {
       name,

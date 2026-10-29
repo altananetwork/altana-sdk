@@ -127,6 +127,19 @@ export function launcherScript(args: {
   protectStdout?: boolean;
   /** Pin the chain, so an unset ALTANA_CHAIN cannot mean a mainnet. */
   chainId?: number;
+  /**
+   * Everything the host and the MCP have to agree on, baked at install time.
+   *
+   * Chrome passes a native host none of our environment. The launcher already
+   * set PATH for exactly that reason, and the same reasoning applies to every
+   * other variable the two halves share, which I missed: a host started by
+   * Chrome fell back to `$HOME/.altana` while the agent used whatever
+   * ALTANA_HOME it was given, so the files they are supposed to share never
+   * met and `listAgents` was honestly empty. A key store set for one and not
+   * the other is the same bug with worse consequences, since the host would
+   * write a key where `list_sessions` never looks.
+   */
+  env?: Record<string, string | undefined>;
 }): string {
   const extra = (args.argv ?? []).map((a) => ` ${shellQuote(a)}`).join("");
   const framesFd = args.protectStdout ? " '--frames-fd' '3'" : "";
@@ -135,6 +148,9 @@ export function launcherScript(args: {
   // this version fixes. A launcher that died on a redirect left nothing at all
   // in host.log, and the absence of that line was most of the time it took to
   // find.
+  // Written after the baked environment and before every redirect: it needs
+  // ALTANA_HOME to already be the value install chose, and it has to survive a
+  // redirect that fails.
   const breadcrumb = `
 # Before any redirect, so a launch that fails one still leaves a trace.
 ALTANA_DIR="\${ALTANA_HOME:-$HOME/.altana}"
@@ -168,12 +184,23 @@ exec 3>&1 1>&2
 `
     : "";
 
-  const chain = args.chainId !== undefined
+  // ALTANA_CHAIN is one of these too. Unset, the MCP picks its own default and
+  // that default is a mainnet, which on a testnet only gate is the one mistake
+  // with real money behind it.
+  const baked: Record<string, string> = {};
+  for (const [name, value] of Object.entries(args.env ?? {})) {
+    if (typeof value === "string" && value.length > 0) baked[name] = value;
+  }
+  if (args.chainId !== undefined) baked.ALTANA_CHAIN = String(args.chainId);
+
+  const chain = Object.keys(baked).length
     ? `
-# Pinned at install time. Unset, the MCP would choose its default network, and
-# for this gate that default is a mainnet.
-ALTANA_CHAIN=${shellQuote(String(args.chainId))}
-export ALTANA_CHAIN
+# Baked at install time, for the same reason PATH is: Chrome passes a native
+# host none of our environment, and the host and the MCP have to agree on
+# these or the files they share never meet.
+${Object.entries(baked)
+  .map(([name, value]) => `${name}=${shellQuote(value)}\nexport ${name}`)
+  .join("\n")}
 `
     : "";
 
@@ -189,7 +216,7 @@ umask 077
 
 PATH="${dirname(args.bun)}:/usr/bin:/bin:/usr/sbin:/sbin"
 export PATH
-${breadcrumb}${chain}${protect}exec ${shellQuote(args.bun)} run ${shellQuote(args.entry)}${extra}${framesFd} "$@"
+${chain}${breadcrumb}${protect}exec ${shellQuote(args.bun)} run ${shellQuote(args.entry)}${extra}${framesFd} "$@"
 `;
 }
 
@@ -388,13 +415,27 @@ export async function writeLaunchers(args: {
   dryRun?: boolean;
 }): Promise<Step[]> {
   const home = args.home ?? altanaHomeDir();
+
+  // Resolved here, once, so the host and the MCP are given the same answer
+  // rather than each working it out from an environment they may not have.
+  // ALTANA_HOME is always written, even when it is the default, because being
+  // explicit is the whole point: the two halves must not be able to disagree.
+  const shared: Record<string, string | undefined> = {
+    ALTANA_HOME: home,
+    ALTANA_KEY_STORE: process.env.ALTANA_KEY_STORE,
+  };
   // Pinned in both. The host does not choose a chain itself, but a launcher
   // that names one can never be the wrong answer on a testnet only gate, and
   // having the two agree is one less thing to wonder about.
   const planned: { path: string; body: string }[] = [
     {
       path: serverLauncherPath(home),
-      body: launcherScript({ bun: args.bun, entry: args.entry, chainId: args.chainId }),
+      body: launcherScript({
+        bun: args.bun,
+        entry: args.entry,
+        chainId: args.chainId,
+        env: shared,
+      }),
     },
     {
       path: hostLauncherPath(home),
@@ -404,6 +445,7 @@ export async function writeLaunchers(args: {
         argv: ["native-host"],
         protectStdout: true,
         chainId: args.chainId,
+        env: shared,
       }),
     },
   ];

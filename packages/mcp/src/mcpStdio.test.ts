@@ -441,6 +441,26 @@ describe("a chain mismatch between the extension and the agent (QA's finding)", 
     }
   }, 30_000);
 
+  test("request_permission refuses, because approving it would be agreeing to the wrong chain", async () => {
+    // Worse than a refusal: the person would have said yes to a permission for
+    // a network they are not on.
+    await linkTo(56);
+    const mcp = await startMcp("claude-code", { ALTANA_CHAIN: "bnb-testnet" });
+    try {
+      const text = textOf(
+        await mcp.call("tools/call", {
+          name: "request_permission",
+          arguments: { name: "bot", reason: "I want to rebalance." },
+        }),
+      );
+      expect(text).toContain("chain 56");
+      expect(text).toContain("chain 97");
+      expect(text).toContain("Nothing has been sent");
+    } finally {
+      await mcp.stop();
+    }
+  }, 30_000);
+
   test("reading is left alone, because that is how somebody works out what happened", async () => {
     await linkTo(56);
     const mcp = await startMcp("claude-code", { ALTANA_CHAIN: "bnb-testnet" });

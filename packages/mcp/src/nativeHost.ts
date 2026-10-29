@@ -28,7 +28,8 @@
 import { appendFileSync, mkdirSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { createReadStream } from "node:fs";
 import { join } from "node:path";
-import { readAgents, reapDeadAgents, type Agent } from "./agents.js";
+import { readdir } from "node:fs/promises";
+import { agentsDir, readAgents, reapDeadAgents, type Agent } from "./agents.js";
 import { altanaHome } from "./keys.js";
 import { clearLink, writeLink, LinkError } from "./link.js";
 import {
@@ -144,7 +145,25 @@ export const handlers: Record<string, HostHandler> = {
     };
   },
 
-  listAgents: async () => ({ agents: await readAgents() }),
+  listAgents: async (_payload, ctx) => {
+    // The directory and the raw file count, separately from the answer. When
+    // the extension sees nothing, the question is whether the host looked in
+    // the right place and whether anything was there, and those are different
+    // failures with different owners.
+    const dir = agentsDir();
+    let files = 0;
+    try {
+      files = (await readdir(dir)).filter((n) => n.endsWith(".json")).length;
+    } catch {
+      files = -1;
+    }
+    const agents = await readAgents();
+    ctx.say(
+      `[altana-host] listAgents read ${dir} files=${files === -1 ? "no-such-directory" : files} ` +
+        `agents=${agents.length}`,
+    );
+    return { agents };
+  },
 
   link: async (payload) => {
     const { address, chainId } = asRecord(payload, "link");
@@ -453,6 +472,9 @@ async function handleFrame(
     return;
   }
   const type = request.type;
+  // One line per request, because the open question after G2 was narrowed was
+  // what the host actually answered, and nothing in the log said.
+  say(`[altana-host] request type=${type} id=${id}`);
   const handler = handlers[type];
   if (!handler) {
     const milestone = NOT_YET[type];
@@ -469,10 +491,13 @@ async function handleFrame(
     return;
   }
   try {
-    send({ id, ok: true, result: await handler(request.payload, ctx) });
+    const result = await handler(request.payload, ctx);
+    send({ id, ok: true, result });
+    say(`[altana-host] answered id=${id} type=${type} ok=true${summarize(type, result)}`);
   } catch (err) {
     if (err instanceof HostError) {
       fail(id, err.code, err.message);
+      say(`[altana-host] answered id=${id} type=${type} ok=false code=${err.code}`);
       return;
     }
     // Everything unplanned lands here, redacted, with one code. A handler that
@@ -574,6 +599,10 @@ export function startAgentWatcher(
       const signature = signatureOf(agents);
       if (signature === last) return;
       last = signature;
+      say(
+        `[altana-host] emitting agents.changed agents=${agents.length} ` +
+          `running=${agents.filter((a) => a.running).length}`,
+      );
       ctx.emit("agents.changed", { agents });
       // Only once the extension has been told, so a reap can never remove the
       // evidence for an event that was not sent.
@@ -631,6 +660,25 @@ export function startRequestWatcher(
       }
     },
   });
+}
+
+/**
+ * What went back, for the answers whose size is the question being asked.
+ *
+ * Deliberately counts rather than contents: a result can carry an address, and
+ * the point of this line is the number, not the data.
+ */
+function summarize(type: string, result: unknown): string {
+  if (!result || typeof result !== "object") return "";
+  const record = result as Record<string, unknown>;
+  if (type === "listAgents" && Array.isArray(record.agents)) {
+    const agents = record.agents as { running?: boolean }[];
+    return ` agents=${agents.length} running=${agents.filter((a) => a.running).length}`;
+  }
+  if (type === "listRequests" && Array.isArray(record.requests)) {
+    return ` requests=${(record.requests as unknown[]).length}`;
+  }
+  return "";
 }
 
 /**
