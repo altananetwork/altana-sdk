@@ -49,7 +49,8 @@ import { startAnvil, waitForAnvil } from "./anvil.js";
 
 const ITHACA_ACCOUNT_IMPL: Address = "0x4B5d20CD8a3927B500540d9BcCDDc27385c9fA79";
 const U = U_TOKEN[56];
-const BSC_RPC = process.env.BSC_FORK_RPC_URL ?? "https://bsc-rpc.publicnode.com";
+// `||`, not `??`: an unset GitHub Actions secret arrives as an empty string.
+const BSC_RPC = process.env.BSC_FORK_RPC_URL || "https://bsc-rpc.publicnode.com";
 const ANVIL_PORT = 8549;
 const ANVIL_URL = `http://127.0.0.1:${ANVIL_PORT}`;
 const HTTP_PORT = 8791;

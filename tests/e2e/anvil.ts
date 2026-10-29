@@ -55,6 +55,16 @@ export type Anvil = {
  * that needs different ones (fork-native-receive wants `--hardfork prague`).
  */
 export function startAnvil(forkUrl: string, port: number, args: readonly string[] = ["--silent"]): Anvil {
+  // An empty fork URL is not a missing one. anvil reads `--fork-url ""` as an
+  // IPC socket path relative to the working directory and fails somewhere far
+  // from the cause: "Internal transport error: Connection refused … with
+  // /home/runner/work/…/tests/e2e/" is what it cost to find that out once.
+  if (!forkUrl.trim()) {
+    throw new Error(
+      "anvil was given an empty --fork-url. An unset GitHub Actions secret arrives as an empty " +
+        "string, so a fallback written with `??` keeps it; write it with `||`.",
+    );
+  }
   // Said here, because `Bun.spawn` answers a missing binary with an ENOENT
   // stack trace pointing at this file, which reads like a bug in the harness.
   if (!Bun.which("anvil")) {
