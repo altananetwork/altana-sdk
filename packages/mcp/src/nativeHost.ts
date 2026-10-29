@@ -25,10 +25,11 @@
  *   never comes hangs with nothing to show the person.
  */
 
-import { appendFile, mkdir, stat, writeFile } from "node:fs/promises";
-import { writeSync } from "node:fs";
+import { appendFileSync, mkdirSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { createReadStream } from "node:fs";
 import { join } from "node:path";
-import { readAgents, reapDeadAgents, type Agent } from "./agents.js";
+import { readdir } from "node:fs/promises";
+import { agentsDir, readAgents, reapDeadAgents, type Agent } from "./agents.js";
 import { altanaHome } from "./keys.js";
 import { clearLink, writeLink, LinkError } from "./link.js";
 import {
@@ -137,7 +138,25 @@ export const handlers: Record<string, HostHandler> = {
     };
   },
 
-  listAgents: async () => ({ agents: await readAgents() }),
+  listAgents: async (_payload, ctx) => {
+    // The directory and the raw file count, separately from the answer. When
+    // the extension sees nothing, the question is whether the host looked in
+    // the right place and whether anything was there, and those are different
+    // failures with different owners.
+    const dir = agentsDir();
+    let files = 0;
+    try {
+      files = (await readdir(dir)).filter((n) => n.endsWith(".json")).length;
+    } catch {
+      files = -1;
+    }
+    const agents = await readAgents();
+    ctx.say(
+      `[altana-host] listAgents read ${dir} files=${files === -1 ? "no-such-directory" : files} ` +
+        `agents=${agents.length}`,
+    );
+    return { agents };
+  },
 
   link: async (payload) => {
     const { address, chainId } = asRecord(payload, "link");
@@ -291,6 +310,17 @@ async function handleFrame(
   ctx: HostContext,
   say: (line: string) => void,
 ): Promise<void> {
+  /**
+   * Every refusal leaves through here, redacted.
+   *
+   * A handler's message is not necessarily a string this file wrote. A
+   * handover failure carries the SDK's own error text, and the SDK is under no
+   * obligation to keep key material out of it. Redacting at the one point
+   * everything leaves by is the only version of this that stays true as
+   * handlers are added.
+   */
+  const fail = (id: string, code: ErrorCode, message: string) =>
+    send({ id, ok: false, error: { code, message: redact(message) } });
   if (!frame.ok) {
     // No id to answer with, so this can only be logged. The extension's own
     // timeout is what surfaces it there.
@@ -304,32 +334,36 @@ async function handleFrame(
   }
   const id = request.id;
   if (typeof request.type !== "string" || !request.type) {
-    send({ id, ok: false, error: { code: "BAD_REQUEST", message: "That request has no type." } });
+    fail(id, "BAD_REQUEST", "That request has no type.");
     return;
   }
   const type = request.type;
+  // One line per request, because the open question after G2 was narrowed was
+  // what the host actually answered, and nothing in the log said.
+  say(`[altana-host] request type=${type} id=${id}`);
   const handler = handlers[type];
   if (!handler) {
     const milestone = NOT_YET[type];
-    send({
-      id,
-      ok: false,
-      error: milestone
-        ? {
-            code: "INTERNAL",
-            message:
-              `This build of the host does not implement ${type} yet. It lands in ` +
-              `milestone ${milestone}. The request itself was well formed.`,
-          }
-        : { code: "BAD_REQUEST", message: `No request type called ${type}.` },
-    });
+    if (milestone) {
+      fail(
+        id,
+        "INTERNAL",
+        `This build of the host does not implement ${type} yet. It lands in ` +
+          `milestone ${milestone}. The request itself was well formed.`,
+      );
+    } else {
+      fail(id, "BAD_REQUEST", `No request type called ${type}.`);
+    }
     return;
   }
   try {
-    send({ id, ok: true, result: await handler(request.payload, ctx) });
+    const result = await handler(request.payload, ctx);
+    send({ id, ok: true, result });
+    say(`[altana-host] answered id=${id} type=${type} ok=true${summarize(type, result)}`);
   } catch (err) {
     if (err instanceof HostError) {
-      send({ id, ok: false, error: { code: err.code, message: err.message } });
+      fail(id, err.code, err.message);
+      say(`[altana-host] answered id=${id} type=${type} ok=false code=${err.code}`);
       return;
     }
     // Everything unplanned lands here, redacted, with one code. A handler that
@@ -337,7 +371,7 @@ async function handleFrame(
     // error message that goes back over the wire and into a log.
     const message = redactedMessage(err);
     say(`[altana-host] ${type} failed: ${message}`);
-    send({ id, ok: false, error: { code: "INTERNAL", message } });
+    fail(id, "INTERNAL", message);
   }
 }
 
@@ -366,6 +400,10 @@ export function startAgentWatcher(
       const signature = signatureOf(agents);
       if (signature === last) return;
       last = signature;
+      say(
+        `[altana-host] emitting agents.changed agents=${agents.length} ` +
+          `running=${agents.filter((a) => a.running).length}`,
+      );
       ctx.emit("agents.changed", { agents });
       // Only once the extension has been told, so a reap can never remove the
       // evidence for an event that was not sent.
@@ -414,6 +452,25 @@ export function startAgentWatcher(
 }
 
 /**
+ * What went back, for the answers whose size is the question being asked.
+ *
+ * Deliberately counts rather than contents: a result can carry an address, and
+ * the point of this line is the number, not the data.
+ */
+function summarize(type: string, result: unknown): string {
+  if (!result || typeof result !== "object") return "";
+  const record = result as Record<string, unknown>;
+  if (type === "listAgents" && Array.isArray(record.agents)) {
+    const agents = record.agents as { running?: boolean }[];
+    return ` agents=${agents.length} running=${agents.filter((a) => a.running).length}`;
+  }
+  if (type === "listRequests" && Array.isArray(record.requests)) {
+    return ` requests=${(record.requests as unknown[]).length}`;
+  }
+  return "";
+}
+
+/**
  * What the extension would see, as a string, for change detection.
  *
  * `lastSeen` is left out on purpose. The MCP rewrites it on every tool call, so
@@ -426,17 +483,86 @@ function signatureOf(agents: Agent[]): string {
 }
 
 /**
- * Pause briefly without an await, for the EAGAIN retry above.
+ * How long the frame write will wait for a pipe that will not take bytes.
  *
- * Synchronous on purpose: that write path cannot become async without becoming
- * buffered again, which is the whole thing it exists to avoid. A full pipe
- * clears in microseconds, so this spins for a very short time or not at all.
+ * There used to be no limit here, which was indefensible: an fd that never
+ * drains meant a process that never ended, and QA found hosts from the previous
+ * day still alive nineteen hours after the Chrome that started them had gone.
+ * Giving up and saying so beats hanging, because a hang is the one failure that
+ * leaves nothing to read.
  */
-function waitABit(): void {
-  const until = Date.now() + 1;
-  while (Date.now() < until) {
-    /* spin */
+const WRITE_DEADLINE_MS = 5000;
+
+/** Sleep without burning a core, and without handing control to the event loop. */
+function sleepSync(ms: number): void {
+  // Atomics.wait on a buffer nobody will notify is a real sleep. A busy spin
+  // would compete with the very read that has to make progress for the pipe to
+  // drain.
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch {
+    const until = Date.now() + ms;
+    while (Date.now() < until) {
+      /* no Atomics here, so spin */
+    }
   }
+}
+
+/**
+ * Write one frame to fd 1, and say what happened.
+ *
+ * Instrumented because this is the half of the g1 failure there was no evidence
+ * about: the host logged the frame arriving and then nothing at all, and a
+ * write that neither returned nor threw would look exactly like that.
+ */
+function writeFrameTo(fd: number, bytes: Buffer): void {
+  const deadline = Date.now() + WRITE_DEADLINE_MS;
+  let written = 0;
+  let retries = 0;
+
+  appendToHostLog(
+    `${new Date().toISOString()} write start pid=${process.pid} fd=${fd} bytes=${bytes.byteLength}\n`,
+  );
+
+  while (written < bytes.byteLength) {
+    try {
+      written += writeSync(fd, bytes, written, bytes.byteLength - written);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code ?? "unknown";
+      if (code === "EAGAIN" || code === "EWOULDBLOCK" || code === "EINTR") {
+        retries += 1;
+        if (Date.now() > deadline) {
+          appendToHostLog(
+            `${new Date().toISOString()} write gave up pid=${process.pid} ` +
+              `code=${code} written=${written}/${bytes.byteLength} retries=${retries}\n`,
+          );
+          throw new Error(
+            `stdout would not accept the frame within ${WRITE_DEADLINE_MS}ms ` +
+              `(${code} after ${retries} retries, ${written} of ${bytes.byteLength} bytes written)`,
+          );
+        }
+        // Logged sparsely: enough to see it happening, not enough to fill the file.
+        if (retries === 1 || retries % 100 === 0) {
+          appendToHostLog(
+            `${new Date().toISOString()} write retry pid=${process.pid} ` +
+              `code=${code} n=${retries} written=${written}/${bytes.byteLength}\n`,
+          );
+        }
+        if (code !== "EINTR") sleepSync(1);
+        continue;
+      }
+      appendToHostLog(
+        `${new Date().toISOString()} write failed pid=${process.pid} ` +
+          `code=${code} written=${written}/${bytes.byteLength}\n`,
+      );
+      throw err;
+    }
+  }
+
+  appendToHostLog(
+    `${new Date().toISOString()} write done pid=${process.pid} bytes=${written}` +
+      `${retries > 0 ? ` retries=${retries}` : ""}\n`,
+  );
 }
 
 /**
@@ -458,41 +584,100 @@ export function hostLogPath(): string {
 /** Keep the breadcrumb file from growing without bound. */
 const HOST_LOG_MAX_BYTES = 64 * 1024;
 
-async function appendToHostLog(line: string): Promise<void> {
+/**
+ * Append a breadcrumb synchronously.
+ *
+ * Synchronous because of how this file is read. The lines that matter most are
+ * the last ones before the process goes, and an async append that has been
+ * handed to the event loop is simply lost if the process exits first. QA's
+ * first host.log had a start line and nothing else, which is exactly what a
+ * lost end line looks like, so the difference between "it is still running"
+ * and "it exited and we did not catch it" was unreadable.
+ */
+function appendToHostLog(line: string): void {
   try {
     const path = hostLogPath();
-    await mkdir(altanaHome(), { recursive: true, mode: 0o700 });
+    mkdirSync(altanaHome(), { recursive: true, mode: 0o700 });
     // Truncating beats rotating here: this is a breadcrumb trail for the last
     // few runs, not a record anybody needs to keep.
-    const size = await stat(path).then((s) => s.size, () => 0);
-    if (size > HOST_LOG_MAX_BYTES) await writeFile(path, "", { mode: 0o600 });
-    await appendFile(path, line, { mode: 0o600 });
+    let size = 0;
+    try {
+      size = statSync(path).size;
+    } catch {
+      size = 0;
+    }
+    if (size > HOST_LOG_MAX_BYTES) writeFileSync(path, "", { mode: 0o600 });
+    appendFileSync(path, line, { mode: 0o600 });
   } catch {
     // A host that cannot write its own diagnostics still has a job to do.
   }
 }
 
-/** Wire the host to this process's stdio. The `native-host` entry point. */
-export async function runNativeHostOnStdio(): Promise<void> {
+/**
+ * Wire the host to this process's descriptors. The `native-host` entry point.
+ *
+ * `framesFd` is where replies go. The launcher moves the real stdout to fd 3
+ * and points fd 1 at stderr, so anything the runtime or a library prints can no
+ * longer land in the middle of a frame. Chrome closes a port the moment it
+ * reads a length prefix it cannot believe, and that failure looks exactly like
+ * a host that answered nothing, which is where a day went.
+ */
+export async function runNativeHostOnStdio(framesFd = 1): Promise<void> {
   const stamp = () => new Date().toISOString();
 
   // Chrome appends the calling origin, and on some platforms a window handle,
   // after the arguments the launcher already passed. Recorded because a wrong
   // origin here is one of the few ways this fails silently.
   const chromeArgs = process.argv.slice(3);
-  void appendToHostLog(
+  appendToHostLog(
     `${stamp()} start pid=${process.pid} altanaHome=${altanaHome()} ` +
-      `args=${JSON.stringify(chromeArgs)}\n`,
+      `runtime=${process.versions.bun ? `bun ${process.versions.bun}` : `node ${process.versions.node}`} ` +
+      `framesFd=${framesFd} args=${JSON.stringify(chromeArgs)}\n`,
   );
 
   const log = (line: string) => {
     process.stderr.write(`${line}\n`);
-    void appendToHostLog(`${stamp()} ${line}\n`);
+    appendToHostLog(`${stamp()} ${line}\n`);
   };
 
+  // A host that dies without saying why is the hardest thing to chase here,
+  // because Chrome reports it as a disconnect with no reason and swallows
+  // stderr. These three are the only way the last moment gets written down.
+  process.on("uncaughtException", (err) => {
+    appendToHostLog(`${stamp()} uncaught pid=${process.pid} ${redactedMessage(err)}\n`);
+    process.exit(1);
+  });
+  process.on("unhandledRejection", (reason) => {
+    appendToHostLog(`${stamp()} unhandled pid=${process.pid} ${redactedMessage(reason)}\n`);
+    process.exit(1);
+  });
+  process.on("exit", (code) => {
+    appendToHostLog(`${stamp()} exit pid=${process.pid} code=${code}\n`);
+  });
+
+  // A port Chrome has forgotten about is the other way a host outlives its
+  // browser: stdin never closes, so nothing ends. If no byte has ever arrived
+  // after this long, there is nothing on the other end worth waiting for.
+  const SILENT_PORT_LIMIT_MS = 10 * 60 * 1000;
+  let sawAnyBytes = false;
+  const idleGuard = setTimeout(() => {
+    if (sawAnyBytes) return;
+    appendToHostLog(
+      `${stamp()} giving up pid=${process.pid} nothing arrived in ${SILENT_PORT_LIMIT_MS}ms\n`,
+    );
+    process.exit(0);
+  }, SILENT_PORT_LIMIT_MS);
+  idleGuard.unref?.();
+
   try {
+    appendToHostLog(`${stamp()} reading stdin pid=${process.pid}\n`);
     await runNativeHost({
-      input: process.stdin,
+      input: (async function* () {
+        for await (const chunk of stdinFrames()) {
+          sawAnyBytes = true;
+          yield chunk;
+        }
+      })(),
       // writeSync on fd 1, not process.stdout.write. Chrome keeps the port's
       // stdin open for the life of the connection, so nothing ever flushes a
       // buffered stream on exit, and a frame still sitting in a buffer is a
@@ -504,32 +689,68 @@ export async function runNativeHostOnStdio(): Promise<void> {
       // buffer is full, which is not an error but a "not yet"; letting that
       // escape would kill the host over a full pipe, dropping the port and
       // every pending request with it.
-      write: (bytes) => {
-        let written = 0;
-        while (written < bytes.byteLength) {
-          try {
-            written += writeSync(1, bytes, written, bytes.byteLength - written);
-          } catch (err) {
-            const code = (err as NodeJS.ErrnoException)?.code;
-            if (code === "EAGAIN" || code === "EWOULDBLOCK") {
-              // Chrome is reading as fast as it can; give it a moment. Busy
-              // waiting is acceptable here because the alternative is an async
-              // write, and an async write is what reintroduces buffering.
-              waitABit();
-              continue;
-            }
-            if (code === "EINTR") continue;
-            throw err;
-          }
-        }
-      },
+      write: (bytes) => writeFrameTo(framesFd, bytes),
       log,
     });
-    void appendToHostLog(`${stamp()} end pid=${process.pid} the port closed\n`);
+    appendToHostLog(`${stamp()} end pid=${process.pid} stdin ended, so the port closed\n`);
+    // Exiting explicitly, rather than trusting the event loop to empty.
+    //
+    // QA found hosts from the previous day still alive nineteen hours after the
+    // Chrome that started them had gone. A host whose port has closed has
+    // nothing left to do, and anything still referenced (a watcher, a half open
+    // descriptor, a pending read) keeps the process alive for no reason while
+    // holding a key store open.
+    process.exit(0);
   } catch (err) {
     // Chrome shows a host that died as a disconnect with no reason, so the
     // reason has to be written down somewhere before this process goes.
-    await appendToHostLog(`${stamp()} died pid=${process.pid} ${redactedMessage(err)}\n`);
+    appendToHostLog(`${stamp()} died pid=${process.pid} ${redactedMessage(err)}\n`);
+    // Same reasoning as the clean path, and more pressing: whatever went wrong
+    // may be the thing holding the loop open.
+    process.exit(1);
+  }
+}
+
+/**
+ * Read framed bytes from fd 0, rather than from `process.stdin`.
+ *
+ * Chrome hands a native host the connection as a file descriptor, and on macOS
+ * it is not always the kind of pipe `process.stdin` expects: a stream built for
+ * a pipe can report end of file immediately on a socket, which looks exactly
+ * like Chrome closing the port the instant it opened it. Reading fd 0 through
+ * a descriptor the runtime did not pre-wrap avoids guessing which it is, and it
+ * is the same reasoning as writing frames with writeSync on fd 1.
+ *
+ * Each chunk is logged by size only, never by content: the bytes here are the
+ * ones that carry a session key.
+ */
+async function* stdinFrames(): AsyncGenerator<Buffer> {
+  const stream = createReadStream("", { fd: 0, autoClose: false });
+  let chunks = 0;
+  let total = 0;
+  try {
+    for await (const chunk of stream) {
+      chunks += 1;
+      const bytes = Buffer.from(chunk as Buffer);
+      total += bytes.byteLength;
+      // Every chunk, not just the first. Chrome splits a frame across reads,
+      // and a log that only recorded the first one could not tell a frame that
+      // never finished arriving from one that arrived and was never answered.
+      appendToHostLog(
+        `${new Date().toISOString()} chunk ${chunks} pid=${process.pid} ` +
+          `bytes=${bytes.byteLength} total=${total}\n`,
+      );
+      yield bytes;
+    }
+  } catch (err) {
+    appendToHostLog(
+      `${new Date().toISOString()} stdin failed pid=${process.pid} ` +
+        `chunks=${chunks} ${redactedMessage(err)}\n`,
+    );
     throw err;
+  } finally {
+    appendToHostLog(
+      `${new Date().toISOString()} stdin closed pid=${process.pid} chunks=${chunks} total=${total}\n`,
+    );
   }
 }

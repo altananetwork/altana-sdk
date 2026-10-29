@@ -94,6 +94,119 @@ describe("launcherScript", () => {
     expect(script).toContain(`run '/e.ts' 'native-host' "$@"`);
   });
 
+  test("fd 2 is opened before stdout is pointed at it", () => {
+    // The bug this replaces: `1>&2` DUPLICATES fd 2, so with fd 2 closed the
+    // redirect fails, and a failed redirect on `exec` makes a non-interactive
+    // shell exit before reaching anything else. Chrome may start a native host
+    // with stderr closed, and the result was zero bytes, "native host has
+    // exited", and nothing in the log at all.
+    const script = launcherScript({
+      bun: "/b/bun",
+      entry: "/e.ts",
+      argv: ["native-host"],
+      protectStdout: true,
+    });
+    // Opening a file works whether or not fd 2 was open, unlike duplicating it.
+    expect(script).toContain(`exec 2>>"$STDERR_TARGET"`);
+    expect(script.indexOf('exec 2>>"$STDERR_TARGET"')).toBeLessThan(script.indexOf("exec 3>&1 1>&2"));
+    // /dev/null is the fallback, because the home directory might not be
+    // writable either.
+    expect(script).toContain("STDERR_TARGET=/dev/null");
+  });
+
+  test("a breadcrumb is written before any redirect at all", () => {
+    // A launcher that died on a redirect left nothing in host.log, and that
+    // absence was most of the time it took to find the bug.
+    const script = launcherScript({
+      bun: "/b/bun",
+      entry: "/e.ts",
+      argv: ["native-host"],
+      protectStdout: true,
+    });
+    const breadcrumb = script.indexOf("launcher pid=");
+    expect(breadcrumb).toBeGreaterThan(-1);
+    expect(breadcrumb).toBeLessThan(script.indexOf("exec 2>>"));
+    expect(breadcrumb).toBeLessThan(script.indexOf("exec 3>&1"));
+  });
+
+  test("the shared environment is baked in, because Chrome passes none of it", () => {
+    // The bug: the launcher set PATH for exactly this reason and nothing else,
+    // so a host started by Chrome fell back to $HOME/.altana while the agent
+    // used the home it was given. The files they are supposed to share never
+    // met and listAgents was honestly empty.
+    const script = launcherScript({
+      bun: "/b/bun",
+      entry: "/e.ts",
+      argv: ["native-host"],
+      protectStdout: true,
+      chainId: 97,
+      env: { ALTANA_HOME: "/tmp/gate-home", ALTANA_KEY_STORE: "file:/tmp/gate-home/keys.json" },
+    });
+    expect(script).toContain(`ALTANA_HOME='/tmp/gate-home'`);
+    expect(script).toContain("export ALTANA_HOME");
+    // A key store set for one half and not the other is the same bug with
+    // worse consequences: the host writes a key where list_sessions never looks.
+    expect(script).toContain(`ALTANA_KEY_STORE='file:/tmp/gate-home/keys.json'`);
+    expect(script).toContain("export ALTANA_KEY_STORE");
+  });
+
+  test("the baked environment comes before the breadcrumb, which depends on it", () => {
+    // Otherwise the breadcrumb resolves ALTANA_HOME from the environment Chrome
+    // did not give us, and lands in the wrong log.
+    const script = launcherScript({
+      bun: "/b/bun",
+      entry: "/e.ts",
+      argv: ["native-host"],
+      protectStdout: true,
+      env: { ALTANA_HOME: "/tmp/gate-home" },
+    });
+    expect(script.indexOf("export ALTANA_HOME")).toBeLessThan(script.indexOf("ALTANA_DIR="));
+    expect(script.indexOf("ALTANA_DIR=")).toBeLessThan(script.indexOf("launcher pid="));
+  });
+
+  test("an empty or unset variable is not baked as an empty string", () => {
+    // Exporting ALTANA_KEY_STORE="" would be worse than not exporting it: the
+    // MCP would see it set and refuse it as malformed.
+    const script = launcherScript({
+      bun: "/b/bun",
+      entry: "/e.ts",
+      env: { ALTANA_HOME: "/tmp/h", ALTANA_KEY_STORE: undefined },
+    });
+    expect(script).toContain("export ALTANA_HOME");
+    expect(script).not.toContain("ALTANA_KEY_STORE");
+  });
+
+  test("the chain can be pinned, so an unset ALTANA_CHAIN cannot mean a mainnet", () => {
+    const pinned = launcherScript({ bun: "/b/bun", entry: "/e.ts", chainId: 97 });
+    expect(pinned).toContain("ALTANA_CHAIN='97'");
+    expect(pinned).toContain("export ALTANA_CHAIN");
+    expect(launcherScript({ bun: "/b/bun", entry: "/e.ts" })).not.toContain("ALTANA_CHAIN");
+  });
+
+  test("the host launcher moves the protocol off fd 1, and tells the host where it went", () => {
+    // Chrome closes the port the instant it reads a length prefix it cannot
+    // believe, so anything the runtime or a library prints to stdout lands in
+    // the middle of a frame and is indistinguishable from a host that answered
+    // nothing. Moving stdout to fd 3 and pointing fd 1 at stderr removes the
+    // whole class.
+    const script = launcherScript({
+      bun: "/b/bun",
+      entry: "/e.ts",
+      argv: ["native-host"],
+      protectStdout: true,
+    });
+    expect(script).toContain("exec 3>&1 1>&2");
+    expect(script).toContain(`'--frames-fd' '3'`);
+    // The redirection has to come before the exec that replaces the shell.
+    expect(script.indexOf("exec 3>&1")).toBeLessThan(script.indexOf("exec '/b/bun'"));
+  });
+
+  test("the server launcher leaves stdout alone, because that is its JSON-RPC channel", () => {
+    const script = launcherScript({ bun: "/b/bun", entry: "/e.ts" });
+    expect(script).not.toContain("3>&1");
+    expect(script).not.toContain("--frames-fd");
+  });
+
   test("quotes a path with a space in it", () => {
     const script = launcherScript({ bun: "/opt/my bun/bun", entry: "/a b/cli.ts" });
     expect(script).toContain(`exec '/opt/my bun/bun' run '/a b/cli.ts'`);
@@ -125,8 +238,24 @@ describe("writeLaunchers", () => {
     for (const path of [serverLauncherPath(), hostLauncherPath()]) {
       expect((await stat(path)).mode & 0o777).toBe(0o700);
     }
-    expect(await readFile(hostLauncherPath(), "utf8")).toContain("'native-host'");
+    const host = await readFile(hostLauncherPath(), "utf8");
+    expect(host).toContain("'native-host'");
+    // What install actually writes is the protected form, since this is the
+    // launcher Chrome runs.
+    expect(host).toContain("exec 3>&1 1>&2");
+    expect(host).toContain(`'--frames-fd' '3'`);
     expect(await readFile(serverLauncherPath(), "utf8")).not.toContain("'native-host'");
+  });
+
+  test("both launchers name the same ALTANA_HOME, even when it is the default", async () => {
+    await writeLaunchers({ bun: "/b/bun", entry: "/e.ts", chainId: 97 });
+    const server = await readFile(serverLauncherPath(), "utf8");
+    const host = await readFile(hostLauncherPath(), "utf8");
+    const expected = `ALTANA_HOME='${process.env.ALTANA_HOME}'`;
+    expect(server).toContain(expected);
+    expect(host).toContain(expected);
+    expect(server).toContain("ALTANA_CHAIN='97'");
+    expect(host).toContain("ALTANA_CHAIN='97'");
   });
 
   test("a dry run writes nothing but still reports what it would do", async () => {
