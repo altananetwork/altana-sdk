@@ -394,7 +394,8 @@ export async function runNativeHost(streams: HostStreams): Promise<void> {
     say,
   };
 
-  const watcher = startAgentWatcher(ctx, say);
+  // Both directories the contract says the host watches while its port is open.
+  const watchers = [startAgentWatcher(ctx, say), startRequestWatcher(ctx, say)];
 
   try {
     const decoder = new FrameDecoder();
@@ -414,7 +415,7 @@ export async function runNativeHost(streams: HostStreams): Promise<void> {
       }
     }
   } finally {
-    watcher.stop();
+    for (const watcher of watchers) watcher.stop();
   }
 }
 
@@ -492,34 +493,40 @@ async function handleFrame(
  * a pid dying above all. Both funnel into one comparison, so the extension
  * never gets an event for a listing it already has.
  */
-export function startAgentWatcher(
-  ctx: HostContext,
-  say: (line: string) => void,
-): { stop: () => void } {
-  let last = "";
+/**
+ * Watch one directory under ALTANA_HOME, with a poll behind the watcher.
+ *
+ * Shared by both watchers rather than written twice. The mechanics are the
+ * fiddly part, and they are identical: create the directory first because
+ * watching one that does not exist throws and neither directory exists until
+ * something writes to it, never run two checks at once, survive a watcher that
+ * cannot be set up, and leave nothing behind that stops the process exiting.
+ * Only what to do on a change differs.
+ */
+function startDirectoryWatcher(args: {
+  dir: string;
+  label: string;
+  check: () => Promise<void>;
+  say: (line: string) => void;
+}): { stop: () => void } {
   let closed = false;
   let inFlight = false;
 
-  const check = async () => {
+  const run = async () => {
     if (closed || inFlight) return;
     inFlight = true;
     try {
-      const agents = await readAgents();
-      const signature = signatureOf(agents);
-      if (signature === last) return;
-      last = signature;
-      ctx.emit("agents.changed", { agents });
-      // Only once the extension has been told, so a reap can never remove the
-      // evidence for an event that was not sent.
-      if (agents.some((a) => !a.running)) await reapDeadAgents();
+      await args.check();
     } catch (err) {
-      say(`[altana-host] the agents directory could not be read: ${redactedMessage(err)}`);
+      args.say(
+        `[altana-host] the ${args.label} directory could not be read: ${redactedMessage(err)}`,
+      );
     } finally {
       inFlight = false;
     }
   };
 
-  const timer = setInterval(check, POLL_MS);
+  const timer = setInterval(run, POLL_MS);
   // The host's whole life is this port, but an interval still should not be the
   // reason the process cannot exit.
   timer.unref?.();
@@ -529,22 +536,20 @@ export function startAgentWatcher(
     try {
       const { watch } = await import("node:fs");
       const { mkdir } = await import("node:fs/promises");
-      const { join } = await import("node:path");
-      const dir = join(altanaHome(), "agents");
-      // Watching a directory that does not exist throws, and it will not exist
-      // until the first agent starts, which is usually after Chrome connects.
-      await mkdir(dir, { recursive: true, mode: 0o700 });
+      await mkdir(args.dir, { recursive: true, mode: 0o700 });
       if (closed) return;
-      fsWatcher = watch(dir, () => void check());
+      fsWatcher = watch(args.dir, () => void run());
     } catch (err) {
-      // Not fatal: the poll already covers everything, just 2 seconds later.
-      say(`[altana-host] watching the agents directory failed, polling instead: ${redactedMessage(err)}`);
+      // Not fatal: the poll already covers everything, just a beat later.
+      args.say(
+        `[altana-host] watching the ${args.label} directory failed, polling instead: ${redactedMessage(err)}`,
+      );
     }
   })();
 
-  // First listing goes out as soon as the port opens, so the extension has
-  // something to show without waiting for a change.
-  void check();
+  // First pass as soon as the port opens, so the extension has something to
+  // show without waiting for a change.
+  void run();
 
   return {
     stop: () => {
@@ -553,6 +558,79 @@ export function startAgentWatcher(
       fsWatcher?.close();
     },
   };
+}
+
+export function startAgentWatcher(
+  ctx: HostContext,
+  say: (line: string) => void,
+): { stop: () => void } {
+  let last = "";
+  return startDirectoryWatcher({
+    dir: join(altanaHome(), "agents"),
+    label: "agents",
+    say,
+    check: async () => {
+      const agents = await readAgents();
+      const signature = signatureOf(agents);
+      if (signature === last) return;
+      last = signature;
+      ctx.emit("agents.changed", { agents });
+      // Only once the extension has been told, so a reap can never remove the
+      // evidence for an event that was not sent.
+      if (agents.some((a) => !a.running)) await reapDeadAgents();
+    },
+  });
+}
+
+/**
+ * Watches the requests directory and announces a new one.
+ *
+ * The contract has the host doing this, and it is what lets the extension show
+ * a badge the moment an agent asks rather than only when something happens to
+ * poll. G5 is "the agent asks, the extension shows it": without this the
+ * showing depends on the extension polling, which is slower and is not what the
+ * contract says either side should rely on.
+ *
+ * Announced once per id. Ids are uuids, so an id that has been seen is never a
+ * different request later, and the set is pruned to what is still pending so a
+ * long lived port does not accumulate every id it ever saw.
+ */
+export function startRequestWatcher(
+  ctx: HostContext,
+  say: (line: string) => void,
+): { stop: () => void } {
+  const announced = new Set<string>();
+  let first = true;
+  return startDirectoryWatcher({
+    dir: requestsDir(),
+    label: "requests",
+    say,
+    check: async () => {
+      const pending = await listPendingRequests();
+      const ids = new Set(pending.map((r) => r.id));
+
+      for (const request of pending) {
+        if (announced.has(request.id)) continue;
+        announced.add(request.id);
+        // A request already waiting when the port opens is new to this
+        // extension window, which is the case that matters after a Chrome
+        // restart: the agent is still waiting and nothing else would say so.
+        ctx.emit("request.created", { request });
+      }
+      if (first) {
+        first = false;
+        if (pending.length > 0) {
+          say(`[altana-host] ${pending.length} permission request(s) were already waiting`);
+        }
+      }
+
+      // Answered, expired or deleted requests drop out of the set, so it stays
+      // the size of what is actually outstanding.
+      for (const id of announced) {
+        if (!ids.has(id)) announced.delete(id);
+      }
+    },
+  });
 }
 
 /**

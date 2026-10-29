@@ -522,3 +522,175 @@ describe("a revoked permission is refused, and says so (M8, G6)", () => {
     }
   }, 40_000);
 });
+
+
+describe("the host announces a request without being asked (M7, G5)", () => {
+  /**
+   * Keep a host's port open and collect its event frames, the way the
+   * extension does, rather than opening a port per question.
+   *
+   * The other tests here open and close a port per request, which can never
+   * see an event that arrives while a port is open. request.created is only
+   * ever an unprompted event, so it needs a port that stays open.
+   */
+  async function openPort() {
+    const host = Bun.spawn([process.execPath, "run", CLI, "native-host"], {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const events: any[] = [];
+    const responses: any[] = [];
+    void (async () => {
+      const decoder = new FrameDecoder();
+      for await (const chunk of host.stdout as any) {
+        for (const frame of decoder.push(Buffer.from(chunk))) {
+          if (!frame.ok) continue;
+          const value = frame.value as any;
+          if (typeof value.event === "string") events.push(value);
+          else responses.push(value);
+        }
+      }
+    })();
+    void (async () => {
+      for await (const _ of host.stderr as any) void _;
+    })();
+
+    return {
+      events,
+      responses,
+      ask: async (request: unknown) => {
+        host.stdin.write(encodeFrame(request));
+        await host.stdin.flush();
+      },
+      waitForEvent: async (name: string, timeoutMs = 15_000) => {
+        const from = Date.now();
+        for (;;) {
+          const found = events.find((e) => e.event === name);
+          if (found) return found;
+          if (Date.now() - from > timeoutMs) return undefined;
+          await Bun.sleep(100);
+        }
+      },
+      close: async () => {
+        await host.stdin.end();
+        host.kill();
+        await host.exited;
+      },
+    };
+  }
+
+  /** Write a pending request the way the MCP's request_permission does. */
+  async function writeRequest(id: string, name: string) {
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    const dir = join(home, "requests");
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    const request = {
+      v: 1,
+      id,
+      client: { name: "claude-code", version: "2.1.312" },
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 600_000).toISOString(),
+      status: "pending",
+      ask: {
+        name,
+        chainId: 97,
+        spend: [{ limit: "1000000000000000", period: "day" }],
+        expirySeconds: 604800,
+        reason: "I want to rebalance the position you asked about.",
+      },
+      answer: null,
+    };
+    await writeFile(join(dir, `${id}.json`), JSON.stringify(request, null, 2), { mode: 0o600 });
+    return request;
+  }
+
+  test("a request written while the port is open is announced, with the agent's own words", async () => {
+    const port = await openPort();
+    try {
+      // Nothing waiting yet, so nothing to announce.
+      expect(await port.waitForEvent("request.created", 1500)).toBeUndefined();
+
+      await writeRequest("11111111-1111-1111-1111-111111111111", "trading-bot");
+      const event = await port.waitForEvent("request.created");
+      expect(event).toBeDefined();
+      expect(event.payload.request.id).toBe("11111111-1111-1111-1111-111111111111");
+      expect(event.payload.request.ask.name).toBe("trading-bot");
+      // The reason is what the person reads before deciding, so it has to
+      // survive the trip verbatim.
+      expect(event.payload.request.ask.reason).toBe(
+        "I want to rebalance the position you asked about.",
+      );
+      expect(event.payload.request.client.name).toBe("claude-code");
+    } finally {
+      await port.close();
+    }
+  }, 40_000);
+
+  test("one already waiting is announced when the port opens, which is the Chrome restart case", async () => {
+    // The agent is still waiting and nothing else would say so.
+    await writeRequest("22222222-2222-2222-2222-222222222222", "late-badge");
+    const port = await openPort();
+    try {
+      const event = await port.waitForEvent("request.created");
+      expect(event?.payload.request.id).toBe("22222222-2222-2222-2222-222222222222");
+    } finally {
+      await port.close();
+    }
+  }, 40_000);
+
+  test("it is announced once, not once per poll", async () => {
+    const port = await openPort();
+    try {
+      await writeRequest("33333333-3333-3333-3333-333333333333", "once-only");
+      await port.waitForEvent("request.created");
+      // Several poll intervals, so a watcher that re-announced would show it.
+      await Bun.sleep(5000);
+      const created = port.events.filter((e) => e.event === "request.created");
+      expect(created).toHaveLength(1);
+    } finally {
+      await port.close();
+    }
+  }, 40_000);
+
+  test("answering it stops it being pending, and a second one is still announced", async () => {
+    const port = await openPort();
+    try {
+      await writeRequest("44444444-4444-4444-4444-444444444444", "first");
+      await port.waitForEvent("request.created");
+
+      await port.ask({
+        id: "ans",
+        type: "answerRequest",
+        payload: { id: "44444444-4444-4444-4444-444444444444", decision: "reject" },
+      });
+      const from = Date.now();
+      while (!port.responses.some((r) => r.id === "ans") && Date.now() - from < 10_000) {
+        await Bun.sleep(100);
+      }
+      expect(port.responses.find((r) => r.id === "ans")).toMatchObject({ ok: true });
+
+      // listRequests is pending only, so the answered one is gone from it.
+      await port.ask({ id: "list", type: "listRequests" });
+      const listFrom = Date.now();
+      while (!port.responses.some((r) => r.id === "list") && Date.now() - listFrom < 10_000) {
+        await Bun.sleep(100);
+      }
+      expect(port.responses.find((r) => r.id === "list").result.requests).toEqual([]);
+
+      await writeRequest("55555555-5555-5555-5555-555555555555", "second");
+      const from2 = Date.now();
+      for (;;) {
+        const ids = port.events
+          .filter((e) => e.event === "request.created")
+          .map((e) => e.payload.request.id);
+        if (ids.includes("55555555-5555-5555-5555-555555555555")) break;
+        expect(Date.now() - from2).toBeLessThan(15_000);
+        await Bun.sleep(100);
+      }
+    } finally {
+      await port.close();
+    }
+  }, 60_000);
+});
