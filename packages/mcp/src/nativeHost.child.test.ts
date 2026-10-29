@@ -18,6 +18,27 @@ import { PROTOCOL } from "./nativeHost.js";
 
 const CLI = resolve(dirname(fileURLToPath(import.meta.url)), "cli.ts");
 
+/**
+ * Wait for a line to appear in the host's log.
+ *
+ * Sleeping a fixed amount and then reading was wrong twice: the host writes its
+ * first line before loading its import graph and the rest after, so how long
+ * that takes depends on the machine. Waiting for the line itself is both faster
+ * and not a race.
+ */
+async function waitForLog(home: string, needle: string, timeoutMs = 15_000): Promise<string> {
+  const path = join(home, "host.log");
+  const from = Date.now();
+  for (;;) {
+    const log = await readFile(path, "utf8").catch(() => "");
+    if (log.includes(needle)) return log;
+    if (Date.now() - from > timeoutMs) {
+      throw new Error(`"${needle}" never appeared in host.log. What was there:\n${log}`);
+    }
+    await Bun.sleep(50);
+  }
+}
+
 let home: string;
 
 beforeEach(async () => {
@@ -221,10 +242,12 @@ describe("answering while the port is still open", () => {
     try {
       child.stdin.write(encodeFrame({ id: "crumb", type: "hello", payload: {} }));
       await child.stdin.flush();
-      await Bun.sleep(1200);
 
-      const log = await readFile(join(home, "host.log"), "utf8");
-      expect(log).toContain(`start pid=${child.pid}`);
+      const log = await waitForLog(home, `start pid=${child.pid}`);
+      // The first line comes before the import graph loads, so that a host
+      // Chrome never really started can be told apart from one that died while
+      // loading. Both are here.
+      expect(log).toContain(`launched pid=${child.pid}`);
       expect(log).toContain(home);
       // The origin Chrome appends is recorded, because a wrong one here is one
       // of the few ways this fails with nothing to look at.
@@ -248,7 +271,7 @@ describe("answering while the port is still open", () => {
         encodeFrame({ id: "k", type: "sendSession", payload: { name: "b", sessionPrivateKey: key } }),
       );
       await child.stdin.flush();
-      await Bun.sleep(1200);
+      await waitForLog(home, "write done");
       const log = await readFile(join(home, "host.log"), "utf8").catch(() => "");
       expect(log).not.toContain(key);
       expect(log).not.toContain("efef");
@@ -277,9 +300,14 @@ describe("a frame Chrome splits across reads, and a port that closes", () => {
       env: { ...process.env, ALTANA_HOME: home },
     });
     try {
+      // Wait until the host is actually reading before splitting, or both
+      // writes land before its first read and the kernel hands it one chunk.
+      // That is a legitimate thing for the kernel to do and it is not what this
+      // test is about.
+      await waitForLog(home, "reading stdin");
       child.stdin.write(whole.subarray(0, 20));
       await child.stdin.flush();
-      await Bun.sleep(400);
+      await waitForLog(home, "chunk 1 ");
       child.stdin.write(whole.subarray(20));
       await child.stdin.flush();
 
@@ -292,11 +320,10 @@ describe("a frame Chrome splits across reads, and a port that closes", () => {
       expect((frames[0] as { value: any }).value).toMatchObject({ id: "split", ok: true });
 
       // Both halves are in the log, which is what was missing when this failed.
-      const log = await readFile(join(home, "host.log"), "utf8");
+      const log = await waitForLog(home, "write done");
       expect(log).toContain("chunk 1 ");
       expect(log).toContain("chunk 2 ");
       expect(log).toContain("write start");
-      expect(log).toContain("write done");
     } finally {
       child.kill();
       await child.exited;
@@ -314,9 +341,10 @@ describe("a frame Chrome splits across reads, and a port that closes", () => {
       env: { ...process.env, ALTANA_HOME: home },
     });
     try {
+      await waitForLog(home, "reading stdin");
       child.stdin.write(whole.subarray(0, 2));
       await child.stdin.flush();
-      await Bun.sleep(300);
+      await waitForLog(home, "chunk 1 ");
       child.stdin.write(whole.subarray(2));
       await child.stdin.flush();
 
@@ -344,7 +372,7 @@ describe("a frame Chrome splits across reads, and a port that closes", () => {
     });
     child.stdin.write(encodeFrame({ id: "bye", type: "hello", payload: {} }));
     await child.stdin.flush();
-    await Bun.sleep(600);
+    await waitForLog(home, "write done");
 
     // Chrome closing the port is stdin reaching end of file.
     await child.stdin.end();
@@ -355,8 +383,7 @@ describe("a frame Chrome splits across reads, and a port that closes", () => {
     ]);
     expect(exited).not.toBe("still running");
 
-    const log = await readFile(join(home, "host.log"), "utf8");
+    const log = await waitForLog(home, "exit pid=");
     expect(log).toContain("stdin ended, so the port closed");
-    expect(log).toContain("exit pid=");
   }, 30_000);
 });
