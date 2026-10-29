@@ -160,17 +160,25 @@ describe("answering every request", () => {
   });
 
   test("a type that a later milestone owns says which one, so it does not look like a typo", async () => {
-    // sendSession is gone from this list now that M6 has landed, which is the
-    // list doing its job.
+    // This list shrinks as milestones land, which is the list doing its job:
+    // sendSession went with M6, the request types with M7, and revokeSession is
+    // the last one left.
+    const { responses } = await talk([{ id: "n1", type: "revokeSession" }]);
+    expect(responses[0]).toMatchObject({ ok: false, error: { code: "INTERNAL" } });
+    expect((responses[0] as { error: { message: string } }).error.message).toContain("M8");
+  });
+
+  test("the request types are implemented now, and answer on their own terms", async () => {
     const { responses } = await talk([
-      { id: "n1", type: "listRequests" },
-      { id: "n2", type: "answerRequest" },
-      { id: "n3", type: "revokeSession" },
+      { id: "q1", type: "listRequests" },
+      { id: "q2", type: "answerRequest" },
+      { id: "q3", type: "answerRequest", payload: { id: "nope", decision: "approve" } },
     ]);
-    expect((responses[0] as { error: { message: string } }).error.message).toContain("M7");
-    expect((responses[1] as { error: { message: string } }).error.message).toContain("M7");
-    expect((responses[2] as { error: { message: string } }).error.message).toContain("M8");
-    for (const r of responses) expect(r.ok).toBe(false);
+    // Nothing has asked for anything, so the list is empty rather than missing.
+    expect(ok(responses[0])).toEqual({ requests: [] });
+    expect(responses[1]).toMatchObject({ ok: false, error: { code: "BAD_REQUEST" } });
+    // An answer to a request that does not exist is NOT_FOUND, not INTERNAL.
+    expect(responses[2]).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
   });
 
   test("sendSession is implemented, so an empty one is a BAD_REQUEST about its shape", async () => {

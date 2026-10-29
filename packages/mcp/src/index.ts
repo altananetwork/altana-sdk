@@ -61,6 +61,13 @@ import {
 import { readLink } from "./link.js";
 import { storeHandedOverSession } from "./storeSession.js";
 import {
+  createRequest,
+  deleteRequest,
+  DEFAULT_TIMEOUT_SECONDS,
+  waitForAnswer,
+  type PermissionAsk,
+} from "./requests.js";
+import {
   getWalletKey,
   setWalletKey,
   walletKeyExists,
@@ -1111,6 +1118,167 @@ tool(
 // does. The metadata goes in ~/.altana/sessions.json. After this, session_execute
 // works by name and cannot tell the difference between a granted session and an
 // imported one.
+// request_permission — the agent asking for authority it does not have.
+//
+// Every other wallet tool answers a question. This one starts a conversation
+// with a person and then waits for them, which makes it the only tool here that
+// can sit for minutes. So it is built around ending: approved, rejected, or
+// expired, and never a wait with no bottom to it. An agent stuck in here is a
+// conversation stopped mid sentence.
+//
+// It writes a file and polls it. The extension, through the native host, is
+// what answers. Nothing is sent on-chain from here: approving is the extension
+// granting the permission and handing it over, which lands through the same
+// path as import_session.
+tool(
+  "request_permission",
+  {
+    title: "Ask the wallet owner for a permission",
+    description:
+      "Ask the person for a scoped permission on their Altana wallet, and wait " +
+      "for them to approve or reject it in the Altana extension. Use this when a " +
+      "task needs authority you do not have yet: list_sessions first, and only " +
+      "ask for what the task needs. Say plainly in `reason` what you intend to " +
+      "do, because that sentence is what the person reads before deciding. " +
+      "Returns the session name to use with session_execute once it is approved. " +
+      "A rejection is an answer, not a failure: say the person declined and stop.",
+    inputSchema: {
+      name: z
+        .string()
+        .describe("What the permission should be called. Used later by session_execute."),
+      reason: z
+        .string()
+        .describe("Why you need it, in your own words. The person reads this before deciding."),
+      spendLimitWei: z
+        .string()
+        .optional()
+        .describe("Spending cap per period, in wei, as a decimal string. Omit for no spending."),
+      spendPeriod: z
+        .enum(["minute", "hour", "day", "week", "month", "year"])
+        .optional()
+        .describe("The period the cap applies over. Defaults to a day when a limit is given."),
+      to: z
+        .array(z.string())
+        .optional()
+        .describe("Contract addresses you need to call. Omit for any contract."),
+      expirySeconds: z
+        .number()
+        .optional()
+        .describe("How long the permission should last. Defaults to seven days."),
+      waitSeconds: z
+        .number()
+        .optional()
+        .describe(
+          "How long to wait for an answer before giving up. Defaults to ten minutes. " +
+            "Giving up does not cancel anything on the person's side.",
+        ),
+    },
+  },
+  async (args: {
+    name: string;
+    reason: string;
+    spendLimitWei?: string;
+    spendPeriod?: "minute" | "hour" | "day" | "week" | "month" | "year";
+    to?: string[];
+    expirySeconds?: number;
+    waitSeconds?: number;
+  }) => {
+    const name = args.name.trim();
+    if (!name) throw new Error("request_permission needs a name for the permission.");
+    const reason = args.reason.trim();
+    if (!reason) {
+      throw new Error(
+        "request_permission needs a reason. It is the sentence the person reads before " +
+          "deciding, so an empty one asks them to approve something unexplained.",
+      );
+    }
+    if (args.spendLimitWei !== undefined && !/^\d+$/.test(args.spendLimitWei.trim())) {
+      throw new Error(
+        "spendLimitWei has to be a whole number of wei as a decimal string, for example " +
+          '"1000000000000000" for 0.001. Not ether, and not hex.',
+      );
+    }
+
+    const client = server.server.getClientVersion();
+    const ask: PermissionAsk = {
+      name,
+      chainId: NETWORK.chainId,
+      ...(args.spendLimitWei !== undefined
+        ? {
+            spend: [
+              { limit: args.spendLimitWei.trim(), period: args.spendPeriod ?? "day" },
+            ],
+          }
+        : {}),
+      ...(args.to !== undefined ? { calls: args.to.map((to) => ({ to: assertAddress(to) })) } : {}),
+      expirySeconds: args.expirySeconds ?? 604800,
+      reason,
+    };
+
+    const waitSeconds = args.waitSeconds ?? DEFAULT_TIMEOUT_SECONDS;
+    const id = crypto.randomUUID();
+    await createRequest({
+      id,
+      client: {
+        name: client?.name ?? "unknown",
+        ...(client?.version ? { version: client.version } : {}),
+      },
+      ask,
+      timeoutSeconds: waitSeconds,
+    });
+
+    const outcome = await waitForAnswer({ id, timeoutSeconds: waitSeconds });
+
+    if (outcome.status === "approved") {
+      // The file has done its job, and leaving answered requests around makes
+      // the extension's list slower to read for no benefit.
+      await deleteRequest(id);
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                status: "approved",
+                sessionName: outcome.sessionName,
+                requestId: id,
+                note:
+                  `Approved. Use it with session_execute and sessionName ` +
+                  `"${outcome.sessionName}". Stay inside the limits that were granted: ` +
+                  `call list_sessions to see exactly what they are.`,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    }
+
+    await deleteRequest(id);
+    const text =
+      outcome.status === "rejected"
+        ? {
+            status: "rejected",
+            requestId: id,
+            note:
+              "The person declined this permission. That is their answer, not a fault to " +
+              "retry: tell them it was declined and stop. Do not ask again for the same " +
+              "thing unless they bring it up.",
+          }
+        : {
+            status: "expired",
+            requestId: id,
+            waitedSeconds: waitSeconds,
+            note:
+              `Nobody answered within ${waitSeconds} seconds, so this request has lapsed. ` +
+              `The Altana extension may not have been open. Tell the person it is waiting ` +
+              `for them and ask them to open it, then request it again.`,
+          };
+    return { content: [{ type: "text", text: JSON.stringify(text, null, 2) }] };
+  },
+);
+
 tool(
   "import_session",
   {

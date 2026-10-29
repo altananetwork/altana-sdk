@@ -227,16 +227,26 @@ describe("the agent heartbeat (M3)", () => {
     }
   }, 40_000);
 
-  test("request_permission is not in tools/list yet, which is M7", async () => {
-    // Recorded rather than assumed, because QA's probe flagged it and G5
-    // rests on it. This test flips when M7 lands.
+  test("request_permission is in tools/list, which is what G5 rests on", async () => {
+    // This test was the other way round until M7 landed, asserting the gap QA's
+    // probe found. It flipped, which is why it was written.
     const mcp = await startMcp("claude-code");
     try {
       const listed = await mcp.call("tools/list", {});
-      const names = (listed.result?.tools ?? []).map((t: any) => t.name);
+      const tools = listed.result?.tools ?? [];
+      const names = tools.map((t: any) => t.name);
       expect(names).toContain("list_sessions");
       expect(names).toContain("wallet_balance");
-      expect(names).not.toContain("request_permission");
+      expect(names).toContain("request_permission");
+
+      // The description is what decides whether an agent uses it well, so the
+      // two things it must convey are checked: ask for the least you need, and
+      // a rejection is an answer rather than something to retry.
+      const ask = tools.find((t: any) => t.name === "request_permission");
+      expect(ask.description).toContain("only ask for what the task needs");
+      expect(ask.description).toContain("not a failure");
+      expect(ask.inputSchema.required).toContain("name");
+      expect(ask.inputSchema.required).toContain("reason");
     } finally {
       await mcp.stop();
     }

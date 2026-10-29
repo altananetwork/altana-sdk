@@ -39,6 +39,14 @@ import {
 } from "./nativeFraming.js";
 import { redact, redactedMessage } from "./redact.js";
 import {
+  answerRequest as recordAnswer,
+  listPendingRequests,
+  readRequest,
+  requestsDir,
+  RequestError,
+  type PermissionRequest,
+} from "./requests.js";
+import {
   parseHandoff,
   sessionFromHandoff,
   storeHandedOverSession,
@@ -103,8 +111,6 @@ export type HostHandler = (payload: unknown, ctx: HostContext) => Promise<unknow
  */
 const NOT_YET: Record<string, string> = {
   revokeSession: "M8",
-  listRequests: "M7",
-  answerRequest: "M7",
 };
 
 // ---------- handlers --------------------------------------------------------
@@ -169,53 +175,133 @@ export const handlers: Record<string, HostHandler> = {
    * promise holds: the MCP's next `list_sessions` and `session_execute` see this
    * session, with no restart and no difference from one pasted in by hand.
    */
-  sendSession: async (payload, ctx) => {
-    let name = "(unnamed)";
-    try {
-      const handoff = parseHandoff(payload);
-      name = handoff.name;
-      const session = sessionFromHandoff(handoff);
-      const stored = await storeHandedOverSession({
-        sessionName: handoff.name,
-        session,
-        privateKey: handoff.sessionPrivateKey,
-      });
-      // Named, never with any part of the key. Somebody watching the host's
-      // output should be able to see that a permission arrived.
-      ctx.say(`[altana-host] stored the permission "${stored.sessionName}" for ${stored.walletAddress}`);
-      return {
-        stored: true,
-        name: stored.sessionName,
-        walletAddress: stored.walletAddress,
-        sessionAddress: stored.sessionAddress,
-        keyHash: stored.keyHash,
-        expiresAt: stored.expiresAt,
-        expired: stored.expired,
-      };
-    } catch (err) {
-      if (err instanceof SessionNameTakenError) {
-        throw new HostError("NAME_TAKEN", err.message);
-      }
-      if (err instanceof SessionHandoverError) {
-        throw new HostError("BAD_REQUEST", err.message);
-      }
-      // Anything else got as far as the key store or the sessions file. The
-      // keychain is worth separating because a refusal there is somebody
-      // clicking Deny on a dialog, which is not a bug to go looking for.
-      const message = redactedMessage(err);
-      if (/keychain|denied|security|authoriz/i.test(message)) {
-        throw new HostError(
-          "KEYCHAIN_DENIED",
-          `The permission "${name}" could not be saved because the keychain refused: ${message}`,
-        );
-      }
+  sendSession: async (payload, ctx) => storeFromHandoff(payload, ctx),
+
+  /** Pending only, as the contract says. An expired request is not pending. */
+  listRequests: async () => ({ requests: await listPendingRequests() }),
+
+  /**
+   * The person's answer to a request the agent made.
+   *
+   * On approve the session is stored first and the request is marked approved
+   * only afterwards. That order is the whole design of this handler: a crash
+   * between the two leaves a request still pending, which somebody can approve
+   * again, rather than an approval with no permission behind it, which would
+   * leave the agent told yes by a request whose session does not exist.
+   */
+  answerRequest: async (payload, ctx) => {
+    const { id, decision, session } = asRecord(payload, "answerRequest");
+    if (typeof id !== "string" || !id) {
+      throw new HostError("BAD_REQUEST", "answerRequest needs the id of the request to answer.");
+    }
+    if (decision !== "approve" && decision !== "reject") {
+      throw new HostError("BAD_REQUEST", 'answerRequest needs decision to be "approve" or "reject".');
+    }
+
+    const existing = await readRequest(id);
+    if (!existing) {
+      throw new HostError("NOT_FOUND", `There is no permission request with id ${id}.`);
+    }
+    if (existing.status !== "pending") {
+      // Also how two hosts racing on one file settle it: whoever is second is
+      // told it is not theirs to answer rather than overwriting an answer that
+      // has already been acted on.
       throw new HostError(
-        "STORE_FAILED",
-        `The permission "${name}" could not be saved: ${message}`,
+        "NOT_FOUND",
+        `That permission request was already ${existing.status}, so there is nothing left to answer.`,
       );
     }
+
+    if (decision === "reject") {
+      await markAnswered({ id, decision: "reject" });
+      ctx.emit("request.answered", { id, status: "rejected" });
+      return { answered: true };
+    }
+
+    if (session === undefined) {
+      throw new HostError(
+        "BAD_REQUEST",
+        "An approval has to carry the session it granted, in the same shape as sendSession.",
+      );
+    }
+    const stored = await storeFromHandoff(session, ctx);
+    await markAnswered({ id, decision: "approve", sessionName: stored.name });
+    ctx.emit("request.answered", { id, status: "approved", name: stored.name });
+    return { answered: true };
   },
 };
+
+/** Map a request store failure onto the contract's codes. */
+async function markAnswered(args: {
+  id: string;
+  decision: "approve" | "reject";
+  sessionName?: string;
+}): Promise<void> {
+  try {
+    await recordAnswer(args);
+  } catch (err) {
+    if (err instanceof RequestError) throw new HostError("NOT_FOUND", err.message);
+    throw new HostError("STORE_FAILED", `The answer could not be written: ${redactedMessage(err)}`);
+  }
+}
+
+/**
+ * Store a handed over permission.
+ *
+ * Shared by `sendSession` and the approve path of `answerRequest` on purpose:
+ * approving a request has to leave exactly the state that sending a permission
+ * does, or a permission that arrived by one route would work and the other
+ * would not.
+ */
+async function storeFromHandoff(
+  payload: unknown,
+  ctx: HostContext,
+): Promise<{ stored: true; name: string; walletAddress: string; sessionAddress: string; keyHash: string; expiresAt: string; expired: boolean }> {
+  let name = "(unnamed)";
+  try {
+    const handoff = parseHandoff(payload);
+    name = handoff.name;
+    const session = sessionFromHandoff(handoff);
+    const stored = await storeHandedOverSession({
+      sessionName: handoff.name,
+      session,
+      privateKey: handoff.sessionPrivateKey,
+    });
+    // Named, never with any part of the key. Somebody watching the host's
+    // output should be able to see that a permission arrived.
+    ctx.say(`[altana-host] stored the permission "${stored.sessionName}" for ${stored.walletAddress}`);
+    return {
+      stored: true,
+      name: stored.sessionName,
+      walletAddress: stored.walletAddress,
+      sessionAddress: stored.sessionAddress,
+      keyHash: stored.keyHash,
+      expiresAt: stored.expiresAt,
+      expired: stored.expired,
+    };
+    } catch (err) {
+    if (err instanceof SessionNameTakenError) {
+      throw new HostError("NAME_TAKEN", err.message);
+    }
+    if (err instanceof SessionHandoverError) {
+      throw new HostError("BAD_REQUEST", err.message);
+    }
+    // Anything else got as far as the key store or the sessions file. The
+    // keychain is worth separating because a refusal there is somebody
+    // clicking Deny on a dialog, which is not a bug to go looking for.
+    const message = redactedMessage(err);
+    if (/keychain|denied|security|authoriz/i.test(message)) {
+      throw new HostError(
+        "KEYCHAIN_DENIED",
+        `The permission "${name}" could not be saved because the keychain refused: ${message}`,
+      );
+    }
+    throw new HostError(
+      "STORE_FAILED",
+      `The permission "${name}" could not be saved: ${message}`,
+    );
+  }
+}
 
 // ---------- the loop --------------------------------------------------------
 
