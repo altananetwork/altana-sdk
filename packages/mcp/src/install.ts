@@ -119,8 +119,29 @@ export function cliEntryPath(): string {
  * environment, and inheriting whatever is there is how this works on one
  * machine and not the next.
  */
-export function launcherScript(args: { bun: string; entry: string; argv?: string[] }): string {
+export function launcherScript(args: {
+  bun: string;
+  entry: string;
+  argv?: string[];
+  /** Move the real stdout aside, for the native messaging protocol. */
+  protectStdout?: boolean;
+}): string {
   const extra = (args.argv ?? []).map((a) => ` ${shellQuote(a)}`).join("");
+  // Chrome reads framed JSON on the host's stdout and closes the port the
+  // instant it sees a length prefix it cannot believe. Anything the runtime or
+  // a library prints to stdout, a resolver note, a warning, lands in the middle
+  // of a frame and is indistinguishable from a host that answered nothing.
+  //
+  // So the real stdout is moved to fd 3 and fd 1 is pointed at stderr, which
+  // Chrome discards harmlessly. The host writes frames to fd 3 and anything
+  // careless about stdout can no longer break the protocol.
+  const protect = args.protectStdout
+    ? `
+# Move the protocol off fd 1 so nothing else can write into a frame.
+exec 3>&1 1>&2
+`
+    : "";
+  const framesFd = args.protectStdout ? " '--frames-fd' '3'" : "";
   return `#!/bin/sh
 # Written by \`altana-mcp install\`. Edits here are lost on the next install.
 #
@@ -128,7 +149,7 @@ export function launcherScript(args: { bun: string; entry: string; argv?: string
 # manifest cannot carry arguments, so both of those live in this file.
 PATH="${dirname(args.bun)}:/usr/bin:/bin:/usr/sbin:/sbin"
 export PATH
-exec ${shellQuote(args.bun)} run ${shellQuote(args.entry)}${extra} "$@"
+${protect}exec ${shellQuote(args.bun)} run ${shellQuote(args.entry)}${extra}${framesFd} "$@"
 `;
 }
 
@@ -330,7 +351,12 @@ export async function writeLaunchers(args: {
     { path: serverLauncherPath(home), body: launcherScript({ bun: args.bun, entry: args.entry }) },
     {
       path: hostLauncherPath(home),
-      body: launcherScript({ bun: args.bun, entry: args.entry, argv: ["native-host"] }),
+      body: launcherScript({
+        bun: args.bun,
+        entry: args.entry,
+        argv: ["native-host"],
+        protectStdout: true,
+      }),
     },
   ];
   const steps: Step[] = [];

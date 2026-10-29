@@ -678,18 +678,18 @@ function sleepSync(ms: number): void {
  * about: the host logged the frame arriving and then nothing at all, and a
  * write that neither returned nor threw would look exactly like that.
  */
-function writeFrameToStdout(bytes: Buffer): void {
+function writeFrameTo(fd: number, bytes: Buffer): void {
   const deadline = Date.now() + WRITE_DEADLINE_MS;
   let written = 0;
   let retries = 0;
 
   appendToHostLog(
-    `${new Date().toISOString()} write start pid=${process.pid} bytes=${bytes.byteLength}\n`,
+    `${new Date().toISOString()} write start pid=${process.pid} fd=${fd} bytes=${bytes.byteLength}\n`,
   );
 
   while (written < bytes.byteLength) {
     try {
-      written += writeSync(1, bytes, written, bytes.byteLength - written);
+      written += writeSync(fd, bytes, written, bytes.byteLength - written);
     } catch (err) {
       const code = (err as NodeJS.ErrnoException)?.code ?? "unknown";
       if (code === "EAGAIN" || code === "EWOULDBLOCK" || code === "EINTR") {
@@ -776,8 +776,16 @@ function appendToHostLog(line: string): void {
   }
 }
 
-/** Wire the host to this process's stdio. The `native-host` entry point. */
-export async function runNativeHostOnStdio(): Promise<void> {
+/**
+ * Wire the host to this process's descriptors. The `native-host` entry point.
+ *
+ * `framesFd` is where replies go. The launcher moves the real stdout to fd 3
+ * and points fd 1 at stderr, so anything the runtime or a library prints can no
+ * longer land in the middle of a frame. Chrome closes a port the moment it
+ * reads a length prefix it cannot believe, and that failure looks exactly like
+ * a host that answered nothing, which is where a day went.
+ */
+export async function runNativeHostOnStdio(framesFd = 1): Promise<void> {
   const stamp = () => new Date().toISOString();
 
   // Chrome appends the calling origin, and on some platforms a window handle,
@@ -787,7 +795,7 @@ export async function runNativeHostOnStdio(): Promise<void> {
   appendToHostLog(
     `${stamp()} start pid=${process.pid} altanaHome=${altanaHome()} ` +
       `runtime=${process.versions.bun ? `bun ${process.versions.bun}` : `node ${process.versions.node}`} ` +
-      `args=${JSON.stringify(chromeArgs)}\n`,
+      `framesFd=${framesFd} args=${JSON.stringify(chromeArgs)}\n`,
   );
 
   const log = (line: string) => {
@@ -844,7 +852,7 @@ export async function runNativeHostOnStdio(): Promise<void> {
       // buffer is full, which is not an error but a "not yet"; letting that
       // escape would kill the host over a full pipe, dropping the port and
       // every pending request with it.
-      write: (bytes) => writeFrameToStdout(bytes),
+      write: (bytes) => writeFrameTo(framesFd, bytes),
       log,
     });
     appendToHostLog(`${stamp()} end pid=${process.pid} stdin ended, so the port closed\n`);
