@@ -394,3 +394,131 @@ describe("a permission the host stores is a permission the MCP can use (M6)", ()
     expect(await Bun.file(join(home, "sessions.json")).exists()).toBe(false);
   }, 40_000);
 });
+
+
+describe("a revoked permission is refused, and says so (M8, G6)", () => {
+  test("the agent's next session_execute names the revoke instead of an unknown session", async () => {
+    // G6 in one test. The wording is the deliverable: "no session named X"
+    // reads as a typo or a bug and sends an agent looking for another way
+    // through, which is the opposite of what a revoke means.
+    const { payload } = handoff("to-revoke");
+    await askHost([{ id: "v1", type: "sendSession", payload }]);
+
+    const agent = await startAgent("claude-code");
+    try {
+      const before = await agent.call("tools/call", { name: "list_sessions", arguments: {} });
+      expect(JSON.stringify(before)).toContain("to-revoke");
+
+      const frames = await askHost([{ id: "v2", type: "revokeSession", payload: { name: "to-revoke" } }]);
+      expect(answerTo(frames, "v2")).toMatchObject({ ok: true, result: { removed: true } });
+
+      // The same running agent, no restart, which is what G6 asks.
+      const after = await agent.call("tools/call", {
+        name: "session_execute",
+        arguments: {
+          sessionName: "to-revoke",
+          to: "0x2222222222222222222222222222222222222222",
+          valueEth: "0",
+        },
+      });
+      const text = JSON.stringify(after);
+      expect(text).toContain("was revoked");
+      expect(text).toContain("the person who owns the wallet");
+      expect(text).toContain("not a fault to retry");
+      expect(text).not.toContain("No session named");
+    } finally {
+      await agent.stop();
+    }
+  }, 40_000);
+
+  test("the key and the metadata are both gone, not just one of them", async () => {
+    const { payload, privateKey } = handoff("gone");
+    await askHost([{ id: "v3", type: "sendSession", payload }]);
+    expect(await Bun.file(join(home, "keys.json")).text()).toContain(privateKey);
+
+    await askHost([{ id: "v4", type: "revokeSession", payload: { name: "gone" } }]);
+
+    // A key left behind after a revoke is a key that can still sign.
+    expect(await Bun.file(join(home, "keys.json")).text()).not.toContain(privateKey);
+    expect(await Bun.file(join(home, "sessions.json")).text()).not.toContain("gone");
+  }, 40_000);
+
+  test("the host says session.revoked without being asked", async () => {
+    const { payload } = handoff("announced");
+    await askHost([{ id: "v5", type: "sendSession", payload }]);
+    const frames = await askHost([{ id: "v6", type: "revokeSession", payload: { name: "announced" } }]);
+    const event = frames.events.find((e) => e.event === "session.revoked");
+    expect(event?.payload).toEqual({ name: "announced" });
+  }, 40_000);
+
+  test("revoking something already gone still leaves the better answer behind", async () => {
+    // The extension may be reconciling after a crash. removed is false, but
+    // the agent should still get the useful wording next time it tries.
+    const frames = await askHost([{ id: "v7", type: "revokeSession", payload: { name: "never-here" } }]);
+    expect(answerTo(frames, "v7")).toMatchObject({ ok: true, result: { removed: false } });
+
+    const agent = await startAgent("claude-code");
+    try {
+      const after = await agent.call("tools/call", {
+        name: "session_execute",
+        arguments: {
+          sessionName: "never-here",
+          to: "0x2222222222222222222222222222222222222222",
+          valueEth: "0",
+        },
+      });
+      expect(JSON.stringify(after)).toContain("was revoked");
+    } finally {
+      await agent.stop();
+    }
+  }, 40_000);
+
+  test("a name can be used again, and is not reported as revoked afterwards", async () => {
+    await askHost([{ id: "v8", type: "sendSession", payload: handoff("reused").payload }]);
+    await askHost([{ id: "v9", type: "revokeSession", payload: { name: "reused" } }]);
+    await askHost([{ id: "v10", type: "sendSession", payload: handoff("reused").payload }]);
+
+    const agent = await startAgent("claude-code");
+    try {
+      const listed = await agent.call("tools/call", { name: "list_sessions", arguments: {} });
+      expect(JSON.stringify(listed)).toContain("reused");
+      const executed = await agent.call("tools/call", {
+        name: "session_execute",
+        arguments: {
+          sessionName: "reused",
+          to: "0x2222222222222222222222222222222222222222",
+          valueEth: "0",
+        },
+      });
+      // Whatever else happens without a chain, it must not claim the fresh
+      // permission was revoked.
+      expect(JSON.stringify(executed)).not.toContain("was revoked");
+    } finally {
+      await agent.stop();
+    }
+  }, 40_000);
+
+  test("revoke_session on an imported permission stops using it and says what it did not do", async () => {
+    // It used to reach getWalletKey("imported") and fail with a keychain
+    // error. Claiming "revoked" would be worse than useless: the key would
+    // still be live on chain while everyone believed it was dead.
+    await askHost([{ id: "v11", type: "sendSession", payload: handoff("agent-side").payload }]);
+    const agent = await startAgent("claude-code");
+    try {
+      const revoked = await agent.call("tools/call", {
+        name: "revoke_session",
+        arguments: { sessionName: "agent-side" },
+      });
+      const text = JSON.stringify(revoked);
+      expect(text).toContain("removedLocally");
+      expect(text).toContain("NOT revoked on chain");
+      expect(text).toContain("only the extension");
+      expect(text.toLowerCase()).not.toContain("keychain");
+
+      const listed = await agent.call("tools/call", { name: "list_sessions", arguments: {} });
+      expect(JSON.stringify(listed)).not.toContain("agent-side");
+    } finally {
+      await agent.stop();
+    }
+  }, 40_000);
+});

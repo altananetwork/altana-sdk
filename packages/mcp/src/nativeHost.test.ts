@@ -159,13 +159,31 @@ describe("answering every request", () => {
     expect((responses[0] as { error: { message: string } }).error.message).toContain("teleport");
   });
 
-  test("a type that a later milestone owns says which one, so it does not look like a typo", async () => {
-    // This list shrinks as milestones land, which is the list doing its job:
-    // sendSession went with M6, the request types with M7, and revokeSession is
-    // the last one left.
-    const { responses } = await talk([{ id: "n1", type: "revokeSession" }]);
-    expect(responses[0]).toMatchObject({ ok: false, error: { code: "INTERNAL" } });
-    expect((responses[0] as { error: { message: string } }).error.message).toContain("M8");
+  test("every request type in the contract is implemented, so nothing is a placeholder", async () => {
+    // This replaces a test that checked the opposite. The placeholder list
+    // emptied out one milestone at a time, sendSession with M6, the request
+    // types with M7, revokeSession with M8, and now the useful assertion is
+    // that the contract's whole surface answers on its own terms rather than
+    // naming a milestone.
+    const types = [
+      "hello",
+      "listAgents",
+      "link",
+      "unlink",
+      "sendSession",
+      "revokeSession",
+      "listRequests",
+      "answerRequest",
+    ];
+    const { responses } = await talk(types.map((type, i) => ({ id: `impl-${i}`, type })));
+    expect(responses).toHaveLength(types.length);
+    for (const response of responses) {
+      if (response.ok) continue;
+      // A refusal is fine here, since most of these are being called with no
+      // payload. What must not appear is a milestone placeholder.
+      expect(response.error.message).not.toMatch(/does not implement/);
+      expect(response.error.message).not.toMatch(/\bM[1-8]\b/);
+    }
   });
 
   test("the request types are implemented now, and answer on their own terms", async () => {

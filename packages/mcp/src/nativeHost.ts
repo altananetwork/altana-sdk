@@ -38,6 +38,9 @@ import {
   type DecodedFrame,
 } from "./nativeFraming.js";
 import { redact, redactedMessage } from "./redact.js";
+import { markRevoked } from "./revoked.js";
+import { deleteSession, getSession } from "./sessions.js";
+import { deleteSessionKey } from "./keys.js";
 import {
   answerRequest as recordAnswer,
   listPendingRequests,
@@ -109,9 +112,7 @@ export type HostHandler = (payload: unknown, ctx: HostContext) => Promise<unknow
  * extension's request was well formed and this end is what is missing. If the
  * PM would rather have a distinct code for it, that is a contracts change.
  */
-const NOT_YET: Record<string, string> = {
-  revokeSession: "M8",
-};
+const NOT_YET: Record<string, string> = {};
 
 // ---------- handlers --------------------------------------------------------
 
@@ -179,6 +180,52 @@ export const handlers: Record<string, HostHandler> = {
 
   /** Pending only, as the contract says. An expired request is not pending. */
   listRequests: async () => ({ requests: await listPendingRequests() }),
+
+  /**
+   * Take a permission away.
+   *
+   * The on-chain revoke is the extension's: it holds the wallet's admin key and
+   * this machine never will. By the time this arrives the key is already dead
+   * on chain, and all that is left is removing the local copy so the agent
+   * stops trying to sign with authority it no longer has.
+   *
+   * The marker is written before the session is deleted, so there is no window
+   * where the session is gone and nothing can say why. The reverse order would
+   * put that window exactly where a crash is most likely to land, between two
+   * writes.
+   */
+  revokeSession: async (payload, ctx) => {
+    const { name } = asRecord(payload, "revokeSession");
+    if (typeof name !== "string" || !name.trim()) {
+      throw new HostError("BAD_REQUEST", "revokeSession needs the name of the permission to remove.");
+    }
+    const sessionName = name.trim();
+
+    let existed = true;
+    try {
+      await getSession(sessionName);
+    } catch {
+      // Already gone. Still worth a marker and an event: the extension may be
+      // reconciling after a crash, and the agent should still get the better
+      // answer on its next attempt.
+      existed = false;
+    }
+
+    try {
+      await markRevoked({ name: sessionName, by: "extension" });
+      await deleteSessionKey(sessionName);
+      await deleteSession(sessionName);
+    } catch (err) {
+      throw new HostError(
+        "STORE_FAILED",
+        `The permission "${sessionName}" could not be removed locally: ${redactedMessage(err)}`,
+      );
+    }
+
+    ctx.say(`[altana-host] removed the permission "${sessionName}"`);
+    ctx.emit("session.revoked", { name: sessionName });
+    return { removed: existed };
+  },
 
   /**
    * The person's answer to a request the agent made.

@@ -59,6 +59,7 @@ import {
   type AgentClient,
 } from "./agents.js";
 import { readLink } from "./link.js";
+import { markRevoked, readRevoked, revokedMessage } from "./revoked.js";
 import { storeHandedOverSession } from "./storeSession.js";
 import {
   createRequest,
@@ -295,6 +296,30 @@ const server = new McpServer(
 const registerTool = (server as unknown as {
   registerTool: (name: string, config: any, cb: any) => unknown;
 }).registerTool.bind(server);
+
+// ---------- a permission that is gone ------------------------------------
+
+/**
+ * A stored session by name, or the reason it is not there any more.
+ *
+ * Every tool that works by session name goes through this instead of
+ * getSession, because "no session named X" is the wrong answer when the real
+ * answer is that somebody revoked it. The first reads like a typo or a bug and
+ * sends an agent looking for another way through; the second is the end of the
+ * matter, and G6 is the check that cares.
+ *
+ * The marker is only consulted when the lookup fails, so nothing is paid for it
+ * on the path that works.
+ */
+async function requireSession(sessionName: string) {
+  try {
+    return await getSession(sessionName);
+  } catch (err) {
+    const marker = await readRevoked(sessionName);
+    if (marker) throw new Error(revokedMessage(marker));
+    throw err;
+  }
+}
 
 // ---------- not connected yet --------------------------------------------
 
@@ -772,7 +797,7 @@ tool(
     let id: Hex;
 
     if (sessionName) {
-      const stored = await getSession(sessionName);
+      const stored = await requireSession(sessionName);
       addr = stored.walletAddress;
       id = keccak256(stored.publicKey);
     } else {
@@ -1387,7 +1412,47 @@ tool(
     },
   },
   async ({ sessionName, feeToken }: { sessionName: string; feeToken?: string | string[] }) => {
-    const stored = await getSession(sessionName);
+    const stored = await requireSession(sessionName);
+
+    // An imported session has no admin key here and never will: the wallet's
+    // owner is a key in somebody's extension. Until now this reached
+    // getWalletKey("imported") and failed with a keychain error, which told the
+    // agent nothing it could act on.
+    //
+    // The honest thing is to do the half that is ours. The local copy goes, so
+    // this agent stops trying to sign with it, and the agent is told plainly
+    // that taking the authority away on chain is the extension's to do. Saying
+    // "revoked" when only the local copy went would be worse than useless: the
+    // key would still be live on chain while everyone believed it was dead.
+    if (stored.walletName === "imported") {
+      await markRevoked({ name: sessionName, by: "agent" });
+      await deleteSessionKey(sessionName);
+      await deleteSession(sessionName);
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                sessionName,
+                removedLocally: true,
+                revokedOnChain: false,
+                walletAddress: stored.walletAddress,
+                note:
+                  `The local copy of "${sessionName}" is gone, so this agent can no longer ` +
+                  `use it. It is NOT revoked on chain: that permission was granted by a ` +
+                  `wallet whose key lives in the Altana extension, and only the extension ` +
+                  `can take it back. Tell the person to revoke it there if that is what they ` +
+                  `want, and say plainly that you have only stopped using it.`,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    }
+
     const admin = await requireWalletKey(stored.walletName);
     const adminSigner = signerFromPrivateKey(admin.privateKey);
     await ensureRegistered(adminSigner);
@@ -1408,6 +1473,10 @@ tool(
     // Clean up local artifacts regardless of on-chain status — if the
     // revoke confirmed, the session is dead; if it didn't, retrying will
     // re-issue and we'd rather not have stale state.
+    //
+    // The marker goes first, so there is never a moment where the session is
+    // gone and nothing can say why.
+    await markRevoked({ name: sessionName, by: "agent" });
     await deleteSessionKey(sessionName);
     await deleteSession(sessionName);
 
@@ -1472,7 +1541,7 @@ tool(
     data?: string;
     feeToken?: string | string[];
   }) => {
-    const stored = await getSession(sessionName);
+    const stored = await requireSession(sessionName);
     const key = await getSessionKey(sessionName);
     const recipient = assertAddress(to);
     const dataHex = data ? assertHexBytes(data) : ("0x" as Hex);
@@ -1549,7 +1618,7 @@ tool(
     method?: string;
     body?: string;
   }) => {
-    const stored = await getSession(sessionName);
+    const stored = await requireSession(sessionName);
     const key = await getSessionKey(sessionName);
 
     // Rebuild the live Session (same as session_execute): permissions +
@@ -1594,7 +1663,7 @@ tool(
 
 /** Rebuild the runtime Session from persisted metadata + the keychain key. */
 async function sessionFromName(sessionName: string) {
-  const stored = await getSession(sessionName);
+  const stored = await requireSession(sessionName);
   const key = await getSessionKey(sessionName);
   return {
     stored,

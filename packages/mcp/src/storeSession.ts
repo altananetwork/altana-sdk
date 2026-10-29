@@ -29,6 +29,7 @@ import {
   type SerializedSession,
 } from "@altananetwork/sdk";
 import { setSessionKey, sessionKeyExists } from "./keys.js";
+import { clearRevoked } from "./revoked.js";
 import { saveSession } from "./sessions.js";
 
 /** A name is already taken. Separate because the wire has a code for it. */
@@ -109,6 +110,11 @@ export async function storeHandedOverSession(args: {
   const secondsLeft = Math.max(0, args.session.expiry - now);
 
   await setSessionKey(sessionName, args.privateKey);
+  // A name can be used again, and here is the one place every route in goes
+  // through. Without this a fresh permission under a name that was revoked
+  // once would be reported as revoked the moment anything else went wrong with
+  // it, which is a confusing answer about a permission that is perfectly live.
+  await clearRevoked(sessionName);
   await saveSession({
     name: sessionName,
     // An imported session has no admin wallet here: the owner is a key in
