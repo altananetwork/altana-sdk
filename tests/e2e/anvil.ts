@@ -60,6 +60,16 @@ export function startAnvil(forkUrl: string, port: number, args: readonly string[
   if (!Bun.which("anvil")) {
     throw new Error("anvil is not on PATH: the fork tests need foundry (https://getfoundry.sh)");
   }
+  // An empty fork URL is not a missing one. anvil reads `--fork-url ""` as an
+  // IPC socket path relative to the working directory and fails somewhere far
+  // from the cause: "Internal transport error: Connection refused … with
+  // /home/runner/work/…/tests/e2e/" is what it cost to find that out once.
+  if (!forkUrl.trim()) {
+    throw new Error(
+      "anvil was given an empty --fork-url. An unset GitHub Actions secret arrives as an empty " +
+        "string, so a fallback written with `??` keeps it; write it with `||`.",
+    );
+  }
   const proc = Bun.spawn(["anvil", "--fork-url", forkUrl, "--port", String(port), ...args], {
     stdout: "ignore",
     stderr: "pipe",
