@@ -384,16 +384,37 @@ async function requireWalletKey(name: string) {
 async function linkedWallet(): Promise<{ name: string; address: Address }> {
   const link = await readLink();
   if (!link) throw new NotConnectedError();
-  if (link.chainId !== NETWORK.chainId) {
-    // Silently reading the wrong chain's balance is worse than refusing: the
-    // number looks plausible and is simply not the one being asked about.
-    throw new Error(
-      `The Altana extension linked ${link.address} on chain ${link.chainId}, but this ` +
-        `agent is running on chain ${NETWORK.chainId}. Start the agent with ` +
-        `ALTANA_CHAIN set to the chain the extension is using, or relink in the extension.`,
-    );
-  }
+  await assertLinkedChain();
   return { name: "linked", address: link.address };
+}
+
+/**
+ * Refuse when the extension's chain and this agent's chain are not the same.
+ *
+ * This is the sharp edge QA found, and it has real money behind it. With
+ * `ALTANA_CHAIN` unset the MCP picks its own default, which is a mainnet, so an
+ * extension granting a permission on testnet 97 while the agent spends on 56
+ * would be a live transaction nobody meant to send. It surfaced as what looked
+ * like a funding problem, which is the worst possible disguise for it.
+ *
+ * Every tool that acts with a session goes through here. Reading is left alone:
+ * `list_sessions` on the wrong chain is harmless and is how somebody works out
+ * what went wrong.
+ *
+ * Only a mismatch refuses. No link at all is a different answer, given by
+ * NotConnectedError, and a session supplied directly in the environment is
+ * still allowed, since nobody linked anything and the operator chose both ends.
+ */
+async function assertLinkedChain(): Promise<void> {
+  const link = await readLink();
+  if (!link || link.chainId === NETWORK.chainId) return;
+  throw new Error(
+    `The Altana extension is on chain ${link.chainId} and this agent is running on ` +
+      `chain ${NETWORK.chainId}, so acting now would send a transaction on the wrong ` +
+      `chain. Nothing has been sent. Start the agent with ALTANA_CHAIN=${link.chainId} ` +
+      `to match the extension, or relink in the extension to chain ${NETWORK.chainId}. ` +
+      `The wallet the extension linked is ${link.address}.`,
+  );
 }
 
 // ---------- the agent heartbeat ------------------------------------------
@@ -1412,6 +1433,8 @@ tool(
     },
   },
   async ({ sessionName, feeToken }: { sessionName: string; feeToken?: string | string[] }) => {
+    // Before anything is signed or sent. A chain mismatch here would be a
+    await assertLinkedChain();
     const stored = await requireSession(sessionName);
 
     // An imported session has no admin key here and never will: the wallet's
@@ -1541,6 +1564,8 @@ tool(
     data?: string;
     feeToken?: string | string[];
   }) => {
+    // Before anything is signed or sent. A chain mismatch here would be a
+    await assertLinkedChain();
     const stored = await requireSession(sessionName);
     const key = await getSessionKey(sessionName);
     const recipient = assertAddress(to);
@@ -1618,6 +1643,8 @@ tool(
     method?: string;
     body?: string;
   }) => {
+    // Before anything is signed or sent. A chain mismatch here would be a
+    await assertLinkedChain();
     const stored = await requireSession(sessionName);
     const key = await getSessionKey(sessionName);
 
@@ -1663,6 +1690,8 @@ tool(
 
 /** Rebuild the runtime Session from persisted metadata + the keychain key. */
 async function sessionFromName(sessionName: string) {
+  // Before anything is signed or sent. A chain mismatch here would be a
+  await assertLinkedChain();
   const stored = await requireSession(sessionName);
   const key = await getSessionKey(sessionName);
   return {

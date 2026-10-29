@@ -94,6 +94,48 @@ describe("launcherScript", () => {
     expect(script).toContain(`run '/e.ts' 'native-host' "$@"`);
   });
 
+  test("fd 2 is opened before stdout is pointed at it", () => {
+    // The bug this replaces: `1>&2` DUPLICATES fd 2, so with fd 2 closed the
+    // redirect fails, and a failed redirect on `exec` makes a non-interactive
+    // shell exit before reaching anything else. Chrome may start a native host
+    // with stderr closed, and the result was zero bytes, "native host has
+    // exited", and nothing in the log at all.
+    const script = launcherScript({
+      bun: "/b/bun",
+      entry: "/e.ts",
+      argv: ["native-host"],
+      protectStdout: true,
+    });
+    // Opening a file works whether or not fd 2 was open, unlike duplicating it.
+    expect(script).toContain(`exec 2>>"$STDERR_TARGET"`);
+    expect(script.indexOf('exec 2>>"$STDERR_TARGET"')).toBeLessThan(script.indexOf("exec 3>&1 1>&2"));
+    // /dev/null is the fallback, because the home directory might not be
+    // writable either.
+    expect(script).toContain("STDERR_TARGET=/dev/null");
+  });
+
+  test("a breadcrumb is written before any redirect at all", () => {
+    // A launcher that died on a redirect left nothing in host.log, and that
+    // absence was most of the time it took to find the bug.
+    const script = launcherScript({
+      bun: "/b/bun",
+      entry: "/e.ts",
+      argv: ["native-host"],
+      protectStdout: true,
+    });
+    const breadcrumb = script.indexOf("launcher pid=");
+    expect(breadcrumb).toBeGreaterThan(-1);
+    expect(breadcrumb).toBeLessThan(script.indexOf("exec 2>>"));
+    expect(breadcrumb).toBeLessThan(script.indexOf("exec 3>&1"));
+  });
+
+  test("the chain can be pinned, so an unset ALTANA_CHAIN cannot mean a mainnet", () => {
+    const pinned = launcherScript({ bun: "/b/bun", entry: "/e.ts", chainId: 97 });
+    expect(pinned).toContain("ALTANA_CHAIN='97'");
+    expect(pinned).toContain("export ALTANA_CHAIN");
+    expect(launcherScript({ bun: "/b/bun", entry: "/e.ts" })).not.toContain("ALTANA_CHAIN");
+  });
+
   test("the host launcher moves the protocol off fd 1, and tells the host where it went", () => {
     // Chrome closes the port the instant it reads a length prefix it cannot
     // believe, so anything the runtime or a library prints to stdout lands in

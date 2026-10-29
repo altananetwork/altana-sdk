@@ -387,3 +387,56 @@ describe("a frame Chrome splits across reads, and a port that closes", () => {
     expect(log).toContain("stdin ended, so the port closed");
   }, 30_000);
 });
+
+describe("the launcher Chrome actually runs", () => {
+  /**
+   * With stderr closed, which Chrome may do.
+   *
+   * This is the regression test for a launcher that died before the host ran.
+   * `1>&2` duplicates fd 2, so with fd 2 closed the redirect failed and the
+   * shell exited: zero bytes back, "native host has exited", and nothing in the
+   * log. `2>&-` in the wrapper is what closes it, because a runtime's "ignore"
+   * gives /dev/null, which passes and so hides this entirely.
+   */
+  test("answers hello with fd 2 closed", async () => {
+    const { writeLaunchers, hostLauncherPath, cliEntryPath } = await import("./install.js");
+    const launchers = await import("./install.js");
+    const previousHome = process.env.ALTANA_HOME;
+    process.env.ALTANA_HOME = home;
+    try {
+      await writeLaunchers({
+        bun: process.execPath,
+        entry: cliEntryPath(),
+        home,
+      });
+      const launcher = launchers.hostLauncherPath(home);
+
+      // sh closes fd 2 and then becomes the launcher, so the launcher really
+      // runs with no stderr.
+      const child = Bun.spawn(["/bin/sh", "-c", `exec '${launcher}' 2>&-`], {
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { HOME: process.env.HOME ?? "", ALTANA_HOME: home },
+      });
+      try {
+        child.stdin.write(encodeFrame({ id: "noerr", type: "hello", payload: {} }));
+        await child.stdin.flush();
+
+        const reader = (child.stdout as ReadableStream<Uint8Array>).getReader();
+        const first = await Promise.race([reader.read(), Bun.sleep(15_000).then(() => undefined)]);
+        expect(first).toBeDefined();
+
+        const decoder = new FrameDecoder();
+        const frames = decoder.push(Buffer.from(first!.value!));
+        expect((frames[0] as { value: any }).value).toMatchObject({ id: "noerr", ok: true });
+      } finally {
+        child.kill();
+        await child.exited;
+      }
+    } finally {
+      if (previousHome === undefined) delete process.env.ALTANA_HOME;
+      else process.env.ALTANA_HOME = previousHome;
+    }
+  }, 40_000);
+});

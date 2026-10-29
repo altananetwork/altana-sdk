@@ -125,31 +125,71 @@ export function launcherScript(args: {
   argv?: string[];
   /** Move the real stdout aside, for the native messaging protocol. */
   protectStdout?: boolean;
+  /** Pin the chain, so an unset ALTANA_CHAIN cannot mean a mainnet. */
+  chainId?: number;
 }): string {
   const extra = (args.argv ?? []).map((a) => ` ${shellQuote(a)}`).join("");
-  // Chrome reads framed JSON on the host's stdout and closes the port the
-  // instant it sees a length prefix it cannot believe. Anything the runtime or
-  // a library prints to stdout, a resolver note, a warning, lands in the middle
-  // of a frame and is indistinguishable from a host that answered nothing.
+  const framesFd = args.protectStdout ? " '--frames-fd' '3'" : "";
+
+  // One line before anything that could fail, which is the lesson of the bug
+  // this version fixes. A launcher that died on a redirect left nothing at all
+  // in host.log, and the absence of that line was most of the time it took to
+  // find.
+  const breadcrumb = `
+# Before any redirect, so a launch that fails one still leaves a trace.
+ALTANA_DIR="\${ALTANA_HOME:-$HOME/.altana}"
+mkdir -p "$ALTANA_DIR" 2>/dev/null
+printf '%s launcher pid=%s\\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$$" >> "$ALTANA_DIR/host.log" 2>/dev/null
+`;
+
+  // Chrome may start a native host with stderr closed.
   //
-  // So the real stdout is moved to fd 3 and fd 1 is pointed at stderr, which
-  // Chrome discards harmlessly. The host writes frames to fd 3 and anything
-  // careless about stdout can no longer break the protocol.
+  // `1>&2` DUPLICATES fd 2, so it fails outright when fd 2 is closed, and a
+  // redirect that fails on `exec` makes a non-interactive shell exit before it
+  // reaches anything else. That is exactly what happened: zero bytes, "native
+  // host has exited", and nothing in the log. Opening a file is different, it
+  // works whether or not fd 2 was open, so fd 2 is opened from a file first and
+  // only then is stdout pointed at it.
+  //
+  // The subshell probe is there because the home directory might not be
+  // writable either, and /dev/null always is.
   const protect = args.protectStdout
     ? `
-# Move the protocol off fd 1 so nothing else can write into a frame.
+# Chrome may hand this process a closed stderr, and 1>&2 duplicates fd 2, so
+# fd 2 has to exist before stdout can be pointed at it.
+STDERR_TARGET=/dev/null
+if ( : >> "$ALTANA_DIR/host.stderr.log" ) 2>/dev/null; then
+  STDERR_TARGET="$ALTANA_DIR/host.stderr.log"
+fi
+exec 2>>"$STDERR_TARGET"
+
+# Now the protocol can be moved off fd 1, so nothing else can write into a frame.
 exec 3>&1 1>&2
 `
     : "";
-  const framesFd = args.protectStdout ? " '--frames-fd' '3'" : "";
+
+  const chain = args.chainId !== undefined
+    ? `
+# Pinned at install time. Unset, the MCP would choose its default network, and
+# for this gate that default is a mainnet.
+ALTANA_CHAIN=${shellQuote(String(args.chainId))}
+export ALTANA_CHAIN
+`
+    : "";
+
   return `#!/bin/sh
 # Written by \`altana-mcp install\`. Edits here are lost on the next install.
 #
 # Chrome does not pass the user's shell PATH to a native messaging host, and a
 # manifest cannot carry arguments, so both of those live in this file.
+
+# 0600 on anything this creates, since one of them is a log of a process that
+# handles keys.
+umask 077
+
 PATH="${dirname(args.bun)}:/usr/bin:/bin:/usr/sbin:/sbin"
 export PATH
-${protect}exec ${shellQuote(args.bun)} run ${shellQuote(args.entry)}${extra}${framesFd} "$@"
+${breadcrumb}${chain}${protect}exec ${shellQuote(args.bun)} run ${shellQuote(args.entry)}${extra}${framesFd} "$@"
 `;
 }
 
@@ -344,11 +384,18 @@ export async function writeLaunchers(args: {
   bun: string;
   entry: string;
   home?: string;
+  chainId?: number;
   dryRun?: boolean;
 }): Promise<Step[]> {
   const home = args.home ?? altanaHomeDir();
+  // Pinned in both. The host does not choose a chain itself, but a launcher
+  // that names one can never be the wrong answer on a testnet only gate, and
+  // having the two agree is one less thing to wonder about.
   const planned: { path: string; body: string }[] = [
-    { path: serverLauncherPath(home), body: launcherScript({ bun: args.bun, entry: args.entry }) },
+    {
+      path: serverLauncherPath(home),
+      body: launcherScript({ bun: args.bun, entry: args.entry, chainId: args.chainId }),
+    },
     {
       path: hostLauncherPath(home),
       body: launcherScript({
@@ -356,6 +403,7 @@ export async function writeLaunchers(args: {
         entry: args.entry,
         argv: ["native-host"],
         protectStdout: true,
+        chainId: args.chainId,
       }),
     },
   ];
@@ -579,6 +627,7 @@ type Parsed = {
   extensionId?: string;
   clients: ClientName[];
   bun?: string;
+  chainId?: number;
   dryRun: boolean;
 };
 
@@ -601,6 +650,14 @@ export function parseArgs(argv: string[]): Parsed {
       case "--bun":
         out.bun = next();
         break;
+      case "--chain": {
+        const value = Number(next());
+        if (!Number.isInteger(value) || value <= 0) {
+          throw new InstallError("--chain takes a chain id, for example 97 for BNB testnet.");
+        }
+        out.chainId = value;
+        break;
+      }
       case "--client": {
         const value = next();
         if (!ALL_CLIENTS.includes(value as ClientName)) {
@@ -642,7 +699,7 @@ async function install(parsed: Parsed): Promise<Step[]> {
   }
 
   steps.push(
-    ...(await writeLaunchers({ bun, entry, dryRun: parsed.dryRun })),
+    ...(await writeLaunchers({ bun, entry, chainId: parsed.chainId, dryRun: parsed.dryRun })),
     ...(await writeHostManifests({
       extensionId,
       hostLauncher: hostLauncherPath(),

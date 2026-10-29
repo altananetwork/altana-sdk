@@ -379,3 +379,106 @@ describe("wallet_balance and the linked wallet (M4)", () => {
     }
   }, 30_000);
 });
+
+
+describe("a chain mismatch between the extension and the agent (QA's finding)", () => {
+  /**
+   * The sharp edge with real money behind it.
+   *
+   * With ALTANA_CHAIN unset the MCP picks its own default, which is a mainnet.
+   * So an extension granting a permission on testnet 97 while the agent runs on
+   * 56 would put a live transaction on the wrong chain, and it surfaced as what
+   * looked like a funding problem, which is the worst possible disguise.
+   */
+  async function linkTo(chainId: number) {
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(
+      join(home, "link.json"),
+      JSON.stringify({
+        v: 1,
+        address: "0x1111111111111111111111111111111111111111",
+        chainId,
+        linkedAt: new Date().toISOString(),
+      }),
+    );
+  }
+
+  test("a tool that acts refuses, naming both chains, and sends nothing", async () => {
+    await linkTo(56);
+    const mcp = await startMcp("claude-code", { ALTANA_CHAIN: "bnb-testnet" });
+    try {
+      const text = textOf(
+        await mcp.call("tools/call", {
+          name: "session_execute",
+          arguments: {
+            sessionName: "anything",
+            to: "0x2222222222222222222222222222222222222222",
+            valueEth: "0",
+          },
+        }),
+      );
+      expect(text).toContain("chain 56");
+      expect(text).toContain("chain 97");
+      expect(text).toContain("Nothing has been sent");
+      // The way out is named, both ways round.
+      expect(text).toContain("ALTANA_CHAIN=56");
+      expect(text).toContain("relink");
+    } finally {
+      await mcp.stop();
+    }
+  }, 30_000);
+
+  test("revoke_session refuses too, since it is a transaction as well", async () => {
+    await linkTo(56);
+    const mcp = await startMcp("claude-code", { ALTANA_CHAIN: "bnb-testnet" });
+    try {
+      const text = textOf(
+        await mcp.call("tools/call", { name: "revoke_session", arguments: { sessionName: "anything" } }),
+      );
+      expect(text).toContain("wrong chain");
+    } finally {
+      await mcp.stop();
+    }
+  }, 30_000);
+
+  test("reading is left alone, because that is how somebody works out what happened", async () => {
+    await linkTo(56);
+    const mcp = await startMcp("claude-code", { ALTANA_CHAIN: "bnb-testnet" });
+    try {
+      const listed = await mcp.call("tools/call", { name: "list_sessions", arguments: {} });
+      expect(listed.error).toBeUndefined();
+      expect(textOf(listed)).not.toContain("wrong chain");
+    } finally {
+      await mcp.stop();
+    }
+  }, 30_000);
+
+  test("a matching chain does not refuse", async () => {
+    await linkTo(97);
+    const mcp = await startMcp("claude-code", { ALTANA_CHAIN: "bnb-testnet" });
+    try {
+      const text = textOf(
+        await mcp.call("tools/call", { name: "revoke_session", arguments: { sessionName: "nope" } }),
+      );
+      // It fails for its own reason, not for the chain.
+      expect(text).not.toContain("wrong chain");
+    } finally {
+      await mcp.stop();
+    }
+  }, 30_000);
+
+  test("no link at all is the not connected answer, not a chain complaint", async () => {
+    const mcp = await startMcp("claude-code", { ALTANA_CHAIN: "bnb-testnet" });
+    try {
+      const text = textOf(
+        await mcp.call("tools/call", {
+          name: "session_execute",
+          arguments: { sessionName: "x", to: "0x2222222222222222222222222222222222222222", valueEth: "0" },
+        }),
+      );
+      expect(text).not.toContain("wrong chain");
+    } finally {
+      await mcp.stop();
+    }
+  }, 30_000);
+});
