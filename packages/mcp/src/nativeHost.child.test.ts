@@ -258,3 +258,105 @@ describe("answering while the port is still open", () => {
     }
   }, 30_000);
 });
+
+
+describe("a frame Chrome splits across reads, and a port that closes", () => {
+  /**
+   * Chrome does not deliver a frame in one piece.
+   *
+   * QA measured the real thing arriving as 74 bytes and then the rest, and the
+   * host's log stopped at the first piece. Every other test here writes a whole
+   * frame in one go, so none of them exercises the case that actually happens.
+   */
+  test("answers a frame delivered in two writes with a pause between them", async () => {
+    const whole = encodeFrame({ id: "split", type: "hello", payload: { extensionVersion: "0.1.0" } });
+    const child = Bun.spawn([process.execPath, "run", CLI, "native-host"], {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, ALTANA_HOME: home },
+    });
+    try {
+      child.stdin.write(whole.subarray(0, 20));
+      await child.stdin.flush();
+      await Bun.sleep(400);
+      child.stdin.write(whole.subarray(20));
+      await child.stdin.flush();
+
+      const reader = (child.stdout as ReadableStream<Uint8Array>).getReader();
+      const first = await Promise.race([reader.read(), Bun.sleep(8000).then(() => undefined)]);
+      expect(first).toBeDefined();
+
+      const decoder = new FrameDecoder();
+      const frames = decoder.push(Buffer.from(first!.value!));
+      expect((frames[0] as { value: any }).value).toMatchObject({ id: "split", ok: true });
+
+      // Both halves are in the log, which is what was missing when this failed.
+      const log = await readFile(join(home, "host.log"), "utf8");
+      expect(log).toContain("chunk 1 ");
+      expect(log).toContain("chunk 2 ");
+      expect(log).toContain("write start");
+      expect(log).toContain("write done");
+    } finally {
+      child.kill();
+      await child.exited;
+    }
+  }, 30_000);
+
+  test("the length prefix split across writes is answered too", async () => {
+    // The nastiest split: fewer than four bytes, so not even the length is
+    // known yet.
+    const whole = encodeFrame({ id: "tiny", type: "hello", payload: {} });
+    const child = Bun.spawn([process.execPath, "run", CLI, "native-host"], {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, ALTANA_HOME: home },
+    });
+    try {
+      child.stdin.write(whole.subarray(0, 2));
+      await child.stdin.flush();
+      await Bun.sleep(300);
+      child.stdin.write(whole.subarray(2));
+      await child.stdin.flush();
+
+      const reader = (child.stdout as ReadableStream<Uint8Array>).getReader();
+      const first = await Promise.race([reader.read(), Bun.sleep(8000).then(() => undefined)]);
+      expect(first).toBeDefined();
+      const decoder = new FrameDecoder();
+      const frames = decoder.push(Buffer.from(first!.value!));
+      expect((frames[0] as { value: any }).value.id).toBe("tiny");
+    } finally {
+      child.kill();
+      await child.exited;
+    }
+  }, 30_000);
+
+  test("the host exits when its port closes, rather than outliving the browser", async () => {
+    // QA found hosts from the previous day still alive nineteen hours after
+    // the Chrome that started them had gone. A host whose port has closed has
+    // nothing left to do and should not be holding a key store open.
+    const child = Bun.spawn([process.execPath, "run", CLI, "native-host"], {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, ALTANA_HOME: home },
+    });
+    child.stdin.write(encodeFrame({ id: "bye", type: "hello", payload: {} }));
+    await child.stdin.flush();
+    await Bun.sleep(600);
+
+    // Chrome closing the port is stdin reaching end of file.
+    await child.stdin.end();
+
+    const exited = await Promise.race([
+      child.exited,
+      Bun.sleep(10_000).then(() => "still running" as const),
+    ]);
+    expect(exited).not.toBe("still running");
+
+    const log = await readFile(join(home, "host.log"), "utf8");
+    expect(log).toContain("stdin ended, so the port closed");
+    expect(log).toContain("exit pid=");
+  }, 30_000);
+});
