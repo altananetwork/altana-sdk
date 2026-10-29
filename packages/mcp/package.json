@@ -25,7 +25,7 @@
     "bun": ">=1.1.0"
   },
   "bin": {
-    "altana-mcp": "./src/index.ts"
+    "altana-mcp": "./src/cli.ts"
   },
   "main": "./src/index.ts",
   "types": "./src/index.ts",

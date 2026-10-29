@@ -15,6 +15,56 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Behaviour change
+
+- **A session granted with `permissions.calls` omitted now allows every
+  target, as the type always said it did.** It previously allowed *none*: the
+  SDK sent no call permissions, and an account with no call permissions
+  authorizes nothing, so the session was refused with `UnauthorizedCall` on
+  its first action. The grant itself succeeded and reported `granted`, so the
+  failure surfaced later with nothing connecting it to its cause.
+
+  `grantSession` now emits the account's `ANY_TARGET` wildcard
+  (`0x3232…32`, from `GuardedExecutor`) when `calls` is omitted, which is what
+  `_canExecute` matches on. `ANY_TARGET` is exported so an unscoped session can
+  be requested explicitly.
+
+  **If you relied on the old behaviour, you were relying on a lockout.** A
+  session granted this way did nothing at all. After upgrading, the same code
+  grants an agent *every* target, which is a real widening of authority even
+  though the previous behaviour was useless. So: **pass `calls` explicitly.**
+  Scope every session you can, and reach for omission or `ANY_TARGET` only when
+  an agent genuinely needs an open wallet.
+
+  An explicitly empty `calls: []` is unchanged and still allows nothing. Only
+  `undefined` becomes the wildcard, because a caller who passes `[]` has said
+  "nothing" and widening that would hand an agent the whole wallet.
+
+### Added
+
+- `getCallsHistory(network, { wallet, limit, index, sort })` reads a wallet's
+  relay call history: which key signed each bundle and what it moved. The only
+  source for attributing a transaction to the agent that made it. Clamps `limit`
+  to the relay's 1 to 100, always sends the required `sort`, and documents that
+  `index` is an offset into the sorted page rather than a bundle identity.
+- `keyHashForSigner(signer)` computes any signer's account key hash, including a
+  passkey admin key. Needed to tell a wallet owner's own transactions from an
+  agent's: on a passkey-owned wallet the owner's key hash is a real non-zero
+  value, so "non-zero means an agent" is wrong and would credit a person's own
+  spending to an agent.
+- `@altananetwork/mcp` gains **`import_session`**, the mirror of
+  `grant_session`: it takes a session granted elsewhere, as the serialized half
+  plus the private key, and stores it so `session_execute` can use it by name.
+  For an agent machine that has no admin key and never will.
+- `@altananetwork/mcp` honours `ALTANA_RPC_URL` and `ALTANA_RELAY_URL`, so a
+  server can be pointed at a local fork while keeping the chain's contract
+  addresses.
+- `@altananetwork/mcp` honours `ALTANA_KEY_STORE=file:<path>` and `ALTANA_HOME`.
+  **For automation only**: a file holds keys in plain text where the OS keychain
+  encrypts them at rest. It exists so an end-to-end test does not write into a
+  developer's real login keychain, which on macOS can also raise an access
+  prompt that no unattended run can answer.
+
 ### Breaking
 
 - **`chainId` is gone from session grant and revoke.**

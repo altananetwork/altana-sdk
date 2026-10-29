@@ -11,6 +11,7 @@ import {
 import {
   NETWORKS,
   SUPPORTED_CHAINS,
+  applyEndpointOverrides,
   describeNetwork,
   fundingSteps,
   networkGroup,
@@ -36,6 +37,31 @@ describe("resolveNetwork", () => {
     expect(resolveNetwork(undefined)).toMatchObject({ network: BNB, requested: "bnb", recognized: true });
     expect(resolveNetwork("")).toMatchObject({ network: BNB, recognized: true });
     expect(resolveNetwork("sepolia")).toMatchObject({ network: BNB, requested: "sepolia", recognized: false });
+  });
+
+  test("a near miss for the testnet is not recognized, which is what makes it fatal", () => {
+    /* The failure this guards: an unrecognised ALTANA_CHAIN used to log a
+       warning and continue on BNB **mainnet**. A typo put an agent on a chain
+       where the money is real, and the warning went to stderr, which on an MCP
+       server is the host's log rather than anywhere the person who pasted the
+       command looks. index.ts exits on `recognized: false` now, so this flag is
+       load bearing rather than informational. */
+    for (const typo of ["bnb_testnet", "bnbtestnet", "testnet", "bnb-test"]) {
+      expect(resolveNetwork(typo).recognized).toBe(false);
+    }
+
+    // The real names still are, so the guard does not block the common case.
+    // bsc-testnet is a deliberate alias, which this test asserted was a typo
+    // until it ran.
+    for (const good of ["bnb-testnet", "BNB-Testnet", "97", "bsc-testnet"]) {
+      expect(resolveNetwork(good).recognized).toBe(true);
+      expect(resolveNetwork(good).network.chainId).toBe(97);
+    }
+
+    // And whitespace is forgiven rather than fatal: a trailing space in a shell
+    // or a config file is the value they meant.
+    expect(resolveNetwork("bnb-testnet ").recognized).toBe(true);
+    expect(resolveNetwork(" 97").network.chainId).toBe(97);
   });
 
   test("the registry chain is the network itself for local registries and the L1 for cached ones", () => {
@@ -131,5 +157,42 @@ describe("networkGroup", () => {
 
   test("a chain outside both groups stands alone", () => {
     expect(networkGroup(SEPOLIA)).toEqual([SEPOLIA]);
+  });
+});
+
+describe("pointing the server at a fork", () => {
+  const FORK_RPC = "http://127.0.0.1:8599";
+  const FORK_RELAY = "http://127.0.0.1:9199";
+
+  test("leaves a network alone when neither override is set", () => {
+    const network = applyEndpointOverrides(BNB_TESTNET, {});
+    expect(network).toBe(BNB_TESTNET);
+  });
+
+  test("overrides the RPC and the relay", () => {
+    const network = applyEndpointOverrides(BNB_TESTNET, {
+      rpcUrl: FORK_RPC,
+      relayUrl: FORK_RELAY,
+    });
+    expect(network.publicRpcUrl).toBe(FORK_RPC);
+    expect(network.relayUrl).toBe(FORK_RELAY);
+  });
+
+  test("keeps the contract addresses, which forked state already carries", () => {
+    const network = applyEndpointOverrides(BNB_TESTNET, { rpcUrl: FORK_RPC });
+    expect(network.keyStore).toBe(BNB_TESTNET.keyStore);
+    expect(network.keyStoreController).toBe(BNB_TESTNET.keyStoreController);
+    expect(network.chainId).toBe(97);
+  });
+
+  test("ignores whitespace, rather than pointing at nowhere", () => {
+    const network = applyEndpointOverrides(BNB_TESTNET, { rpcUrl: "   ", relayUrl: "" });
+    expect(network.publicRpcUrl).toBe(BNB_TESTNET.publicRpcUrl);
+  });
+
+  test("overrides one endpoint without disturbing the other", () => {
+    const network = applyEndpointOverrides(BNB_TESTNET, { relayUrl: FORK_RELAY });
+    expect(network.relayUrl).toBe(FORK_RELAY);
+    expect(network.publicRpcUrl).toBe(BNB_TESTNET.publicRpcUrl);
   });
 });
