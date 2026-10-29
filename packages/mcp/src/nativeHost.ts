@@ -368,17 +368,86 @@ function signatureOf(agents: Agent[]): string {
 }
 
 /**
- * Pause briefly without an await, for the EAGAIN retry above.
+ * How long the frame write will wait for a pipe that will not take bytes.
  *
- * Synchronous on purpose: that write path cannot become async without becoming
- * buffered again, which is the whole thing it exists to avoid. A full pipe
- * clears in microseconds, so this spins for a very short time or not at all.
+ * There used to be no limit here, which was indefensible: an fd that never
+ * drains meant a process that never ended, and QA found hosts from the previous
+ * day still alive nineteen hours after the Chrome that started them had gone.
+ * Giving up and saying so beats hanging, because a hang is the one failure that
+ * leaves nothing to read.
  */
-function waitABit(): void {
-  const until = Date.now() + 1;
-  while (Date.now() < until) {
-    /* spin */
+const WRITE_DEADLINE_MS = 5000;
+
+/** Sleep without burning a core, and without handing control to the event loop. */
+function sleepSync(ms: number): void {
+  // Atomics.wait on a buffer nobody will notify is a real sleep. A busy spin
+  // would compete with the very read that has to make progress for the pipe to
+  // drain.
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch {
+    const until = Date.now() + ms;
+    while (Date.now() < until) {
+      /* no Atomics here, so spin */
+    }
   }
+}
+
+/**
+ * Write one frame to fd 1, and say what happened.
+ *
+ * Instrumented because this is the half of the g1 failure there was no evidence
+ * about: the host logged the frame arriving and then nothing at all, and a
+ * write that neither returned nor threw would look exactly like that.
+ */
+function writeFrameToStdout(bytes: Buffer): void {
+  const deadline = Date.now() + WRITE_DEADLINE_MS;
+  let written = 0;
+  let retries = 0;
+
+  appendToHostLog(
+    `${new Date().toISOString()} write start pid=${process.pid} bytes=${bytes.byteLength}\n`,
+  );
+
+  while (written < bytes.byteLength) {
+    try {
+      written += writeSync(1, bytes, written, bytes.byteLength - written);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code ?? "unknown";
+      if (code === "EAGAIN" || code === "EWOULDBLOCK" || code === "EINTR") {
+        retries += 1;
+        if (Date.now() > deadline) {
+          appendToHostLog(
+            `${new Date().toISOString()} write gave up pid=${process.pid} ` +
+              `code=${code} written=${written}/${bytes.byteLength} retries=${retries}\n`,
+          );
+          throw new Error(
+            `stdout would not accept the frame within ${WRITE_DEADLINE_MS}ms ` +
+              `(${code} after ${retries} retries, ${written} of ${bytes.byteLength} bytes written)`,
+          );
+        }
+        // Logged sparsely: enough to see it happening, not enough to fill the file.
+        if (retries === 1 || retries % 100 === 0) {
+          appendToHostLog(
+            `${new Date().toISOString()} write retry pid=${process.pid} ` +
+              `code=${code} n=${retries} written=${written}/${bytes.byteLength}\n`,
+          );
+        }
+        if (code !== "EINTR") sleepSync(1);
+        continue;
+      }
+      appendToHostLog(
+        `${new Date().toISOString()} write failed pid=${process.pid} ` +
+          `code=${code} written=${written}/${bytes.byteLength}\n`,
+      );
+      throw err;
+    }
+  }
+
+  appendToHostLog(
+    `${new Date().toISOString()} write done pid=${process.pid} bytes=${written}` +
+      `${retries > 0 ? ` retries=${retries}` : ""}\n`,
+  );
 }
 
 /**
@@ -463,10 +532,29 @@ export async function runNativeHostOnStdio(): Promise<void> {
     appendToHostLog(`${stamp()} exit pid=${process.pid} code=${code}\n`);
   });
 
+  // A port Chrome has forgotten about is the other way a host outlives its
+  // browser: stdin never closes, so nothing ends. If no byte has ever arrived
+  // after this long, there is nothing on the other end worth waiting for.
+  const SILENT_PORT_LIMIT_MS = 10 * 60 * 1000;
+  let sawAnyBytes = false;
+  const idleGuard = setTimeout(() => {
+    if (sawAnyBytes) return;
+    appendToHostLog(
+      `${stamp()} giving up pid=${process.pid} nothing arrived in ${SILENT_PORT_LIMIT_MS}ms\n`,
+    );
+    process.exit(0);
+  }, SILENT_PORT_LIMIT_MS);
+  idleGuard.unref?.();
+
   try {
     appendToHostLog(`${stamp()} reading stdin pid=${process.pid}\n`);
     await runNativeHost({
-      input: stdinFrames(),
+      input: (async function* () {
+        for await (const chunk of stdinFrames()) {
+          sawAnyBytes = true;
+          yield chunk;
+        }
+      })(),
       // writeSync on fd 1, not process.stdout.write. Chrome keeps the port's
       // stdin open for the life of the connection, so nothing ever flushes a
       // buffered stream on exit, and a frame still sitting in a buffer is a
@@ -478,33 +566,25 @@ export async function runNativeHostOnStdio(): Promise<void> {
       // buffer is full, which is not an error but a "not yet"; letting that
       // escape would kill the host over a full pipe, dropping the port and
       // every pending request with it.
-      write: (bytes) => {
-        let written = 0;
-        while (written < bytes.byteLength) {
-          try {
-            written += writeSync(1, bytes, written, bytes.byteLength - written);
-          } catch (err) {
-            const code = (err as NodeJS.ErrnoException)?.code;
-            if (code === "EAGAIN" || code === "EWOULDBLOCK") {
-              // Chrome is reading as fast as it can; give it a moment. Busy
-              // waiting is acceptable here because the alternative is an async
-              // write, and an async write is what reintroduces buffering.
-              waitABit();
-              continue;
-            }
-            if (code === "EINTR") continue;
-            throw err;
-          }
-        }
-      },
+      write: (bytes) => writeFrameToStdout(bytes),
       log,
     });
     appendToHostLog(`${stamp()} end pid=${process.pid} stdin ended, so the port closed\n`);
+    // Exiting explicitly, rather than trusting the event loop to empty.
+    //
+    // QA found hosts from the previous day still alive nineteen hours after the
+    // Chrome that started them had gone. A host whose port has closed has
+    // nothing left to do, and anything still referenced (a watcher, a half open
+    // descriptor, a pending read) keeps the process alive for no reason while
+    // holding a key store open.
+    process.exit(0);
   } catch (err) {
     // Chrome shows a host that died as a disconnect with no reason, so the
     // reason has to be written down somewhere before this process goes.
     appendToHostLog(`${stamp()} died pid=${process.pid} ${redactedMessage(err)}\n`);
-    throw err;
+    // Same reasoning as the clean path, and more pressing: whatever went wrong
+    // may be the thing holding the loop open.
+    process.exit(1);
   }
 }
 
@@ -524,20 +604,30 @@ export async function runNativeHostOnStdio(): Promise<void> {
 async function* stdinFrames(): AsyncGenerator<Buffer> {
   const stream = createReadStream("", { fd: 0, autoClose: false });
   let chunks = 0;
+  let total = 0;
   try {
     for await (const chunk of stream) {
       chunks += 1;
       const bytes = Buffer.from(chunk as Buffer);
-      if (chunks === 1) {
-        appendToHostLog(
-          `${new Date().toISOString()} first chunk pid=${process.pid} bytes=${bytes.byteLength}\n`,
-        );
-      }
+      total += bytes.byteLength;
+      // Every chunk, not just the first. Chrome splits a frame across reads,
+      // and a log that only recorded the first one could not tell a frame that
+      // never finished arriving from one that arrived and was never answered.
+      appendToHostLog(
+        `${new Date().toISOString()} chunk ${chunks} pid=${process.pid} ` +
+          `bytes=${bytes.byteLength} total=${total}\n`,
+      );
       yield bytes;
     }
+  } catch (err) {
+    appendToHostLog(
+      `${new Date().toISOString()} stdin failed pid=${process.pid} ` +
+        `chunks=${chunks} ${redactedMessage(err)}\n`,
+    );
+    throw err;
   } finally {
     appendToHostLog(
-      `${new Date().toISOString()} stdin closed pid=${process.pid} chunks=${chunks}\n`,
+      `${new Date().toISOString()} stdin closed pid=${process.pid} chunks=${chunks} total=${total}\n`,
     );
   }
 }
