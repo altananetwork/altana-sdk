@@ -61,6 +61,7 @@ import {
 import { readLink } from "./link.js";
 import { markRevoked, readRevoked, revokedMessage } from "./revoked.js";
 import { storeHandedOverSession } from "./storeSession.js";
+import { describeRetries, withRelayBackoff } from "./relayRetry.js";
 import {
   createRequest,
   deleteRequest,
@@ -1582,15 +1583,38 @@ tool(
     // that doesn't match the session's registered publicKey.
     const session = deserializeSession(stored, signerFromPrivateKey(key.privateKey));
 
-    const result = await client.execute({
-      session,
-      calls: {
-        to: recipient,
-        value: parseEther(valueEth ?? "0"),
-        data: dataHex,
+    // The first action after a grant can race what the relay is able to see:
+    // measured live on 97, the relay refused a bundle with status 300 and no
+    // receipt while the grant was already on chain, and the same call succeeded
+    // minutes later. A person who grants a permission, sends it and asks their
+    // agent to act is inside that window, so this waits rather than failing.
+    //
+    // The retry is not a replay. The SDK discards its view of the nonce lane
+    // before it throws, so each attempt re-reads the counter from the chain and
+    // builds a fresh intent. Retrying without waiting, which is what the live
+    // run did, presents the same counter into the same stale view twice.
+    const attempted = await withRelayBackoff(
+      () =>
+        client.execute({
+          session,
+          calls: {
+            to: recipient,
+            value: parseEther(valueEth ?? "0"),
+            data: dataHex,
+          },
+          ...(feeToken !== undefined ? { feeToken: assertFeeToken(feeToken) } : {}),
+        }),
+      {
+        onWait: ({ attempt, waitMs }) =>
+          console.error(
+            `[altana-mcp] the relay refused to broadcast (attempt ${attempt}); waiting ` +
+              `${waitMs}ms and rebuilding the transaction, since a recent grant may not be ` +
+              `visible to it yet`,
+          ),
       },
-      ...(feeToken !== undefined ? { feeToken: assertFeeToken(feeToken) } : {}),
-    });
+    );
+    const result = attempted.value;
+    const retried = describeRetries(attempted);
 
     return {
       content: [
@@ -1606,6 +1630,16 @@ tool(
               callsId: result.callsId,
               // The token the relay charged its fee in (zero address: native).
               ...(result.feeToken ? { feeToken: result.feeToken } : {}),
+              // Said rather than hidden: a transaction that took 9 seconds and
+              // two refusals to land is worth the agent knowing about, and the
+              // person being told if they asked why it was slow.
+              ...(attempted.attempts > 1
+                ? {
+                    attempts: attempted.attempts,
+                    waitedSeconds: Math.round(attempted.waitedMs / 100) / 10,
+                    note: retried,
+                  }
+                : {}),
             },
             null,
             2,
