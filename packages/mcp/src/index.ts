@@ -480,7 +480,6 @@ tool(
               walletAddress: addr,
               keyId: id,
               ...(sessionName ? { sessionName } : {}),
-              ...(REGISTRY !== NETWORK ? { registryNetwork: REGISTRY.chain.name } : {}),
               ...result,
             },
             null,

@@ -173,5 +173,9 @@ export async function readAuthorization(ctx: KeyStoreReadContext, addr: Address,
     args: [addr, keyId],
   })) as boolean;
   const cache = await cacheBlock(ctx, addr, keyId);
-  return { authorized: valid, ...(cache ? { cache } : {}) };
+  return {
+    authorized: valid,
+    ...(ctx.registry !== ctx.network ? { registryNetwork: ctx.registry.chain.name } : {}),
+    ...(cache ? { cache } : {}),
+  };
 }

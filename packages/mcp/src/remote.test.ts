@@ -86,3 +86,18 @@ test("unknown paths 404", async () => {
   const res = await fetch(`${baseUrl}/nope`);
   expect(res.status).toBe(404);
 });
+
+test("GET /mcp is rejected: no standalone SSE stream on a stateless server", async () => {
+  const res = await fetch(`${baseUrl}/mcp`, {
+    headers: { Accept: "text/event-stream" },
+  });
+  expect(res.status).toBe(405);
+  expect(res.headers.get("Allow")).toContain("POST");
+});
+
+test("OPTIONS /mcp answers the CORS preflight", async () => {
+  const res = await fetch(`${baseUrl}/mcp`, { method: "OPTIONS" });
+  expect(res.status).toBe(204);
+  expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
+  expect(res.headers.get("Access-Control-Allow-Headers")).toContain("Mcp-Protocol-Version");
+});

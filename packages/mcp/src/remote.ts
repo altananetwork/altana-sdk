@@ -44,6 +44,8 @@ import {
 } from "./keystoreRead.js";
 
 // ---------- network ---------------------------------------------------------
+// Mirrors the bootstrap in index.ts — keep the two in sync when chain or
+// registry wiring changes.
 
 const resolved = resolveNetwork(process.env.ALTANA_CHAIN);
 const NETWORK = resolved.network;
@@ -77,6 +79,9 @@ const READ_CTX: KeyStoreReadContext = {
 const REMOTE_INSTRUCTIONS =
   SERVER_INSTRUCTIONS +
   ` This hosted endpoint is read-only: it verifies authority, reads balances and discovers certified skills, and holds no keys. Creating wallets, granting sessions and executing transactions happen in the local \`@altananetwork/mcp\` stdio server, where keys stay in the user's own OS keychain.`;
+
+/** Max ERC-20 addresses one wallet_balance call may read. */
+const MAX_BALANCE_TOKENS = 50;
 
 /** Marks a tool as a pure read for hosts that honor MCP tool annotations. */
 const READ_ONLY = {
@@ -158,12 +163,7 @@ export function createReadonlyServer(): McpServer {
       const addr = assertAddress(walletAddress);
       const id = assertBytes32(keyId);
       const result = await readAuthorization(READ_CTX, addr, id);
-      return jsonContent({
-        walletAddress: addr,
-        keyId: id,
-        ...(REGISTRY !== NETWORK ? { registryNetwork: REGISTRY.chain.name } : {}),
-        ...result,
-      });
+      return jsonContent({ walletAddress: addr, keyId: id, ...result });
     },
   );
 
@@ -198,6 +198,15 @@ export function createReadonlyServer(): McpServer {
           "wallet_balance: pass either `tokens` (explicit ERC-20 list) or `discover: true` (list what the wallet holds), not both.",
         );
       }
+      // Anonymous public endpoint: cap the per-request fan-out so one call
+      // can't burn the relay/RPC quota for everyone else.
+      if (tokens !== undefined && tokens.length > MAX_BALANCE_TOKENS) {
+        throw new Error(
+          `wallet_balance: at most ${MAX_BALANCE_TOKENS} token addresses per call (got ${tokens.length}).`,
+        );
+      }
+      // Mirrors the stdio wallet_balance in index.ts (which resolves a local
+      // wallet name instead of taking an address) — keep the two in sync.
       const addr = assertAddress(address);
       const formatted = discover
         ? await client.holdings({ wallet: addr }).then((res) =>
@@ -295,32 +304,65 @@ export function createReadonlyServer(): McpServer {
 
 // ---------- HTTP ------------------------------------------------------------
 
+// Public read-only data, so CORS is wide open — browser-based MCP hosts
+// preflight with OPTIONS before every POST.
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers":
+    "Content-Type, Accept, Authorization, Mcp-Session-Id, Mcp-Protocol-Version, Last-Event-ID",
+  "Access-Control-Expose-Headers": "Mcp-Session-Id, Mcp-Protocol-Version",
+  "Access-Control-Max-Age": "86400",
+} as const;
+
+function withCors(res: Response): Response {
+  const headers = new Headers(res.headers);
+  for (const [k, v] of Object.entries(CORS_HEADERS)) headers.set(k, v);
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}
+
 /**
  * Handle one MCP-over-HTTP request. Stateless: a fresh server + transport
- * pair per request, torn down when the response finishes.
+ * pair per POST, torn down when the response finishes. GET (the standalone
+ * SSE notification stream) is rejected — a per-request server can never
+ * emit anything on it, so accepting it would only pin connections open —
+ * and so is DELETE (there is no session to terminate).
  */
 export async function handleMcpRequest(req: Request): Promise<Response> {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: CORS_HEADERS });
+  }
+  if (req.method !== "POST") {
+    return withCors(
+      new Response("Method not allowed: this MCP endpoint is stateless and accepts POST only.", {
+        status: 405,
+        headers: { Allow: "POST, OPTIONS" },
+      }),
+    );
+  }
   const server = createReadonlyServer();
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,
   });
   await server.connect(transport);
-  return transport.handleRequest(req);
+  return withCors(await transport.handleRequest(req));
 }
 
-export function handleHttpRequest(req: Request): Promise<Response> | Response {
+export async function handleHttpRequest(req: Request): Promise<Response> {
   const url = new URL(req.url);
   if (url.pathname === "/mcp") return handleMcpRequest(req);
   if (url.pathname === "/" || url.pathname === "/healthz") {
-    return Response.json({
-      name: "altana-readonly",
-      version: VERSION,
-      network: NETWORK.chain.name,
-      chainId: NETWORK.chainId,
-      mcpEndpoint: "/mcp",
-      docs: "https://docs.altana.network",
-    });
+    return withCors(
+      Response.json({
+        name: "altana-readonly",
+        version: VERSION,
+        network: NETWORK.chain.name,
+        chainId: NETWORK.chainId,
+        mcpEndpoint: "/mcp",
+        docs: "https://docs.altana.network",
+      }),
+    );
   }
   return new Response("Not found", { status: 404 });
 }
@@ -331,13 +373,17 @@ declare const Bun: {
   serve(options: {
     port: number;
     fetch: (req: Request) => Response | Promise<Response>;
-  }): unknown;
+  }): { port: number };
 };
 
 if ((import.meta as ImportMeta & { main?: boolean }).main) {
-  const port = Number(process.env.PORT ?? 3717);
-  Bun.serve({ port, fetch: handleHttpRequest });
+  const rawPort = process.env.PORT?.trim();
+  const port = rawPort ? Number(rawPort) : 3717;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`[altana-mcp-remote] Invalid PORT="${process.env.PORT}": expected 1-65535.`);
+  }
+  const listening = Bun.serve({ port, fetch: handleHttpRequest });
   console.error(
-    `[altana-mcp-remote] read-only MCP on http://localhost:${port}/mcp — network: ${describeNetwork(NETWORK)}`,
+    `[altana-mcp-remote] read-only MCP on http://localhost:${listening.port}/mcp — network: ${describeNetwork(NETWORK)}`,
   );
 }
