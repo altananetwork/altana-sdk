@@ -27,7 +27,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { VERSION } from "./version.js";
 import { formatBalance } from "./balanceFormat.js";
-import { createPublicClient, formatUnits, http, parseEther, parseUnits, type Address, type Hex } from "viem";
+import { createPublicClient, formatUnits, http, parseEther, parseUnits, type Address, type Hex, type PublicClient } from "viem";
 import { keccak256 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import {
@@ -47,10 +47,16 @@ import {
   decodeErc8004AgentUri,
   encodeErc8004AgentUri,
   withErc8004Registration,
-  isCachedRegistry,
-  isCachedKeyValid,
-  readCachedKey,
 } from "@altananetwork/sdk";
+import {
+  ABOUT_ALTANA,
+  SERVER_INSTRUCTIONS,
+  assertAddress,
+  assertBytes32,
+  readAuthorization,
+  readWalletVerification,
+  type KeyStoreReadContext,
+} from "./keystoreRead.js";
 import type { Signer, Wallet } from "@altananetwork/sdk";
 import {
   getWalletKey,
@@ -119,93 +125,18 @@ const registryClient =
     ? publicClient
     : createPublicClient({ chain: REGISTRY.chain, transport: http(REGISTRY.publicRpcUrl) });
 
-/**
- * On a cached network, what the local KeyStoreCache holds for (wallet, keyId).
- * `fresh` is the cache's own isValidKey: true only while the cache entry was
- * proven at the registry block the chain currently anchors, so a `false`
- * here with `cached: true` and `revoked: false` means the entry needs a new
- * proof (grant_session and revoke_session submit one; the SDK's
- * syncSessionToCache retries it). Undefined on local-registry chains.
- */
-async function cacheBlock(addr: Address, keyId: Hex) {
-  if (!isCachedRegistry(NETWORK)) return undefined;
-  const cache = NETWORK.registry.keyStoreCache;
-  const base = { chainId: NETWORK.chainId, registryChainId: REGISTRY.chainId };
-  try {
-    const [entry, fresh] = await Promise.all([
-      readCachedKey(publicClient, cache, addr, keyId),
-      isCachedKeyValid(publicClient, cache, addr, keyId),
-    ]);
-    const cached = entry.publicKey !== "0x" && entry.publicKey.length > 2;
-    return {
-      ...base,
-      deployed: true,
-      keyStoreCache: cache,
-      cached,
-      revoked: entry.revoked,
-      expiry: entry.expiry,
-      ...(entry.expiry ? { expiresAt: new Date(entry.expiry * 1000).toISOString() } : {}),
-      isRoot: entry.isRoot,
-      sourceBlockNumber: entry.sourceBlockNumber.toString(),
-      fresh,
-    };
-  } catch (err) {
-    return {
-      ...base,
-      deployed: true,
-      keyStoreCache: cache,
-      error: err instanceof Error ? err.message : String(err),
-    };
-  }
-}
+// KeyStore reads (wallet_verification, verify_authorization, cache blocks)
+// are shared with the remote read-only server; see keystoreRead.ts.
+const READ_CTX: KeyStoreReadContext = {
+  network: NETWORK,
+  registry: REGISTRY,
+  publicClient: publicClient as PublicClient,
+  registryClient: registryClient as PublicClient,
+};
 
-// ---------- KeyStore (read-only inspection tools) --------------------------
-
-const KEYSTORE_ABI = [
-  {
-    name: "getKeys",
-    type: "function",
-    stateMutability: "view",
-    inputs: [{ name: "user", type: "address" }],
-    outputs: [{ type: "bytes32[]" }],
-  },
-  {
-    name: "getPublicKey",
-    type: "function",
-    stateMutability: "view",
-    inputs: [
-      { name: "user", type: "address" },
-      { name: "keyId", type: "bytes32" },
-    ],
-    outputs: [{ type: "bytes" }],
-  },
-  {
-    name: "isValidKey",
-    type: "function",
-    stateMutability: "view",
-    inputs: [
-      { name: "user", type: "address" },
-      { name: "keyId", type: "bytes32" },
-    ],
-    outputs: [{ type: "bool" }],
-  },
-] as const;
-
-function assertAddress(value: string): Address {
-  if (!/^0x[0-9a-fA-F]{40}$/.test(value)) {
-    throw new Error(`Not a valid 0x-prefixed 20-byte address: ${value}`);
-  }
-  return value as Address;
-}
 /** A `feeToken` tool input: one address, or a list to choose from. */
 function assertFeeToken(value: string | string[]): Address | Address[] {
   return Array.isArray(value) ? value.map(assertAddress) : assertAddress(value);
-}
-function assertBytes32(value: string): Hex {
-  if (!/^0x[0-9a-fA-F]{64}$/.test(value)) {
-    throw new Error(`Not a valid 0x-prefixed 32-byte hex: ${value}`);
-  }
-  return value as Hex;
 }
 /** bigint-safe copy for JSON.stringify (report structs carry block numbers). */
 function jsonSafe<T>(value: T): unknown {
@@ -238,10 +169,6 @@ async function ensureRegistered(signer: Signer): Promise<void> {
 
 // ---------- server ----------------------------------------------------------
 
-// Compact positioning surfaced at MCP handshake. Clients load this with
-// every conversation; the full version is behind the `about_altana` tool.
-const SERVER_INSTRUCTIONS = `Altana Smart Agentic Wallet enables a global registry of permissions on-chain, accessible by any agent. Traditional agentic wallets store permissions locally or on centralized servers; Altana's KeyStore makes composable permissions accessible across any chain and any wallet. Call \`about_altana\` for the full positioning.`;
-
 const server = new McpServer(
   {
     name: "altana-agentic-wallet",
@@ -268,19 +195,9 @@ const prompt = (server as unknown as {
   registerPrompt: (name: string, config: any, cb: any) => unknown;
 }).registerPrompt.bind(server);
 
-// about_altana — positioning + capability summary. Call when the user asks
-// what Altana is, how it differs from other wallets, or why integrate it.
-const ABOUT_ALTANA = `# Altana Smart Agentic Wallet
-
-Altana Smart Agentic Wallet enables a global registry of permissions on-chain, accessible by any agent.
-
-Traditional agentic wallets store permissions locally or on centralized servers. Altana's **KeyStore** infrastructure makes composable permissions accessible across any chain and any wallet — enabling:
-
-- **Agent-to-agent verification.** Two AIs acting on the same wallet can verify each other's authority on-chain. No platform in between.
-- **Cross-app authorization.** Any DEX, orderbook, or protocol can read whether an agent is authorized — without integrating with the specific wallet vendor.
-- **A new class of agent services.** Users hire AI agents through on-chain employment contracts. Anyone can verify what an agent is allowed to do, and revoke is one transaction.
-`;
-
+// about_altana — positioning + capability summary (text in keystoreRead.ts).
+// Call when the user asks what Altana is, how it differs from other wallets,
+// or why integrate it.
 tool(
   "about_altana",
   {
@@ -494,45 +411,9 @@ tool(
     inputSchema: { address: z.string() },
   },
   async ({ address }: { address: string }) => {
-    const addr = assertAddress(address);
-    const keys = (await registryClient.readContract({
-      address: REGISTRY.keyStore,
-      abi: KEYSTORE_ABI,
-      functionName: "getKeys",
-      args: [addr],
-    })) as readonly Hex[];
-
-    const details = await Promise.all(
-      keys.map(async (keyId) => {
-        const publicKey = (await registryClient.readContract({
-          address: REGISTRY.keyStore,
-          abi: KEYSTORE_ABI,
-          functionName: "getPublicKey",
-          args: [addr, keyId],
-        })) as Hex;
-        const cache = await cacheBlock(addr, keyId);
-        return { keyId, publicKey, ...(cache ? { cache } : {}) };
-      }),
-    );
-
+    const payload = await readWalletVerification(READ_CTX, address);
     return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(
-            {
-              address,
-              keyStore: REGISTRY.keyStore,
-              network: NETWORK.chain.name,
-              ...(REGISTRY !== NETWORK ? { registryNetwork: REGISTRY.chain.name } : {}),
-              activeKeyCount: keys.length,
-              keys: details,
-            },
-            null,
-            2,
-          ),
-        },
-      ],
+      content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
     };
   },
 );
@@ -588,13 +469,7 @@ tool(
       id = assertBytes32(keyId);
     }
 
-    const valid = (await registryClient.readContract({
-      address: REGISTRY.keyStore,
-      abi: KEYSTORE_ABI,
-      functionName: "isValidKey",
-      args: [addr, id],
-    })) as boolean;
-    const cache = await cacheBlock(addr, id);
+    const result = await readAuthorization(READ_CTX, addr, id);
 
     return {
       content: [
@@ -605,9 +480,8 @@ tool(
               walletAddress: addr,
               keyId: id,
               ...(sessionName ? { sessionName } : {}),
-              authorized: valid,
               ...(REGISTRY !== NETWORK ? { registryNetwork: REGISTRY.chain.name } : {}),
-              ...(cache ? { cache } : {}),
+              ...result,
             },
             null,
             2,
