@@ -18,6 +18,31 @@ bunx @altananetwork/mcp
 
 Requires [Bun](https://bun.sh) (the server runs via the `bun` shebang).
 
+## Hosted remote server (read-only)
+
+The package also ships `altana-mcp-remote`: the same server's read-only
+subset over [Streamable HTTP](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http),
+for hosting on a public endpoint (and for the host app directories, which
+list remote MCP servers only). It exposes `about_altana`,
+`wallet_verification`, `verify_authorization`, `wallet_balance` (by
+address), `list_fee_currencies`, `search_skills` and `get_skill` — every
+tool annotated `readOnlyHint`. It holds **no key material and no per-user
+state**: creating wallets, granting sessions and executing transactions
+stay with the local stdio server, where keys live in your OS keychain.
+
+```bash
+# serve BNB Chain (default) on :3717
+bunx --package @altananetwork/mcp altana-mcp-remote
+
+# another chain / port
+ALTANA_CHAIN=ethereum PORT=8080 bunx --package @altananetwork/mcp altana-mcp-remote
+```
+
+The MCP endpoint is `/mcp`; `/healthz` answers readiness probes. The
+transport is stateless, so instances scale horizontally behind a load
+balancer. Chain selection works exactly like the stdio server (one process,
+one chain, `ALTANA_CHAIN`).
+
 ## Network
 
 The chain is selected at startup via the `ALTANA_CHAIN` environment variable:

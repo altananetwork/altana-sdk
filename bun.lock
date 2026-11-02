@@ -73,10 +73,11 @@
       "version": "0.10.0",
       "bin": {
         "altana-mcp": "./src/index.ts",
+        "altana-mcp-remote": "./src/remote.ts",
       },
       "dependencies": {
         "@altananetwork/sdk": "^0.10.0",
-        "@modelcontextprotocol/sdk": "^1.0.0",
+        "@modelcontextprotocol/sdk": "^1.29.0",
         "@napi-rs/keyring": "^1.1.0",
         "viem": "^2.21.0",
         "zod": "^3.23.0",

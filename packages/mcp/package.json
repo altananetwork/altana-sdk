@@ -25,7 +25,8 @@
     "bun": ">=1.1.0"
   },
   "bin": {
-    "altana-mcp": "./src/index.ts"
+    "altana-mcp": "./src/index.ts",
+    "altana-mcp-remote": "./src/remote.ts"
   },
   "main": "./src/index.ts",
   "types": "./src/index.ts",
@@ -39,6 +40,7 @@
   ],
   "scripts": {
     "start": "bun run src/index.ts",
+    "start:remote": "bun run src/remote.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "node ../../scripts/check-publishable.mjs"
@@ -48,7 +50,7 @@
   },
   "dependencies": {
     "@altananetwork/sdk": "^0.10.0",
-    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@napi-rs/keyring": "^1.1.0",
     "viem": "^2.21.0",
     "zod": "^3.23.0"
