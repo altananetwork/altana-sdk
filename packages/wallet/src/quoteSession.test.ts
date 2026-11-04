@@ -309,6 +309,13 @@ describe("formatQuoteLine on a cross-asset write", () => {
     expect(formatQuoteLine(crossAssetLine(celoNeed), SEPOLIA)).toContain("value 0.000236604958884629 ETH");
   });
 
+  test("a line carrying only the legacy `needed` still states its total, as the funding chain's native token", () => {
+    // A quote recorded before `needs` existed, or one built by hand. Without
+    // this the line names a CELO fee and an ETH value and no total at all.
+    const legacy: QuoteLine = { ...crossAssetLine(celoNeed), needs: undefined, needed: CELO_NEED };
+    expect(formatQuoteLine(legacy, SEPOLIA)).toContain("pays 2.845288560627534961 S-CELO on Celo Sepolia Testnet");
+  });
+
   test("a plain single-chain line says nothing about paying elsewhere", () => {
     const out = formatQuoteLine(registryLine({}), SEPOLIA);
     expect(out).not.toContain("pays");

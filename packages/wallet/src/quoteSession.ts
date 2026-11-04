@@ -509,8 +509,17 @@ export function formatQuoteLine(line: QuoteLine, network: NetworkConfig): string
   const value = line.value > 0n ? `, value ${formatUnits(line.value, decimals)} ${symbol}` : "";
   const funded =
     line.fundedFromChainId !== undefined ? `, funded from ${chainName(line.fundedFromChainId)}` : "";
-  // What the payer must hold, when that is not simply this chain's native token.
-  const pays = (line.needs ?? [])
+  // What the payer must hold, when that is not simply this chain's native
+  // token. A line that carries only the legacy `needed` — a quote recorded
+  // before `needs` existed, or one built by hand — still states its total,
+  // read as the funding chain's native token, which is what `needed` meant.
+  const needs =
+    line.needs && line.needs.length > 0
+      ? line.needs
+      : line.fundedFromChainId !== undefined && line.needed > 0n
+        ? [{ chainId: line.fundedFromChainId, token: NATIVE_TOKEN, amount: line.needed, fromRelay: line.neededFromRelay }]
+        : [];
+  const pays = needs
     .filter((n) => n.amount > 0n && (n.chainId !== line.chainId || n.token.toLowerCase() !== NATIVE_TOKEN))
     .map((n) => `pays ${formatNeed(n, feeNetwork)}${n.chainId !== undefined ? ` on ${chainName(n.chainId)}` : ""}`);
   return `chain ${line.chainId} ${line.kind}${line.via ? ` via ${line.via}` : ""}: ${fee}${value}${funded}${pays.length ? `, ${pays.join(", ")}` : ""}`;
