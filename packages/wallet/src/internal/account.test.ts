@@ -78,7 +78,7 @@ describe("feeFromPrepared", () => {
         },
       },
     };
-    expect(feeFromPrepared(prepared)).toEqual({ fee: 1016n, feeTokenDeficit: 2n });
+    expect(feeFromPrepared(prepared)).toMatchObject({ fee: 1016n, feeTokenDeficit: 2n });
   });
 
   test("reads paymentMaxAmount, the fee field of the intent shape the relay returns today", () => {
@@ -97,7 +97,7 @@ describe("nativeNeededFromPrepared", () => {
 
   test("a funded wallet: the fee plus the registration fee, not the registration fee alone", () => {
     const prepared = { context: { quote: { quotes: [{ intent: { totalPaymentMaxAmount: 700n } }] } } };
-    expect(nativeNeededFromPrepared(prepared, { fee: 700n, value: 200n, feeToken: NATIVE })).toEqual({
+    expect(nativeNeededFromPrepared(prepared, { fee: 700n, value: 200n, feeToken: NATIVE })).toMatchObject({
       nativeNeeded: 900n,
       nativeNeededFromRelay: false,
     });
@@ -107,7 +107,7 @@ describe("nativeNeededFromPrepared", () => {
     const prepared = {
       context: { quote: { quotes: [{ assetDeficits: [{ address: null, required: 950n, deficit: 950n }] }] } },
     };
-    expect(nativeNeededFromPrepared(prepared, { fee: 700n, value: 200n, feeToken: NATIVE })).toEqual({
+    expect(nativeNeededFromPrepared(prepared, { fee: 700n, value: 200n, feeToken: NATIVE })).toMatchObject({
       nativeNeeded: 950n,
       nativeNeededFromRelay: true,
     });
@@ -117,7 +117,7 @@ describe("nativeNeededFromPrepared", () => {
     const prepared = {
       context: { quote: { quotes: [{ assetDeficits: [{ address: TOKEN, required: 5n, deficit: 5n }] }] } },
     };
-    expect(nativeNeededFromPrepared(prepared, { fee: 700n, value: 200n, feeToken: TOKEN })).toEqual({
+    expect(nativeNeededFromPrepared(prepared, { fee: 700n, value: 200n, feeToken: TOKEN })).toMatchObject({
       nativeNeeded: 200n,
       nativeNeededFromRelay: false,
     });

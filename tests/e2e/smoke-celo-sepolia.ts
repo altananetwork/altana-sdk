@@ -9,13 +9,16 @@
  *      Sepolia are relayed wallet calls paid from this balance, registration
  *      fee and relay fee alike
  *   3. execute(wallet, admin, ...) on Celo Sepolia (no registry prepend here)
- *   4. grantSession: registry write on Sepolia, account authorization on
+ *   4. quoteGrantSession: what the payer owes on Celo Sepolia, per token, and
+ *      on a cross-asset relay the converted amount checked against an
+ *      independent price
+ *   5. grantSession: registry write on Sepolia, account authorization on
  *      Celo Sepolia, proof into the cache; all three reported
- *   5. execute(session, ...) as the agent
- *   6. registry + cache reads: Sepolia isValidKey true, cache getCachedKey set
- *   7. revokeSession: discovery, account revoke, registry revoke,
+ *   6. execute(session, ...) as the agent
+ *   7. registry + cache reads: Sepolia isValidKey true, cache getCachedKey set
+ *   8. revokeSession: discovery, account revoke, registry revoke,
  *      post-revocation proof; one leg each
- *   8. execute(session, ...) after revoke: rejected
+ *   9. execute(session, ...) after revoke: rejected
  *
  * Needs, and fails loudly without:
  *   TEST_FUNDER_KEY   funded with CELO on Celo Sepolia (>= 1 CELO,
@@ -33,6 +36,7 @@
 import {
   createClient,
   createPrivateKeySigner,
+  formatQuoteLine,
   isCachedKeyValid,
   readCachedKey,
   CELO_SEPOLIA,
@@ -41,7 +45,8 @@ import {
   type NetworkConfig,
 } from "@altananetwork/sdk";
 import { assertStatus, legOf, printLegs } from "./session-legs.js";
-import { createPublicClient, createWalletClient, formatEther, http, keccak256, parseEther, type Address, type Hex, type PublicClient } from "viem";
+import { assertCrossAssetCharge, checkCrossAssetCharge } from "./cross-asset-check.js";
+import { createPublicClient, createWalletClient, formatEther, formatUnits, http, keccak256, parseEther, type Address, type Hex, type PublicClient } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
 const TEST_FUNDER_KEY = process.env.TEST_FUNDER_KEY as Hex;
@@ -73,6 +78,12 @@ function ms(start: number) {
 }
 function show(v: unknown) {
   return JSON.stringify(v, (_k, x) => (typeof x === "bigint" ? x.toString() : x), 2);
+}
+/** The config for a chain the quote names: the two this smoke test runs on. */
+function networkOf(chainId: number): NetworkConfig {
+  if (chainId === celoSepolia.chainId) return celoSepolia;
+  if (chainId === sepolia.chainId) return sepolia;
+  throw new Error(`the quote named an unexpected chain ${chainId}`);
 }
 
 async function main() {
@@ -119,13 +130,36 @@ async function main() {
   console.log("    tx:    ", firstExec.transactionHash);
   if (firstExec.status !== "CONFIRMED") throw new Error("First execute failed");
 
-  // 4. Grant a session: three steps, all reported.
-  console.log("\n[4] grantSession (1h expiry, scoped to funder + 1 CELO/day cap)");
+  // 4. Price the grant before signing it. The registry write lands on Sepolia
+  //    and is paid on Celo Sepolia, so the quote states what the payer owes
+  //    there, per token. On a cross-asset relay that is a converted amount,
+  //    checked against an independent price before anything is signed.
+  const grant = {
+    permissions: { calls: [{ to: funder.address }], spend: [{ limit: parseEther("1"), period: "day" as const }] },
+    expiry: Math.floor(Date.now() / 1000) + 3600,
+  };
+  console.log("\n[4] quoteGrantSession: what the payer owes on Celo Sepolia, per token");
+  const quote = await client.quoteGrantSession({ wallet, signer: adminSigner, ...grant });
+  for (const line of quote.lines) console.log(`    ${formatQuoteLine(line, networkOf(line.chainId))}`);
+  for (const b of quote.balances) {
+    console.log(
+      `    balance chain ${b.chainId} ${b.symbol}: ${formatUnits(b.balance, b.decimals)}, needs ` +
+        `${formatUnits(b.needed, b.decimals)}${b.sufficient ? "" : "  SHORT"}${b.reason ? ` (${b.reason})` : ""}`,
+    );
+  }
+  // A warning, not a failure: the grant below is the real assertion, and a
+  // quote that reads a balance in the wrong token must not be what stops a run.
+  for (const b of quote.balances.filter((x) => !x.sufficient)) {
+    console.log(`    WARNING: short ${b.symbol} on chain ${b.chainId}; the grant will fail if the quote is right`);
+  }
+  assertCrossAssetCharge(await checkCrossAssetCharge(quote, { registry: sepolia, funding: celoSepolia }));
+
+  // 5. Grant a session: three steps, all reported.
+  console.log("\n[5] grantSession (1h expiry, scoped to funder + 1 CELO/day cap)");
   const session = await client.grantSession({
     wallet,
     signer: adminSigner,
-    permissions: { calls: [{ to: funder.address }], spend: [{ limit: parseEther("1"), period: "day" }] },
-    expiry: Math.floor(Date.now() / 1000) + 3600,
+    ...grant,
     onStatus: (s, d) => console.log(`    status: ${s}${d ? ` (chain ${d.chainId})` : ""} [${ms(t0)}]`),
   });
   printLegs(session.legs);
@@ -138,14 +172,14 @@ async function main() {
   console.log(`    granted [${ms(t0)}]`);
 
   // 5. Execute as the session
-  console.log("\n[5] execute(session, sendOneWei) on Celo Sepolia");
+  console.log("\n[6] execute(session, sendOneWei) on Celo Sepolia");
   const sessionExec = await client.execute({ session, calls: { to: funder.address, value: 1n, data: "0x" } });
   console.log("    status:", sessionExec.status, `[${ms(t0)}]`);
   console.log("    tx:    ", sessionExec.transactionHash);
   if (sessionExec.status !== "CONFIRMED") throw new Error("session execute failed");
 
   // 6. Reads: registry on Sepolia, cache on Celo Sepolia
-  console.log("\n[6] reads");
+  console.log("\n[7] reads");
   const keyId = keccak256(session.publicKey);
   const registryValid = await sepoliaPublic.readContract({ address: sepolia.keyStore, abi: KEYSTORE_ABI, functionName: "isValidKey", args: [wallet.address, keyId] });
   const cached = await readCachedKey(celoPublic, CACHE, wallet.address, keyId);
@@ -157,7 +191,7 @@ async function main() {
   if (cached.publicKey.toLowerCase() !== session.publicKey.toLowerCase() || cached.revoked) throw new Error("cache does not hold the live session key");
 
   // 7. Revoke: account and registry in parallel, then the post-revocation proof
-  console.log("\n[7] revokeSession");
+  console.log("\n[8] revokeSession");
   // The funded grant leaves the unspent part of the relay's maximum fee on Sepolia. The revoke
   // must still be paid from Celo: ETH the wallet holds on Sepolia is not used. Wait for the
   // leftover to show (a public RPC can lag the relay's settlement) so the run proves that case.
@@ -201,7 +235,7 @@ async function main() {
   if (!afterCache.revoked) throw new Error("cache still reports the key as live after the post-revocation proof");
 
   // 8. Session after revoke: rejected
-  console.log("\n[8] execute(session, ...) after revoke, expecting rejection");
+  console.log("\n[9] execute(session, ...) after revoke, expecting rejection");
   try {
     const afterRevoke = await client.execute({ session, calls: { to: funder.address, value: 1n, data: "0x" } });
     if (afterRevoke.status === "CONFIRMED") throw new Error("UNEXPECTED: session still works after revoke");

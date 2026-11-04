@@ -74,6 +74,7 @@ export { revokeSession } from "./revokeSession.js";
 export type { RevokeSessionResult, RevokeSessionOptions } from "./revokeSession.js";
 export { quoteGrantSession, quoteRevokeSession, formatQuoteLine } from "./quoteSession.js";
 export type { SessionQuote, QuoteLine, QuoteBalance } from "./quoteSession.js";
+export type { LegCharge, QuoteNeed } from "./internal/relay.js";
 export { quoteCalls } from "./internal/relay.js";
 export type { CallsQuote } from "./internal/relay.js";
 

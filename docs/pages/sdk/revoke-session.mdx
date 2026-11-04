@@ -84,12 +84,22 @@ The cache proofs wait for each L2 to anchor the Sepolia block of the Keystore re
 
 The registry leg is paid from the wallet's balance on the L2, registration fee and relay fee; ETH held on the Keystore chain is not used. It carries `fundedFromChainId`, and its cost shows on that chain in `quoteRevokeSession`.
 
-`client.quoteRevokeSession` takes the same options and returns one line per leg (fee and native value, who pays) plus the payers' balances, without signing or sending anything. Each line's `needed`, and each balance's sum of them, is the native amount the leg needs: the fee plus the value it carries, such as a registration fee. When the wallet is short, the relay's own figure is used and `neededFromRelay` is `true`:
+`client.quoteRevokeSession` takes the same options and returns one line per leg (fee and value, who pays) plus the payers' balances, without signing or sending anything. Each line's `needed`, and each balance's sum of them, is the native amount the leg needs: the fee plus the value it carries, such as a registration fee. When the wallet is short, the relay's own figure is used and `neededFromRelay` is `true`:
 
 ```ts
 const quote = await client.quoteRevokeSession({ wallet, signer: admin, session });
 for (const line of quote.lines) console.log(line.chainId, line.kind, line.fee);
 ```
+
+A leg is not always paid in a chain's native token. The relay prices the registry write in whichever token it accepts on the funding chain, which can be the native one or a stablecoin with 6 decimals. Each line's `needs` says what the payer must hold, per chain and per token, and `balances` carries one row per token with its own `symbol` and `decimals`. Read those rather than assuming 18:
+
+```ts
+for (const b of quote.balances) {
+  console.log(b.chainId, b.symbol, formatUnits(b.balance, b.decimals), formatUnits(b.needed, b.decimals), b.sufficient);
+}
+```
+
+`needed` on a line is the native part of `needs`, so a leg the relay charges in a stablecoin has `needed: 0n` and the real amount in `needs`. `fee` and `feeToken` are the charge on the chain the payer pays from.
 
 Each leg is one signature today, so a revoke on two L2s is five: two account legs, one registry leg, two cache proofs.
 

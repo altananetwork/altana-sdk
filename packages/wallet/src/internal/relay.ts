@@ -567,6 +567,52 @@ export type CallsQuote = {
   nativeNeeded: bigint;
   /** True when `nativeNeeded` is the relay's own figure rather than fee plus value. */
   nativeNeededFromRelay: boolean;
+  /**
+   * What each quoted leg charges, in that leg's own token on its own chain.
+   *
+   * `fee` above is a single number and only means one when every leg charges
+   * the same token. A cross-asset quote charges the source leg in CELO or a
+   * stablecoin and the destination leg in ETH, so read this to show or check
+   * either one. Empty when the relay's quote carried no legs.
+   */
+  charges: readonly LegCharge[];
+  /**
+   * What the payer must hold for this intent, per chain and token.
+   *
+   * This is the figure to check a balance against. For a multichain quote it
+   * is the source chain's own cost only: the escrow the wallet locks there
+   * plus that leg's fee. The destination chain costs the payer nothing — the
+   * funder fronts it and the escrow repays it — so no need is reported there.
+   */
+  needs: readonly QuoteNeed[];
+};
+
+/** What one quoted leg charges its payer, in that leg's own token on its own chain. */
+export type LegCharge = {
+  /** The leg's chain. Absent when the relay's quote did not name one. */
+  chainId?: number;
+  /** The token the relay charges this leg's fee in (the zero address is native). */
+  feeToken: Address;
+  /** The leg's own fee, in `feeToken` base units. Never summed across legs. */
+  fee: bigint;
+  /** How much of `feeToken` the payer is missing on this leg. 0 when funded. */
+  feeTokenDeficit: bigint;
+};
+
+/** One amount the payer must hold: a token on a chain. */
+export type QuoteNeed = {
+  /** The chain the amount is needed on. Absent when the quote named no chain. */
+  chainId?: number;
+  /** The token needed (the zero address is that chain's native token). */
+  token: Address;
+  /** The amount, in that token's own base units. */
+  amount: bigint;
+  /** True when the amount is the relay's own asset-deficit figure. */
+  fromRelay: boolean;
+  /** The token's symbol, when the relay's asset diffs named one. */
+  symbol?: string;
+  /** The token's decimals, when the relay's asset diffs named them. */
+  decimals?: number;
 };
 
 /**
@@ -582,11 +628,15 @@ export async function quoteCalls(
   opts: SubmitCallsOptions,
 ): Promise<CallsQuote> {
   const { prepared, effectiveCalls, feeToken: named } = await prepareIntent(client, walletAddress, signer, calls, opts);
-  const { fee, feeTokenDeficit } = feeFromPrepared(prepared);
   const value = effectiveCalls.reduce((sum, c) => sum + (c.value ?? 0n), 0n);
+  const ownChainId = client.chain?.id;
+  const fundedFromChainId = fundedFromChainIdOf(prepared, ownChainId);
+  // The chain whose balance this costs the payer: the funding chain of a
+  // multichain quote, the intent's own chain otherwise.
+  const payChainId = fundedFromChainId ?? ownChainId;
+  const { fee, feeTokenDeficit, feeToken: quoted, charges } = feeFromPrepared(prepared, { payChainId });
   // The token the relay quoted in; the one the rule named when the quote does not say.
-  const feeToken = paymentTokenFromPrepared(prepared) ?? named ?? NATIVE_TOKEN;
-  const fundedFromChainId = fundedFromChainIdOf(prepared, client.chain?.id);
+  const feeToken = quoted ?? named ?? NATIVE_TOKEN;
   return {
     ...(fundedFromChainId !== undefined ? { fundedFromChainId } : {}),
     legs: quoteLegsFromPrepared(prepared),
@@ -594,7 +644,16 @@ export async function quoteCalls(
     feeTokenDeficit,
     feeToken,
     value,
-    ...nativeNeededFromPrepared(prepared, { fee, value, feeToken }),
+    charges,
+    ...nativeNeededFromPrepared(prepared, {
+      fee,
+      value,
+      feeToken,
+      charges,
+      payer: walletAddress,
+      ...(ownChainId !== undefined ? { ownChainId } : {}),
+      ...(payChainId !== undefined ? { payChainId } : {}),
+    }),
   };
 }
 
@@ -616,29 +675,243 @@ export function receiptOnChain(receipts: readonly RelayReceipt[], chainId: numbe
 }
 
 /**
- * Native wei an intent needs from the wallet. The relay only states a balance figure when the
- * wallet is short: then each quote carries an asset deficit for the native token whose
- * `required` covers the fee and everything the intent spends. Otherwise the need is the fee (if
- * paid natively) plus the value the calls carry.
+ * What an intent needs from the wallet.
+ *
+ * `needs` answers it per chain and token, which is the only form that survives
+ * a cross-asset quote. See `needsFromPrepared`.
+ *
+ * `nativeNeeded` is the one native figure callers that read a single number
+ * still get: the native part of what the payer needs on the chain they pay
+ * from. For a single-chain quote that is the fee (when paid natively) plus the
+ * value the calls carry, or the relay's own asset deficit when it says the
+ * wallet is short — exactly as before. For a multichain quote it is the
+ * funding chain's own cost, and it is 0 when that chain is paid in a token,
+ * because then no native balance is needed there at all.
  */
 export function nativeNeededFromPrepared(
   prepared: any,
-  args: { fee: bigint; value: bigint; feeToken: Address },
-): { nativeNeeded: bigint; nativeNeededFromRelay: boolean } {
-  const estimate = args.value + (args.feeToken.toLowerCase() === NATIVE_TOKEN ? args.fee : 0n);
+  args: {
+    fee: bigint;
+    value: bigint;
+    feeToken: Address;
+    /** The quote's per-leg charges, when already read. */
+    charges?: readonly LegCharge[];
+    /** The chain the intent runs on: the destination of a multichain quote. */
+    ownChainId?: number;
+    /** The chain the payer pays from: the funding leg of a multichain quote. */
+    payChainId?: number;
+    /** Whose asset diffs the escrow outflow is read from. */
+    payer?: Address;
+  },
+): { nativeNeeded: bigint; nativeNeededFromRelay: boolean; needs: readonly QuoteNeed[] } {
+  const needs = needsFromPrepared(prepared, args);
+  const payChain = payKeyChain(prepared, args);
+  const native = needs.find((n) => n.token.toLowerCase() === NATIVE_TOKEN && n.chainId === payChain);
+  return {
+    nativeNeeded: native?.amount ?? 0n,
+    nativeNeededFromRelay: native?.fromRelay ?? false,
+    needs,
+  };
+}
+
+/**
+ * The chain `needs` is keyed by for the payer: the funding chain of a
+ * multichain quote, otherwise the intent's own chain, and when the relay's
+ * quote named no chain at all, undefined — the same key `needsFromPrepared`
+ * uses, so the two never disagree.
+ */
+function payKeyChain(
+  prepared: any,
+  args: { ownChainId?: number; payChainId?: number },
+): number | undefined {
+  if (args.payChainId !== undefined) return args.payChainId;
+  if (args.ownChainId !== undefined) return args.ownChainId;
+  return chainIdOfQuote((prepared?.context?.quote?.quotes ?? [])[0]);
+}
+
+/**
+ * What the payer must hold for a quoted intent, per chain and token.
+ *
+ * **Single-chain quote:** the leg's fee in the leg's own token, plus the
+ * native value the calls carry.
+ *
+ * **Multichain quote** (a registry write the relay funds from an L2): only the
+ * funding chain costs the payer anything. There the wallet locks an escrow and
+ * pays that leg's fee; the destination chain is paid by the relay's funder and
+ * the escrow repays it, so adding the destination leg would charge the payer
+ * twice. The escrow is read from the outgoing asset diffs the relay simulated
+ * for the payer on the funding chain — the relay's own figure for what leaves
+ * the wallet, which is the only place a cross-asset quote states the converted
+ * source amount. Those diffs carry the escrow and not the leg's fee (the fee
+ * goes to `paymentRecipient`, which the relay accounts separately; observed on
+ * the testnet relay, `celo-harness/evidence/2026-10-15-spine-local-11-31-31-wire.json`),
+ * so the two add without overlapping.
+ *
+ * **When the relay sent no asset diffs** for the payer on the funding chain —
+ * an older relay, or a quote with diffs switched off — there is no converted
+ * amount to read, so the figure falls back to what the SDK has always assumed:
+ * every leg's fee plus the value, all charged on the funding chain in that
+ * leg's token. That is only right when one unit of the source asset repays one
+ * unit of the destination asset, which is exactly what those relays do.
+ *
+ * In both shapes the relay's own asset deficits act as a floor per chain and
+ * token: when it says the wallet is short by more than the derived figure, its
+ * figure wins.
+ */
+export function needsFromPrepared(
+  prepared: any,
+  args: {
+    /** The fee on the paying chain, as `feeFromPrepared` reduced it. */
+    fee: bigint;
+    /** The token that fee is charged in. */
+    feeToken: Address;
+    /** Native value the intent's calls carry, on the intent's own chain. */
+    value: bigint;
+    charges?: readonly LegCharge[];
+    ownChainId?: number;
+    payChainId?: number;
+    payer?: Address;
+  },
+): readonly QuoteNeed[] {
   const quotes: any[] = prepared?.context?.quote?.quotes ?? [];
-  let fromRelay = 0n;
-  let reported = false;
-  for (const q of quotes) {
-    for (const d of (q?.assetDeficits ?? []) as any[]) {
-      const native = d?.address === null || d?.address === undefined || String(d.address).toLowerCase() === NATIVE_TOKEN;
-      if (!native) continue;
-      fromRelay += toBigInt(d.required);
-      reported = true;
+  if (quotes.length === 0) return [];
+  const charges = args.charges ?? chargesFromPrepared(quotes);
+  const multichain =
+    args.payChainId !== undefined &&
+    args.ownChainId !== undefined &&
+    args.payChainId !== args.ownChainId;
+
+  const acc = new Map<string, { need: QuoteNeed }>();
+  const key = (chainId: number | undefined, token: Address) => `${chainId ?? "?"}:${token.toLowerCase()}`;
+  const add = (chainId: number | undefined, token: Address, amount: bigint, meta?: { symbol?: string; decimals?: number }) => {
+    if (amount === 0n) return;
+    const k = key(chainId, token);
+    const found = acc.get(k);
+    if (found) {
+      found.need.amount += amount;
+      if (meta?.symbol !== undefined && found.need.symbol === undefined) found.need.symbol = meta.symbol;
+      if (meta?.decimals !== undefined && found.need.decimals === undefined) found.need.decimals = meta.decimals;
+      return;
+    }
+    acc.set(k, {
+      need: {
+        ...(chainId !== undefined ? { chainId } : {}),
+        token,
+        amount,
+        fromRelay: false,
+        ...(meta?.symbol !== undefined ? { symbol: meta.symbol } : {}),
+        ...(meta?.decimals !== undefined ? { decimals: meta.decimals } : {}),
+      },
+    });
+  };
+
+  // One key per chain for the payer's side, so a quote the relay did not tag
+  // with a chain still adds its fee and its value together rather than
+  // splitting them over two entries that no balance check would ever join.
+  const payChain = payKeyChain(prepared, args);
+  // `args.fee` is already the charge on the paying chain in its own token
+  // (`feeFromPrepared` reduced it with the same `payChainId`), so it is used
+  // rather than re-derived: one figure, one place it comes from.
+  add(payChain, args.feeToken, args.fee);
+  if (!multichain) {
+    add(payChain, NATIVE_TOKEN, args.value);
+  } else {
+    const outgoing = args.payer ? outgoingDiffs(prepared, { chainId: payChain, payer: args.payer }) : [];
+    if (outgoing.length > 0) {
+      for (const o of outgoing) add(payChain, o.token, o.amount, o);
+    } else {
+      // No diffs to read the converted escrow from: fall back to the 1:1
+      // figure, every other leg's fee plus the value, in the paying token.
+      const others = charges.filter((c) => c.chainId !== payChain).reduce((sum, c) => sum + c.fee, 0n);
+      add(payChain, args.feeToken, others + args.value);
     }
   }
-  if (reported && fromRelay >= estimate) return { nativeNeeded: fromRelay, nativeNeededFromRelay: true };
-  return { nativeNeeded: estimate, nativeNeededFromRelay: false };
+
+  // The relay's deficits are a floor, per chain and token, and only on the
+  // chain the payer actually pays from: on a multichain quote the destination
+  // deficits are what made the relay fund the intent in the first place, and
+  // the escrow already covers them.
+  for (const q of quotes) {
+    const chainId = chainIdOfQuote(q);
+    if (multichain && chainId !== args.payChainId) continue;
+    for (const d of (q?.assetDeficits ?? []) as any[]) {
+      const token = isNativeAddress(d?.address) ? NATIVE_TOKEN : getAddress(String(d.address));
+      const required = toBigInt(d?.required);
+      if (required === 0n) continue;
+      const k = key(chainId, token);
+      const found = acc.get(k);
+      if (!found) {
+        acc.set(k, { need: { ...(chainId !== undefined ? { chainId } : {}), token, amount: required, fromRelay: true } });
+      } else if (required >= found.need.amount) {
+        // `>=`, not `>`: when the two agree the figure is the relay's, which is
+        // what `nativeNeededFromRelay` has always reported for that case.
+        found.need.amount = required;
+        found.need.fromRelay = true;
+      }
+    }
+  }
+
+  return [...acc.values()].map((v) => v.need);
+}
+
+/**
+ * What the relay simulated leaving `payer` on `chainId`, per token, from the
+ * response's `assetDiffs`. Escrowed funds show up here, and for a cross-asset
+ * quote this is the only statement of the converted source amount.
+ *
+ * The EIP-7708 system-address duplicate is already gone: every relay response
+ * passes through `stripEip7708AssetDiffs` in the transport.
+ */
+export function outgoingDiffs(
+  prepared: any,
+  args: { chainId: number | undefined; payer: Address },
+): readonly { token: Address; amount: bigint; symbol?: string; decimals?: number }[] {
+  if (args.chainId === undefined) return [];
+  const byChain = prepared?.capabilities?.assetDiffs;
+  if (typeof byChain !== "object" || byChain === null) return [];
+  // Chain keys come as hex ("0xaa044c"); match by value, not by spelling.
+  const entry = Object.entries(byChain as Record<string, unknown>).find(([k]) => chainIdOfKey(k) === args.chainId);
+  if (!entry || !Array.isArray(entry[1])) return [];
+  const payer = args.payer.toLowerCase();
+  const out = new Map<string, { token: Address; amount: bigint; symbol?: string; decimals?: number }>();
+  for (const tuple of entry[1] as unknown[]) {
+    if (!Array.isArray(tuple) || tuple.length < 2 || !Array.isArray(tuple[1])) continue;
+    if (String(tuple[0]).toLowerCase() !== payer) continue;
+    for (const d of tuple[1] as any[]) {
+      if (d?.direction !== "outgoing") continue;
+      const token = isNativeAddress(d?.address) ? NATIVE_TOKEN : getAddress(String(d.address));
+      const amount = toBigInt(d?.value);
+      if (amount === 0n) continue;
+      const k = token.toLowerCase();
+      const found = out.get(k);
+      if (found) {
+        found.amount += amount;
+        continue;
+      }
+      out.set(k, {
+        token,
+        amount,
+        ...(typeof d?.symbol === "string" && d.symbol.length > 0 ? { symbol: d.symbol } : {}),
+        ...(typeof d?.decimals === "number" ? { decimals: d.decimals } : {}),
+      });
+    }
+  }
+  return [...out.values()];
+}
+
+/** True for the ways a relay response spells "the chain's native token". */
+function isNativeAddress(address: unknown): boolean {
+  return address === null || address === undefined || String(address).toLowerCase() === NATIVE_TOKEN;
+}
+
+function chainIdOfQuote(q: any): number | undefined {
+  return chainIdOfKey(q?.chainId);
+}
+
+function chainIdOfKey(value: unknown): number | undefined {
+  if (value === null || value === undefined || value === "") return undefined;
+  const n = typeof value === "string" ? Number(value) : Number(value);
+  return Number.isFinite(n) ? n : undefined;
 }
 
 /**
@@ -665,21 +938,67 @@ export function quoteLegsFromPrepared(prepared: any): readonly QuoteLeg[] {
   });
 }
 
-/** Reads the fee out of a prepareCalls response (porto decodes the quote's hex amounts). */
-export function feeFromPrepared(prepared: any): { fee: bigint; feeTokenDeficit: bigint } {
+/**
+ * Reads the fee out of a prepareCalls response (porto decodes the quote's hex
+ * amounts), per leg and in each leg's own token.
+ *
+ * `charges` is the real answer: one entry per quoted leg, with the token that
+ * leg is charged in. `fee`, `feeToken` and `feeTokenDeficit` reduce it to the
+ * one number most callers want: the charge on `payChainId`, the chain the payer
+ * pays from. Summing the legs instead would be wrong twice over on a
+ * multichain quote — it adds CELO to ETH when a cross-asset relay prices the
+ * legs in different tokens, and even when both legs are "native" that is the
+ * same zero address standing for two different assets. The destination leg is
+ * the relay funder's to pay; the escrow the source leg locks repays it, and
+ * `needs` carries that escrow.
+ *
+ * With no `payChainId`, or no leg on it, the legs are summed as they always
+ * were. That is every quote whose legs the relay did not tag with a chain.
+ */
+export function feeFromPrepared(
+  prepared: any,
+  opts: {
+    /** The chain the payer pays from: the funding leg of a multichain quote. */
+    payChainId?: number;
+  } = {},
+): { fee: bigint; feeToken: Address | undefined; feeTokenDeficit: bigint; charges: readonly LegCharge[] } {
   const quotes: any[] = prepared?.context?.quote?.quotes ?? [];
   if (quotes.length === 0) {
     throw new Error("The relay's prepareCalls response carried no quote to read a fee from.");
   }
-  let fee = 0n;
-  let feeTokenDeficit = 0n;
-  for (const q of quotes) {
-    // The relay's intent comes in two shapes: the current one names the fee
-    // `paymentMaxAmount`, the newer one `totalPaymentMaxAmount`.
-    fee += toBigInt(q?.intent?.totalPaymentMaxAmount ?? q?.intent?.paymentMaxAmount);
-    feeTokenDeficit += toBigInt(q?.feeTokenDeficit);
-  }
-  return { fee, feeTokenDeficit };
+  const charges = chargesFromPrepared(quotes);
+  const paying = opts.payChainId === undefined ? [] : charges.filter((c) => c.chainId === opts.payChainId);
+  const counted = paying.length === 0 ? charges : paying;
+  const countedQuotes = counted === charges ? quotes : quotes.filter((q) => chainIdOfQuote(q) === opts.payChainId);
+  return {
+    fee: counted.reduce((sum, c) => sum + c.fee, 0n),
+    // Undefined when no counted leg names a payment token, so the caller's own
+    // fee-token rule still decides, exactly as before.
+    feeToken: countedQuotes.map((q) => paymentTokenOfIntent(q?.intent)).find((t) => t !== undefined),
+    feeTokenDeficit: counted.reduce((sum, c) => sum + c.feeTokenDeficit, 0n),
+    charges,
+  };
+}
+
+/** One charge per quoted leg, in that leg's own token. */
+function chargesFromPrepared(quotes: readonly any[]): readonly LegCharge[] {
+  return quotes.map((q) => {
+    const chainId = chainIdOfQuote(q);
+    return {
+      ...(chainId !== undefined ? { chainId } : {}),
+      feeToken: paymentTokenOfIntent(q?.intent) ?? NATIVE_TOKEN,
+      // The relay's intent comes in two shapes: the current one names the fee
+      // `paymentMaxAmount`, the newer one `totalPaymentMaxAmount`.
+      fee: toBigInt(q?.intent?.totalPaymentMaxAmount ?? q?.intent?.paymentMaxAmount),
+      feeTokenDeficit: toBigInt(q?.feeTokenDeficit),
+    };
+  });
+}
+
+/** An intent's payment token, when it names a real address. */
+function paymentTokenOfIntent(intent: unknown): Address | undefined {
+  const token = (intent as { paymentToken?: unknown } | undefined)?.paymentToken;
+  return typeof token === "string" && /^0x[0-9a-fA-F]{40}$/.test(token) ? getAddress(token) : undefined;
 }
 
 function toBigInt(x: unknown): bigint {
