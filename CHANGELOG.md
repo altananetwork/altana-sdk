@@ -252,6 +252,12 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Fixed
 
+- **`fetchWithX402` discovers canonical x402 v2 header challenges.** A present
+  `PAYMENT-REQUIRED` header supplies the complete version, resource and payment
+  options, even with an empty or non-JSON response body. Malformed or unsupported
+  header challenges fail before signing instead of falling back to conflicting
+  body instructions. When the header is absent, legacy v1, v2 and B402 body
+  challenges keep working. Each call still signs and retries at most once.
 - **A wallet's first session key registers reliably again.** That first
   registry write is two KeyStore calls, `initialRegisterKey` then
   `registerKey`, and they were bundled into one relayed intent.
