@@ -74,6 +74,8 @@ export type SessionLegDeps = {
       calls: readonly Call[];
       /** Called before each intent: `root` then `session` on a first-time write. */
       onStep?: (step: "root" | "session") => void;
+      /** What a quote taken before this said the payer pays, for wording a failure. */
+      expectedCost?: { chainId: number; token: Address; amount: bigint };
     },
   ): Promise<IntentOutcome & { via: "relay" | "eoa" }>;
   proveIntoCache(
@@ -157,6 +159,7 @@ export const realSessionLegDeps: SessionLegDeps = {
         adminSigner: args.adminSigner,
         calls: args.calls,
         ...(args.onStep ? { onStep: args.onStep } : {}),
+        ...(args.expectedCost ? { expectedCost: args.expectedCost } : {}),
       });
       return {
         via: written.via,

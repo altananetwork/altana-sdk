@@ -26,9 +26,10 @@ import {
   type Transport,
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { NATIVE_TOKEN, networkByChainId, type NetworkConfig } from "../config.js";
+import { NATIVE_TOKEN, networkByChainId, registryNetwork, type NetworkConfig } from "../config.js";
 import { stripEip7708AssetDiffs } from "./eip7708.js";
-import { feeTokenHint } from "./feeCurrencies.js";
+import { acceptedFeeSymbols, acceptedFeeTokens, feeTokenHint } from "./feeCurrencies.js";
+import { explainRelayFailure, classifyRelayFailure, type FundingShortfall, type RelayFailureFacts } from "../errors.js";
 import { resolveFeeToken, type FeeTokenOption } from "./feeTokenSelection.js";
 import { hasRawPrivateKey, type Signer } from "./signer.js";
 import {
@@ -404,6 +405,26 @@ export type SubmitCallsOptions = {
    * of which the relay already sequences for itself.
    */
   nonce?: bigint;
+  /**
+   * What the person is doing, in their words: "registering this key on
+   * Ethereum", "this transfer". Used only to word a failure, and only ever
+   * read by the error map; the SDK's own "prepare the call" is for logs.
+   */
+  operation?: string;
+  /**
+   * The chain the payer pays from, when it is not the chain the intent runs
+   * on. A registry write on Ethereum funded from a Celo balance sets it to
+   * Celo, and that is the only chain a failure may name: the wallet holding
+   * no ETH on Ethereum is what the product is for, not a fault to report.
+   */
+  fundFrom?: NetworkConfig;
+  /**
+   * What the caller's own quote said this costs the payer, on `fundFrom` (or
+   * on this chain when there is none). The relay will not quote for a wallet
+   * it has already refused, so a figure in the payer's own token exists on a
+   * failure only when a quote was taken before it.
+   */
+  expectedCost?: { chainId: number; token: Address; amount: bigint };
   submittingKey: KeyDescriptor;
   authorizeKeys?: readonly KeyDescriptor[];
   revokeKeys?: readonly KeyDescriptor[];
@@ -480,7 +501,7 @@ export async function submitCallsDetailed(
   calls: readonly Call[],
   opts: SubmitCallsOptions,
 ): Promise<SubmitCallsResult> {
-  const { prepared, signingKeyForPorto, isAdmin } = await prepareIntent(
+  const { prepared, signingKeyForPorto, isAdmin, effectiveCalls } = await prepareIntent(
     client,
     walletAddress,
     signer,
@@ -520,6 +541,7 @@ export async function submitCallsDetailed(
       } as any),
     "submit the call",
     { client, network: opts.network },
+    intentContext(walletAddress, effectiveCalls, feeToken, opts),
   );
 
   return { callsId: (sent?.id ?? sent) as Hex, ...(feeToken ? { feeToken } : {}) };
@@ -1173,7 +1195,7 @@ async function prepareIntent(
     () => retryInvalidNonce(() => prepareCalls(client, prepareParams)),
     "prepare the call",
     { client, network: opts.network },
-    { account: walletAddress, calls: effectiveCalls, funded: Boolean(opts.requiredFunds?.length) },
+    intentContext(walletAddress, effectiveCalls, chosenFeeToken, opts),
   );
 
   return { prepared, signingKeyForPorto, isAdmin, effectiveCalls, feeToken: chosenFeeToken };
@@ -1241,18 +1263,209 @@ async function withRelayReason<T>(
   try {
     return await fn();
   } catch (err) {
-    const reason = deepestRelayReason(err);
+    // A transport failure carries no relay message at all: nothing answered.
+    const reason = deepestRelayReason(err) ?? transportFailure(err);
     if (!reason) throw err;
-    // An empty revert carries no cause, so say that, and add only facts we checked.
-    if (EMPTY_REVERT.test(reason) && relay && intent) {
-      const what = await describeEmptyRevert(relay.client, relay.network, intent);
-      throw new Error(`The relay rejected the request to ${doing}: ${what} (relay: ${reason})`, { cause: err });
-    }
-    // A fee token rejection names the tokens this relay does accept, read live.
-    const hint =
-      /fee token/i.test(reason) && relay ? await feeTokenHint(relay.client, relay.network) : relayRejectionHint(reason);
-    throw new Error(`The relay rejected the request to ${doing}: ${reason}${hint}`, { cause: err });
+    throw await explainRelayError({ reason, doing, err, ...(relay ? { relay } : {}), ...(intent ? { intent } : {}) });
   }
+}
+
+/** Every message an error and its causes carry, outermost first. */
+function errorTexts(err: unknown, limit = 12): string[] {
+  const texts: string[] = [];
+  let cur: any = err;
+  for (let i = 0; i < limit && cur && typeof cur === "object"; i++) {
+    for (const raw of [cur.details, cur.shortMessage, cur.message]) {
+      const text = typeof raw === "string" ? raw.split("\n")[0]!.trim() : "";
+      if (text) texts.push(text);
+    }
+    cur = cur.cause;
+  }
+  return texts;
+}
+
+/** Wrappers that mean the request never reached a relay, or reached none that answered. */
+const TRANSPORT_FAILURE =
+  /HTTP request failed|fetch failed|Failed to fetch|ECONNREFUSED|ENOTFOUND|socket hang up|network error|ETIMEDOUT|request timed out/i;
+
+/**
+ * The transport's own words, when the failure is that nothing answered.
+ *
+ * `deepestRelayReason` drops these on purpose: they are the generic wrappers
+ * that hide a real relay message. When they are all there is, the failure IS
+ * the transport, and the error map says so rather than rethrowing viem's
+ * sentence at a person.
+ */
+function transportFailure(err: unknown): string | undefined {
+  return errorTexts(err).find((t) => TRANSPORT_FAILURE.test(t));
+}
+
+/**
+ * The sentence a person is shown for a relay failure, with the long form kept
+ * for the log.
+ *
+ * `detail` is exactly what this layer used to throw: the request it was
+ * making, the relay's words, the calls simulated and the balances read. None
+ * of it reaches a screen any more. What does is one sentence from
+ * `explainRelayFailure`, and the facts it is built from are the SDK's own: the
+ * balances it read, the quote the caller took, the tokens the relay accepts.
+ */
+async function explainRelayError(args: {
+  reason: string;
+  doing: string;
+  err: unknown;
+  relay?: { client: ReturnType<typeof buildRelayClient>; network: NetworkConfig };
+  intent?: IntentContext;
+}): Promise<Error> {
+  const { reason, doing, err, relay, intent } = args;
+  const detail = await composeFailureDetail(reason, doing, relay, intent);
+  // What the relay said, read for meaning once. A cause it named (an expired
+  // key, a spend cap, a chain it does not serve) is the cause, and the
+  // balances are not read at all; only a funding or unexplained failure
+  // justifies the second round trip.
+  const provisional = classifyRelayFailure({ relayMessage: reason });
+  const shortfall =
+    (provisional === "insufficient_funds" || provisional === "unknown") && relay && intent
+      ? await payerShortfall(relay, intent)
+      : undefined;
+  const feeSymbol =
+    provisional === "price_unavailable" || provisional === "spend_limit_exceeded"
+      ? await feeTokenSymbol(relay, intent?.feeToken)
+      : undefined;
+  const facts: RelayFailureFacts = {
+    relayMessage: reason,
+    detail,
+    cause: err,
+    ...(shortfall ? { shortfall } : {}),
+    ...(feeSymbol ? { feeSymbol } : {}),
+    ...(intent?.operation ? { operation: intent.operation } : {}),
+    ...(relay
+      ? {
+          chain: { name: relay.network.chain.name, chainId: relay.network.chainId },
+          ...(relay.network.relayUrl ? { relayUrl: relay.network.relayUrl } : {}),
+        }
+      : {}),
+  };
+  return explainRelayFailure(facts);
+}
+
+/** The long form: what was asked, what the relay said, and what the SDK checked. */
+async function composeFailureDetail(
+  reason: string,
+  doing: string,
+  relay?: { client: ReturnType<typeof buildRelayClient>; network: NetworkConfig },
+  intent?: IntentContext,
+): Promise<string> {
+  const lead = `The relay rejected the request to ${doing}`;
+  if (EMPTY_REVERT.test(reason) && relay && intent) {
+    const what = await describeEmptyRevert(relay.client, relay.network, intent);
+    return `${lead}: ${what} (relay: ${reason})`;
+  }
+  const hint =
+    /fee token/i.test(reason) && relay ? await feeTokenHint(relay.client, relay.network) : relayRejectionHint(reason);
+  return `${lead}: ${reason}${hint}`;
+}
+
+/** The symbol of the token a fee was to be charged in, when it can be named. */
+async function feeTokenSymbol(
+  relay: { client: ReturnType<typeof buildRelayClient>; network: NetworkConfig } | undefined,
+  feeToken: Address | undefined,
+): Promise<string | undefined> {
+  if (!relay || !feeToken) return undefined;
+  if (isNativeAddress(feeToken)) return relay.network.chain.nativeCurrency.symbol;
+  const tokens = await acceptedFeeTokens(relay.client, relay.network);
+  return tokens.find((t) => t.address.toLowerCase() === feeToken.toLowerCase())?.symbol;
+}
+
+/**
+ * The chain a funded intent is paid from, when the caller did not name one.
+ *
+ * A registry write runs on the registry chain and is paid from the balance on
+ * the chain whose registry it is, which the config states: Celo Sepolia keeps
+ * its KeyStore in Sepolia's, so a Sepolia intent for a Celo wallet is paid in
+ * CELO. Where several configured chains share a registry, the one the wallet
+ * actually holds something on is the one the relay would have drawn from.
+ */
+function fundingNetwork(intentNetwork: NetworkConfig, holdings: readonly Holding[]): NetworkConfig | undefined {
+  const candidates = [...new Set(holdings.map((h) => h.chainId))]
+    .filter((chainId) => chainId !== intentNetwork.chainId)
+    .map((chainId) => networkByChainId(chainId))
+    .filter((n): n is NetworkConfig => !!n && registryNetwork(n).chainId === intentNetwork.chainId);
+  if (candidates.length <= 1) return candidates[0];
+  const value = (n: NetworkConfig) =>
+    holdings
+      .filter((h) => h.chainId === n.chainId)
+      .reduce((most, h) => (h.balance > most ? h.balance : most), 0n);
+  return [...candidates].sort((a, b) => (value(b) > value(a) ? 1 : value(b) < value(a) ? -1 : 0))[0];
+}
+
+/**
+ * What the payer is short of, in the token the payer pays with, on the chain
+ * the payer holds it on.
+ *
+ * Two rules decide what this may say.
+ *
+ * It may only name the chain the payer pays from. A registry write on Ethereum
+ * funded from a Celo balance is short of CELO on Celo, and a message about the
+ * wallet's ETH on Ethereum describes the product's whole purpose as a fault.
+ * For a funded intent the paying chain is the one the caller named
+ * (`fundFrom`); without one, nothing is returned, because the only other
+ * candidate is the destination.
+ *
+ * It may only state a figure the SDK has. The need comes from a quote the
+ * caller already took, or from the native value the calls carry when the
+ * intent is not funded from elsewhere. The relay will not quote for a request
+ * it has refused, so the honest answer is often `have` alone, and a shortfall
+ * is claimed with no figure only when the balance is nothing at all. qa lost
+ * an hour to the inverse, a wallet holding 133x the fee told it could not pay
+ * (`evidence/2026-09-28-s3-registry-write-reverts-0x.md`).
+ */
+async function payerShortfall(
+  relay: { client: ReturnType<typeof buildRelayClient>; network: NetworkConfig },
+  intent: IntentContext,
+): Promise<FundingShortfall | undefined> {
+  const holdings = await readHoldings(relay.client, intent.account).catch(() => undefined);
+  if (!holdings) return undefined;
+  const payNetwork = intent.funded ? (intent.fundFrom ?? fundingNetwork(relay.network, holdings)) : relay.network;
+  if (!payNetwork) return undefined;
+
+  // The token the payer pays with: the one the caller named when it is charged
+  // on this chain, the paying chain's own currency otherwise.
+  const namedHere =
+    intent.feeToken !== undefined &&
+    !isNativeAddress(intent.feeToken) &&
+    payNetwork.chainId === relay.network.chainId
+      ? getAddress(intent.feeToken)
+      : undefined;
+  const token = namedHere ?? NATIVE_TOKEN;
+  const held = holdings.find(
+    (h) => h.chainId === payNetwork.chainId && h.token.toLowerCase() === token.toLowerCase(),
+  );
+  const have = held?.balance ?? 0n;
+  const symbol = held?.symbol ?? (namedHere ? undefined : payNetwork.chain.nativeCurrency.symbol);
+  const decimals = held?.decimals ?? (namedHere ? undefined : payNetwork.chain.nativeCurrency.decimals);
+  // A token the relay did not describe cannot be named in a sentence.
+  if (symbol === undefined || decimals === undefined) return undefined;
+
+  const quoted =
+    intent.expectedCost &&
+    intent.expectedCost.chainId === payNetwork.chainId &&
+    intent.expectedCost.token.toLowerCase() === token.toLowerCase() &&
+    intent.expectedCost.amount > 0n
+      ? intent.expectedCost.amount
+      : undefined;
+  const sends = !intent.funded && token === NATIVE_TOKEN ? totalValue(intent.calls) : 0n;
+  const need = quoted ?? (sends > 0n ? sends : undefined);
+  if (need !== undefined ? have >= need : have > 0n) return undefined;
+
+  const payClient = payNetwork.chainId === relay.network.chainId ? relay.client : buildRelayClient(payNetwork);
+  const tokens = await acceptedFeeSymbols(payClient, payNetwork);
+  return {
+    token: { symbol, decimals },
+    ...(need !== undefined ? { need } : {}),
+    have,
+    fund: { chain: payNetwork.chain.name, ...(tokens.length > 0 ? { tokens } : { tokens: [symbol] }) },
+  };
 }
 
 /** The relay's simulation reverted with no reason bytes ("intent reverted: 0x" or a bare "0x"). */
@@ -1324,7 +1537,33 @@ export type IntentContext = {
   calls: readonly Call[];
   /** Whether the request asked the relay to fund the intent from another chain. */
   funded: boolean;
+  /** The token the fee was to be charged in, when the caller named one. */
+  feeToken?: Address;
+  /** What the person is doing, in their words. See `SubmitCallsOptions.operation`. */
+  operation?: string;
+  /** The chain the payer pays from, when it is not the intent's own. */
+  fundFrom?: NetworkConfig;
+  /** What a quote taken before this said it costs the payer. */
+  expectedCost?: { chainId: number; token: Address; amount: bigint };
 };
+
+/** The facts about one intent a failure may be worded from. */
+function intentContext(
+  account: Address,
+  calls: readonly Call[],
+  feeToken: Address | undefined,
+  opts: SubmitCallsOptions,
+): IntentContext {
+  return {
+    account,
+    calls,
+    funded: Boolean(opts.requiredFunds?.length),
+    ...(feeToken ? { feeToken } : {}),
+    ...(opts.operation ? { operation: opts.operation } : {}),
+    ...(opts.fundFrom ? { fundFrom: opts.fundFrom } : {}),
+    ...(opts.expectedCost ? { expectedCost: opts.expectedCost } : {}),
+  };
+}
 
 /** A wallet's native balance on one chain, as the relay reports it. */
 export type NativeHolding = { chainId: number; chain: string; symbol: string; decimals: number; balance: bigint };
@@ -1425,28 +1664,89 @@ export function balanceClause(here: NativeHolding, value: bigint, elsewhere: rea
   return `${lead}; it holds ${list}, which the relay could not use to fund it`;
 }
 
-/** The wallet's native balance on every chain the SDK knows, from the relay's `wallet_getAssets`. */
-async function readNativeHoldings(relay: ReturnType<typeof buildRelayClient>, account: Address): Promise<NativeHolding[]> {
-  const response = (await relay.request({
-    method: "wallet_getAssets" as never,
-    params: [{ account, assetTypeFilter: ["native"] }] as never,
-  })) as Record<string, unknown> | null;
-  const holdings: NativeHolding[] = [];
+/** One balance the relay reported: a token on a chain. */
+export type Holding = {
+  chainId: number;
+  chain: string;
+  /** The token's address, or the zero address for the chain's own currency. */
+  token: Address;
+  symbol: string;
+  decimals: number;
+  balance: bigint;
+};
+
+/**
+ * Every balance the relay knows for an account, on every chain the SDK is
+ * configured with, from `wallet_getAssets`.
+ *
+ * Tokens are asked for as well as the native currency: a wallet that pays its
+ * fees in a stablecoin is short of the stablecoin, and a reader that saw only
+ * native balances would report it as holding nothing.
+ */
+async function readHoldings(relay: ReturnType<typeof buildRelayClient>, account: Address): Promise<Holding[]> {
+  const response = (await withinShortfallTimeout(
+    relay.request({
+      method: "wallet_getAssets" as never,
+      params: [{ account, assetTypeFilter: ["native", "erc20"] }] as never,
+    }) as Promise<Record<string, unknown> | null>,
+  )) as Record<string, unknown> | null;
+  const holdings: Holding[] = [];
   for (const [key, assets] of Object.entries(response ?? {})) {
     const chainId = key.startsWith("0x") ? parseInt(key, 16) : Number(key);
     const network = networkByChainId(chainId);
     if (!network || !Array.isArray(assets)) continue;
-    const native: any = assets.find((a: any) => a && (a.type === "native" || a.address === "native"));
-    const balance = typeof native?.balance === "string" && /^0x[0-9a-fA-F]+$/.test(native.balance) ? hexToBigInt(native.balance) : 0n;
-    holdings.push({
-      chainId,
-      chain: network.chain.name,
-      symbol: typeof native?.metadata?.symbol === "string" ? native.metadata.symbol : network.chain.nativeCurrency.symbol,
-      decimals: typeof native?.metadata?.decimals === "number" ? native.metadata.decimals : network.chain.nativeCurrency.decimals,
-      balance,
-    });
+    for (const asset of assets as any[]) {
+      if (!asset) continue;
+      const isNative = asset.type === "native" || asset.address === "native" || isNativeAddress(asset.address);
+      const token = isNative
+        ? (NATIVE_TOKEN as Address)
+        : typeof asset.address === "string" && /^0x[0-9a-fA-F]{40}$/.test(asset.address)
+          ? getAddress(asset.address)
+          : undefined;
+      if (token === undefined) continue;
+      holdings.push({
+        chainId,
+        chain: network.chain.name,
+        token,
+        // The chain config is the authority on its own currency's symbol: the
+        // relay labels the native entry from whatever its asset lookup returned.
+        symbol: isNative
+          ? network.chain.nativeCurrency.symbol
+          : typeof asset.metadata?.symbol === "string"
+            ? asset.metadata.symbol
+            : "",
+        decimals: isNative
+          ? network.chain.nativeCurrency.decimals
+          : typeof asset.metadata?.decimals === "number"
+            ? asset.metadata.decimals
+            : 18,
+        balance:
+          typeof asset.balance === "string" && /^0x[0-9a-fA-F]+$/.test(asset.balance) ? hexToBigInt(asset.balance) : 0n,
+      });
+    }
   }
-  return holdings;
+  // A token the relay named nothing for cannot be put in a sentence.
+  return holdings.filter((h) => h.symbol.length > 0);
+}
+
+/** Gives up on a balance read, so a slow relay costs a clause and not the error. */
+async function withinShortfallTimeout<T>(work: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("balance read timed out")), SHORTFALL_READ_TIMEOUT_MS);
+  });
+  return await Promise.race([work, timeout]).finally(() => clearTimeout(timer));
+}
+
+/** The wallet's native balance on every chain the SDK knows, for the long form. */
+async function readNativeHoldings(
+  relay: ReturnType<typeof buildRelayClient>,
+  account: Address,
+): Promise<NativeHolding[]> {
+  const holdings = await readHoldings(relay, account);
+  return holdings
+    .filter((h) => h.token.toLowerCase() === NATIVE_TOKEN)
+    .map((h) => ({ chainId: h.chainId, chain: h.chain, symbol: h.symbol, decimals: h.decimals, balance: h.balance }));
 }
 
 /** Raw selectors, for the fee path: the Orchestrator re-reverts only 32 bytes of return data. */

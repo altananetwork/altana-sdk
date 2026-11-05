@@ -136,6 +136,44 @@ export function formatFeeAmount(
 /** How long the error path waits for the relay's fee token list. */
 export const FEE_TOKEN_HINT_TIMEOUT_MS = 3_000;
 
+/** Runs `work`, giving up after `ms`. A degraded relay must not hold an error back. */
+async function within<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("fee token read timed out")), ms);
+  });
+  return await Promise.race([work, timeout]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * The fee tokens the relay accepts on a chain, as a person reads them.
+ *
+ * Empty when the relay cannot be asked or does not answer in time: an error
+ * message that waits on a second relay call is worse than one without the
+ * list, so every caller treats emptiness as "say nothing about tokens".
+ */
+export async function acceptedFeeTokens(
+  relay: Client,
+  network: NetworkConfig,
+  timeoutMs: number = FEE_TOKEN_HINT_TIMEOUT_MS,
+): Promise<readonly { address: Address; symbol: string }[]> {
+  try {
+    const { currencies } = await within(fetchFeeCurrencies(relay, network), timeoutMs);
+    return currencies.map((c) => ({ address: c.address, symbol: c.symbol }));
+  } catch {
+    return [];
+  }
+}
+
+/** Just the symbols of `acceptedFeeTokens`, for "Add CELO, USDC or USDT on Celo". */
+export async function acceptedFeeSymbols(
+  relay: Client,
+  network: NetworkConfig,
+  timeoutMs: number = FEE_TOKEN_HINT_TIMEOUT_MS,
+): Promise<readonly string[]> {
+  return (await acceptedFeeTokens(relay, network, timeoutMs)).map((t) => t.symbol);
+}
+
 /**
  * The hint appended to a "fee token" relay rejection: which tokens the relay
  * accepts on this chain, read live. Falls back to a generic sentence when
