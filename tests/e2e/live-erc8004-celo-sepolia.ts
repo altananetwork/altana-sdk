@@ -55,6 +55,7 @@ import {
   createPublicClient,
   createWalletClient,
   formatEther,
+  formatUnits,
   http,
   parseEther,
   type Address,
@@ -180,8 +181,8 @@ async function run(
   for (const line of quote.lines) console.log(`    quote: ${formatQuoteLine(line, network)}`);
   for (const b of quote.balances) {
     console.log(
-      `    balance: ${formatEther(b.balance)} ${b.symbol} on chain ${b.chainId}, needs ` +
-        `${formatEther(b.needed)}${b.sufficient ? "" : " (SHORT)"}`,
+      `    balance: ${formatUnits(b.balance, b.decimals)} ${b.symbol} on chain ${b.chainId}, needs ` +
+        `${formatUnits(b.needed, b.decimals)}${b.sufficient ? "" : " (SHORT)"}`,
     );
   }
   const session = await client.grantSession({

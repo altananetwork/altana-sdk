@@ -49,6 +49,7 @@ import {
   type RelayReceipt,
 } from "./relay.js";
 
+import { withFailureContext } from "../errors.js";
 import { NATIVE_TOKEN } from "../config.js";
 
 export type CachedRegistry = Extract<KeyStoreRegistry, { kind: "cached" }>;
@@ -195,6 +196,12 @@ export type SubmitRegistryCallsArgs = {
    * two intents, `root` then `session`; every later write is `session` only.
    */
   onStep?: (step: "root" | "session") => void;
+  /**
+   * What the caller's own quote said the payer pays, on the chain the payer
+   * pays from. Used only to word a failure, where the relay has stopped
+   * quoting and the figure cannot be read any other way.
+   */
+  expectedCost?: { chainId: number; token: Address; amount: bigint };
 };
 
 /**
@@ -296,6 +303,8 @@ async function submitOneRelayedWrite(args: {
   walletAddress: Address;
   adminSigner: Signer;
   calls: readonly Call[];
+  /** The caller's own quote, for wording a failure. See `SubmitRegistryCallsArgs`. */
+  expectedCost?: { chainId: number; token: Address; amount: bigint };
 }): Promise<RootRegistrationLeg> {
   const { registry, walletAddress, adminSigner, calls, registryClient } = args;
   try {
@@ -311,6 +320,11 @@ async function submitOneRelayedWrite(args: {
     const callsId = await submitCalls(args.relayClient, walletAddress, adminSigner, calls, {
       feeToken: NATIVE_TOKEN,
       requiredFunds,
+      // What a person is doing, for the one sentence a failure shows. The
+      // chain they pay from is inferred from the registry relationship; a
+      // sentence never names the asset they deliberately do not hold here.
+      operation: `registering this key on ${registry.chain.name}`,
+      ...(args.expectedCost ? { expectedCost: args.expectedCost } : {}),
       submittingKey: { type: "secp256k1", publicKey: adminSigner.publicKey, role: "admin" },
       network: registry,
       // These calls ARE the first-action registration, so submitCalls must not
@@ -337,10 +351,11 @@ async function submitOneRelayedWrite(args: {
       ...(result.status !== "CONFIRMED" ? { reason: describeRelayFailure(callsId, registry.chainId, result) } : {}),
     };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(
-      `The root registration (initialRegisterKey) could not be submitted, so the session ` +
-        `key's registerKey was not attempted. ${message}`,
+    // The sentence a person reads is the failure's own. This context is for
+    // the log: which of the two intents of a first write did not go.
+    throw withFailureContext(
+      err,
+      "The root registration (initialRegisterKey) could not be submitted, so the session key's registerKey was not attempted.",
     );
   }
 }
@@ -395,6 +410,7 @@ export async function submitRegistryWrite(
         walletAddress,
         adminSigner,
         calls: prepend,
+        ...(args.expectedCost ? { expectedCost: args.expectedCost } : {}),
       });
       if (rootRegistration.status !== "CONFIRMED") {
         return {
@@ -432,6 +448,8 @@ export async function submitRegistryWrite(
       ...(rootHandled ? { skipFirstActionPrepend: true } : {}),
       feeToken: NATIVE_TOKEN,
       requiredFunds,
+      operation: `registering this key on ${registry.chain.name}`,
+      ...(args.expectedCost ? { expectedCost: args.expectedCost } : {}),
       submittingKey: { type: "secp256k1", publicKey: adminSigner.publicKey, role: "admin" },
       network: registry,
     });

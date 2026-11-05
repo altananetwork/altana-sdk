@@ -327,6 +327,7 @@ export function createClient(opts: CreateClientOptions): Client {
       ...(o.onStatus ? { onStatus: o.onStatus } : {}),
       ...(o.feeSpendLimit !== undefined ? { feeSpendLimit: o.feeSpendLimit } : {}),
       ...(o.x402Tokens ? { x402Tokens: o.x402Tokens } : {}),
+      ...(o.expectedCost ? { expectedCost: o.expectedCost } : {}),
     };
   }
 
