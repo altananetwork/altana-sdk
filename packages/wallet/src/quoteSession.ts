@@ -521,6 +521,10 @@ export function formatQuoteLine(line: QuoteLine, network: NetworkConfig): string
         : [];
   const pays = needs
     .filter((n) => n.amount > 0n && (n.chainId !== line.chainId || n.token.toLowerCase() !== NATIVE_TOKEN))
+    // A need that is only the fee again, on the leg's own chain, is not worth
+    // a second clause: "fee 0.622991 USDC, pays 0.622991 USDC on Celo Sepolia
+    // Testnet" says one thing twice.
+    .filter((n) => !(n.chainId === line.chainId && n.token.toLowerCase() === line.feeToken.toLowerCase() && n.amount === line.fee))
     .map((n) => `pays ${formatNeed(n, feeNetwork)}${n.chainId !== undefined ? ` on ${chainName(n.chainId)}` : ""}`);
   return `chain ${line.chainId} ${line.kind}${line.via ? ` via ${line.via}` : ""}: ${fee}${value}${funded}${pays.length ? `, ${pays.join(", ")}` : ""}`;
 }

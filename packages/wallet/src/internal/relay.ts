@@ -811,8 +811,10 @@ export function needsFromPrepared(
   const payChain = payKeyChain(prepared, args);
   // `args.fee` is already the charge on the paying chain in its own token
   // (`feeFromPrepared` reduced it with the same `payChainId`), so it is used
-  // rather than re-derived: one figure, one place it comes from.
-  add(payChain, args.feeToken, args.fee);
+  // rather than re-derived: one figure, one place it comes from. The relay's
+  // own diffs name the token, so a fee in an ERC-20 reads as "0.622991 USDC"
+  // rather than as a base-unit integer beside an address.
+  add(payChain, args.feeToken, args.fee, tokenMeta(prepared, payChain, args.feeToken));
   if (!multichain) {
     add(payChain, NATIVE_TOKEN, args.value);
   } else {
@@ -852,6 +854,48 @@ export function needsFromPrepared(
   }
 
   return [...acc.values()].map((v) => v.need);
+}
+
+/**
+ * The symbol and decimals the relay gave a token on one chain, from anywhere
+ * in the response's `assetDiffs`.
+ *
+ * Direction and holder are ignored on purpose: this asks what the token is,
+ * not what moved. A single-chain quote's fee is charged in a token whose only
+ * description in the whole payload may be an incoming diff on the recipient's
+ * side, and without it the fee prints as "622991 of token 0x01C5…" (qa,
+ * evidence/2026-11-05-qa-option-b-relay-staging-rerun.md). Nothing is invented:
+ * a token the relay did not describe still prints as a raw amount.
+ *
+ * Native is left alone. Its decimals and symbol come from the chain, which is
+ * where every reader already takes them from, and the relay's own spelling of
+ * a testnet native token ("CELO" where the chain says "S-CELO") is not worth
+ * introducing as a second source for the one token that never needed one.
+ */
+function tokenMeta(
+  prepared: any,
+  chainId: number | undefined,
+  token: Address,
+): { symbol?: string; decimals?: number } | undefined {
+  if (chainId === undefined || token.toLowerCase() === NATIVE_TOKEN) return undefined;
+  const byChain = prepared?.capabilities?.assetDiffs;
+  if (typeof byChain !== "object" || byChain === null) return undefined;
+  const entry = Object.entries(byChain as Record<string, unknown>).find(([k]) => chainIdOfKey(k) === chainId);
+  if (!entry || !Array.isArray(entry[1])) return undefined;
+  const wanted = token.toLowerCase();
+  for (const tuple of entry[1] as unknown[]) {
+    if (!Array.isArray(tuple) || tuple.length < 2 || !Array.isArray(tuple[1])) continue;
+    for (const d of tuple[1] as any[]) {
+      const address = isNativeAddress(d?.address) ? NATIVE_TOKEN : String(d?.address).toLowerCase();
+      if (address !== wanted) continue;
+      const symbol = typeof d?.symbol === "string" && d.symbol.length > 0 ? d.symbol : undefined;
+      const decimals = typeof d?.decimals === "number" ? d.decimals : undefined;
+      if (symbol !== undefined || decimals !== undefined) {
+        return { ...(symbol !== undefined ? { symbol } : {}), ...(decimals !== undefined ? { decimals } : {}) };
+      }
+    }
+  }
+  return undefined;
 }
 
 /**

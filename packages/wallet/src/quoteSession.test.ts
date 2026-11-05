@@ -316,6 +316,36 @@ describe("formatQuoteLine on a cross-asset write", () => {
     expect(formatQuoteLine(legacy, SEPOLIA)).toContain("pays 2.845288560627534961 S-CELO on Celo Sepolia Testnet");
   });
 
+  test("an account leg paid in a stablecoin names it once, in its own units", () => {
+    /*
+     * What the card showed on relay-staging on 2026-11-05: "chain 11142220
+     * account: fee 622991 of token 0x01C5…, pays 622991 of token 0x01C5… on
+     * Celo Sepolia Testnet". Two defects in one line, a 62-cent fee printed
+     * as a base-unit integer beside an address, and said twice.
+     */
+    const accountLeg: QuoteLine = {
+      chainId: CELO_SEPOLIA.chainId,
+      kind: "account",
+      via: "relay",
+      payer: WALLET,
+      fee: 622_991n,
+      feeToken: USDC,
+      value: 0n,
+      needed: 0n,
+      neededFromRelay: false,
+      needs: [{ chainId: CELO_SEPOLIA.chainId, token: USDC, amount: 622_991n, fromRelay: false, symbol: "USDC", decimals: 6 }],
+    };
+    const out = formatQuoteLine(accountLeg, CELO_SEPOLIA);
+    expect(out).toBe("chain 11142220 account via relay: fee 0.622991 USDC");
+  });
+
+  test("a leg that pays more than its fee still says so", () => {
+    // Only a need that is exactly the fee again is dropped; an escrow on top
+    // of it is the figure the payer most needs to see.
+    const out = formatQuoteLine(crossAssetLine(usdcNeed), SEPOLIA);
+    expect(out).toContain("pays 0.853588 USDC on Celo Sepolia Testnet");
+  });
+
   test("a plain single-chain line says nothing about paying elsewhere", () => {
     const out = formatQuoteLine(registryLine({}), SEPOLIA);
     expect(out).not.toContain("pays");

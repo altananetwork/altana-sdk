@@ -212,6 +212,47 @@ describe("a single-chain quote is unchanged", () => {
   });
 });
 
+describe("a single-chain leg whose fee is charged in an ERC-20", () => {
+  /**
+   * The account leg of a grant by a wallet holding only USDC, narrowed from
+   * the recorded cross-asset USDC capture: its Sepolia quote and Sepolia
+   * diffs are dropped and nothing else is touched, so every field left is
+   * still the relay's own.
+   */
+  const accountLeg = (() => {
+    const copy = structuredClone(crossUsdc) as any;
+    copy.context.quote.quotes = copy.context.quote.quotes.filter((q: any) => Number(q.chainId) === CELO_SEPOLIA);
+    for (const k of Object.keys(copy.capabilities.assetDiffs)) {
+      if (Number(k) !== CELO_SEPOLIA) delete copy.capabilities.assetDiffs[k];
+    }
+    return copy;
+  })();
+
+  const read1 = (prepared: unknown) =>
+    needsFromPrepared(prepared, {
+      // 0.622991 USDC, the account leg qa saw on relay-staging on 2026-11-05.
+      fee: 622_991n,
+      feeToken: USDC,
+      value: 0n,
+      ownChainId: CELO_SEPOLIA,
+      payer: WALLET,
+    });
+
+  test("the fee carries the token's own symbol and decimals", () => {
+    // Without them the demo's cost card printed "fee 622991 of token
+    // 0x01C5…" for a leg that cost 62 cents.
+    expect(read1(accountLeg)).toEqual([
+      { chainId: CELO_SEPOLIA, token: USDC, amount: 622_991n, fromRelay: false, symbol: "USDC", decimals: 6 },
+    ]);
+  });
+
+  test("a token the relay did not describe is still reported, as a raw amount", () => {
+    const noDiffs = structuredClone(accountLeg);
+    delete noDiffs.capabilities.assetDiffs;
+    expect(read1(noDiffs)).toEqual([{ chainId: CELO_SEPOLIA, token: USDC, amount: 622_991n, fromRelay: false }]);
+  });
+});
+
 describe("a relay that sends no asset diffs", () => {
   /** The recorded multichain quote with `capabilities.assetDiffs` removed. */
   const noDiffs = (() => {
