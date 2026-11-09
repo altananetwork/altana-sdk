@@ -83,6 +83,113 @@ describe("not enough to pay", () => {
     }
   });
 
+  /**
+   * qa, 2026-11-09, section 6e, on the public testnet relay. A first-time
+   * grant is two Ethereum writes; the first drained the wallet, and the
+   * second was refused. The relay's own log named the shortfall to the wei:
+   *
+   *   source_funds requested_assets=[(Native, 572625247385500)]
+   *   Could not source the requested funds from any chain
+   *   still_short=...:424477729655769
+   *   sources=celo@11142220 balance=1270113627103362222 covers=25740014880364
+   *
+   * and then answered `intent reverted: 0x`. The demo showed "This could not
+   * be carried out (registering this key on Sepolia), and the relay gave no
+   * reason", while the one fact the person needed, that their CELO no longer
+   * covered the write, had been established and thrown away.
+   */
+  describe("a relay that could not source the funds", () => {
+    /** The wallet as it stood after the first write: 1.270113627103362222 CELO. */
+    const AFTER_THE_FIRST_WRITE = {
+      token: { symbol: "CELO", decimals: 18 },
+      have: 1_270_113_627_103_362_222n,
+      fund: { chain: "Celo Sepolia Testnet", tokens: ["CELO", "USDC", "USDT"] },
+    } as const;
+
+    test("it is a funding failure, not a reasonless one", () => {
+      expect(classifyRelayFailure({ relayMessage: "intent reverted: 0x", fundingRefused: true })).toBe(
+        "insufficient_funds",
+      );
+      // And a bare "0x", which is what some transports hand back.
+      expect(classifyRelayFailure({ relayMessage: "0x", fundingRefused: true })).toBe("insufficient_funds");
+    });
+
+    test("qa's run, worded: what the wallet holds, in the token it pays with", () => {
+      const err = explainRelayFailure({
+        relayMessage: "intent reverted: 0x",
+        operation: "registering this key on Sepolia",
+        shortfall: AFTER_THE_FIRST_WRITE,
+        fundingRefused: true,
+        detail: "the long form: the relay was asked to front 0.0005726 ETH on Sepolia and would not",
+      });
+      expect(err.code).toBe("insufficient_funds");
+      expect(err.message).toBe(
+        "Not enough CELO to pay for registering this key on Sepolia: you have 1.270113 CELO. " +
+          "Add CELO, USDC or USDT on Celo Sepolia Testnet.",
+      );
+      // The wording qa reported is gone.
+      expect(err.message).not.toContain("gave no reason");
+      // The destination chain is named as the thing being done, which is
+      // Doris's own wording. What is never named is its asset or what the
+      // wallet holds there, however short of it the relay was.
+      expect(err.message).not.toContain("ETH");
+      expect(err.message).not.toContain("0 ETH");
+      expect(err.detail).toContain("0.0005726 ETH");
+    });
+
+    test("no figure is invented: there is no quote to take one from", () => {
+      // The relay refused to quote this request at all, so "needs about" has
+      // no honest value. The sentence says what the wallet holds and stops.
+      const err = explainRelayFailure({
+        relayMessage: "intent reverted: 0x",
+        operation: "registering this key on Sepolia",
+        shortfall: AFTER_THE_FIRST_WRITE,
+        fundingRefused: true,
+      });
+      expect(err.message).not.toContain("needs about");
+      expect(err.message).not.toMatch(/0\.000/);
+    });
+
+    test("with the pre-request quote, the figure is in the sentence", () => {
+      // What the demo passes as `expectedCost`: the quote it took before the
+      // grant, in the token the payer pays with.
+      const err = explainRelayFailure({
+        relayMessage: "intent reverted: 0x",
+        operation: "registering this key on Sepolia",
+        fundingRefused: true,
+        shortfall: { ...AFTER_THE_FIRST_WRITE, need: 19_000_000_000_000_000_000n },
+      });
+      expect(err.message).toBe(
+        "Not enough CELO to pay for registering this key on Sepolia: needs about 19 CELO, you have 1.270113 CELO. " +
+          "Add CELO, USDC or USDT on Celo Sepolia Testnet.",
+      );
+    });
+
+    test("a refusal the SDK could not read a balance for still says the right kind of thing", () => {
+      // No holdings read, so no shortfall and no figures. It is still a
+      // funding failure, and "0x" is still never quoted at a person.
+      const err = explainRelayFailure({
+        relayMessage: "intent reverted: 0x",
+        operation: "registering this key on Sepolia",
+        fundingRefused: true,
+      });
+      expect(err.code).toBe("insufficient_funds");
+      expect(err.message).toBe(
+        "There is not enough in this wallet to pay for registering this key on Sepolia. Add funds and try again.",
+      );
+      expect(err.message).not.toContain("0x");
+      expect(err.message).not.toContain("ETH");
+    });
+
+    test("a cause the relay named still outranks it", () => {
+      // The flag says the relay was asked to fund and gave no reason. A relay
+      // that did give one is describing something the funding does not explain.
+      for (const relayMessage of ["ExceededSpendLimit", "KeyExpired", "quote expired", "HTTP request failed"]) {
+        expect(classifyRelayFailure({ relayMessage, fundingRefused: true })).not.toBe("insufficient_funds");
+      }
+    });
+  });
+
   test("a revert with no reason and no shortfall is not dressed up as one", () => {
     // qa lost an hour to the opposite: a wallet holding 133x the fee was told
     // it could not pay (evidence/2026-09-28-s3-registry-write-reverts-0x.md).

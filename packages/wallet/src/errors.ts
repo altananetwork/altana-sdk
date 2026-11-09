@@ -84,6 +84,25 @@ export type RelayFailureFacts = {
   feeSymbol?: string;
   /** The relay the request went to, for a transport failure. */
   relayUrl?: string;
+  /**
+   * Set when the relay was asked to source funds for this operation from
+   * another chain and refused without saying why.
+   *
+   * The relay sources the funds before it simulates anything, and when it
+   * cannot it logs the shortfall to the wei and then answers the caller with a
+   * bare revert: `Could not source the requested funds from any chain` in its
+   * own log, `intent reverted: 0x` on the wire (qa, 2026-11-09, section 6e,
+   * on the public testnet relay). The SDK is the only place that can turn that
+   * back into a sentence, because it knows it asked for funding; a person who
+   * cannot read the relay's logs was told the relay gave no reason.
+   *
+   * The caller sets this only when it has no evidence the payer could have
+   * covered the request: a balance that covers the quote the caller already
+   * took is evidence the cause is something else, and a wallet holding 133x
+   * the fee being told to add funds is the mistake this guards against
+   * (`evidence/2026-09-28-s3-registry-write-reverts-0x.md`).
+   */
+  fundingRefused?: boolean;
   /** Everything the SDK knows, for the debug log. Never shown. */
   detail?: string;
   cause?: unknown;
@@ -172,10 +191,14 @@ export function classifyRelayFailure(facts: RelayFailureFacts): AltanaErrorCode 
     if (pattern.test(message)) return code;
   }
   // A revert with no reason bytes says nothing at all. It is a funding failure
-  // only when the balances say so, which is what cost qa an hour the other way
-  // round (a wallet holding 133x the fee told it could not pay).
+  // only when something else says so, which is what cost qa an hour the other
+  // way round (a wallet holding 133x the fee told it could not pay).
   if (facts.shortfall) return "insufficient_funds";
-  if (NO_REASON.test(message)) return "unknown";
+  // The relay refusing to source the funds is itself the cause, and the only
+  // one the payer can act on. It reaches the caller as a bare revert, so
+  // without this the one failure a cross-asset wallet actually hits reads as
+  // "the relay gave no reason".
+  if (facts.fundingRefused) return "insufficient_funds";
   return "unknown";
 }
 
@@ -237,7 +260,9 @@ function fundingStatement(facts: RelayFailureFacts): string {
   }
   // No figures of our own. The relay quantified it in its own message often
   // enough that its sentence is the better one; ours would drop the numbers.
-  const said = oneLine(facts.relayMessage);
+  // A revert with no reason bytes is not one of those messages: "intent
+  // reverted: 0x" is not a sentence and is never put in front of a person.
+  const said = NO_REASON.test(facts.relayMessage ?? "") ? undefined : oneLine(facts.relayMessage);
   if (said) return capitalise(said.endsWith(".") ? said : `${said}.`);
   return `There is not enough in this wallet to pay for ${what}.`;
 }

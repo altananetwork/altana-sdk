@@ -1324,10 +1324,23 @@ async function explainRelayError(args: {
   // balances are not read at all; only a funding or unexplained failure
   // justifies the second round trip.
   const provisional = classifyRelayFailure({ relayMessage: reason });
-  const shortfall =
+  /**
+   * The relay was asked to front funds from another chain and reverted with
+   * no reason, which is what it answers when it could not source them: the
+   * shortfall is in its own log to the wei, and `0x` is all that reaches the
+   * caller (qa, 2026-11-09, 6e). The SDK is the only layer that can turn that
+   * back into a sentence, because it knows what it asked for.
+   */
+  const refusedToFund = Boolean(intent?.funded) && EMPTY_REVERT.test(reason);
+  const balance: PayerBalance =
     (provisional === "insufficient_funds" || provisional === "unknown") && relay && intent
-      ? await payerShortfall(relay, intent)
-      : undefined;
+      ? await payerBalance(relay, intent, refusedToFund)
+      : { kind: "unknown" };
+  const shortfall = balance.kind === "short" ? balance.shortfall : undefined;
+  // Withheld when the payer's balance covers the quote the caller took: that
+  // is evidence the cause is something else, and telling a wallet that can pay
+  // to add funds is the error this rule has made before.
+  const fundingRefused = refusedToFund && balance.kind !== "covers";
   const feeSymbol =
     provisional === "price_unavailable" || provisional === "spend_limit_exceeded"
       ? await feeTokenSymbol(relay, intent?.feeToken)
@@ -1337,6 +1350,7 @@ async function explainRelayError(args: {
     detail,
     cause: err,
     ...(shortfall ? { shortfall } : {}),
+    ...(fundingRefused ? { fundingRefused } : {}),
     ...(feeSymbol ? { feeSymbol } : {}),
     ...(intent?.operation ? { operation: intent.operation } : {}),
     ...(relay
@@ -1400,6 +1414,20 @@ function fundingNetwork(intentNetwork: NetworkConfig, holdings: readonly Holding
 }
 
 /**
+ * What the SDK could establish about the payer's balance, which is three
+ * answers and not two.
+ *
+ * `covers` is the one worth having a name for: a balance that covers the quote
+ * the caller took is positive evidence that the failure is not about money,
+ * and it is what stops an unexplained revert being dressed up as a shortfall.
+ * `unknown` is the absence of evidence either way, which is not the same thing.
+ */
+type PayerBalance =
+  | { kind: "short"; shortfall: FundingShortfall }
+  | { kind: "covers" }
+  | { kind: "unknown" };
+
+/**
  * What the payer is short of, in the token the payer pays with, on the chain
  * the payer holds it on.
  *
@@ -1415,19 +1443,37 @@ function fundingNetwork(intentNetwork: NetworkConfig, holdings: readonly Holding
  * It may only state a figure the SDK has. The need comes from a quote the
  * caller already took, or from the native value the calls carry when the
  * intent is not funded from elsewhere. The relay will not quote for a request
- * it has refused, so the honest answer is often `have` alone, and a shortfall
- * is claimed with no figure only when the balance is nothing at all. qa lost
- * an hour to the inverse, a wallet holding 133x the fee told it could not pay
- * (`evidence/2026-09-28-s3-registry-write-reverts-0x.md`).
+ * it has refused, so the honest answer is often `have` alone. qa lost an hour
+ * to the inverse, a wallet holding 133x the fee told it could not pay
+ * (`evidence/2026-09-28-s3-registry-write-reverts-0x.md`), which is why
+ * `covers` is a state of its own: a balance that covers the quote the caller
+ * took is evidence against a funding failure, and is reported as such rather
+ * than folded into "nothing to say".
  */
-async function payerShortfall(
+async function payerBalance(
   relay: { client: ReturnType<typeof buildRelayClient>; network: NetworkConfig },
   intent: IntentContext,
-): Promise<FundingShortfall | undefined> {
+  /** Whether the relay refused to source the funds, which is a shortfall with no figure. */
+  refusedToFund = false,
+): Promise<PayerBalance> {
   const holdings = await readHoldings(relay.client, intent.account).catch(() => undefined);
-  if (!holdings) return undefined;
+  if (!holdings) return { kind: "unknown" };
+
+  /**
+   * The judgement the debug log already makes, in `balanceClause`: a wallet
+   * holding more on the intent's own chain than the calls send is a wallet
+   * whose balance is not the cause. It is read first, so the sentence and the
+   * log cannot disagree about whether money was the problem, and so a revert
+   * the relay did not explain is not turned into a shortfall for a wallet
+   * that could pay (`evidence/2026-09-28-s3-registry-write-reverts-0x.md`).
+   */
+  const onIntentChain = holdings.find(
+    (h) => h.chainId === relay.network.chainId && h.token.toLowerCase() === NATIVE_TOKEN.toLowerCase(),
+  );
+  if ((onIntentChain?.balance ?? 0n) > totalValue(intent.calls)) return { kind: "covers" };
+
   const payNetwork = intent.funded ? (intent.fundFrom ?? fundingNetwork(relay.network, holdings)) : relay.network;
-  if (!payNetwork) return undefined;
+  if (!payNetwork) return { kind: "unknown" };
 
   // The token the payer pays with: the one the caller named when it is charged
   // on this chain, the paying chain's own currency otherwise.
@@ -1445,7 +1491,7 @@ async function payerShortfall(
   const symbol = held?.symbol ?? (namedHere ? undefined : payNetwork.chain.nativeCurrency.symbol);
   const decimals = held?.decimals ?? (namedHere ? undefined : payNetwork.chain.nativeCurrency.decimals);
   // A token the relay did not describe cannot be named in a sentence.
-  if (symbol === undefined || decimals === undefined) return undefined;
+  if (symbol === undefined || decimals === undefined) return { kind: "unknown" };
 
   const quoted =
     intent.expectedCost &&
@@ -1456,15 +1502,25 @@ async function payerShortfall(
       : undefined;
   const sends = !intent.funded && token === NATIVE_TOKEN ? totalValue(intent.calls) : 0n;
   const need = quoted ?? (sends > 0n ? sends : undefined);
-  if (need !== undefined ? have >= need : have > 0n) return undefined;
+  if (need !== undefined) {
+    if (have >= need) return { kind: "covers" };
+  } else if (have > 0n && !refusedToFund) {
+    // No figure to compare against, and nothing that says the funding failed.
+    // A nonzero balance on its own does not establish a shortfall: that is
+    // the 2026-09-28 mistake.
+    return { kind: "unknown" };
+  }
 
   const payClient = payNetwork.chainId === relay.network.chainId ? relay.client : buildRelayClient(payNetwork);
   const tokens = await acceptedFeeSymbols(payClient, payNetwork);
   return {
-    token: { symbol, decimals },
-    ...(need !== undefined ? { need } : {}),
-    have,
-    fund: { chain: payNetwork.chain.name, ...(tokens.length > 0 ? { tokens } : { tokens: [symbol] }) },
+    kind: "short",
+    shortfall: {
+      token: { symbol, decimals },
+      ...(need !== undefined ? { need } : {}),
+      have,
+      fund: { chain: payNetwork.chain.name, ...(tokens.length > 0 ? { tokens } : { tokens: [symbol] }) },
+    },
   };
 }
 

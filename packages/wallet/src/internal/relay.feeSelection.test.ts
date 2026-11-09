@@ -500,6 +500,61 @@ describe("registry write funded from the L2, on the wire", () => {
     expect(error?.message).not.toContain("ETH");
   });
 
+  /**
+   * qa, 2026-11-09, section 6e, on the public testnet relay.
+   *
+   * A first-time grant is two Ethereum writes. The relay fronted the first,
+   * locking 23.07 of the wallet's 24.7 CELO, and then could not source funds
+   * for the second: `Could not source the requested funds from any chain`,
+   * `balance=1270113627103362222 covers=25740014880364`, and on the wire
+   * `intent reverted: 0x`. The wallet also held 0.000122 ETH stranded on
+   * Sepolia, less than the registration fee the call carries.
+   *
+   * The demo showed "the relay gave no reason". The relay had every number.
+   */
+  test("a relay that could not source the funds says so, in the token the payer pays with", async () => {
+    const signer = createPrivateKeySigner();
+    const leftOnCelo = 1_270_113_627_103_362_222n;
+    const strandedOnSepolia = 122_407_502_849_367n;
+    mockRegistryWire({
+      balance: strandedOnSepolia,
+      activeKeys: [("0x" + "01".repeat(32)) as Hex],
+      prepareError: "intent reverted: 0x",
+      assets: {
+        [numberToHex(SEPOLIA.chainId)]: [
+          { address: "native", balance: numberToHex(strandedOnSepolia), type: "native", metadata: { symbol: "ETH", decimals: 18 } },
+        ],
+        [numberToHex(CELO_SEPOLIA.chainId)]: [
+          { address: "native", balance: numberToHex(leftOnCelo), type: "native", metadata: { symbol: "CELO", decimals: 18 } },
+        ],
+      },
+    });
+    const thrown = await submitRegistryWrite(SEPOLIA, {
+      walletAddress: signer.address,
+      adminSigner: signer,
+      calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+    }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    const error = altanaErrorOf(thrown);
+    const symbol = CELO_SEPOLIA.chain.nativeCurrency.symbol;
+    expect(error?.code).toBe("insufficient_funds");
+    // No figure for what it needs: the relay refused to quote the request, so
+    // there is no honest one. What the wallet holds is read, and said.
+    expect(error?.message).toBe(
+      `Not enough ${symbol} to pay for registering this key on Sepolia: you have 1.270113 ${symbol}. ` +
+        `Add ${symbol} on ${CELO_SEPOLIA.chain.name}.`,
+    );
+    expect(error?.message).not.toContain("gave no reason");
+    expect(error?.message).not.toContain("needs about");
+    expect(error?.message).not.toContain("ETH");
+    expect(error?.message).not.toContain("0x");
+    // Both balances, the stranded ETH included, are in the log where they belong.
+    expect(String(error?.detail)).toContain("0.000122407502849367 ETH on Sepolia");
+    expect(String(error?.detail)).toContain("intent reverted: 0x");
+  });
+
   test("a wallet with no ETH on Sepolia asks the relay to front each registration fee, paid in native", async () => {
     const signer = createPrivateKeySigner();
     const wire = mockRegistryWire({ balance: 0n, activeKeys: [] });
