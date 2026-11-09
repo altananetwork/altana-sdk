@@ -288,6 +288,66 @@ describe("the other common failures", () => {
   });
 });
 
+describe("a wallet this relay never created", () => {
+  /** What reached the demo's step 4 verbatim (qa, evidence/2026-10-20-qa-demo-clickthrough.md). */
+  const QA_MESSAGE =
+    'ErrorObject { code: InvalidParams, message: "invalid authorization item, expected ' +
+    'Some(0x0000000000000000000000000000000000000000), got None", data: None }';
+  /** Doris's wording, verbatim (2026-11-09). */
+  const SENTENCE = "Invalid authorization item. Create a new wallet to continue.";
+
+  test("qa's step 4 message becomes the sentence, and takes its jargon with it", () => {
+    const err = explainRelayFailure({
+      relayMessage: QA_MESSAGE,
+      operation: "registering this key on Ethereum",
+      chain: { name: "Sepolia", chainId: 11155111 },
+    });
+    expect(err.code).toBe("wallet_unknown_to_relay");
+    expect(err.message).toBe(SENTENCE);
+    // Doris keeps "authorization item"; the rest of the wire noise does not
+    // reach a person.
+    for (const leak of ["Some(0x", "ErrorObject", "InvalidParams", "7702", "relay", "\n"]) {
+      expect(err.message).not.toContain(leak);
+    }
+    // The relay's own words are kept for the log, which is where they belong.
+    expect(err.relayMessage).toBe(QA_MESSAGE);
+  });
+
+  test("the sentence is the same whatever chain it happened on", () => {
+    // Nothing in it is interpolated, so there is one sentence for this cause
+    // in every app on the SDK, and no chain name to get wrong.
+    expect(explainRelayFailure({ relayMessage: QA_MESSAGE }).message).toBe(SENTENCE);
+    expect(
+      explainRelayFailure({ relayMessage: QA_MESSAGE, chain: { name: "Celo Sepolia Testnet", chainId: 11142220 } }).message,
+    ).toBe(SENTENCE);
+  });
+
+  test("the relay's other ways of saying it read the same", () => {
+    // AuthError::InvalidAuthAddress, and the quote rejected outright.
+    for (const message of [
+      "invalid auth item, expected 0x623b…1f2a, got None",
+      "quotes for unknown accounts are not accepted",
+    ]) {
+      const err = explainRelayFailure({ relayMessage: message, chain: { name: "Sepolia", chainId: 11155111 } });
+      expect(err.code).toBe("wallet_unknown_to_relay");
+      expect(err.message).toBe(SENTENCE);
+    }
+  });
+
+  test("a nonce that moved on is a different cause and keeps its own words", () => {
+    // AuthError::AuthItemInvalidNonce. Re-creating the wallet is not the answer
+    // to it, so it must not be swept into this mapping.
+    const err = explainRelayFailure({ relayMessage: "invalid auth item nonce, expected 4, got 3" });
+    expect(err.code).toBe("unknown");
+    expect(err.message).not.toContain("not ready");
+  });
+
+  test("it outranks a wallet that is also low, because the relay named the cause", () => {
+    expect(classifyRelayFailure({ relayMessage: QA_MESSAGE, shortfall: CELO_SHORTFALL })).toBe("wallet_unknown_to_relay");
+    expect(classifyRelayFailure({ relayMessage: QA_MESSAGE, fundingRefused: true })).toBe("wallet_unknown_to_relay");
+  });
+});
+
 describe("the error object", () => {
   test("it carries the code, the detail and the relay's words, and is recognised through a cause chain", () => {
     const cause = new Error("viem: RPC Request failed");

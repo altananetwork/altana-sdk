@@ -33,6 +33,8 @@ export type AltanaErrorCode =
   | "relay_unreachable"
   /** The relay has no entry for the chain, so it cannot act on it. */
   | "chain_not_served"
+  /** This relay has no record of the wallet, so it will not act for it. */
+  | "wallet_unknown_to_relay"
   /** The relay could not price the fee, so it would not quote. */
   | "price_unavailable"
   /** Anything the map does not recognise. The relay's own words lead. */
@@ -164,6 +166,16 @@ const PATTERNS: readonly (readonly [AltanaErrorCode, RegExp])[] = [
   // Transport and configuration first: they explain every later symptom.
   ["chain_not_served", /does not serve chain|no entry for it|Cannot destructure property 'contracts'|unsupported chain|chain not supported/i],
   ["relay_unreachable", /HTTP request failed|fetch failed|Failed to fetch|ECONNREFUSED|ENOTFOUND|socket hang up|network error|timed out|ETIMEDOUT|502 Bad Gateway|503 Service|504 Gateway/i],
+  // A wallet this relay never created. Kept with the configuration failures
+  // because it explains everything after it: the relay holds the account
+  // record a quote is checked against, so a wallet created against another
+  // relay (or against one whose record is gone) cannot be acted for here, and
+  // every later symptom is downstream of that.
+  //
+  // The nonce variant is deliberately not matched: `invalid auth item nonce`
+  // is the EOA's nonce having moved on, which is a different cause with a
+  // different answer.
+  ["wallet_unknown_to_relay", /invalid auth(orization)? item, expected|quotes for unknown accounts are not accepted/i],
   // Then the account's own refusals, which a balance never explains away.
   ["quote_expired", /quote (has )?expired|expired quote|quote is no longer valid|QuoteExpired/i],
   ["session_expired", /KeyExpired|key (has )?expired|session (has )?expired|expired key/i],
@@ -319,6 +331,21 @@ export function explainRelayFailure(facts: RelayFailureFacts): AltanaError {
         return {
           statement: `Altana does not serve ${chain ?? "this chain"} yet.`,
           action: "Switch to a chain it serves, or point the SDK at a relay that serves this one.",
+        };
+      case "wallet_unknown_to_relay":
+        // `invalid authorization item, expected Some(0x0000...0000), got None`
+        // is what reached qa for this (evidence/2026-10-20-qa-demo-clickthrough.md),
+        // and it says nothing about the wallet or the way out.
+        //
+        // The wording is Doris's, verbatim and deliberately (2026-11-09, via
+        // the PM, after two earlier wordings): the action is the part that
+        // matters, and a wallet with no account record behind it is not one a
+        // person can get working again. It keeps the relay's own phrase, which
+        // is the one thing in this file that does; the rest of the raw text
+        // stays in `relayMessage` and `detail`, for the log.
+        return {
+          statement: "Invalid authorization item.",
+          action: "Create a new wallet to continue.",
         };
       case "price_unavailable":
         return {
