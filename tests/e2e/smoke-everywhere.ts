@@ -45,7 +45,7 @@ import {
   type NetworkConfig,
   type SessionQuote,
 } from "@altananetwork/sdk";
-import { createClient as createViemClient, createPublicClient, createWalletClient, formatEther, http, keccak256, parseEther, type Hex, type PublicClient } from "viem";
+import { createClient as createViemClient, createPublicClient, createWalletClient, formatEther, formatUnits, http, keccak256, parseEther, type Hex, type PublicClient } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { appendFileSync } from "node:fs";
 import { testnetEnvFile } from "./testnet-env.js";
@@ -79,7 +79,10 @@ const status = (s: string, d?: { chainId: number }) => console.log(`    status: 
 function printQuote(q: SessionQuote) {
   for (const line of q.lines) console.log(`    ${formatQuoteLine(line, networkByChainId(line.chainId)!)}`);
   for (const b of q.balances) {
-    console.log(`    balance chain ${b.chainId} ${b.address}: ${formatEther(b.balance)} ${b.symbol}, needs ${formatEther(b.needed)} ${b.symbol}${b.sufficient ? "" : "  INSUFFICIENT"}`);
+    // formatUnits with the row's own decimals: a cross-asset quote can charge
+    // the payer in a 6-decimal stablecoin, which formatEther reads 1e12 wrong.
+    const amount = (v: bigint) => formatUnits(v, b.decimals);
+    console.log(`    balance chain ${b.chainId} ${b.address}: ${amount(b.balance)} ${b.symbol}, needs ${amount(b.needed)} ${b.symbol}${b.sufficient ? "" : "  INSUFFICIENT"}${b.reason ? ` (${b.reason})` : ""}`);
   }
   if (!q.complete) console.log("    (incomplete: some legs could not be quoted ahead of time)");
 }

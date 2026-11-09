@@ -72,8 +72,23 @@ export { grantSession } from "./grantSession.js";
 export type { GrantSessionConfig } from "./grantSession.js";
 export { revokeSession } from "./revokeSession.js";
 export type { RevokeSessionResult, RevokeSessionOptions } from "./revokeSession.js";
+// Failures a person can act on: one plain sentence with the next step, and a
+// typed code to branch on. The long form stays on the error as `detail`, for
+// a debug log, and never reaches a screen.
+export {
+  AltanaError,
+  altanaErrorOf,
+  classifyRelayFailure,
+  explainRelayFailure,
+  isAltanaError,
+  readableAmount,
+  withFailureContext,
+} from "./errors.js";
+export type { AltanaErrorCode, FundingShortfall, RelayFailureFacts, TokenAmount } from "./errors.js";
+
 export { quoteGrantSession, quoteRevokeSession, formatQuoteLine } from "./quoteSession.js";
 export type { SessionQuote, QuoteLine, QuoteBalance } from "./quoteSession.js";
+export type { LegCharge, QuoteNeed } from "./internal/relay.js";
 export { quoteCalls } from "./internal/relay.js";
 export type { CallsQuote } from "./internal/relay.js";
 

@@ -265,6 +265,9 @@ export async function runGrantSession(
       adminSigner,
       calls: [registerCall(r, fee)],
       onStep: (step) => onStatus?.("registry-write", { chainId: r.chainId, step }),
+      // The caller's own quote, for wording a refusal in the token the wallet
+      // pays with. The relay will not quote for a request it has refused.
+      ...(opts.expectedCost ? { expectedCost: opts.expectedCost } : {}),
     });
   };
 

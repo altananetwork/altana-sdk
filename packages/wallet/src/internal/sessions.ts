@@ -242,6 +242,15 @@ export type SessionStatusDetail = {
 /** Options for grantSession. */
 export type GrantSessionOptions = {
   permissions: SessionPermissions;
+  /**
+   * What your own quote said this will cost the payer, in the token and on the
+   * chain the payer pays from (`quoteGrantSession`'s line for the funding
+   * chain). Used only to word a failure: the relay will not quote for a
+   * request it has already refused, so without it a shortfall can be stated
+   * as "you have 4.1 CELO" but not as "needs about 16.2 CELO".
+   */
+  expectedCost?: { chainId: number; token: Address; amount: bigint };
+
   /** Unix epoch seconds. Most apps use Date.now()/1000 + N. */
   expiry: number;
   /**

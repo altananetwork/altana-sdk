@@ -252,6 +252,35 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Fixed
 
+- **A quote reads a cross-chain cost per leg and per token.** A registry
+  write the relay funds from an L2 is paid on that L2, and the relay prices it
+  in whatever token it accepts there: the native one, or a stablecoin with 6
+  decimals. The SDK used to reduce a two-leg quote to one number by adding the
+  legs' fees together and charging the total to the payer's **native** balance
+  on the funding chain. That only worked while one unit of the source asset
+  repaid one unit of the destination asset, which is what the testnet relay's
+  own config arranged; it is not true at real prices, and it is not true at
+  all when the source leg is priced in a stablecoin. Worse, both legs report
+  the same zero address for "native", so the old sum was adding CELO wei to
+  ETH wei without anything looking wrong.
+
+  A `QuoteLine` now carries `needs`: what the payer must hold, per chain and
+  per token, and `charges`: what each of the relay's legs charges in its own
+  token. `quote.balances` has one row per token with its own `token`,
+  `symbol` and `decimals`, read as an ERC-20 balance when the token is one
+  (and reporting `sufficient: false` with a `reason` when that read fails,
+  never a short answer dressed as a safe one). `formatQuoteLine` says "pays
+  2.845288560627534961 CELO on Celo Sepolia" instead of labelling a CELO
+  amount with the registry chain's symbol. For a multichain quote only the
+  funding chain is charged: the relay's funder pays on the destination and
+  the escrow repays it, so counting the destination leg as well charged the
+  payer twice.
+
+  `fee`, `feeToken` and `needed` stay, as the figures for the chain the payer
+  pays from, and `needed` is the native part of `needs` — so a leg charged in
+  a stablecoin reports `needed: 0n` and the real amount in `needs`. A quote
+  whose legs the relay does not tag with chains behaves exactly as before.
+
 - **A wallet's first session key registers reliably again.** That first
   registry write is two KeyStore calls, `initialRegisterKey` then
   `registerKey`, and they were bundled into one relayed intent.

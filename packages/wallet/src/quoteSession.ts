@@ -12,8 +12,9 @@ import { NATIVE_TOKEN, networkByChainId, type NetworkConfig } from "./config.js"
 import { planRegistryFunding, planRegistryWrite, keyStoreCacheOf } from "./internal/cachedRegistry.js";
 import { buildFirstActionPrepend, readActiveKeys, readPublicKey } from "./internal/keystore.js";
 import { buildPublicClient, buildRelayClient, quoteCalls, type Call, type CallsQuote,
-  type QuoteLeg,
+  type LegCharge, type QuoteLeg, type QuoteNeed,
 } from "./internal/relay.js";
+import { readTokenBalances } from "./internal/tokenBalances.js";
 import { errorMessage, realSessionLegDeps, type SessionLegDeps } from "./internal/sessionLegs.js";
 import type { GrantSessionOptions, Session, SessionLeg } from "./internal/sessions.js";
 import type { Signer } from "./internal/signer.js";
@@ -48,12 +49,29 @@ export type QuoteLine = {
    */
   fundedFromChainId?: number;
   /**
+   * What this line takes from its payer, per chain and token.
+   *
+   * `needed` above is one native number, which only says everything while the
+   * payer pays in the chain's native token. A registry leg the relay funds
+   * from an L2 is charged on that L2 in whatever token the relay priced it in:
+   * CELO, or a stablecoin with 6 decimals. This is the figure to check a
+   * balance against; `needed` is its native part.
+   */
+  needs?: readonly QuoteNeed[];
+  /**
+   * What each of the relay's quoted legs charges, in that leg's own token on
+   * its own chain. `fee` and `feeToken` are the charge on the chain the payer
+   * pays from; this is every leg, including the registry chain's, which the
+   * relay's funder pays and the escrow repays.
+   */
+  charges?: readonly LegCharge[];
+  /**
    * Registry legs on a wallet's FIRST write: that write is two sequential
    * intents, so `fee`, `value` and `needed` above are the sum of both, and this
    * is the root (`initialRegisterKey`) intent's own share. Absent on every
    * later write, which is one intent.
    */
-  rootRegistration?: Pick<QuoteLine, "fee" | "feeToken" | "value" | "needed" | "neededFromRelay" | "fundedFromChainId">;
+  rootRegistration?: Pick<QuoteLine, "fee" | "feeToken" | "value" | "needed" | "neededFromRelay" | "fundedFromChainId" | "needs" | "charges">;
   /**
    * The relay's quoted legs with their gas budgets, per leg. What decides
    * whether each fits; see `CallsQuote.legs`.
@@ -68,15 +86,24 @@ export type QuoteLine = {
   deferred?: true;
 };
 
-/** A payer's native balance on one chain, against what the quoted lines take from it. */
+/** A payer's balance of one token on one chain, against what the quoted lines take from it. */
 export type QuoteBalance = {
   chainId: number;
   address: Address;
+  /** The token this row is about (the zero address is the chain's native token). */
+  token: Address;
   symbol: string;
+  /** Decimals for `balance` and `needed`: 18 for a native token, the token's own otherwise. */
+  decimals: number;
   balance: bigint;
-  /** Native wei the quoted lines need from this payer on this chain: the sum of their `needed`. */
+  /** What the quoted lines need from this payer, in this token on this chain. */
   needed: bigint;
   sufficient: boolean;
+  /**
+   * Why the balance could not be read, when it could not. `balance` is then 0
+   * and `sufficient` false, so a short answer is never reported as a safe one.
+   */
+  reason?: string;
 };
 
 export type SessionQuote = {
@@ -203,6 +230,7 @@ export function quotingDeps(base: SessionLegDeps = realSessionLegDeps): {
             line.value = q.value + root.value;
             line.needed = q.nativeNeeded + root.nativeNeeded;
             line.neededFromRelay = q.nativeNeededFromRelay || root.nativeNeededFromRelay;
+            line.needs = mergeNeeds(q.needs, root.needs);
             line.rootRegistration = pickQuote(root);
           }
         } else {
@@ -298,7 +326,15 @@ export function quotingDeps(base: SessionLegDeps = realSessionLegDeps): {
   return { deps, lines };
 }
 
-/** Balances per payer and chain against what the lines need. Exported for tests. */
+/**
+ * Balances per payer, chain and token against what the lines need. Exported for tests.
+ *
+ * A line's `needs` decides which balance is read: a registry leg the relay
+ * funds from Celo and prices in USDC is checked against the payer's USDC
+ * there, not against anyone's native balance. Lines with no `needs` — a direct
+ * EOA registry write, or a leg that could not be quoted — keep the long-standing
+ * behaviour: their `needed` is native on `fundedFromChainId ?? chainId`.
+ */
 export async function withBalances(
   lines: QuoteLine[],
   networks: readonly NetworkConfig[],
@@ -308,63 +344,187 @@ export async function withBalances(
     byChain.set(n.chainId, n);
     if (n.registry?.kind === "cached") byChain.set(n.registry.l1.chainId, n.registry.l1);
   }
-  const needs = new Map<string, { chainId: number; address: Address; wei: bigint }>();
+  type Want = {
+    chainId: number;
+    address: Address;
+    token: Address;
+    amount: bigint;
+    symbol?: string;
+    decimals?: number;
+  };
+  const wants = new Map<string, Want>();
+  const want = (w: Want) => {
+    const key = `${w.chainId}:${w.token.toLowerCase()}:${w.address.toLowerCase()}`;
+    const found = wants.get(key);
+    if (!found) {
+      wants.set(key, { ...w });
+      return;
+    }
+    found.amount += w.amount;
+    found.symbol ??= w.symbol;
+    found.decimals ??= w.decimals;
+  };
   for (const line of lines) {
     // A leg the relay funds from an L2 costs the payer on that chain.
-    const chainId = line.fundedFromChainId ?? line.chainId;
-    const key = `${chainId}:${line.payer.toLowerCase()}`;
-    const entry = needs.get(key) ?? { chainId, address: line.payer, wei: 0n };
-    entry.wei += line.needed;
-    needs.set(key, entry);
+    const fallbackChain = line.fundedFromChainId ?? line.chainId;
+    if (!line.needs || line.needs.length === 0) {
+      want({ chainId: fallbackChain, address: line.payer, token: NATIVE_TOKEN, amount: line.needed });
+      continue;
+    }
+    for (const need of line.needs) {
+      want({
+        chainId: need.chainId ?? fallbackChain,
+        address: line.payer,
+        token: need.token,
+        amount: need.amount,
+        ...(need.symbol !== undefined ? { symbol: need.symbol } : {}),
+        ...(need.decimals !== undefined ? { decimals: need.decimals } : {}),
+      });
+    }
   }
   const balances = await Promise.all(
-    [...needs.values()].map(async ({ chainId, address, wei }): Promise<QuoteBalance> => {
-      const network = byChain.get(chainId) ?? networkByChainId(chainId);
-      if (!network) throw new Error(`quote: no network config for chain ${chainId}`);
-      const balance = await buildPublicClient(network).getBalance({ address });
+    [...wants.values()].map(async (w): Promise<QuoteBalance> => {
+      const network = byChain.get(w.chainId) ?? networkByChainId(w.chainId);
+      if (!network) throw new Error(`quote: no network config for chain ${w.chainId}`);
+      const client = buildPublicClient(network);
+      if (w.token.toLowerCase() === NATIVE_TOKEN) {
+        const balance = await client.getBalance({ address: w.address });
+        return {
+          chainId: w.chainId,
+          address: w.address,
+          token: NATIVE_TOKEN,
+          symbol: network.chain.nativeCurrency.symbol,
+          decimals: network.chain.nativeCurrency.decimals,
+          balance,
+          needed: w.amount,
+          sufficient: balance >= w.amount,
+        };
+      }
+      // An ERC-20 the relay priced the leg in: its own balance, symbol and
+      // decimals, read on chain. A failed read reports short, with the reason.
+      const [read] = await readTokenBalances(client, w.address, [w.token]);
+      if (!read?.ok) {
+        return {
+          chainId: w.chainId,
+          address: w.address,
+          token: w.token,
+          symbol: w.symbol ?? "",
+          decimals: w.decimals ?? 0,
+          balance: 0n,
+          needed: w.amount,
+          sufficient: false,
+          reason: read?.ok === false ? read.error : `could not read ${w.token}`,
+        };
+      }
       return {
-        chainId,
-        address,
-        symbol: network.chain.nativeCurrency.symbol,
-        balance,
-        needed: wei,
-        sufficient: balance >= wei,
+        chainId: w.chainId,
+        address: w.address,
+        token: w.token,
+        symbol: read.symbol.length > 0 ? read.symbol : (w.symbol ?? ""),
+        decimals: read.decimals,
+        balance: read.raw,
+        needed: w.amount,
+        sufficient: read.raw >= w.amount,
       };
     }),
   );
   return { lines, balances, complete: lines.every((l) => l.fee !== undefined) };
 }
 
-/** The quote fields a line keeps: fee, value, and the native amount needed. */
+/** The quote fields a line keeps: fee, value, and what the payer must hold. */
 function pickQuote(
   q: CallsQuote,
-): Pick<QuoteLine, "fee" | "feeToken" | "value" | "needed" | "neededFromRelay" | "fundedFromChainId" | "legs"> {
+): Pick<QuoteLine, "fee" | "feeToken" | "value" | "needed" | "neededFromRelay" | "fundedFromChainId" | "legs" | "needs" | "charges"> {
   return {
     ...(q.legs.length ? { legs: q.legs } : {}),
+    ...(q.charges.length ? { charges: q.charges } : {}),
     fee: q.fee,
     feeToken: q.feeToken,
     value: q.value,
     needed: q.nativeNeeded,
     neededFromRelay: q.nativeNeededFromRelay,
+    ...(q.needs.length ? { needs: q.needs } : {}),
     ...(q.fundedFromChainId !== undefined ? { fundedFromChainId: q.fundedFromChainId } : {}),
   };
 }
 
-/** A one-line human summary of a quote line, for logs. */
+/** The two intents of a first registry write, added per chain and token. */
+function mergeNeeds(...sets: (readonly QuoteNeed[] | undefined)[]): readonly QuoteNeed[] {
+  const out = new Map<string, QuoteNeed>();
+  for (const set of sets) {
+    for (const need of set ?? []) {
+      const key = `${need.chainId ?? "?"}:${need.token.toLowerCase()}`;
+      const found = out.get(key);
+      if (!found) {
+        out.set(key, { ...need });
+        continue;
+      }
+      found.amount += need.amount;
+      found.fromRelay = found.fromRelay || need.fromRelay;
+      if (found.symbol === undefined && need.symbol !== undefined) found.symbol = need.symbol;
+      if (found.decimals === undefined && need.decimals !== undefined) found.decimals = need.decimals;
+    }
+  }
+  return [...out.values()];
+}
+
+/** A chain's name, for a log line. */
+function chainName(chainId: number): string {
+  return networkByChainId(chainId)?.chain.name ?? `chain ${chainId}`;
+}
+
+/** How a need reads: "29.4 CELO", or the raw amount when nothing names the token. */
+function formatNeed(need: QuoteNeed, fallback: NetworkConfig | undefined): string {
+  if (need.token.toLowerCase() === NATIVE_TOKEN) {
+    const native = (need.chainId !== undefined ? networkByChainId(need.chainId) : fallback)?.chain.nativeCurrency;
+    const decimals = need.decimals ?? native?.decimals;
+    const symbol = need.symbol ?? native?.symbol;
+    if (decimals === undefined || symbol === undefined) return `${need.amount}`;
+    return `${formatUnits(need.amount, decimals)} ${symbol}`;
+  }
+  if (need.decimals === undefined) return `${need.amount} of token ${need.token}`;
+  return `${formatUnits(need.amount, need.decimals)} ${need.symbol ?? need.token}`;
+}
+
+/**
+ * A one-line human summary of a quote line, for logs.
+ *
+ * The fee is labelled in the token and on the chain it is actually charged on.
+ * A registry leg the relay funds from an L2 is paid there, so a cross-asset
+ * quote reads "pays 2.84 CELO on Celo Sepolia" rather than quietly labelling
+ * a CELO amount with the registry chain's symbol.
+ */
 export function formatQuoteLine(line: QuoteLine, network: NetworkConfig): string {
   const symbol = network.chain.nativeCurrency.symbol;
+  const decimals = network.chain.nativeCurrency.decimals;
+  // The fee is charged on the chain the payer pays from, not on the leg's own.
+  const feeNetwork = line.fundedFromChainId !== undefined ? networkByChainId(line.fundedFromChainId) : network;
+  const feeNeed = line.needs?.find((n) => n.token.toLowerCase() === line.feeToken.toLowerCase());
   const fee =
     line.fee === undefined
       ? line.deferred
         ? "fee priced once the registry write lands"
         : `could not be quoted: ${line.reason ?? "no quote"}`
-      : line.feeToken === NATIVE_TOKEN
-        ? `fee ${formatUnits(line.fee, network.chain.nativeCurrency.decimals)} ${symbol}`
-        : `fee ${line.fee} of token ${line.feeToken}`;
-  const value = line.value > 0n ? `, value ${formatUnits(line.value, network.chain.nativeCurrency.decimals)} ${symbol}` : "";
+      : `fee ${formatNeed({ ...(feeNeed ?? {}), token: line.feeToken, amount: line.fee, fromRelay: false, ...(line.fundedFromChainId !== undefined ? { chainId: line.fundedFromChainId } : {}) }, feeNetwork)}`;
+  const value = line.value > 0n ? `, value ${formatUnits(line.value, decimals)} ${symbol}` : "";
   const funded =
-    line.fundedFromChainId !== undefined
-      ? `, funded from ${networkByChainId(line.fundedFromChainId)?.chain.name ?? `chain ${line.fundedFromChainId}`}`
-      : "";
-  return `chain ${line.chainId} ${line.kind}${line.via ? ` via ${line.via}` : ""}: ${fee}${value}${funded}`;
+    line.fundedFromChainId !== undefined ? `, funded from ${chainName(line.fundedFromChainId)}` : "";
+  // What the payer must hold, when that is not simply this chain's native
+  // token. A line that carries only the legacy `needed` — a quote recorded
+  // before `needs` existed, or one built by hand — still states its total,
+  // read as the funding chain's native token, which is what `needed` meant.
+  const needs =
+    line.needs && line.needs.length > 0
+      ? line.needs
+      : line.fundedFromChainId !== undefined && line.needed > 0n
+        ? [{ chainId: line.fundedFromChainId, token: NATIVE_TOKEN, amount: line.needed, fromRelay: line.neededFromRelay }]
+        : [];
+  const pays = needs
+    .filter((n) => n.amount > 0n && (n.chainId !== line.chainId || n.token.toLowerCase() !== NATIVE_TOKEN))
+    // A need that is only the fee again, on the leg's own chain, is not worth
+    // a second clause: "fee 0.622991 USDC, pays 0.622991 USDC on Celo Sepolia
+    // Testnet" says one thing twice.
+    .filter((n) => !(n.chainId === line.chainId && n.token.toLowerCase() === line.feeToken.toLowerCase() && n.amount === line.fee))
+    .map((n) => `pays ${formatNeed(n, feeNetwork)}${n.chainId !== undefined ? ` on ${chainName(n.chainId)}` : ""}`);
+  return `chain ${line.chainId} ${line.kind}${line.via ? ` via ${line.via}` : ""}: ${fee}${value}${funded}${pays.length ? `, ${pays.join(", ")}` : ""}`;
 }
