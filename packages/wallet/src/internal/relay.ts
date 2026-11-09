@@ -1351,6 +1351,7 @@ async function explainRelayError(args: {
     cause: err,
     ...(shortfall ? { shortfall } : {}),
     ...(fundingRefused ? { fundingRefused } : {}),
+    ...(intent?.sessionExpiry !== undefined ? { sessionExpiry: intent.sessionExpiry } : {}),
     ...(feeSymbol ? { feeSymbol } : {}),
     ...(intent?.operation ? { operation: intent.operation } : {}),
     ...(relay
@@ -1601,6 +1602,8 @@ export type IntentContext = {
   fundFrom?: NetworkConfig;
   /** What a quote taken before this said it costs the payer. */
   expectedCost?: { chainId: number; token: Address; amount: bigint };
+  /** The expiry of the session key that signed it, when a session key did. */
+  sessionExpiry?: number;
 };
 
 /** The facts about one intent a failure may be worded from. */
@@ -1618,6 +1621,11 @@ function intentContext(
     ...(opts.operation ? { operation: opts.operation } : {}),
     ...(opts.fundFrom ? { fundFrom: opts.fundFrom } : {}),
     ...(opts.expectedCost ? { expectedCost: opts.expectedCost } : {}),
+    // Only a session key's: an admin key does not expire, and an expiry on one
+    // would make a relay failure read as a session that ran out.
+    ...(opts.submittingKey.role === "session" && opts.submittingKey.expiry !== undefined
+      ? { sessionExpiry: opts.submittingKey.expiry }
+      : {}),
   };
 }
 

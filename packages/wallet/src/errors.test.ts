@@ -4,7 +4,9 @@ import {
   classifyRelayFailure,
   explainRelayFailure,
   isAltanaError,
+  expiredSessionError,
   readableAmount,
+  sessionHasExpired,
   type RelayFailureFacts,
 } from "./errors.js";
 
@@ -216,7 +218,7 @@ describe("the other common failures", () => {
       facts: { relayMessage: "KeyExpired()" },
       code: "session_expired",
       says: "This session key has expired.",
-      action: "Grant a new session key",
+      action: "Grant a new session",
     },
     {
       name: "spend limit exceeded",
@@ -345,6 +347,70 @@ describe("a wallet this relay never created", () => {
   test("it outranks a wallet that is also low, because the relay named the cause", () => {
     expect(classifyRelayFailure({ relayMessage: QA_MESSAGE, shortfall: CELO_SHORTFALL })).toBe("wallet_unknown_to_relay");
     expect(classifyRelayFailure({ relayMessage: QA_MESSAGE, fundingRefused: true })).toBe("wallet_unknown_to_relay");
+  });
+});
+
+describe("a session that has run out", () => {
+  /** Doris's case: granted to 12:28 UTC, used at 15:20 (2026-11-09). */
+  const EXPIRED_AT = Math.floor(Date.UTC(2026, 10, 9, 12, 28, 0) / 1000);
+  const SENTENCE = "This session expired at 12:28 UTC. Grant a new session to continue.";
+  /** What the relay answers once the account has dropped the expired key. */
+  const KEY_UNKNOWN = "key hash 0xf93ce095e4d0a9dfd1b7ab0fd4f45ea8ba2e6b07a4ef1a4f1c0f0b3e0f1d2c3b is unknown";
+
+  test("the check before sending says when it expired", () => {
+    const err = expiredSessionError({ expiry: EXPIRED_AT, detail: "nothing was sent to the relay" });
+    expect(err.code).toBe("session_expired");
+    expect(err.message).toBe(SENTENCE);
+    expect(err.detail).toBe("nothing was sent to the relay");
+  });
+
+  test("the relay's unknown key hash reads the same, once the expiry has passed", () => {
+    const err = explainRelayFailure({ relayMessage: KEY_UNKNOWN, sessionExpiry: EXPIRED_AT });
+    expect(err.code).toBe("session_expired");
+    expect(err.message).toBe(SENTENCE);
+    // The hash is the relay's business, and it is kept where that belongs.
+    expect(err.message).not.toContain("key hash");
+    expect(err.relayMessage).toBe(KEY_UNKNOWN);
+  });
+
+  test("an unknown key hash from a session still in date keeps the relay's own words", () => {
+    // Nothing says this is an expiry, and saying so would send someone to
+    // re-grant a key that is live. It stays unrecognised, with the relay's
+    // sentence, which is the one thing known to be true about it.
+    const live = Math.floor(Date.UTC(2099, 0, 1) / 1000);
+    for (const facts of [{ relayMessage: KEY_UNKNOWN }, { relayMessage: KEY_UNKNOWN, sessionExpiry: live }]) {
+      const err = explainRelayFailure(facts);
+      expect(err.code).toBe("unknown");
+      expect(err.message).not.toContain("expired");
+    }
+  });
+
+  test("an expiry that passed does not reword every other failure", () => {
+    // The expiry is carried on every session failure, so it must only speak
+    // where the relay said nothing or said it could not find the key.
+    expect(classifyRelayFailure({ relayMessage: "ExceededSpendLimit", sessionExpiry: EXPIRED_AT })).toBe(
+      "spend_limit_exceeded",
+    );
+    expect(classifyRelayFailure({ relayMessage: "intent reverted: 0x", sessionExpiry: EXPIRED_AT, shortfall: CELO_SHORTFALL })).toBe(
+      "insufficient_funds",
+    );
+  });
+
+  test("the relay's own KeyExpired needs no expiry to be read", () => {
+    const err = explainRelayFailure({ relayMessage: "KeyExpired()" });
+    expect(err.code).toBe("session_expired");
+    expect(err.statement).toBe("This session key has expired.");
+    expect(err.action).toBe("Grant a new session to continue.");
+  });
+
+  test("0 and absent are keys that do not expire", () => {
+    const past = Date.UTC(2026, 10, 9, 15, 20, 0);
+    expect(sessionHasExpired(EXPIRED_AT, past)).toBe(true);
+    expect(sessionHasExpired(0, past)).toBe(false);
+    expect(sessionHasExpired(undefined, past)).toBe(false);
+    // The minute it expires, it is expired.
+    expect(sessionHasExpired(EXPIRED_AT, EXPIRED_AT * 1000)).toBe(true);
+    expect(sessionHasExpired(EXPIRED_AT, EXPIRED_AT * 1000 - 1)).toBe(false);
   });
 });
 

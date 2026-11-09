@@ -105,6 +105,18 @@ export type RelayFailureFacts = {
    * (`evidence/2026-09-28-s3-registry-write-reverts-0x.md`).
    */
   fundingRefused?: boolean;
+  /**
+   * The expiry of the session key the intent was signed with, unix seconds,
+   * when the caller holds one. 0 is a key that does not expire.
+   *
+   * The account drops an expired key from `getKeys`, so the relay stops
+   * recognising it and says `key hash 0x… is unknown`: a key that never
+   * existed, rather than one that ran out at a time the person could be told
+   * (Doris, 2026-11-09, key 0xf93ce095 on 0x73548b39, expiry 12:28 UTC, used
+   * at 15:20). The SDK is holding that expiry the whole time, so it is the
+   * layer that can tell the two apart.
+   */
+  sessionExpiry?: number;
   /** Everything the SDK knows, for the debug log. Never shown. */
   detail?: string;
   cause?: unknown;
@@ -189,6 +201,36 @@ const PATTERNS: readonly (readonly [AltanaErrorCode, RegExp])[] = [
 /** The relay's simulation reverted with no reason bytes ("intent reverted: 0x", or a bare "0x"). */
 const NO_REASON = /(^|\s)0x$/;
 
+/** The relay cannot find the key an intent is signed with, by its hash. */
+const KEY_UNKNOWN = /key hash 0x[0-9a-f]+ is unknown/i;
+
+const MS = 1000;
+
+/**
+ * Whether an expiry the caller is holding has already passed.
+ *
+ * `0` and absent both mean a key that does not expire, which is what the
+ * KeyStore stores for one (`toUint40Expiry`), so neither is ever overdue.
+ */
+export function sessionHasExpired(expiry: number | undefined, now: number = Date.now()): boolean {
+  return expiry !== undefined && expiry > 0 && expiry * MS <= now;
+}
+
+/**
+ * `12:28 UTC`: when a session ran out, to the minute.
+ *
+ * UTC, and said so, rather than the viewer's own clock: this sentence is read
+ * next to a relay log, a grant's expiry and somebody else's screenshot, and a
+ * bare `12:28` in an unstated zone is the ambiguity that costs the hour. It is
+ * also the zone the expiry was quoted in when this was reported.
+ */
+function expiredAt(expiry: number): string {
+  const at = new Date(expiry * MS);
+  const hh = String(at.getUTCHours()).padStart(2, "0");
+  const mm = String(at.getUTCMinutes()).padStart(2, "0");
+  return `${hh}:${mm} UTC`;
+}
+
 /**
  * Which failure this is.
  *
@@ -205,6 +247,13 @@ export function classifyRelayFailure(facts: RelayFailureFacts): AltanaErrorCode 
   // A revert with no reason bytes says nothing at all. It is a funding failure
   // only when something else says so, which is what cost qa an hour the other
   // way round (a wallet holding 133x the fee told it could not pay).
+  // A session the SDK can see has run out. Either nothing came back from the
+  // relay (the check made before sending) or what came back was a key it does
+  // not know, which is what an account that has dropped an expired key
+  // answers. There is one thing to say about both.
+  if (sessionHasExpired(facts.sessionExpiry) && (message === "" || KEY_UNKNOWN.test(message))) {
+    return "session_expired";
+  }
   if (facts.shortfall) return "insufficient_funds";
   // The relay refusing to source the funds is itself the cause, and the only
   // one the payer can act on. It reaches the caller as a bare revert, so
@@ -311,7 +360,17 @@ export function explainRelayFailure(facts: RelayFailureFacts): AltanaError {
           action: "Try again, and it will be priced afresh.",
         };
       case "session_expired":
-        return { statement: "This session key has expired.", action: "Grant a new session key, then try again." };
+        // With the expiry in hand the sentence carries the time, which is what
+        // makes it checkable: a key used at 15:20 against an expiry of 12:28
+        // is answered, instead of leaving a person to wonder whether the relay
+        // lost their key.
+        return {
+          statement:
+            facts.sessionExpiry !== undefined && facts.sessionExpiry > 0
+              ? `This session expired at ${expiredAt(facts.sessionExpiry)}.`
+              : "This session key has expired.",
+          action: "Grant a new session to continue.",
+        };
       case "spend_limit_exceeded":
         return {
           statement: `This session key's spending limit does not cover this${facts.feeSymbol ? ` in ${facts.feeSymbol}` : ""}.`,
@@ -371,6 +430,21 @@ export function explainRelayFailure(facts: RelayFailureFacts): AltanaError {
     ...(facts.detail !== undefined ? { detail: facts.detail } : {}),
     ...(facts.relayMessage !== undefined ? { relayMessage: facts.relayMessage } : {}),
     ...(facts.cause !== undefined ? { cause: facts.cause } : {}),
+  });
+}
+
+/**
+ * The failure for a session the SDK can see has run out, raised before
+ * anything is sent.
+ *
+ * The same sentence the relay's refusal maps to, from the same place, so the
+ * wallet does not say one thing when it checks and another when the relay
+ * does.
+ */
+export function expiredSessionError(args: { expiry: number; detail?: string }): AltanaError {
+  return explainRelayFailure({
+    sessionExpiry: args.expiry,
+    ...(args.detail !== undefined ? { detail: args.detail } : {}),
   });
 }
 
