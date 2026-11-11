@@ -35,6 +35,8 @@ export type AltanaErrorCode =
   | "chain_not_served"
   /** The relay could not price the fee, so it would not quote. */
   | "price_unavailable"
+  /** The prices the relay converts with are older than it accepts, so it would not quote. */
+  | "prices_stale"
   /** Anything the map does not recognise. The relay's own words lead. */
   | "unknown";
 
@@ -65,6 +67,18 @@ export type FundingShortfall = {
   have: bigint;
   /** Where to add funds, and what the relay takes there. */
   fund?: { chain: string; tokens: readonly string[] };
+};
+
+/** A price the relay converts with, read at its feed and found too old. For the log. */
+export type StalePrice = {
+  /** The asset the feed prices, as a person reads it: "CELO". */
+  asset: string;
+  /** How old the feed's newest answer was when the SDK read it, in seconds. */
+  ageSecs: number;
+  /** The oldest the relay accepts, in seconds. */
+  maxAgeSecs: number;
+  /** Where the feed is: its address and the chain it is on. */
+  feed?: string;
 };
 
 /** Everything the map decides from. Only `relayMessage` comes from the relay. */
@@ -103,6 +117,21 @@ export type RelayFailureFacts = {
    * (`evidence/2026-09-28-s3-registry-write-reverts-0x.md`).
    */
   fundingRefused?: boolean;
+  /**
+   * Set when the SDK read a price feed the relay converts with and found it
+   * older than the relay accepts.
+   *
+   * A request paid on one chain in one asset and carried out on another in a
+   * different one is converted at a price, and the relay refuses to convert at
+   * a price that is too old. It names the feed and its age in its own log and
+   * answers the caller with the same bare revert as any other refusal to fund
+   * (`evidence/2026-11-10-celo-mainnet-fork-rehearsal-phase2.md`, 6.4), so the
+   * relay's words cannot tell the two apart. The feed can: its age is public,
+   * and the caller reads it. This is set only from that read, never from the
+   * revert alone, and it outranks a shortfall because no balance would have
+   * been enough while the price was missing.
+   */
+  stalePrice?: StalePrice;
   /** Everything the SDK knows, for the debug log. Never shown. */
   detail?: string;
   cause?: unknown;
@@ -129,11 +158,16 @@ export class AltanaError extends Error {
     code: AltanaErrorCode;
     statement: string;
     action: string;
+    /** The whole sentence, where it is not simply the statement followed by the action. */
+    message?: string;
     detail?: string;
     relayMessage?: string;
     cause?: unknown;
   }) {
-    super(`${args.statement} ${args.action}`.trim(), ...(args.cause !== undefined ? [{ cause: args.cause }] : []));
+    super(
+      args.message ?? `${args.statement} ${args.action}`.trim(),
+      ...(args.cause !== undefined ? [{ cause: args.cause }] : []),
+    );
     this.name = "AltanaError";
     this.code = args.code;
     this.statement = args.statement;
@@ -169,6 +203,8 @@ const PATTERNS: readonly (readonly [AltanaErrorCode, RegExp])[] = [
   ["session_expired", /KeyExpired|key (has )?expired|session (has )?expired|expired key/i],
   ["spend_limit_exceeded", /ExceededSpendLimit|0x9054c912|NoSpendPermissions|0x5ee7e5b1|spend limit|spending limit/i],
   ["call_not_permitted", /Unauthorized(Call|Key)?|not permitted|no call permission|InvalidSignature.*key|KeyDoesNotExist/i],
+  // The relay's own sentence for a price that is too old, should it ever reach the caller.
+  ["prices_stale", /price for \S+ is \d+s old/i],
   ["price_unavailable", /(price|oracle|rate|feed)[^.]{0,40}(unavailable|not available|missing|stale|failed|not found)|(no|without a) (price|rate|oracle)/i],
   // Funding last: everything above can look like a wallet that cannot pay.
   ["insufficient_funds", /insufficient|not enough|deficit|QuoteHasDeficits|InsufficientLiquidity|cannot be funded|unable to fund|no route|exceeds balance|balance too low/i],
@@ -190,6 +226,10 @@ export function classifyRelayFailure(facts: RelayFailureFacts): AltanaErrorCode 
   for (const [code, pattern] of PATTERNS) {
     if (pattern.test(message)) return code;
   }
+  // A price the SDK read and found too old explains a refusal the relay did
+  // not: no balance would have been enough while it was missing, so it is
+  // tried before the wallet is told to add funds.
+  if (facts.stalePrice) return "prices_stale";
   // A revert with no reason bytes says nothing at all. It is a funding failure
   // only when something else says so, which is what cost qa an hour the other
   // way round (a wallet holding 133x the fee told it could not pay).
@@ -289,7 +329,7 @@ function capitalise(text: string): string {
 export function explainRelayFailure(facts: RelayFailureFacts): AltanaError {
   const code = classifyRelayFailure(facts);
   const chain = facts.chain?.name;
-  const parts = ((): { statement: string; action: string } => {
+  const parts = ((): { statement: string; action: string; message?: string } => {
     switch (code) {
       case "insufficient_funds":
         return { statement: fundingStatement(facts), action: fundingAction(facts.shortfall) };
@@ -325,6 +365,15 @@ export function explainRelayFailure(facts: RelayFailureFacts): AltanaError {
           statement: `No price was available for ${facts.feeSymbol ?? "the fee token"} just now, so this could not be priced.`,
           action: "Try again in a moment, or pay the fee in another token the relay accepts.",
         };
+      case "prices_stale":
+        // The sentence is fixed and carries no figure: the feed's age is a
+        // fact for the log, and neither chain's asset is named, because the
+        // person can act on neither.
+        return {
+          statement: "Prices are temporarily unavailable.",
+          action: "Try again in a few minutes.",
+          message: "Prices are temporarily unavailable, try again shortly.",
+        };
       default: {
         // A revert with no reason bytes is not a sentence. Quoting "0x" at a
         // person says less than admitting there is nothing to say.
@@ -338,13 +387,21 @@ export function explainRelayFailure(facts: RelayFailureFacts): AltanaError {
       }
     }
   })();
+  const stale = facts.stalePrice ? stalePriceDetail(facts.stalePrice) : undefined;
+  const detail = [facts.detail, stale].filter((part) => part !== undefined).join(" ");
   return new AltanaError({
     code,
     ...parts,
-    ...(facts.detail !== undefined ? { detail: facts.detail } : {}),
+    ...(detail.length > 0 ? { detail } : {}),
     ...(facts.relayMessage !== undefined ? { relayMessage: facts.relayMessage } : {}),
     ...(facts.cause !== undefined ? { cause: facts.cause } : {}),
   });
+}
+
+/** The long form of a stale price, in the relay's own shape, for the log. */
+function stalePriceDetail(stale: StalePrice): string {
+  const where = stale.feed ? ` (${stale.feed})` : "";
+  return `The price for ${stale.asset} is ${stale.ageSecs}s old at its feed${where}, and the relay's limit is ${stale.maxAgeSecs}s.`;
 }
 
 /**
@@ -361,6 +418,7 @@ export function withFailureContext(err: unknown, context: string): Error {
       code: err.code,
       statement: err.statement,
       action: err.action,
+      message: err.message,
       detail: `${context} ${err.detail ?? err.message}`,
       ...(err.relayMessage !== undefined ? { relayMessage: err.relayMessage } : {}),
       cause: err,

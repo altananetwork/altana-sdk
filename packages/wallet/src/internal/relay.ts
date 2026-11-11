@@ -29,7 +29,14 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { NATIVE_TOKEN, networkByChainId, registryNetwork, type NetworkConfig } from "../config.js";
 import { stripEip7708AssetDiffs } from "./eip7708.js";
 import { acceptedFeeSymbols, acceptedFeeTokens, feeTokenHint } from "./feeCurrencies.js";
-import { explainRelayFailure, classifyRelayFailure, type FundingShortfall, type RelayFailureFacts } from "../errors.js";
+import {
+  explainRelayFailure,
+  classifyRelayFailure,
+  type FundingShortfall,
+  type RelayFailureFacts,
+  type StalePrice,
+} from "../errors.js";
+import { findStalePrice } from "./priceFeeds.js";
 import { resolveFeeToken, type FeeTokenOption } from "./feeTokenSelection.js";
 import { hasRawPrivateKey, type Signer } from "./signer.js";
 import {
@@ -1332,10 +1339,15 @@ async function explainRelayError(args: {
    * back into a sentence, because it knows what it asked for.
    */
   const refusedToFund = Boolean(intent?.funded) && EMPTY_REVERT.test(reason);
+  const readBalances = (provisional === "insufficient_funds" || provisional === "unknown") && relay && intent;
+  const holdings = readBalances ? await readHoldings(relay.client, intent.account).catch(() => undefined) : undefined;
+  // The same bare revert is what the relay answers when a price it converts
+  // with is too old. That is read at the feed before anything is said about
+  // the wallet's balance, which no top-up would have fixed.
+  const stalePrice =
+    refusedToFund && relay && intent ? await stalePriceFor(relay.network, intent, holdings) : undefined;
   const balance: PayerBalance =
-    (provisional === "insufficient_funds" || provisional === "unknown") && relay && intent
-      ? await payerBalance(relay, intent, refusedToFund)
-      : { kind: "unknown" };
+    readBalances && !stalePrice ? await payerBalance(relay, intent, holdings, refusedToFund) : { kind: "unknown" };
   const shortfall = balance.kind === "short" ? balance.shortfall : undefined;
   // Withheld when the payer's balance covers the quote the caller took: that
   // is evidence the cause is something else, and telling a wallet that can pay
@@ -1351,6 +1363,7 @@ async function explainRelayError(args: {
     cause: err,
     ...(shortfall ? { shortfall } : {}),
     ...(fundingRefused ? { fundingRefused } : {}),
+    ...(stalePrice ? { stalePrice } : {}),
     ...(feeSymbol ? { feeSymbol } : {}),
     ...(intent?.operation ? { operation: intent.operation } : {}),
     ...(relay
@@ -1361,6 +1374,32 @@ async function explainRelayError(args: {
       : {}),
   };
   return explainRelayFailure(facts);
+}
+
+/**
+ * A price the relay needed for a funded intent and would have found too old.
+ *
+ * Only asked once the relay has refused to fund a request with no reason
+ * given. The paying chain is the one the caller named, or the one the
+ * wallet's holdings point at; with neither there is no conversion to check
+ * and nothing is read. An injected reader keeps this testable without a chain.
+ */
+async function stalePriceFor(
+  destination: NetworkConfig,
+  intent: IntentContext,
+  holdings: readonly Holding[] | undefined,
+): Promise<StalePrice | undefined> {
+  const source = intent.fundFrom ?? (holdings ? fundingNetwork(destination, holdings) : undefined);
+  if (!source) return undefined;
+  const native = holdings?.find(
+    (h) => h.chainId === source.chainId && h.token.toLowerCase() === NATIVE_TOKEN.toLowerCase(),
+  );
+  return findStalePrice({
+    destination,
+    source,
+    // Unread holdings are not evidence the wallet holds none.
+    sourceNativeHeld: holdings === undefined || (native?.balance ?? 0n) > 0n,
+  }).catch(() => undefined);
 }
 
 /** The long form: what was asked, what the relay said, and what the SDK checked. */
@@ -1453,10 +1492,11 @@ type PayerBalance =
 async function payerBalance(
   relay: { client: ReturnType<typeof buildRelayClient>; network: NetworkConfig },
   intent: IntentContext,
+  /** The wallet's balances as the relay reports them, or nothing when they could not be read. */
+  holdings: readonly Holding[] | undefined,
   /** Whether the relay refused to source the funds, which is a shortfall with no figure. */
   refusedToFund = false,
 ): Promise<PayerBalance> {
-  const holdings = await readHoldings(relay.client, intent.account).catch(() => undefined);
   if (!holdings) return { kind: "unknown" };
 
   /**

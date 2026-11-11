@@ -252,6 +252,16 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Fixed
 
+- **A price that is too old is reported as one.** The relay converts a
+  request paid in one asset and carried out in another at a Chainlink price,
+  and refuses when that price is older than its limit. It answers the refusal
+  with a revert that carries no reason, the same answer it gives when a wallet
+  cannot pay, so a wallet that could pay was told to add funds. The SDK now
+  reads the feeds the conversion depends on after such a refusal, and when one
+  is older than the relay accepts the error is `prices_stale`: "Prices are
+  temporarily unavailable, try again shortly." The feed and its age are on
+  `detail`. Any other refusal keeps the sentence it had. The feeds and the
+  limit are on `NetworkConfig.nativePriceFeed`.
 - **A quote reads a cross-chain cost per leg and per token.** A registry
   write the relay funds from an L2 is paid on that L2, and the relay prices it
   in whatever token it accepts there: the native one, or a stablecoin with 6
