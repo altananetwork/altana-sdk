@@ -15,6 +15,8 @@ This page is about the Ethereum → Base path specifically. Sessions granted on 
 
 It's idempotent: if the L2 cache already has the key, it returns immediately. Otherwise it waits for the L2 to anchor past the relevant L1 block, then submits a storage proof.
 
+The proof is built at the L1 block the L2 anchors, which can be a hundred blocks behind the L1's head, so `l1Client` must point at an RPC that serves `eth_getProof` that far back. `syncSessionToCache` picks one for you from the registry network's `proofRpcUrls`.
+
 Call it yourself before the first action on an L2; [`execute`](/sdk/execute) does not call it for you. Base is a verification target only: it hosts a cache and no relay, so `BASE` cannot be passed to `createClient`.
 
 ```ts
