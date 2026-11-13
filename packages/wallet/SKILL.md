@@ -100,7 +100,12 @@ const session = await client.grantSession({
     }],
   },
   expiry: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60, // 7 days
+  // chainId: 56,            // one chain; omitted, the client's default chain
+  // chainIds: [56, 42220],  // or several chains in one call
 });
+// One chain: resolves once the account authorized the key, with
+// session.transactionHash, and throws when it did not. With chainIds it does
+// not throw for a chain that failed: check session.status and session.legs.
 
 // Hand `session` to whichever process runs the agent. To persist it, do NOT
 // JSON.stringify the Session (it throws on bigint limits and embeds the
@@ -197,7 +202,7 @@ await client.revokeSession({ wallet, signer: adminSigner, session });
 await client.revokeSession({ wallet, signer: adminSigner, session: sessionPublicKey });
 ```
 
-Revocation acts on every chain the client was configured with: it finds the chains whose account holds the key, pulls the session's authority on each, revokes the key in Keystore, and proves the revocation into every L2 cache. Check `result.status` (`"revoked"` or `"failed"`); `result.legs` names the chain and step of any failure, and calling it again only redoes what is pending. The session's next signed call reverts at validation. Revocation is monotonic in Keystore v1.0.0, so to restore access, grant a fresh session.
+Revocation acts on every chain the client was configured with: it finds the chains whose account holds the key, pulls the session's authority on each, revokes the key in Keystore, and proves the revocation into every L2 cache. The call answers for one chain, `chainId` or the client's default chain: `result.transactionHash` is the account revoke there, and a revoke that failed there throws a `SessionRevokeError` carrying the full `result`. A failure on another chain of the client is in `result.status` (`"revoked"` or `"failed"`) and `result.legs`, and calling it again only redoes what is pending. The session's next signed call reverts at validation. Revocation is monotonic in Keystore v1.0.0, so to restore access, grant a fresh session.
 
 ### Recover a passkey wallet
 
@@ -227,7 +232,7 @@ The MCP server is a thin wrapper around this SDK. Anything the MCP does, you can
 - **Sessions must match the grant on execute.** The session's `permissions + expiry + publicKey` values must equal what was committed at grant time; a lossy round trip (bigints → number, re-cased hex) breaks the match. Persist with `serializeSession` and restore with `deserializeSession(stored, signer)` — never raw `JSON.stringify` on a `Session`.
 - **Empty calls means no calls.** `client.execute({ wallet, signer, calls: [] })` is rejected. Pass at least one call.
 - **`permissions.calls` omitted = unrestricted.** If you don't pass `calls`, the session can call any contract within its spend cap. Set both unless that's truly what you want.
-- **Pick chains at the client.** `createClient({ chains })` takes one or more chains; the same wallet address works on all of them. Select per operation with `chainId`; `grantSession` takes `chainIds` (default: all chains) and `revokeSession` always acts on all of them.
+- **Pick chains at the client.** `createClient({ chains })` takes one or more chains; the same wallet address works on all of them. Select per operation with `chainId` (default: the client's default chain). `grantSession` follows the same rule and also takes `chainIds` to grant on several chains in one call; `revokeSession` always acts on every chain holding the key.
 
 ## Networks
 

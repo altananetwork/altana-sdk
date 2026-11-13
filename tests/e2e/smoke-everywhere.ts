@@ -142,10 +142,12 @@ async function run(
   const sessionSigner = createPrivateKeySigner();
 
   console.log("\n[3a] quoteGrantSession");
-  printQuote(await client.quoteGrantSession({ wallet, signer: admin, sessionSigner, permissions, expiry }));
+  // A grant goes to one chain unless told otherwise: name both.
+  const chainIds = CHAINS.map((n) => n.chainId);
+  printQuote(await client.quoteGrantSession({ wallet, signer: admin, sessionSigner, permissions, expiry, chainIds }));
 
   console.log("\n[3b] grantSession on both chains");
-  const session = await client.grantSession({ wallet, signer: admin, sessionSigner, permissions, expiry, onStatus: status });
+  const session = await client.grantSession({ wallet, signer: admin, sessionSigner, permissions, expiry, chainIds, onStatus: status });
   printLegs(session.legs);
   assertStatus(session, "granted", "grantSession");
   const grantRegistry = legOf(session.legs, "registry", sepolia.chainId);

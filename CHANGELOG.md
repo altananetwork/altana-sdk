@@ -17,17 +17,28 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Breaking
 
-- **`chainId` is gone from session grant and revoke.**
-  `client.revokeSession` acts on every chain the client was configured with
-  and no longer accepts `chainId` (a type error). `client.grantSession`
-  grants on every chain of the client by default; pick chains with
-  `chainIds: number[]` instead of `chainId`. The low-level functions take
-  `{ networks }` instead of `{ network }`. `RevokeSessionResult` is now
-  `{ keyId, status: "revoked" | "failed", legs }` instead of an
-  `ExecuteResult` with `registry` / `cache` reports; `GrantSessionResult`
-  replaces `transactionHash`, `registry` and `cache` with `keyId`, `status`
-  and `legs`. `grantSession` no longer throws when a step fails: check
-  `status`. `onStatus` receives the chain as a second argument.
+- **Session grant and revoke report per chain; a grant still goes to one
+  chain.** `client.grantSession` grants on one chain, `chainId` or the
+  client's default chain, as in 0.9.0: it returns `transactionHash` and
+  throws when the account on that chain did not authorize the key (the
+  original error, or `Session grant did not confirm: status=<STATUS>`). Pass
+  `chainIds: number[]` instead to grant on several chains in one call; that
+  form does not throw for a failed chain. Calls written for 0.9.0 keep
+  working unchanged. New in `GrantSessionResult`: `keyId`, `keyHash`,
+  `status: "granted" | "failed"`, `legs` (one per step per chain),
+  `registration` and `cacheSync`; on an L2 a result with `status: "failed"`
+  is a live key whose Keystore write or cache proof is left.
+  `client.revokeSession` revokes on every chain of the client that holds the
+  key. It still accepts `chainId` (deprecated: it names the chain the call
+  answers for, default the client's default chain, and does not narrow the
+  revoke), returns `transactionHash` for that chain, and throws a
+  `SessionRevokeError` when the revoke failed there instead of returning
+  `status: "FAILED"`. Its result is now `{ keyId, status: "revoked" |
+  "failed", legs, cacheSync }` rather than an `ExecuteResult`: `status` no
+  longer reads `"CONFIRMED"`, so code that waits for that value must compare
+  against `"revoked"`. The low-level `grantSession` / `revokeSession`
+  functions take `{ networks }` instead of `{ network }` and never throw for
+  a failed leg. `onStatus` receives the chain as a second argument.
 
 ### Added
 

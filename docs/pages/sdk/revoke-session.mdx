@@ -14,9 +14,7 @@ Revoke a session key everywhere it lives. One call finds the chains whose accoun
 ```ts
 // `client`, `wallet`, `admin`, and `session` from earlier
 const result = await client.revokeSession({ wallet, signer: admin, session });
-if (result.status !== "revoked") {
-  console.error(result.legs.filter((leg) => leg.status === "FAILED"));
-}
+console.log(result.transactionHash);
 ```
 
 You can also pass just the session's public key:
@@ -30,7 +28,7 @@ A bare public key is read as secp256k1. Pass the `Session` for a passkey session
 
 ## Which chains it acts on
 
-`client.revokeSession` acts on every chain the client was configured with. There is no `chainId` option: pass the whole group, for example `createClient({ chains: [...NETWORKS.testnet] })`, and the SDK does the rest.
+`client.revokeSession` acts on every chain the client was configured with: pass the whole group, for example `createClient({ chains: [...NETWORKS.testnet] })`, and the SDK does the rest.
 
 1. **Discovery.** In parallel, it reads which chains' accounts hold the key, and whether each Keystore behind those chains lists it as valid.
 2. **Revoke.** In parallel, one account leg per chain holding the key, and one registry leg per Keystore that lists it. Two L2s behind the same L1 share one registry leg. When the Keystore chain is itself a chain holding the key (BNB, Ethereum), the registry revoke rides in that chain's account leg, in the same intent.
@@ -49,10 +47,12 @@ type ClientRevokeSessionOptions = {
   onStatus?: (status: "discovery" | "registry-write" | "account-revoke" | "cache-sync" | "done",
               detail?: { chainId: number }) => void;
   populateCache?: "await";        // return only once every cache proof is in
+  chainId?: number;               // the chain the call answers for; see below
 };
 
 type RevokeSessionResult = {
   keyId: Hex;
+  transactionHash?: Hex;          // the account revoke on the chain the call answers for
   status: "revoked" | "failed";
   legs: SessionLeg[];
   cacheSync: Promise<SessionLeg[]>;  // the cache legs once their proofs are in
@@ -71,6 +71,7 @@ type SessionLeg = {
   l1BlockNumber?: bigint;              // cache legs
   cachedKey?: CachedKey;               // cache legs
   reason?: string;                     // why it was skipped or failed
+  unread?: true;                       // failed because the chain could not be read
 };
 ```
 
@@ -78,7 +79,28 @@ The cache proofs wait for each L2 to anchor the Sepolia block of the Keystore re
 
 `status` is either `revoked` or `failed`. It is `revoked` only when every leg confirmed or had nothing to do. Any failed leg makes it `failed`, and the other legs still run, so `legs` tells you exactly which chain and which step is left. Calling `revokeSession` again is safe: discovery only picks up what is still pending (an account still holding the key, a Keystore still listing it, a cache still showing it live).
 
-`revokeSession` never throws for a failed leg. Check `status`.
+## The chain the call answers for
+
+The revoke reaches every chain of the client, and the call answers for one of them: `chainId`, or the client's default chain. `transactionHash` is the account revoke on that chain. When the account leg or the registry leg of that chain failed, `revokeSession` throws a `SessionRevokeError`, so a revoke that did not go through there is never returned as a result:
+
+```ts
+import { SessionRevokeError } from "@altananetwork/sdk";
+
+try {
+  const result = await client.revokeSession({ wallet, signer: admin, session, chainId: 56 });
+  if (result.status !== "revoked") {
+    // Revoked on BNB. Another chain of the client is left: legs says which.
+    console.error(result.legs.filter((leg) => leg.status === "FAILED"));
+  }
+} catch (err) {
+  if (err instanceof SessionRevokeError) console.error(err.result.legs);
+  throw err;
+}
+```
+
+`err.result` is the full result, every chain included, and `err.cause` is the error raised underneath when there was one. A failed leg on any other chain does not throw: it makes `status` `failed`, and a leg with `unread: true` is a chain that could not be read, so nothing is known about the key there.
+
+`chainId` is deprecated as an option: it does not limit the revoke to one chain. It is accepted so calls written for 0.9.0 keep working.
 
 ## What it costs
 
@@ -133,4 +155,4 @@ await syncKeyToL2({
 
 - Revocation does not require the session signer, only the wallet's admin signer.
 - Revocation needs only the session's public key (`revokeSession` accepts `Session | Hex`). But keep the full serialized session ([`serializeSession`](/sdk/grant-session#persisting-a-session)) while the session is meant to keep working — an agent needs `permissions + expiry` to execute, not just the key.
-- A failed revocation **returns** `status: "failed"` rather than throwing. Check the returned status; do not assume success because nothing was raised. See [Errors](/sdk/errors).
+- A revocation that failed on the chain the call answers for throws. One that failed on another chain of the client **returns** `status: "failed"`. See [Errors](/sdk/errors).
