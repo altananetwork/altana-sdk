@@ -104,7 +104,12 @@ export function oneChainRevoke(
   const registry = result.legs.find((l) => l.kind === "registry" && l.chainId === registryChainId);
   const failed = [account, registry].filter((l): l is SessionLeg => l?.status === "FAILED");
   if (failed.length > 0) {
-    const what = failed
+    // A registry revoke that rode in the account leg's intent failed with it:
+    // one failure, said once.
+    const distinct = failed.filter(
+      (l) => !(l.kind === "registry" && l.via === "bundled" && account?.status === "FAILED" && l.chainId === chainId),
+    );
+    const what = distinct
       .map((l) => {
         const detail = legDetail(l);
         const why = detail?.error !== undefined && l.reason ? l.reason : relayStatusText(l);

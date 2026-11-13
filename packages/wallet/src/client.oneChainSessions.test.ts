@@ -501,6 +501,22 @@ describe("revokeSession answers for one chain", () => {
     expect(thrown.message).toContain("status=PENDING (relay code 100)");
   });
 
+  test("a registry revoke bundled into the failed account intent is one failure, said once", async () => {
+    const { client } = clientOf([BNB], {
+      holds: [BNB.chainId],
+      registryValid: [BNB.chainId],
+      account: { [BNB.chainId]: { status: "FAILED", relayStatus: "FAILED", statusCode: 300 } },
+    });
+
+    const thrown = (await thrownBy(() => client.revokeSession(revokeArgs()))) as SessionRevokeError;
+
+    expect(legKinds(thrown.result)).toEqual(["account:56:FAILED", "registry:56:FAILED"]);
+    expect(thrown.message).toBe(
+      "Session revoke did not confirm on chain 56 (account leg on chain 56: status=FAILED (relay code 300)). " +
+        "Calling revokeSession again is safe: it only acts on what is still pending.",
+    );
+  });
+
   test("the error thrown underneath is the cause", async () => {
     const original = relayError();
     const { client } = clientOf([BNB], {
