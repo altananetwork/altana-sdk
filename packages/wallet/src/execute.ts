@@ -15,6 +15,7 @@ import {
 import type { ExecuteResult, Wallet } from "./internal/types.js";
 import type { Session } from "./internal/sessions.js";
 import { forgetAppLane, withAppLaneNonce } from "./internal/appNonceLane.js";
+import { expiredSessionError, sessionHasExpired } from "./errors.js";
 import { keyHashForSigner } from "./internal/erc1271.js";
 
 export type ExecuteOptions = {
@@ -102,6 +103,23 @@ export async function executeWithReceipts(
   const opts = (isSessionCall ? callsOrOpts : maybeOpts) as ExecuteOptions;
 
   const network = opts.network;
+
+  // A session whose own expiry has passed cannot act, and the SDK has been
+  // holding that expiry since the grant. Sending anyway buys a round trip and
+  // an answer about a key hash: the account drops an expired key from
+  // `getKeys`, so the relay stops recognising it and says it is unknown
+  // (Doris, 2026-11-09, key 0xf93ce095 on 0x73548b39, expiry 12:28 UTC, used
+  // at 15:20). Checked here, before the relay client exists, so the sentence
+  // does not depend on reaching the relay at all.
+  if (isSessionCall && sessionHasExpired(walletOrSession.expiry)) {
+    throw expiredSessionError({
+      expiry: walletOrSession.expiry,
+      detail:
+        `Session key ${walletOrSession.publicKey} on wallet ${walletAddress} expired at ` +
+        `${new Date(walletOrSession.expiry * 1000).toISOString()}, and it is now ` +
+        `${new Date().toISOString()}. Nothing was sent to the relay.`,
+    });
+  }
 
   const relayClient = buildRelayClient(network);
   const userCalls = Array.isArray(callsArg) ? callsArg : [callsArg as Call];
