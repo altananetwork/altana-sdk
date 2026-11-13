@@ -170,9 +170,9 @@ import { BNB, ETHEREUM, BASE, BNB_TESTNET, CELO_SEPOLIA, BASE_SEPOLIA, SEPOLIA, 
 
 On an L1 (`BNB`, `ETHEREUM`) the KeyStore is on the chain itself and a grant
 is one relay transaction. On an L2 (`CELO`, `CELO_SEPOLIA`) the KeyStore is
-on the L1 and a KeyStoreCache on the L2 mirrors it: `grantSession` writes the
-L1 KeyStore, authorizes the account through the L2 relay, then proves the
-entry into the L2 cache. `grantSession` grants on one chain (`chainId`, or the
+on the L1 and a KeyStoreCache on the L2 mirrors it: `grantSession` authorizes
+the account through the L2 relay, which is when the session is usable, then
+writes the L1 KeyStore and proves the entry into the L2 cache. `grantSession` grants on one chain (`chainId`, or the
 client's default chain) and returns `transactionHash`; pass `chainIds` to
 grant on several at once (`NETWORKS.mainnet` / `NETWORKS.testnet` list the
 groups). `revokeSession` finds the chains of the client whose account holds

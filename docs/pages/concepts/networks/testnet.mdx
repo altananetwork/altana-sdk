@@ -18,8 +18,9 @@ Altana runs on three testnets, plus Sepolia as their KeyStore chain, all served 
   same Sepolia KeyStore. SDK config `BASE_SEPOLIA`. See
   [Base Sepolia](#base-sepolia) below.
 
-`NETWORKS.testnet` lists all three. A client created with it grants and
-revokes a session on all of them in one call.
+`NETWORKS.testnet` lists all three. A client created with it grants a session
+on the chain you name, or on several with `chainIds`, and revokes it wherever
+it lives.
 
 To see registered keys and sessions on testnet, use the [Keystore Explorer](/explorer) at
 [testnet.altana.network](https://testnet.altana.network). For raw transactions, use

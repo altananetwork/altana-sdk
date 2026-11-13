@@ -42,7 +42,7 @@ ALTANA_CHAIN=celo-sepolia bunx @altananetwork/mcp
 ```
 
 An unrecognised value logs a warning and falls back to `bnb`. Sepolia and Base
-Sepolia are keystore-only (no relay), so they are not selectable here.
+Sepolia are not selectable here.
 
 On an L2 (`celo`, `celo-sepolia`) the KeyStore is on the L1 and a
 KeyStoreCache on the L2 mirrors it: `wallet_verification` and
