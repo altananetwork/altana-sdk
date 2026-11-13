@@ -13,7 +13,7 @@ Two different things can go wrong, and they surface differently.
 
 **Failures before submission throw.** Bad configuration, an unsupported signer, a chain with no relay, or a relay rejection (e.g. an unaccepted `feeToken`). These are JavaScript `Error`s with a message string. Catch them with `try/catch`. When the relay rejects a request, the thrown error **leads with the relay's own reason** (e.g. `The relay rejected the request to prepare the call: fee token not supported: 0x…`) instead of a generic "Invalid parameters"; the original error is preserved on `.cause`. For the rejections people hit most, the message also says what to do: an unfunded wallet, a session with no spend limit for the token being spent, an exhausted cap, or an unaccepted fee token (see the table under [Chain and relay](#chain-and-relay)).
 
-**Failures at or after submission do not throw.** [`execute`](/sdk/execute) returns an `ExecuteResult` with `status: "FAILED"`. [`grantSession`](/sdk/grant-session) and [`revokeSession`](/sdk/revoke-session) act on several chains and return `status: "failed"` with the failing step in `legs` (each leg carries `chainId`, `kind`, `status` and `reason`); on those two, even a relay rejection is reported on its leg rather than thrown. Nothing is raised. If you only wrap calls in `try/catch`, you will not notice these.
+**Failures at or after submission do not throw.** [`execute`](/sdk/execute) returns an `ExecuteResult` with `status: "FAILED"`. A [`grantSession`](/sdk/grant-session) on several chains (`chainIds`) returns `status: "failed"` with the failing step in `legs` (each leg carries `chainId`, `kind`, `status` and `reason`), and so does a [`revokeSession`](/sdk/revoke-session) that failed on a chain other than the one the call answers for; there, even a relay rejection is reported on its leg rather than thrown. Nothing is raised. If you only wrap calls in `try/catch`, you will not notice these.
 
 ```ts
 const result = await client.execute({ wallet, signer, calls });
@@ -22,7 +22,7 @@ if (result.status !== "CONFIRMED") {
 }
 ```
 
-[`grantSession`](/sdk/grant-session) is the exception: it throws `Session grant did not confirm: status=<status>` (with the relay code appended when one was observed, e.g. `status=FAILED (relay code 300)`) rather than returning a failed result, because there is no useful `Session` object to hand back.
+A [`grantSession`](/sdk/grant-session) on one chain is the exception: when the account did not authorize the key it throws `Session grant did not confirm: status=<status>` (with the relay code appended when one was observed, e.g. `status=FAILED (relay code 300)`) rather than returning a failed result, because there is no useful `Session` object to hand back. [`revokeSession`](/sdk/revoke-session) throws a `SessionRevokeError` in the same way when the revoke failed on the chain the call answers for; the full result is on `error.result`.
 
 ## Reading `ExecuteResult`
 
@@ -131,7 +131,7 @@ Passing a signer the SDK cannot use produces a multi-line message naming every s
 | `Registry writes on <chain> are direct transactions from the admin's private key ... A passkey (P256) admin cannot sign one. ...` | Passkey wallet on an L2 testnet, where Keystore writes are direct transactions on Sepolia. Grant with `register: false`. |
 | `Registry writes on <chain> are sent directly from the admin key, so the KeyStore records the sender as the wallet. The signer's address (...) is not the wallet address (...)` | On a testnet L1 (Sepolia) the admin key must be the wallet's own key. |
 | `Registry writes on <chain> are sent directly from the admin key <address>, which holds <n> but needs about <m> (registration fee plus gas). Fund ...` | The admin key needs Sepolia ETH. The message names the faucet. |
-| A `grantSession` leg `account` with `status: "SKIPPED"` and reason `registry write on chain <id> did not confirm; authorization not attempted` | The Keystore write failed (its own leg says why); the chains behind it were not authorized. |
+| A `grantSession` leg `account` with `status: "SKIPPED"` and reason `registry write on chain <id> did not confirm; authorization not attempted` | The Keystore write failed (its own leg says why); the chains behind it were not authorized. A grant on one chain throws in this case. |
 | `The registry chain's RPC refused eth_getProof at block <n> (the block the L2 anchors): ...` | No configured RPC serves proofs at the anchored block. Set `proofRpcUrls` on the registry network or pass `l1Client` to `syncSessionToCache`. |
 | `syncSessionToCache: the L1 anchor moved on every one of <n> attempts ...` | Every proof missed its anchor window. Raise `maxAttempts`. |
 | `syncSessionToCache: L2 did not anchor past L1 block <n> within <ms>ms` | The L2 did not anchor the L1 block within the wait. Raise `anchorTimeoutMs`. |

@@ -43,7 +43,43 @@ export type IntentOutcome = {
   /** Registry writes: the root (`initialRegisterKey`) intent of a first-time write. */
   rootRegistration?: RootRegistrationLeg;
   reason?: string;
+  /** The relay's own status for the intent (`CONFIRMED`, `FAILED`, `PENDING`), when the relay answered. */
+  relayStatus?: string;
+  /** The relay's numeric status code, when it reported one. */
+  statusCode?: number;
+  /** The relay bundle id of the intent, once it was submitted. */
+  callsId?: Hex;
+  /** What was thrown, untouched, when the failure was a thrown error. */
+  error?: unknown;
 };
+
+/**
+ * What a leg's intent reported beyond the public leg fields: the relay's raw
+ * status and code, the bundle id, and the original thrown error.
+ */
+export type LegDetail = Pick<IntentOutcome, "relayStatus" | "statusCode" | "callsId" | "error">;
+
+// Kept beside the legs instead of on them: a leg is a plain value callers log
+// and serialize, and a thrown error does not belong in that.
+const legDetails = new WeakMap<SessionLeg, LegDetail>();
+
+/** Records what is known about the intent behind `leg`. Returns the leg. */
+export function withLegDetail(leg: SessionLeg, detail: LegDetail | undefined): SessionLeg {
+  if (!detail) return leg;
+  const kept: LegDetail = {
+    ...(detail.relayStatus !== undefined ? { relayStatus: detail.relayStatus } : {}),
+    ...(detail.statusCode !== undefined ? { statusCode: detail.statusCode } : {}),
+    ...(detail.callsId !== undefined ? { callsId: detail.callsId } : {}),
+    ...(detail.error !== undefined ? { error: detail.error } : {}),
+  };
+  if (Object.keys(kept).length > 0) legDetails.set(leg, kept);
+  return leg;
+}
+
+/** The relay status, code, bundle id and thrown error behind a leg, when any is known. */
+export function legDetail(leg: SessionLeg | undefined): LegDetail | undefined {
+  return leg ? legDetails.get(leg) : undefined;
+}
 
 export type SessionLegDeps = {
   accountHasKey(network: NetworkConfig, wallet: Address, keyHash: Hex): Promise<boolean>;
@@ -124,9 +160,15 @@ export const realSessionLegDeps: SessionLegDeps = {
         ...(args.revokeKeys ? { revokeKeys: args.revokeKeys } : {}),
       });
       const result = await waitForCalls(relayClient, callsId);
+      const raw = {
+        relayStatus: result.status,
+        ...(result.statusCode !== undefined ? { statusCode: result.statusCode } : {}),
+        callsId,
+      };
       if (result.status !== "CONFIRMED") {
         return {
           status: "FAILED",
+          ...raw,
           ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
           reason:
             `relay status ${result.status}` +
@@ -142,12 +184,13 @@ export const realSessionLegDeps: SessionLegDeps = {
         : undefined;
       return {
         status: "CONFIRMED",
+        ...raw,
         ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
         ...(block?.blockNumber !== undefined ? { blockNumber: block.blockNumber } : {}),
         ...(block && "blockNumberError" in block ? { blockNumberError: block.blockNumberError } : {}),
       };
     } catch (err) {
-      return { status: "FAILED", reason: errorMessage(err) };
+      return { status: "FAILED", reason: errorMessage(err), error: err };
     }
   },
 
@@ -178,7 +221,7 @@ export const realSessionLegDeps: SessionLegDeps = {
           : {}),
       };
     } catch (err) {
-      return { via, status: "FAILED", reason: errorMessage(err) };
+      return { via, status: "FAILED", reason: errorMessage(err), error: err };
     }
   },
 
@@ -207,12 +250,12 @@ export function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** A read's value, or its error message. */
-export async function settle<T>(p: Promise<T>): Promise<{ value: T } | { error: string }> {
+/** A read's value, or its error message with what was thrown as `cause`. */
+export async function settle<T>(p: Promise<T>): Promise<{ value: T } | { error: string; cause: unknown }> {
   try {
     return { value: await p };
   } catch (err) {
-    return { error: errorMessage(err) };
+    return { error: errorMessage(err), cause: err };
   }
 }
 
@@ -233,6 +276,15 @@ export function registriesOf(networks: readonly NetworkConfig[]): NetworkConfig[
 
 /** A leg from an intent outcome. */
 export function legFromOutcome(
+  chainId: number,
+  kind: SessionLeg["kind"],
+  outcome: IntentOutcome,
+  via?: SessionLeg["via"],
+): SessionLeg {
+  return withLegDetail(legOf(chainId, kind, outcome, via), outcome);
+}
+
+function legOf(
   chainId: number,
   kind: SessionLeg["kind"],
   outcome: IntentOutcome,

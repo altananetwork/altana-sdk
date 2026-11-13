@@ -21,6 +21,7 @@ import {
   skippedLeg,
   unknownRegistryBlockReason,
   uniqueNetworks,
+  withLegDetail,
   type IntentOutcome,
   type SessionLegDeps,
   launchCacheProofs,
@@ -50,6 +51,12 @@ export type RevokeSessionResult = {
   keyId: Hex;
   status: "revoked" | "failed";
   legs: RevokeLeg[];
+  /**
+   * `client.revokeSession` only: the transaction of the account leg on the
+   * chain the call named (`chainId`, or the client's default chain). Absent
+   * when the account there did not hold the key.
+   */
+  transactionHash?: Hex;
   /**
    * The cache legs once every proof has finished. A proof waits for the L2
    * to anchor the Keystore write's block (up to half an hour on Celo
@@ -137,12 +144,18 @@ export async function runRevokeSession(
   networks.forEach((n, i) => {
     const read = accountReads[i]!;
     if ("error" in read) {
-      legs.push({
-        chainId: n.chainId,
-        kind: "account",
-        status: "FAILED",
-        reason: `could not read the account's keys: ${read.error}`,
-      });
+      legs.push(
+        withLegDetail(
+          {
+            chainId: n.chainId,
+            kind: "account",
+            status: "FAILED",
+            reason: `could not read the account's keys: ${read.error}`,
+            unread: true,
+          },
+          { error: read.cause },
+        ),
+      );
     } else if (read.value) {
       holding.push(n);
     }
@@ -153,12 +166,18 @@ export async function runRevokeSession(
   registries.forEach((r, i) => {
     const read = registryReads[i]!;
     if ("error" in read) {
-      legs.push({
-        chainId: r.chainId,
-        kind: "registry",
-        status: "FAILED",
-        reason: `could not read the registry: ${read.error}`,
-      });
+      legs.push(
+        withLegDetail(
+          {
+            chainId: r.chainId,
+            kind: "registry",
+            status: "FAILED",
+            reason: `could not read the registry: ${read.error}`,
+            unread: true,
+          },
+          { error: read.cause },
+        ),
+      );
     } else {
       registryValid.set(r.chainId, read.value);
       if (!read.value) {
