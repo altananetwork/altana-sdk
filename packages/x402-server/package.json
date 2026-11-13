@@ -43,7 +43,7 @@
     "prepublishOnly": "node ../../scripts/check-publishable.mjs && bun run build"
   },
   "dependencies": {
-    "@altananetwork/sdk": "^0.10.0",
+    "@altananetwork/sdk": "^1.0.0",
     "viem": "^2.21.0"
   },
   "devDependencies": {
