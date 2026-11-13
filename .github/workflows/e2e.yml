@@ -43,6 +43,11 @@ jobs:
       - name: Typecheck e2e (fork + demo harness)
         run: bun run --filter '@altananetwork/e2e' typecheck
 
+      - name: Install check (packed tarballs, code written for 0.9.0)
+        # Packs each publishable package, installs the tarballs into an empty
+        # project, imports them under Node and compiles a 0.9.0-style script.
+        run: node scripts/check-install.mjs
+
       - name: Unit tests
         # The sdk test files run one process per file: a bun loader bug (still
         # present in bun 1.3.14) deadlocks multi-file runs on GitHub runners
