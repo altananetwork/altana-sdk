@@ -7,14 +7,14 @@ description: Third-party security audits of the Altana Keystore contracts.
 
 The Altana Keystore contracts were audited by [CertiK](https://www.certik.com), completed 15 July 2026. The full report, the finding-by-finding detail and the current status of every item are published on [CertiK Skynet](https://skynet.certik.com/projects/altana).
 
-Scope was `KeyStore.sol` and `KeyStoreCacheOPStack.sol`, plus six further files listed in the report: the onchain registry that stores session-key permissions, and the L2 cache contract that mirrors them to Base. These are the contracts that decide whether an agent is authorized to act.
+Scope was `KeyStore.sol` and `KeyStoreCacheOPStack.sol`, plus six further files listed in the report: the onchain registry that stores session-key permissions, and the L2 cache contract that mirrors them to an L2. These are the contracts that decide whether an agent is authorized to act.
 
-The audited source is deployed and source-verified, exact match, on all three networks Altana runs on. You can read it directly:
+The KeyStore is deployed from the audited source and source-verified, exact match, on Ethereum and BNB Smart Chain. The cache on Celo is KeyStoreCacheOPStack 1.1.1: the audited contract with one fix made after the audit, on 19 August 2026, to how it decodes the storage value a proof carries. Its source is verified, exact match, on Sourcify. You can read each one directly:
 
-| Network | Contract | Explorer |
+| Network | Contract | Verified source |
 | --- | --- | --- |
 | Ethereum | KeyStore | [Etherscan](https://etherscan.io/address/0xb70fDa90C1d576Ba8399946a0c10ECD9d9Ea923b#code) |
 | BNB Smart Chain | KeyStore | [BscScan](https://bscscan.com/address/0x6572427ED530BadcF7375Cf9A4709D8d2b0E7E0a#code) |
-| Base | KeyStoreCacheOPStack | [Basescan](https://basescan.org/address/0x6572427ED530BadcF7375Cf9A4709D8d2b0E7E0a#code) |
+| Celo | KeyStoreCacheOPStack 1.1.1 | [Sourcify](https://repo.sourcify.dev/42220/0xF939d7D3a2b8262aD8662c71Dec38119058d5a06) · [Celoscan](https://celoscan.io/address/0xF939d7D3a2b8262aD8662c71Dec38119058d5a06) |
 
 Addresses for every deployed contract are listed under [Networks & Addresses](/concepts/networks).
