@@ -16,6 +16,7 @@ import {
   createClient,
   createPublicClient,
   decodeErrorResult,
+  fallback,
   formatUnits,
   getAddress,
   hexToBigInt,
@@ -109,6 +110,22 @@ export function buildPublicClient(network: NetworkConfig): PublicClient {
   return createPublicClient({
     chain: network.chain,
     transport: http(network.publicRpcUrl),
+  });
+}
+
+/**
+ * The client a KeyStoreCache proof is built with: `eth_getProof` and the
+ * header fetch at the block the L2 anchors. Uses the network's
+ * `proofRpcUrls` in order, then `publicRpcUrl`, moving to the next endpoint
+ * when one refuses the block. A network without `proofRpcUrls` gets the same
+ * client as `buildPublicClient`.
+ */
+export function buildProofClient(network: NetworkConfig): PublicClient {
+  const urls = network.proofRpcUrls ?? [];
+  if (urls.length === 0) return buildPublicClient(network);
+  return createPublicClient({
+    chain: network.chain,
+    transport: fallback([...urls, network.publicRpcUrl].map((url) => http(url))),
   });
 }
 
