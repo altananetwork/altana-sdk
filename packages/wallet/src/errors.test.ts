@@ -6,6 +6,8 @@ import {
   isAltanaError,
   expiredSessionError,
   readableAmount,
+  withFailureContext,
+  type AltanaError,
   sessionHasExpired,
   type RelayFailureFacts,
 } from "./errors.js";
@@ -287,6 +289,83 @@ describe("the other common failures", () => {
     const err = explainRelayFailure({ relayMessage: "fee token not supported: 0xdead" });
     expect(err.code).toBe("unknown");
     expect(err.statement).toBe("Fee token not supported: 0xdead.");
+  });
+});
+
+/**
+ * The mainnet fork rehearsal, 2026-11-10, section 6.4: the relay refused a
+ * Celo-paid registration because a price was older than its limit, wrote
+ * `price for celo is 390s old at the chainlink feed, limit is 60s` to its own
+ * log, and answered `intent reverted: 0x`. The reason never reaches the
+ * caller, so this is decided from a feed the SDK read, never from the revert.
+ */
+describe("prices too old to convert at", () => {
+  const STALE = { asset: "CELO", ageSecs: 390, maxAgeSecs: 60, feed: "0x0568fD19986748cEfF3301e55c0eb1E729E0Ab7e on Celo" } as const;
+
+  test("a stale price the SDK read: the sentence Doris chose, and nothing else", () => {
+    const err = explainRelayFailure({
+      relayMessage: "intent reverted: 0x",
+      operation: "registering this key on Ethereum",
+      stalePrice: STALE,
+      fundingRefused: true,
+      detail: "its simulation reverted with no reason on Ethereum (chainId 1) (relay: intent reverted: 0x)",
+    });
+    expect(err.code).toBe("prices_stale");
+    expect(err.message).toBe("Prices are temporarily unavailable, try again shortly.");
+    expect(err.statement).toBe("Prices are temporarily unavailable.");
+    expect(err.action).toBe("Try again in a few minutes.");
+    // No figure, no asset, no chain: nothing here is the person's to fix.
+    expect(err.message).not.toMatch(/\d/);
+    expect(err.message).not.toContain("ETH");
+    expect(err.message).not.toContain("CELO");
+    expect(err.message).not.toContain("Ethereum");
+  });
+
+  test("the technical form stays on the error as detail", () => {
+    const err = explainRelayFailure({
+      relayMessage: "intent reverted: 0x",
+      stalePrice: STALE,
+      detail: "its simulation reverted with no reason on Ethereum (chainId 1) (relay: intent reverted: 0x)",
+    });
+    expect(err.detail).toBe(
+      "its simulation reverted with no reason on Ethereum (chainId 1) (relay: intent reverted: 0x) " +
+        "The price for CELO is 390s old at its feed (0x0568fD19986748cEfF3301e55c0eb1E729E0Ab7e on Celo), " +
+        "and the relay's limit is 60s.",
+    );
+    expect(err.relayMessage).toBe("intent reverted: 0x");
+  });
+
+  test("it outranks a shortfall: no balance would have been enough", () => {
+    expect(classifyRelayFailure({ relayMessage: "intent reverted: 0x", stalePrice: STALE, shortfall: CELO_SHORTFALL })).toBe(
+      "prices_stale",
+    );
+  });
+
+  test("the same revert with no stale price read keeps its meaning", () => {
+    // The whole point: a revert with no reason is not a price problem unless
+    // a feed says so.
+    expect(classifyRelayFailure({ relayMessage: "intent reverted: 0x" })).toBe("unknown");
+    expect(classifyRelayFailure({ relayMessage: "intent reverted: 0x", fundingRefused: true })).toBe("insufficient_funds");
+    expect(explainRelayFailure({ relayMessage: "intent reverted: 0x", operation: "this transfer" }).message).toBe(
+      "This could not be carried out (this transfer), and the relay gave no reason. Try again; the debug log has the whole failure.",
+    );
+  });
+
+  test("a cause the relay named is still the cause", () => {
+    expect(classifyRelayFailure({ relayMessage: "intent reverted: KeyExpired()", stalePrice: STALE })).toBe("session_expired");
+  });
+
+  test("the relay's own sentence maps here, should it ever reach the caller", () => {
+    const err = explainRelayFailure({ relayMessage: "price for celo is 390s old at the chainlink feed, limit is 60s" });
+    expect(err.code).toBe("prices_stale");
+    expect(err.message).toBe("Prices are temporarily unavailable, try again shortly.");
+  });
+
+  test("context added later does not change the sentence", () => {
+    const err = explainRelayFailure({ relayMessage: "intent reverted: 0x", stalePrice: STALE });
+    const wrapped = withFailureContext(err, "The root registration could not be submitted.");
+    expect(wrapped.message).toBe("Prices are temporarily unavailable, try again shortly.");
+    expect((wrapped as AltanaError).code).toBe("prices_stale");
   });
 });
 
