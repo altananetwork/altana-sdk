@@ -89,7 +89,7 @@ export {
   readableAmount,
   withFailureContext,
 } from "./errors.js";
-export type { AltanaErrorCode, FundingShortfall, RelayFailureFacts, TokenAmount } from "./errors.js";
+export type { AltanaErrorCode, FundingShortfall, RelayFailureFacts, StalePrice, TokenAmount } from "./errors.js";
 
 export { quoteGrantSession, quoteRevokeSession, formatQuoteLine } from "./quoteSession.js";
 export type { SessionQuote, QuoteLine, QuoteBalance } from "./quoteSession.js";

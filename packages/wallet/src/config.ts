@@ -29,6 +29,44 @@ export type KeyStoreRegistry =
   | { kind: "local" }
   | { kind: "cached"; l1: NetworkConfig; keyStoreCache: Address };
 
+/**
+ * The price feed the relay reads an asset's USD price from, and how old it
+ * lets that price be.
+ *
+ * A request paid in one asset on one chain and carried out in another asset
+ * on another chain is converted at these prices, and the relay refuses to
+ * convert at one older than `maxAgeSecs`, measured at the feed's own
+ * `updatedAt`. It answers that refusal with a revert that carries no reason,
+ * so the SDK reads the same feed to tell a price that is too old from every
+ * other refusal (`internal/priceFeeds.ts`).
+ *
+ * The relay does not publish these in `wallet_getCapabilities`, so they are
+ * kept here and mirror its configuration: `pricefeed.chainlink.feeds` and
+ * `interop.cross_asset.max_price_age_secs`.
+ */
+export type PriceFeed = {
+  /** The Chainlink `<asset>/USD` aggregator. */
+  address: Address;
+  /** The chain the aggregator is on, which is not always the chain the asset is held on. */
+  chain: Chain;
+  /** Public RPC URL for reading it. */
+  publicRpcUrl: string;
+  /** The oldest price the relay converts at, in seconds. */
+  maxAgeSecs: number;
+};
+
+/** The oldest price the mainnet relay converts at, in seconds. */
+const MAINNET_MAX_PRICE_AGE_SECS = 3900;
+/** The oldest price the testnet relay converts at, in seconds. */
+const TESTNET_MAX_PRICE_AGE_SECS = 7200;
+
+/** Chainlink CELO/USD on Celo, which prices CELO for both relays. */
+const CELO_USD_FEED = {
+  address: "0x0568fD19986748cEfF3301e55c0eb1E729E0Ab7e",
+  chain: celo,
+  publicRpcUrl: "https://celo-rpc.publicnode.com",
+} as const;
+
 export type NetworkConfig = {
   chain: Chain;
   chainId: number;
@@ -42,6 +80,14 @@ export type NetworkConfig = {
   keyStoreController: Address;
   /** Public RPC URL for reads. Override per-environment if needed. */
   publicRpcUrl: string;
+  /**
+   * RPC URLs that serve `eth_getProof` for blocks a few hundred behind head,
+   * tried in order. Set on a registry chain whose `publicRpcUrl` only serves
+   * proofs for its newest blocks: an L2 anchors the registry chain about 100
+   * blocks behind head, and the proof into its KeyStoreCache is built at that
+   * block. Omitted, proofs use `publicRpcUrl`.
+   */
+  proofRpcUrls?: readonly string[];
   /** Block explorer base URL. */
   explorer: string;
   /**
@@ -53,6 +99,12 @@ export type NetworkConfig = {
    * Registry topology. Omitted means `{ kind: "local" }`. See KeyStoreRegistry.
    */
   registry?: KeyStoreRegistry;
+  /**
+   * The feed the relay prices this network's native asset from when it
+   * converts between assets. Unset where the relay converts nothing to or
+   * from it. See PriceFeed.
+   */
+  nativePriceFeed?: PriceFeed;
 };
 
 /** Altana relay serving all mainnets. */
@@ -84,8 +136,24 @@ export const ETHEREUM: NetworkConfig = {
   keyStore: "0xb70fDa90C1d576Ba8399946a0c10ECD9d9Ea923b",
   keyStoreController: "0x30a188Eecf14F4142B0d828ce838C9E1134e7FaA",
   publicRpcUrl: "https://ethereum-rpc.publicnode.com",
+  // Celo anchors Ethereum 100 to 130 blocks behind head. Each of these served
+  // `eth_getProof` at the anchored block on 2026-11-13; the first two also
+  // served it 300 blocks further back.
+  proofRpcUrls: [
+    "https://eth-mainnet.public.blastapi.io",
+    "https://rpc.mevblocker.io",
+    "https://eth.drpc.org",
+    "https://0xrpc.io/eth",
+  ],
   explorer: "https://etherscan.io",
   relayUrl: RELAY_URL,
+  // Chainlink ETH/USD on Ethereum.
+  nativePriceFeed: {
+    address: "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
+    chain: mainnet,
+    publicRpcUrl: "https://ethereum-rpc.publicnode.com",
+    maxAgeSecs: MAINNET_MAX_PRICE_AGE_SECS,
+  },
 };
 
 export const BNB: NetworkConfig = {
@@ -137,6 +205,13 @@ export const SEPOLIA: NetworkConfig = {
   publicRpcUrl: "https://0xrpc.io/sep",
   explorer: "https://sepolia.etherscan.io",
   relayUrl: TESTNET_RELAY_URL,
+  // Chainlink ETH/USD on Sepolia.
+  nativePriceFeed: {
+    address: "0x694AA1769357215DE4FAC081bf1f309aDC325306",
+    chain: sepolia,
+    publicRpcUrl: "https://0xrpc.io/sep",
+    maxAgeSecs: TESTNET_MAX_PRICE_AGE_SECS,
+  },
 };
 
 /**
@@ -164,6 +239,9 @@ export const CELO_SEPOLIA: NetworkConfig = {
     // Source: <altana-keystore>/deployments/celo-sepolia.json.
     keyStoreCache: "0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD",
   },
+  // Celo Sepolia has no Chainlink deployment, so the testnet relay prices
+  // CELO from the feed on Celo.
+  nativePriceFeed: { ...CELO_USD_FEED, maxAgeSecs: TESTNET_MAX_PRICE_AGE_SECS },
 };
 
 /**
@@ -194,10 +272,12 @@ export const BASE_SEPOLIA: NetworkConfig = {
 
 /**
  * Celo (chain 42220). Wallets run through the Altana relay with fees in
- * CELO; session keys are registered in the Ethereum KeyStore and proven into
- * the KeyStoreCache on Celo.
+ * CELO, USDC or USDT; session keys are registered in the Ethereum KeyStore
+ * and proven into the KeyStoreCacheOPStack contract on Celo through the
+ * OP-stack `L1Block` predeploy.
  *
- * `keyStoreCache`: fill in from <altana-keystore>/deployments/celo.json.
+ * `keyStoreCache` is KeyStoreCacheOPStack 1.1.1, deployed 2026-11-11 and
+ * anchored to the Ethereum KeyStore above.
  */
 export const CELO: NetworkConfig = {
   chain: celo,
@@ -210,8 +290,9 @@ export const CELO: NetworkConfig = {
   registry: {
     kind: "cached",
     l1: ETHEREUM,
-    keyStoreCache: KEYSTORE_CACHE_UNSET,
+    keyStoreCache: "0xF939d7D3a2b8262aD8662c71Dec38119058d5a06",
   },
+  nativePriceFeed: { ...CELO_USD_FEED, maxAgeSecs: MAINNET_MAX_PRICE_AGE_SECS },
 };
 
 /**

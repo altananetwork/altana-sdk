@@ -33,8 +33,12 @@ export type AltanaErrorCode =
   | "relay_unreachable"
   /** The relay has no entry for the chain, so it cannot act on it. */
   | "chain_not_served"
+  /** This relay has no record of the wallet, so it will not act for it. */
+  | "wallet_unknown_to_relay"
   /** The relay could not price the fee, so it would not quote. */
   | "price_unavailable"
+  /** The prices the relay converts with are older than it accepts, so it would not quote. */
+  | "prices_stale"
   /** Anything the map does not recognise. The relay's own words lead. */
   | "unknown";
 
@@ -65,6 +69,18 @@ export type FundingShortfall = {
   have: bigint;
   /** Where to add funds, and what the relay takes there. */
   fund?: { chain: string; tokens: readonly string[] };
+};
+
+/** A price the relay converts with, read at its feed and found too old. For the log. */
+export type StalePrice = {
+  /** The asset the feed prices, as a person reads it: "CELO". */
+  asset: string;
+  /** How old the feed's newest answer was when the SDK read it, in seconds. */
+  ageSecs: number;
+  /** The oldest the relay accepts, in seconds. */
+  maxAgeSecs: number;
+  /** Where the feed is: its address and the chain it is on. */
+  feed?: string;
 };
 
 /** Everything the map decides from. Only `relayMessage` comes from the relay. */
@@ -103,6 +119,33 @@ export type RelayFailureFacts = {
    * (`evidence/2026-09-28-s3-registry-write-reverts-0x.md`).
    */
   fundingRefused?: boolean;
+  /**
+   * Set when the SDK read a price feed the relay converts with and found it
+   * older than the relay accepts.
+   *
+   * A request paid on one chain in one asset and carried out on another in a
+   * different one is converted at a price, and the relay refuses to convert at
+   * a price that is too old. It names the feed and its age in its own log and
+   * answers the caller with the same bare revert as any other refusal to fund
+   * (`evidence/2026-11-10-celo-mainnet-fork-rehearsal-phase2.md`, 6.4), so the
+   * relay's words cannot tell the two apart. The feed can: its age is public,
+   * and the caller reads it. This is set only from that read, never from the
+   * revert alone, and it outranks a shortfall because no balance would have
+   * been enough while the price was missing.
+   */
+  stalePrice?: StalePrice;
+  /**
+   * The expiry of the session key the intent was signed with, unix seconds,
+   * when the caller holds one. 0 is a key that does not expire.
+   *
+   * The account drops an expired key from `getKeys`, so the relay stops
+   * recognising it and says `key hash 0x… is unknown`: a key that never
+   * existed, rather than one that ran out at a time the person could be told
+   * (Doris, 2026-11-09, key 0xf93ce095 on 0x73548b39, expiry 12:28 UTC, used
+   * at 15:20). The SDK is holding that expiry the whole time, so it is the
+   * layer that can tell the two apart.
+   */
+  sessionExpiry?: number;
   /** Everything the SDK knows, for the debug log. Never shown. */
   detail?: string;
   cause?: unknown;
@@ -129,11 +172,16 @@ export class AltanaError extends Error {
     code: AltanaErrorCode;
     statement: string;
     action: string;
+    /** The whole sentence, where it is not simply the statement followed by the action. */
+    message?: string;
     detail?: string;
     relayMessage?: string;
     cause?: unknown;
   }) {
-    super(`${args.statement} ${args.action}`.trim(), ...(args.cause !== undefined ? [{ cause: args.cause }] : []));
+    super(
+      args.message ?? `${args.statement} ${args.action}`.trim(),
+      ...(args.cause !== undefined ? [{ cause: args.cause }] : []),
+    );
     this.name = "AltanaError";
     this.code = args.code;
     this.statement = args.statement;
@@ -164,11 +212,23 @@ const PATTERNS: readonly (readonly [AltanaErrorCode, RegExp])[] = [
   // Transport and configuration first: they explain every later symptom.
   ["chain_not_served", /does not serve chain|no entry for it|Cannot destructure property 'contracts'|unsupported chain|chain not supported/i],
   ["relay_unreachable", /HTTP request failed|fetch failed|Failed to fetch|ECONNREFUSED|ENOTFOUND|socket hang up|network error|timed out|ETIMEDOUT|502 Bad Gateway|503 Service|504 Gateway/i],
+  // A wallet this relay never created. Kept with the configuration failures
+  // because it explains everything after it: the relay holds the account
+  // record a quote is checked against, so a wallet created against another
+  // relay (or against one whose record is gone) cannot be acted for here, and
+  // every later symptom is downstream of that.
+  //
+  // The nonce variant is deliberately not matched: `invalid auth item nonce`
+  // is the EOA's nonce having moved on, which is a different cause with a
+  // different answer.
+  ["wallet_unknown_to_relay", /invalid auth(orization)? item, expected|quotes for unknown accounts are not accepted/i],
   // Then the account's own refusals, which a balance never explains away.
   ["quote_expired", /quote (has )?expired|expired quote|quote is no longer valid|QuoteExpired/i],
   ["session_expired", /KeyExpired|key (has )?expired|session (has )?expired|expired key/i],
   ["spend_limit_exceeded", /ExceededSpendLimit|0x9054c912|NoSpendPermissions|0x5ee7e5b1|spend limit|spending limit/i],
   ["call_not_permitted", /Unauthorized(Call|Key)?|not permitted|no call permission|InvalidSignature.*key|KeyDoesNotExist/i],
+  // The relay's own sentence for a price that is too old, should it ever reach the caller.
+  ["prices_stale", /price for \S+ is \d+s old/i],
   ["price_unavailable", /(price|oracle|rate|feed)[^.]{0,40}(unavailable|not available|missing|stale|failed|not found)|(no|without a) (price|rate|oracle)/i],
   // Funding last: everything above can look like a wallet that cannot pay.
   ["insufficient_funds", /insufficient|not enough|deficit|QuoteHasDeficits|InsufficientLiquidity|cannot be funded|unable to fund|no route|exceeds balance|balance too low/i],
@@ -176,6 +236,36 @@ const PATTERNS: readonly (readonly [AltanaErrorCode, RegExp])[] = [
 
 /** The relay's simulation reverted with no reason bytes ("intent reverted: 0x", or a bare "0x"). */
 const NO_REASON = /(^|\s)0x$/;
+
+/** The relay cannot find the key an intent is signed with, by its hash. */
+const KEY_UNKNOWN = /key hash 0x[0-9a-f]+ is unknown/i;
+
+const MS = 1000;
+
+/**
+ * Whether an expiry the caller is holding has already passed.
+ *
+ * `0` and absent both mean a key that does not expire, which is what the
+ * KeyStore stores for one (`toUint40Expiry`), so neither is ever overdue.
+ */
+export function sessionHasExpired(expiry: number | undefined, now: number = Date.now()): boolean {
+  return expiry !== undefined && expiry > 0 && expiry * MS <= now;
+}
+
+/**
+ * `12:28 UTC`: when a session ran out, to the minute.
+ *
+ * UTC, and said so, rather than the viewer's own clock: this sentence is read
+ * next to a relay log, a grant's expiry and somebody else's screenshot, and a
+ * bare `12:28` in an unstated zone is the ambiguity that costs the hour. It is
+ * also the zone the expiry was quoted in when this was reported.
+ */
+function expiredAt(expiry: number): string {
+  const at = new Date(expiry * MS);
+  const hh = String(at.getUTCHours()).padStart(2, "0");
+  const mm = String(at.getUTCMinutes()).padStart(2, "0");
+  return `${hh}:${mm} UTC`;
+}
 
 /**
  * Which failure this is.
@@ -190,9 +280,20 @@ export function classifyRelayFailure(facts: RelayFailureFacts): AltanaErrorCode 
   for (const [code, pattern] of PATTERNS) {
     if (pattern.test(message)) return code;
   }
+  // A price the SDK read and found too old explains a refusal the relay did
+  // not: no balance would have been enough while it was missing, so it is
+  // tried before the wallet is told to add funds.
+  if (facts.stalePrice) return "prices_stale";
   // A revert with no reason bytes says nothing at all. It is a funding failure
   // only when something else says so, which is what cost qa an hour the other
   // way round (a wallet holding 133x the fee told it could not pay).
+  // A session the SDK can see has run out. Either nothing came back from the
+  // relay (the check made before sending) or what came back was a key it does
+  // not know, which is what an account that has dropped an expired key
+  // answers. There is one thing to say about both.
+  if (sessionHasExpired(facts.sessionExpiry) && (message === "" || KEY_UNKNOWN.test(message))) {
+    return "session_expired";
+  }
   if (facts.shortfall) return "insufficient_funds";
   // The relay refusing to source the funds is itself the cause, and the only
   // one the payer can act on. It reaches the caller as a bare revert, so
@@ -289,7 +390,7 @@ function capitalise(text: string): string {
 export function explainRelayFailure(facts: RelayFailureFacts): AltanaError {
   const code = classifyRelayFailure(facts);
   const chain = facts.chain?.name;
-  const parts = ((): { statement: string; action: string } => {
+  const parts = ((): { statement: string; action: string; message?: string } => {
     switch (code) {
       case "insufficient_funds":
         return { statement: fundingStatement(facts), action: fundingAction(facts.shortfall) };
@@ -299,7 +400,17 @@ export function explainRelayFailure(facts: RelayFailureFacts): AltanaError {
           action: "Try again, and it will be priced afresh.",
         };
       case "session_expired":
-        return { statement: "This session key has expired.", action: "Grant a new session key, then try again." };
+        // With the expiry in hand the sentence carries the time, which is what
+        // makes it checkable: a key used at 15:20 against an expiry of 12:28
+        // is answered, instead of leaving a person to wonder whether the relay
+        // lost their key.
+        return {
+          statement:
+            facts.sessionExpiry !== undefined && facts.sessionExpiry > 0
+              ? `This session expired at ${expiredAt(facts.sessionExpiry)}.`
+              : "This session key has expired.",
+          action: "Grant a new session to continue.",
+        };
       case "spend_limit_exceeded":
         return {
           statement: `This session key's spending limit does not cover this${facts.feeSymbol ? ` in ${facts.feeSymbol}` : ""}.`,
@@ -320,10 +431,34 @@ export function explainRelayFailure(facts: RelayFailureFacts): AltanaError {
           statement: `Altana does not serve ${chain ?? "this chain"} yet.`,
           action: "Switch to a chain it serves, or point the SDK at a relay that serves this one.",
         };
+      case "wallet_unknown_to_relay":
+        // `invalid authorization item, expected Some(0x0000...0000), got None`
+        // is what reached qa for this (evidence/2026-10-20-qa-demo-clickthrough.md),
+        // and it says nothing about the wallet or the way out.
+        //
+        // The wording is Doris's, verbatim and deliberately (2026-11-09, via
+        // the PM, after two earlier wordings): the action is the part that
+        // matters, and a wallet with no account record behind it is not one a
+        // person can get working again. It keeps the relay's own phrase, which
+        // is the one thing in this file that does; the rest of the raw text
+        // stays in `relayMessage` and `detail`, for the log.
+        return {
+          statement: "Invalid authorization item.",
+          action: "Create a new wallet to continue.",
+        };
       case "price_unavailable":
         return {
           statement: `No price was available for ${facts.feeSymbol ?? "the fee token"} just now, so this could not be priced.`,
           action: "Try again in a moment, or pay the fee in another token the relay accepts.",
+        };
+      case "prices_stale":
+        // The sentence is fixed and carries no figure: the feed's age is a
+        // fact for the log, and neither chain's asset is named, because the
+        // person can act on neither.
+        return {
+          statement: "Prices are temporarily unavailable.",
+          action: "Try again in a few minutes.",
+          message: "Prices are temporarily unavailable, try again shortly.",
         };
       default: {
         // A revert with no reason bytes is not a sentence. Quoting "0x" at a
@@ -338,12 +473,35 @@ export function explainRelayFailure(facts: RelayFailureFacts): AltanaError {
       }
     }
   })();
+  const stale = facts.stalePrice ? stalePriceDetail(facts.stalePrice) : undefined;
+  const detail = [facts.detail, stale].filter((part) => part !== undefined).join(" ");
   return new AltanaError({
     code,
     ...parts,
-    ...(facts.detail !== undefined ? { detail: facts.detail } : {}),
+    ...(detail.length > 0 ? { detail } : {}),
     ...(facts.relayMessage !== undefined ? { relayMessage: facts.relayMessage } : {}),
     ...(facts.cause !== undefined ? { cause: facts.cause } : {}),
+  });
+}
+
+/** The long form of a stale price, in the relay's own shape, for the log. */
+function stalePriceDetail(stale: StalePrice): string {
+  const where = stale.feed ? ` (${stale.feed})` : "";
+  return `The price for ${stale.asset} is ${stale.ageSecs}s old at its feed${where}, and the relay's limit is ${stale.maxAgeSecs}s.`;
+}
+
+/**
+ * The failure for a session the SDK can see has run out, raised before
+ * anything is sent.
+ *
+ * The same sentence the relay's refusal maps to, from the same place, so the
+ * wallet does not say one thing when it checks and another when the relay
+ * does.
+ */
+export function expiredSessionError(args: { expiry: number; detail?: string }): AltanaError {
+  return explainRelayFailure({
+    sessionExpiry: args.expiry,
+    ...(args.detail !== undefined ? { detail: args.detail } : {}),
   });
 }
 
@@ -361,6 +519,7 @@ export function withFailureContext(err: unknown, context: string): Error {
       code: err.code,
       statement: err.statement,
       action: err.action,
+      message: err.message,
       detail: `${context} ${err.detail ?? err.message}`,
       ...(err.relayMessage !== undefined ? { relayMessage: err.relayMessage } : {}),
       cause: err,

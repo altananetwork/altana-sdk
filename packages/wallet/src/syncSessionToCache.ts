@@ -18,6 +18,7 @@ import { keccak256, stringToHex, type Address, type Hex, type PublicClient } fro
 import { type NetworkConfig } from "./config.js";
 import { isCachedRegistry, keyStoreCacheOf } from "./internal/cachedRegistry.js";
 import {
+  buildProofClient,
   buildPublicClient,
   buildRelayClient,
   submitCalls,
@@ -82,15 +83,15 @@ export type SyncSessionToCacheOptions = {
   feeToken?: Address | readonly Address[];
   /** Poll cadence while waiting for the anchor. Default 3s. */
   anchorPollIntervalMs?: number;
-  /** Max wait for the anchor to pass `afterL1Block`. Default 30 minutes (Celo Sepolia anchors about every 20 minutes). */
+  /** Max wait for the anchor to pass `afterL1Block`. Default 30 minutes (Celo anchors its registry chain 15 to 30 minutes behind). */
   anchorTimeoutMs?: number;
   /**
    * Public client for the registry chain, used for `eth_getProof` and the
-   * header fetch. Defaults to the registry network's `publicRpcUrl`. The
-   * endpoint must serve proofs for the anchored block, which is a few blocks
-   * behind the registry chain's head; many public Sepolia endpoints only
-   * serve the newest block, so pass a client for one that keeps history
-   * (see buildPopulateKeyCall for known-good endpoints).
+   * header fetch. Defaults to the registry network's `proofRpcUrls`, tried in
+   * order, then its `publicRpcUrl`. The endpoint must serve proofs for the
+   * anchored block, which is about 100 blocks behind the registry chain's
+   * head; many public endpoints only serve the newest blocks, so pass a
+   * client for one that keeps history when the defaults do not.
    */
   l1Client?: PublicClient;
 };
@@ -193,7 +194,7 @@ export async function runSyncSessionToCache(
     typeof sessionOrPublicKey === "string" ? sessionOrPublicKey : sessionOrPublicKey.publicKey;
   const keyId = keccak256(publicKey);
 
-  const l1Client = opts.l1Client ?? buildPublicClient(registry);
+  const l1Client = opts.l1Client ?? buildProofClient(registry);
   const l2Client = buildPublicClient(network);
   const relayClient = buildRelayClient(network);
 

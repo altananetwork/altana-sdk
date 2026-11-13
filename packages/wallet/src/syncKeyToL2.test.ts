@@ -24,6 +24,7 @@ import {
   computeKeyPackedSlot,
   readL1Anchor,
   waitForL1Anchor,
+  isProofWindowRefusal,
 } from "./syncKeyToL2.js";
 
 const L1_KEYSTORE: Address = "0x38Aaf396F462Ad3a4F38ADa653AF6bDEA55F772d";
@@ -190,7 +191,21 @@ describe("buildPopulateKeyCall", () => {
         user: USER,
         publicKey: PUBKEY,
       }),
-    ).rejects.toThrow(/proof window that covers the anchor/);
+    ).rejects.toThrow(/setting the registry network's proofRpcUrls or passing l1Client/);
+  });
+
+  test("every provider's wording of the refusal is recognised", () => {
+    for (const text of [
+      "distance to target block exceeds maximum proof window",
+      "Archive requests require a personal token. Get one at: https://example.org",
+      "historical state 0973637c is not available",
+      "Unknown state. First available state is 1",
+      "missing trie node 0xabc (path ) state 0xdef is not available",
+    ]) {
+      expect(isProofWindowRefusal(text)).toBe(true);
+    }
+    expect(isProofWindowRefusal("execution reverted")).toBe(false);
+    expect(isProofWindowRefusal("fetch failed")).toBe(false);
   });
 });
 

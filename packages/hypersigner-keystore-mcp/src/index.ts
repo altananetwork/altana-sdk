@@ -15,6 +15,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { VERSION } from "./version.js";
 import {
   createPublicClient,
+  fallback,
   http,
   isAddress,
   isHex,
@@ -23,6 +24,7 @@ import {
   type Hex,
 } from "viem";
 import { z } from "zod";
+import { ETHEREUM } from "@altananetwork/sdk";
 import {
   buildRegisterCall,
   buildRevokeCall,
@@ -43,6 +45,19 @@ const publicClient = createPublicClient({
   chain: CHAIN.chain,
   transport: http(RPC_URL),
 });
+/**
+ * The registry client a cache proof is built with. The proof is taken at the
+ * block the L2 anchors, about 100 blocks behind head, which the default
+ * Ethereum RPC does not serve; the SDK's proof endpoints do. An explicit
+ * `RPC_URL` is used as given.
+ */
+const proofClient =
+  process.env.RPC_URL || CHAIN.chainId !== ETHEREUM.chainId || !ETHEREUM.proofRpcUrls?.length
+    ? publicClient
+    : createPublicClient({
+        chain: CHAIN.chain,
+        transport: fallback([...ETHEREUM.proofRpcUrls, RPC_URL].map((url) => http(url))),
+      });
 
 function jsonText(value: unknown) {
   const text = JSON.stringify(
@@ -379,7 +394,7 @@ export function buildServer(): McpServer {
         chain: CHAIN,
         user: assertAddress(user),
         publicKey: assertPublicKey(publicKey),
-        l1Client: publicClient,
+        l1Client: proofClient,
         ...(L2_RPC_URL ? { rpcUrl: L2_RPC_URL } : {}),
       });
       return jsonText({

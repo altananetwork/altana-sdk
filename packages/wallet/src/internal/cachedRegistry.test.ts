@@ -48,12 +48,15 @@ describe("keyStoreCacheOf", () => {
   });
 
   test("refuses an unset cache address with a message naming the chain and the field", () => {
-    expect(CELO.registry?.kind === "cached" && CELO.registry.keyStoreCache).toBe(
-      KEYSTORE_CACHE_UNSET,
-    );
-    expect(() => keyStoreCacheOf(CELO)).toThrow(/no KeyStoreCache address configured/);
-    expect(() => keyStoreCacheOf(CELO)).toThrow(/registry\.keyStoreCache/);
+    if (CELO.registry?.kind !== "cached") throw new Error("CELO must be a cached network");
+    const unset: NetworkConfig = {
+      ...CELO,
+      registry: { ...CELO.registry, keyStoreCache: KEYSTORE_CACHE_UNSET },
+    };
+    expect(() => keyStoreCacheOf(unset)).toThrow(/no KeyStoreCache address configured/);
+    expect(() => keyStoreCacheOf(unset)).toThrow(/registry\.keyStoreCache/);
     expect(keyStoreCacheOf(CELO_SEPOLIA)).toBe("0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD");
+    expect(keyStoreCacheOf(CELO)).toBe("0xF939d7D3a2b8262aD8662c71Dec38119058d5a06");
   });
 
   test("refuses a local-registry network (there is no cache)", () => {
