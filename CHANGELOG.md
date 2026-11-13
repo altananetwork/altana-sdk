@@ -31,6 +31,13 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Added
 
+- **Hosted remote MCP server (read-only).** `@altananetwork/mcp` ships a second
+  entry point, `altana-mcp-remote`, serving the read-only toolset
+  (`about_altana`, `wallet_verification`, `verify_authorization`,
+  `wallet_balance` by address, `list_fee_currencies`, `search_skills`,
+  `get_skill`) over Streamable HTTP on a public endpoint — every tool
+  annotated `readOnlyHint`, stateless transport, no key material. Keys and
+  transaction execution stay with the local stdio server.
 - **`quoteExecute`.** `client.quoteExecute` (and the standalone `quoteExecute`) takes the same
   options as `execute` and returns the relay's quote for those exact calls without sending
   them: the maximum fee, the token it is charged in, the native value the calls carry and any
