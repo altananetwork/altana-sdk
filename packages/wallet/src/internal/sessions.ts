@@ -103,6 +103,11 @@ export type SessionLeg = {
   rootRegistration?: RootRegistrationLeg;
   /** Why the leg was skipped or failed. */
   reason?: string;
+  /**
+   * revokeSession only: the leg failed because the chain could not be read, so
+   * nothing was sent there and whether the key lives there is unknown.
+   */
+  unread?: true;
 };
 
 /** The root (`initialRegisterKey`) half of a first-time registry write. */
@@ -147,6 +152,12 @@ export type GrantSessionResult = Session & {
   keyHash: Hex;
   status: "granted" | "failed";
   legs: GrantLeg[];
+  /**
+   * The transaction that authorized the key on the account. Set by a grant on
+   * one chain (`client.grantSession` without `chainIds`); a grant on several
+   * chains has one per chain, in `legs`.
+   */
+  transactionHash?: Hex;
   /**
    * The cache legs once every proof has finished (or been skipped). Resolves
    * at once with `populateCache: "await"` or false; never rejects: a proof
