@@ -4,9 +4,11 @@ import {
   classifyRelayFailure,
   explainRelayFailure,
   isAltanaError,
+  expiredSessionError,
   readableAmount,
   withFailureContext,
   type AltanaError,
+  sessionHasExpired,
   type RelayFailureFacts,
 } from "./errors.js";
 
@@ -218,7 +220,7 @@ describe("the other common failures", () => {
       facts: { relayMessage: "KeyExpired()" },
       code: "session_expired",
       says: "This session key has expired.",
-      action: "Grant a new session key",
+      action: "Grant a new session",
     },
     {
       name: "spend limit exceeded",
@@ -364,6 +366,130 @@ describe("prices too old to convert at", () => {
     const wrapped = withFailureContext(err, "The root registration could not be submitted.");
     expect(wrapped.message).toBe("Prices are temporarily unavailable, try again shortly.");
     expect((wrapped as AltanaError).code).toBe("prices_stale");
+  });
+});
+
+describe("a wallet this relay never created", () => {
+  /** What reached the demo's step 4 verbatim (qa, evidence/2026-10-20-qa-demo-clickthrough.md). */
+  const QA_MESSAGE =
+    'ErrorObject { code: InvalidParams, message: "invalid authorization item, expected ' +
+    'Some(0x0000000000000000000000000000000000000000), got None", data: None }';
+  /** Doris's wording, verbatim (2026-11-09). */
+  const SENTENCE = "Invalid authorization item. Create a new wallet to continue.";
+
+  test("qa's step 4 message becomes the sentence, and takes its jargon with it", () => {
+    const err = explainRelayFailure({
+      relayMessage: QA_MESSAGE,
+      operation: "registering this key on Ethereum",
+      chain: { name: "Sepolia", chainId: 11155111 },
+    });
+    expect(err.code).toBe("wallet_unknown_to_relay");
+    expect(err.message).toBe(SENTENCE);
+    // Doris keeps "authorization item"; the rest of the wire noise does not
+    // reach a person.
+    for (const leak of ["Some(0x", "ErrorObject", "InvalidParams", "7702", "relay", "\n"]) {
+      expect(err.message).not.toContain(leak);
+    }
+    // The relay's own words are kept for the log, which is where they belong.
+    expect(err.relayMessage).toBe(QA_MESSAGE);
+  });
+
+  test("the sentence is the same whatever chain it happened on", () => {
+    // Nothing in it is interpolated, so there is one sentence for this cause
+    // in every app on the SDK, and no chain name to get wrong.
+    expect(explainRelayFailure({ relayMessage: QA_MESSAGE }).message).toBe(SENTENCE);
+    expect(
+      explainRelayFailure({ relayMessage: QA_MESSAGE, chain: { name: "Celo Sepolia Testnet", chainId: 11142220 } }).message,
+    ).toBe(SENTENCE);
+  });
+
+  test("the relay's other ways of saying it read the same", () => {
+    // AuthError::InvalidAuthAddress, and the quote rejected outright.
+    for (const message of [
+      "invalid auth item, expected 0x623b…1f2a, got None",
+      "quotes for unknown accounts are not accepted",
+    ]) {
+      const err = explainRelayFailure({ relayMessage: message, chain: { name: "Sepolia", chainId: 11155111 } });
+      expect(err.code).toBe("wallet_unknown_to_relay");
+      expect(err.message).toBe(SENTENCE);
+    }
+  });
+
+  test("a nonce that moved on is a different cause and keeps its own words", () => {
+    // AuthError::AuthItemInvalidNonce. Re-creating the wallet is not the answer
+    // to it, so it must not be swept into this mapping.
+    const err = explainRelayFailure({ relayMessage: "invalid auth item nonce, expected 4, got 3" });
+    expect(err.code).toBe("unknown");
+    expect(err.message).not.toContain("not ready");
+  });
+
+  test("it outranks a wallet that is also low, because the relay named the cause", () => {
+    expect(classifyRelayFailure({ relayMessage: QA_MESSAGE, shortfall: CELO_SHORTFALL })).toBe("wallet_unknown_to_relay");
+    expect(classifyRelayFailure({ relayMessage: QA_MESSAGE, fundingRefused: true })).toBe("wallet_unknown_to_relay");
+  });
+});
+
+describe("a session that has run out", () => {
+  /** Doris's case: granted to 12:28 UTC, used at 15:20 (2026-11-09). */
+  const EXPIRED_AT = Math.floor(Date.UTC(2026, 10, 9, 12, 28, 0) / 1000);
+  const SENTENCE = "This session expired at 12:28 UTC. Grant a new session to continue.";
+  /** What the relay answers once the account has dropped the expired key. */
+  const KEY_UNKNOWN = "key hash 0xf93ce095e4d0a9dfd1b7ab0fd4f45ea8ba2e6b07a4ef1a4f1c0f0b3e0f1d2c3b is unknown";
+
+  test("the check before sending says when it expired", () => {
+    const err = expiredSessionError({ expiry: EXPIRED_AT, detail: "nothing was sent to the relay" });
+    expect(err.code).toBe("session_expired");
+    expect(err.message).toBe(SENTENCE);
+    expect(err.detail).toBe("nothing was sent to the relay");
+  });
+
+  test("the relay's unknown key hash reads the same, once the expiry has passed", () => {
+    const err = explainRelayFailure({ relayMessage: KEY_UNKNOWN, sessionExpiry: EXPIRED_AT });
+    expect(err.code).toBe("session_expired");
+    expect(err.message).toBe(SENTENCE);
+    // The hash is the relay's business, and it is kept where that belongs.
+    expect(err.message).not.toContain("key hash");
+    expect(err.relayMessage).toBe(KEY_UNKNOWN);
+  });
+
+  test("an unknown key hash from a session still in date keeps the relay's own words", () => {
+    // Nothing says this is an expiry, and saying so would send someone to
+    // re-grant a key that is live. It stays unrecognised, with the relay's
+    // sentence, which is the one thing known to be true about it.
+    const live = Math.floor(Date.UTC(2099, 0, 1) / 1000);
+    for (const facts of [{ relayMessage: KEY_UNKNOWN }, { relayMessage: KEY_UNKNOWN, sessionExpiry: live }]) {
+      const err = explainRelayFailure(facts);
+      expect(err.code).toBe("unknown");
+      expect(err.message).not.toContain("expired");
+    }
+  });
+
+  test("an expiry that passed does not reword every other failure", () => {
+    // The expiry is carried on every session failure, so it must only speak
+    // where the relay said nothing or said it could not find the key.
+    expect(classifyRelayFailure({ relayMessage: "ExceededSpendLimit", sessionExpiry: EXPIRED_AT })).toBe(
+      "spend_limit_exceeded",
+    );
+    expect(classifyRelayFailure({ relayMessage: "intent reverted: 0x", sessionExpiry: EXPIRED_AT, shortfall: CELO_SHORTFALL })).toBe(
+      "insufficient_funds",
+    );
+  });
+
+  test("the relay's own KeyExpired needs no expiry to be read", () => {
+    const err = explainRelayFailure({ relayMessage: "KeyExpired()" });
+    expect(err.code).toBe("session_expired");
+    expect(err.statement).toBe("This session key has expired.");
+    expect(err.action).toBe("Grant a new session to continue.");
+  });
+
+  test("0 and absent are keys that do not expire", () => {
+    const past = Date.UTC(2026, 10, 9, 15, 20, 0);
+    expect(sessionHasExpired(EXPIRED_AT, past)).toBe(true);
+    expect(sessionHasExpired(0, past)).toBe(false);
+    expect(sessionHasExpired(undefined, past)).toBe(false);
+    // The minute it expires, it is expired.
+    expect(sessionHasExpired(EXPIRED_AT, EXPIRED_AT * 1000)).toBe(true);
+    expect(sessionHasExpired(EXPIRED_AT, EXPIRED_AT * 1000 - 1)).toBe(false);
   });
 });
 

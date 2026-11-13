@@ -57,8 +57,10 @@ const USDC: Address = "0x01C5C0122039549AD1493B8220cABEdD739BC44E";
 const USDC_NAME = "USDC";
 const USDC_VERSION = "2";
 const CHAIN_ID = 11142220;
+// `||`, not `??`: an unset GitHub Actions secret arrives as an empty string,
+// and anvil reads an empty --fork-url as an IPC socket path rather than a URL.
 const FORK_RPC =
-  process.env.CELO_SEPOLIA_FORK_RPC_URL ??
+  process.env.CELO_SEPOLIA_FORK_RPC_URL ||
   "https://forno.celo-sepolia.celo-testnet.org";
 const ANVIL_PORT = 8549;
 const ANVIL_URL = `http://127.0.0.1:${ANVIL_PORT}`;
