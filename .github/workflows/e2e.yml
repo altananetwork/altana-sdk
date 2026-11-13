@@ -43,6 +43,11 @@ jobs:
       - name: Typecheck e2e (fork + demo harness)
         run: bun run --filter '@altananetwork/e2e' typecheck
 
+      - name: Publish guard (workspace: ranges, address checksums)
+        # The same script every package runs in prepublishOnly, so a problem
+        # that would stop a publish stops the pull request that introduces it.
+        run: node scripts/check-publishable.mjs
+
       - name: Install check (packed tarballs, code written for 0.9.0)
         # Packs each publishable package, installs the tarballs into an empty
         # project, imports them under Node and compiles a 0.9.0-style script.

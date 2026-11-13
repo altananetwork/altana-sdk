@@ -42,7 +42,7 @@ describe("stripEip7708AssetDiffs", () => {
 
   test("matches the address case-insensitively", () => {
     const mixed = structuredClone(captured) as any;
-    diffsOf(mixed)[0][1][1].address = "0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfE";
+    diffsOf(mixed)[0][1][1].address = "0xffffFFFfFFffffffffffffffFfFFFfffFFFfFFfE";
     const out = stripEip7708AssetDiffs(mixed);
     expect(diffsOf(out)[0][1]).toHaveLength(1);
   });

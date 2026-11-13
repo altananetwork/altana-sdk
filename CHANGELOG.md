@@ -1,19 +1,62 @@
 # Changelog
 
-Notable changes to `@altananetwork/sdk`, `@altananetwork/mcp` and
-`@altananetwork/x402-server`.
+Notable changes to `@altananetwork/sdk`, `@altananetwork/mcp`,
+`@altananetwork/x402-server` and `@altananetwork/hypersigner-keystore-mcp`.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions below are the `@altananetwork/sdk` version; the matching
 `@altananetwork/mcp` version is noted where it differs.
 
-These packages are pre-1.0. Minor versions may contain breaking changes.
+From 1.0.0 the sdk and mcp packages follow semantic versioning: a breaking
+change is a major version. `@altananetwork/x402-server` and
+`@altananetwork/hypersigner-keystore-mcp` are still 0.x, where a minor
+version may contain breaking changes.
 
 > This changelog starts at 0.7.0. Entries for earlier versions were
 > reconstructed from commit history after the fact, so they summarize what
 > shipped rather than itemizing every change.
 
-## [Unreleased]
+## [1.0.0] - Unreleased
+
+`@altananetwork/mcp` 1.0.0, `@altananetwork/x402-server` 0.3.0,
+`@altananetwork/hypersigner-keystore-mcp` 0.3.0
+
+### Upgrading from 0.9.0
+
+Code written for 0.9.0 compiles and runs against 1.0.0; CI installs the
+packed packages and compiles such a script on every pull request. What
+behaves differently:
+
+- **Revoke.** `client.revokeSession` revokes on every chain of the client
+  that holds the key, throws a `SessionRevokeError` when it failed on the
+  chain the call answers for, and reports `status: "revoked"`, not
+  `"CONFIRMED"`.
+- **Grant result.** `GrantSessionResult` gains `status`, `legs`,
+  `registration` and `cacheSync`. On BNB Chain and Ethereum nothing else
+  changes. On an L2 the call returns once the account authorized the key;
+  the Keystore write and the cache proof finish in the background.
+- **Errors.** A relay failure is thrown as an `AltanaError` with a `code` and
+  one plain sentence; the relay's own words are on `relayMessage` and
+  `cause`. Branch on `code`, not on message text.
+- **`execute`.** A bundle the relay refused with no receipt throws instead
+  of returning `FAILED`.
+- **Fee token.** With no `feeToken` the relay charges whichever accepted
+  token the wallet holds. On BNB Chain and Ethereum that is still the native
+  token; on Celo it can be CELO, USDC or USDT.
+- **x402.** `signX402Payment` signs a v2 envelope when the requirement names
+  no version. `fetchWithX402` reads the session's approvals first and
+  refuses when one is missing (`checkApprovals: false` skips the reads).
+- **`@altananetwork/x402-server`.** A payment that was broadcast but whose
+  receipt could not be read is answered `200` with `settlement: "pending"`,
+  not `402`. Deliver on `"confirmed"` if delivery must wait for the chain.
+- **`fundNative`** always throws; fund wallets from a faucet or your own
+  wallet.
+- **MCP.** `deadlineMinutes` must be positive, `revoke_session` revokes on
+  every chain of the environment that holds the key, and a failed grant is
+  not saved as a session.
+- **Licence.** `@altananetwork/x402-server` and
+  `@altananetwork/hypersigner-keystore-mcp` are Apache-2.0, as the sdk and
+  mcp packages already were.
 
 ### Breaking
 
@@ -157,9 +200,9 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
   to pay every fee in CELO and now pays in whichever of the two the relay
   values higher. Pass `feeToken: NATIVE_TOKEN` to keep paying in CELO. On
   every other chain the relay accepts native only, so nothing changes.
-- **Grant and revoke a session on every chain in one call.**
-  `grantSession` and `revokeSession` act on a set of networks instead of
-  one. Revoke discovers, in parallel, which chains' accounts hold the key and
+- **Grant on several chains in one call, and revoke wherever the key is.**
+  `grantSession` takes `chainIds` to act on a set of networks, and
+  `revokeSession` always does. Revoke discovers, in parallel, which chains' accounts hold the key and
   which Keystores list it, then revokes on each: one account leg per chain
   holding the key, one registry leg per Keystore chain (shared by the L2s
   behind it, bundled into the account intent when the Keystore chain is itself
@@ -200,9 +243,7 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
   and write the L1. New `client.syncSessionToCache` (and
   `syncSessionToCache`) submits the proof as a wallet call through the L2
   relay, waiting for the anchor and retrying when it moves;
-  `GrantSessionOptions` gains `populateCache` and `onStatus`. On testnet the
-  L1 (Sepolia) has no relay, so KeyStore writes are direct transactions from
-  the wallet's admin key (passkey wallets grant with `register: false`). The
+  `GrantSessionOptions` gains `populateCache` and `onStatus`. The
   proof building blocks are exported: `buildPopulateKeyCall`,
   `waitForL1Anchor`, `readL1Anchor`, `computeKeyPackedSlot`. New configs
   `CELO` (chain 42220, L1 Ethereum), `CELO_SEPOLIA` (chain 11142220, L1
@@ -228,7 +269,7 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
   only). Settlement through viem's Celo chains is a standard EIP-1559
   transaction, pinned by a unit test and the Celo Sepolia fork test.
 
-- **`@altananetwork/hypersigner-keystore-mcp` 0.2.1: `sepolia` chain and
+- **`@altananetwork/hypersigner-keystore-mcp`: `sepolia` chain and
   Celo aliases.** `ALTANA_CHAIN=sepolia` (the registry behind Celo Sepolia),
   with `celo-sepolia` / `11142220` resolving to it and `celo` / `42220` to
   `ethereum`, the L1s that hold the KeyStore.
@@ -248,6 +289,25 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
   of tokens does not burst-fire calls at a public RPC. (#78)
 
 ### Changed
+
+- **Relay failures are `AltanaError`s.** Every failure the relay reports is
+  thrown as an `AltanaError`: `code` to branch on (`insufficient_funds`,
+  `quote_expired`, `session_expired`, `spend_limit_exceeded`,
+  `call_not_permitted`, `relay_unreachable`, `chain_not_served`,
+  `wallet_unknown_to_relay`, `price_unavailable`, `prices_stale`,
+  `unknown`), `message` as one sentence a person can act on, `statement` and
+  `action` as its two halves, `detail` for a log, and the relay's own words
+  on `relayMessage` and `cause`. `isAltanaError` recognises one across
+  package copies. `classifyRelayFailure`, `explainRelayFailure` and
+  `withFailureContext` are exported for apps that map failures themselves,
+  and `sdkBuild` names the commit a build came from.
+- **A session that has run out says when.** A session used after its expiry
+  is refused before anything is sent: "This session expired at 12:28 UTC.
+  Grant a new session to continue." The relay's "key hash is unknown" for the
+  same case reads the same.
+- **A wallet the relay has no record of says what to do.** "Invalid
+  authorization item. Create a new wallet to continue." (`wallet_unknown_to_relay`).
+- `grantSession` and `revokeSession` return as soon as the Keystore write and the account legs are confirmed, which is when the session is usable (or stopped). The L2 cache proofs, which wait for the L2 to anchor the Keystore block (15 to 30 minutes on Celo Sepolia), keep running in the background: their legs read `PENDING` and the new `cacheSync` promise resolves with them once they are in. `populateCache: "await"` restores the blocking behaviour. `SessionLeg.status` gains `PENDING`.
 
 - **`fetchWithX402` reads a session's x402 approvals before paying** and refuses
   when one is missing, naming it, rather than settling into a revert. It fails
@@ -539,7 +599,6 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Changed
 
-- `grantSession` and `revokeSession` return as soon as the Keystore write and the account legs are confirmed, which is when the session is usable (or stopped). The L2 cache proofs, which wait for the L2 to anchor the Keystore block (15 to 30 minutes on Celo Sepolia), keep running in the background: their legs read `PENDING` and the new `cacheSync` promise resolves with them once they are in. `populateCache: "await"` restores the blocking behaviour. `SessionLeg.status` gains `PENDING`.
 - **`SignerType` no longer advertises `"injected"`.** The union member
   promised browser-wallet (MetaMask) signing that was never implemented and
   is blocked by the wallets themselves: extension wallets withhold the
