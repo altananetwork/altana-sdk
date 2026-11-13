@@ -1,0 +1,73 @@
+{
+  "relay": "https://relay-staging-production-2657.up.railway.app",
+  "startedAt": "2026-10-21T11:46:17.387Z",
+  "count": 5,
+  "sdkBuild": "d65bdfc+dirty",
+  "fundingTxs": [
+    "0xf9b0a3c7572eaa26fd42819bd0baff20102c7e27ef1b5a60ff11b8e8250bac01",
+    "0x03f2ad4749a7711aa1ef24b802e2be52b8ba0a552ebb117b2691871206e7a67e",
+    "0xaa3c70cbfdb50e4815bffd60e92e54ee442013bbca9c9a65747633c126ff8735",
+    "0x75effe15d0e06783d8359c558d1fe07eaed3ffbf89555d2f00c7579a8569da1c",
+    "0x5c6c894ea2ffd4f84baee124b41ec6eb3b51831cebc1ac85764b1c70308892c8"
+  ],
+  "wallets": [
+    {
+      "tag": "w1",
+      "address": "0xb497aD6372Ba473610F5075BC92F8fD6dC50DdC6",
+      "explorer": "https://testnet.altana.network/account/0xb497aD6372Ba473610F5075BC92F8fD6dC50DdC6",
+      "grantedAt": "t+26.1s",
+      "accountTx": "0x84a876ee5befc5de62979c41ef6f7b3f3c81604aa3045f56e9a810ad30360648",
+      "sessionTx": "0x3dc365b1f5abb458a8e83c00e699a0c16e287d2edf295b959d5407b8631687fc",
+      "registryTx": "0xdb045d52f51d3ecf0b89d9e66cb5d73f6d57ecf5ea09f33ed9dd9ebfd5ad5023",
+      "registryStatus": "CONFIRMED"
+    },
+    {
+      "tag": "w2",
+      "address": "0x0a6405847ac92Ad0D5C5EF39304676CA5f47ea3C",
+      "explorer": "https://testnet.altana.network/account/0x0a6405847ac92Ad0D5C5EF39304676CA5f47ea3C",
+      "grantedAt": "t+26.1s",
+      "accountTx": "0x4ef4807ba51c9498710001c84fe5786c932cb2e431afbb01cc0213809d1d7006",
+      "sessionTx": "0xb3f5f5c1c770142ee1df210621100f05ef48170b030b5f9f4cf3e776c4348b36",
+      "registryTx": "0x94ff1a1f8dcfd282dc4bb28a4cac45f6763967a200fe989988fd7c91fc42b8de",
+      "registryStatus": "CONFIRMED"
+    },
+    {
+      "tag": "w3",
+      "address": "0x238D9EE26528B11D94b30eB3997F5A8eC318Ca39",
+      "explorer": "https://testnet.altana.network/account/0x238D9EE26528B11D94b30eB3997F5A8eC318Ca39",
+      "grantedAt": "t+26.6s",
+      "accountTx": "0xca6fcaec58eab1a117449a3bf802ad6cefd9ca2f9d96c22c436c0d5d45bcacd9",
+      "sessionTx": "0x8487cadceeb5f05105aea62360b643de2c18ba73a0ee346a89e81bc50d85ffd2",
+      "registryStatus": "FAILED"
+    },
+    {
+      "tag": "w4",
+      "address": "0x9d8827920fE5DA0354aA82C087c7E0af23572688",
+      "explorer": "https://testnet.altana.network/account/0x9d8827920fE5DA0354aA82C087c7E0af23572688",
+      "grantedAt": "t+26.1s",
+      "accountTx": "0x2f77f6c850d4892ccaa40c82c0fb20175252da51d63e9f2b6c107f8fe3a2bfe6",
+      "sessionTx": "0xed544c7d24d7ad6a9b4e87343b67364e3734a5e68ed9b73c9a011bd5730cddb7",
+      "registryTx": "0x4be2ad35fbf80ffe08c37702636379b6471a67e80c54491bfb8d61eab0d5cca0",
+      "registryStatus": "CONFIRMED"
+    },
+    {
+      "tag": "w5",
+      "address": "0x5cF11c5415c2Dc5dE4Bd01409752a009bd96A668",
+      "explorer": "https://testnet.altana.network/account/0x5cF11c5415c2Dc5dE4Bd01409752a009bd96A668",
+      "grantedAt": "t+26.5s",
+      "accountTx": "0x5e52202cc01234dd1d9be2e12b94541b34dbbaeb2b411c207c0046ffed2e8734",
+      "sessionTx": "0xc37e27dddb192f6bec9b59dc9e64bb193d628d8c2b4414b37549e350119ac3ee",
+      "registryTx": "0xa4d50ae83b1ba9b9dc2e147dc0369bab2ba8e7f366c907581dc74954249aa8cc",
+      "registryStatus": "CONFIRMED"
+    }
+  ],
+  "summary": {
+    "granted": 5,
+    "used": 5,
+    "registered": 4,
+    "count": 5
+  },
+  "returned": "5.388892712802632887",
+  "funderAfter": "66.246646832414162095",
+  "verdict": "PASS"
+}
