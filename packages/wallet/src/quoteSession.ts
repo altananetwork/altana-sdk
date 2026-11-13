@@ -11,7 +11,7 @@ import { formatUnits, keccak256, type Address, type Hex } from "viem";
 import { NATIVE_TOKEN, networkByChainId, type NetworkConfig } from "./config.js";
 import { planRegistryFunding, planRegistryWrite, keyStoreCacheOf } from "./internal/cachedRegistry.js";
 import { buildFirstActionPrepend, readActiveKeys, readPublicKey } from "./internal/keystore.js";
-import { buildPublicClient, buildRelayClient, quoteCalls, type Call, type CallsQuote,
+import { buildProofClient, buildPublicClient, buildRelayClient, quoteCalls, type Call, type CallsQuote,
   type LegCharge, type QuoteLeg, type QuoteNeed,
 } from "./internal/relay.js";
 import { readTokenBalances } from "./internal/tokenBalances.js";
@@ -276,7 +276,7 @@ export function quotingDeps(base: SessionLegDeps = realSessionLegDeps): {
       };
       try {
         if (network.registry?.kind !== "cached") throw new Error("not a cached network");
-        const l1Client = buildPublicClient(network.registry.l1);
+        const l1Client = buildProofClient(network.registry.l1);
         const l2Client = buildPublicClient(network);
         // The proof needs a Keystore entry. The key's own once the registry
         // write has landed (revokes, re-grants); otherwise any key the wallet

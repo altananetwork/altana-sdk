@@ -52,11 +52,9 @@ describe("resolveChain", () => {
     expect(resolveChain("bnb").l2).toBeUndefined();
   });
 
-  test("Celo Sepolia's cache is the deployed KeyStoreCacheOPStack; Celo's is not deployed yet", () => {
+  test("Celo Sepolia's and Celo's caches are the deployed KeyStoreCacheOPStack contracts", () => {
     expect(L2_CACHES["celo-sepolia"]!.cache).toBe("0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD");
-    // Zero on purpose, so requireL2 can say "no cache deployed" instead of
-    // encoding a proof to a codeless address.
-    expect(L2_CACHES["celo"]!.cache).toBe("0x0000000000000000000000000000000000000000");
+    expect(L2_CACHES["celo"]!.cache).toBe("0xF939d7D3a2b8262aD8662c71Dec38119058d5a06");
   });
 
   test("existing names still resolve, unknown falls back to bnb", () => {

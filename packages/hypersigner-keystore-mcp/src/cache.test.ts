@@ -14,7 +14,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Address, Hex, PublicClient } from "viem";
 import { readCacheStatus, requireL2, type CacheStatus } from "./cache.js";
-import { L2_CACHES, resolveChain } from "./keystore.js";
+import { L2_CACHES, ZERO_ADDRESS, resolveChain } from "./keystore.js";
 
 const USER: Address = "0x1111111111111111111111111111111111111111";
 const KEY_ID: Hex = `0x${"ab".repeat(32)}`;
@@ -39,11 +39,18 @@ describe("requireL2", () => {
     expect(() => requireL2(resolveChain("bnb"))).toThrow(/holds the KeyStore itself/);
   });
 
-  // Celo mainnet's cache is not deployed. Saying that is much better than
-  // encoding a proof to the zero address and having it revert on chain.
-  test("an L2 whose cache is not deployed yet says that, and that wallets still work", () => {
-    expect(() => requireL2(resolveChain("celo"))).toThrow(/no KeyStoreCache deployed/);
-    expect(() => requireL2(resolveChain("celo"))).toThrow(/account enforces/);
+  test("celo names the Celo mainnet cache", () => {
+    expect(requireL2(resolveChain("celo")).chainId).toBe(42220);
+    expect(requireL2(resolveChain("42220")).cache).toBe(L2_CACHES["celo"]!.cache);
+  });
+
+  // An unset cache says so, which is much better than encoding a proof to the
+  // zero address and having it revert on chain.
+  test("an L2 whose cache is not deployed says that, and that wallets still work", () => {
+    const chain = resolveChain("celo");
+    const unset = { ...chain, l2: { ...chain.l2!, cache: ZERO_ADDRESS } };
+    expect(() => requireL2(unset)).toThrow(/no KeyStoreCache deployed/);
+    expect(() => requireL2(unset)).toThrow(/account enforces/);
   });
 });
 
