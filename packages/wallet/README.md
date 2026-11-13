@@ -172,10 +172,12 @@ On an L1 (`BNB`, `ETHEREUM`) the KeyStore is on the chain itself and a grant
 is one relay transaction. On an L2 (`CELO`, `CELO_SEPOLIA`) the KeyStore is
 on the L1 and a KeyStoreCache on the L2 mirrors it: `grantSession` writes the
 L1 KeyStore, authorizes the account through the L2 relay, then proves the
-entry into the L2 cache. Both `grantSession` and `revokeSession` act on every
-chain of the client at once (`NETWORKS.mainnet` / `NETWORKS.testnet` list the
-groups): revoke finds the chains whose account holds the key, and both report
-one leg per step per chain with a binary `status`.
+entry into the L2 cache. `grantSession` grants on one chain (`chainId`, or the
+client's default chain) and returns `transactionHash`; pass `chainIds` to
+grant on several at once (`NETWORKS.mainnet` / `NETWORKS.testnet` list the
+groups). `revokeSession` finds the chains of the client whose account holds
+the key and revokes on each. Both report one leg per step per chain with a
+binary `status`.
 `client.syncSessionToCache` runs the proof on its own. Reads go to
 `registryNetwork(network)`, the L1. The L1 KeyStore write is paid from the
 wallet's balance on the L2, so the wallet needs no ETH on the L1.

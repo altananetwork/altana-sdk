@@ -43,7 +43,7 @@ On an L1 the Keystore is on the chain itself and every tool works on that one ch
 | `grant_session` | Generates a session key, registers it in Keystore, authorizes it with the given permissions. `feeToken` (one address or a list) names the tokens the session may pay relay fees in; each gets a daily spend cap added (`feeSpendLimit`, in the token's smallest unit, overrides the one-whole-token default). Returns the session details, keyId, and the grant's transaction hash. |
 | `list_sessions` | Lists local session metadata (those granted from this machine). |
 | `session_execute` | Submits calls signed by a stored session key. The fee comes out of the session's spend caps: the capped token the relay accepts that the wallet holds the most of; `feeToken` forces one address, or with a list pays with the first that qualifies. The result names the token charged (`feeToken`). |
-| `revoke_session` | Deactivates the session in Keystore and pulls onchain authority. |
+| `revoke_session` | Deactivates the session in Keystore and pulls onchain authority, then deletes the local session. A revoke that fails keeps the local session so it can be run again; the result lists each chain's outcome. |
 
 ## Agent commerce
 

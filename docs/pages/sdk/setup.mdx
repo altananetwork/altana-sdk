@@ -48,8 +48,9 @@ Keystore cache used by [`ensureKeyCached`](/sdk/sync-to-l2).
 ## Multiple chains
 
 `createClient` accepts several chains. A wallet has the same address on all
-of them. Most calls pick one with `chainId`; sessions are granted and revoked
-on all of them at once:
+of them. Calls pick one with `chainId` and use the default chain without it.
+A session is granted on one chain, or on several with `chainIds`, and revoked
+wherever it lives:
 
 ```ts
 import { createClient, NETWORKS } from "@altananetwork/sdk";
@@ -57,8 +58,9 @@ import { createClient, NETWORKS } from "@altananetwork/sdk";
 const client = createClient({ chains: [...NETWORKS.mainnet], defaultChainId: 56 });
 
 await client.execute({ /* ... */, chainId: 42220 });      // one chain: Celo
-await client.grantSession({ /* ... */ });                  // every chain of the client
-await client.grantSession({ /* ... */, chainIds: [56] });  // or only the ones you list
+await client.grantSession({ /* ... */ });                  // the default chain: BNB
+await client.grantSession({ /* ... */, chainId: 42220 });  // one chain: Celo
+await client.grantSession({ /* ... */, chainIds: [56, 42220] });  // several in one call
 await client.revokeSession({ wallet, signer, session });   // wherever the key lives
 ```
 

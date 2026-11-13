@@ -32,11 +32,29 @@ const session = await client.grantSession({
   expiry: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60, // 7 days
 });
 
-if (session.status !== "granted") throw new Error("grant failed");
+console.log(session.transactionHash);
 // Hand `session` to whichever process runs the agent.
 ```
 
-`grantSession` authorizes the session on every chain the client was configured with, or on the chains you pass in `chainIds`. It never throws for a failed step: check `status`.
+`grantSession` authorizes the session on one chain: the one you name with `chainId`, or the client's default chain. It resolves once the wallet's account on that chain has authorized the key, with the transaction in `transactionHash`, and throws when the account did not authorize it.
+
+To authorize the same session on several chains in one call, pass `chainIds`:
+
+```ts
+const session = await client.grantSession({
+  wallet,
+  signer: admin,
+  permissions,
+  expiry,
+  chainIds: [56, 42220],
+});
+
+if (session.status !== "granted") {
+  console.error(session.legs.filter((leg) => leg.status === "FAILED"));
+}
+```
+
+A grant on several chains does not throw for a chain that failed. `status` is `granted` only when every chain went through, and `legs` says how each one went.
 
 :::warning[Spend limits are raw token units, and decimals differ by chain]
 `limit` is denominated in the token's smallest unit, so you need that token's decimals on that chain. USDT and USDC use **18 decimals on BNB Chain** and 6 on Ethereum. Writing `100_000_000n` for "100 USDT" on BNB sets a cap of 0.0000000001 USDT, and the agent's payments revert against a limit that looks generous.
@@ -94,10 +112,14 @@ type ClientGrantSessionOptions = {
   feeToken?: Address | readonly Address[];
   /** The cap added for each fee token, in its smallest unit. Default one whole token per day. */
   feeSpendLimit?: bigint;
-  /** The chains to grant on. Defaults to every chain the client was configured with. */
+  /** The chain to grant on. Defaults to the client's default chain. */
+  chainId?: number;
+  /** Grant on several chains in one call. Use it instead of chainId. */
   chainIds?: number[];
 };
 ```
+
+Pass `chainId` or `chainIds`, not both.
 
 A session pays relay fees only out of its spend caps: with no `feeToken` on an
 execute, the SDK charges the capped token the relay accepts that the wallet
@@ -114,9 +136,11 @@ See [Sessions](/concepts/sessions) for the full permission shape reference.
 ```ts
 type GrantSessionResult = Session & {
   keyId: Hex;
+  transactionHash?: Hex;    // the account authorization, on a one-chain grant
   status: "granted" | "failed";
   legs: SessionLeg[];       // one per step per chain; see revokeSession for the shape
-  cacheSync: Promise<SessionLeg[]>;  // the cache legs once their proofs are in
+  registration: Promise<SessionLeg[]>;  // the registry legs once the Keystore write is in
+  cacheSync: Promise<SessionLeg[]>;     // the cache legs once their proofs are in
 };
 
 type Session = {
@@ -130,7 +154,11 @@ type Session = {
 
 `GrantSessionResult` is a `Session`, so it goes anywhere a `Session` goes: `execute`, `revokeSession`, `registerSessionKey`, `signOrder`.
 
+`transactionHash` is the transaction in which the account authorized the key, on a grant to one chain. A grant with `chainIds` has one per chain, on the account legs.
+
 `status` is either `granted` or `failed`. It is `granted` only when every leg confirmed or had nothing to do; any failed leg makes it `failed`, and `legs` says which chain and which step. Each leg carries its own `transactionHash`, which is the receipt to record for the registration fee. Granting again with the same `sessionSigner` is safe: a key already valid in the Keystore is not written or charged twice.
+
+On a grant to one chain, the account leg decides whether the call throws. When it did not confirm, the error is the one the relay or the chain raised, with its `cause` intact, or `Session grant did not confirm: status=<STATUS> (relay code <N>)` when the relay answered with a status other than confirmed. On an L2 the Keystore write and the cache proof run after the account has authorized the key, so a session returned with `status: "failed"` is live on the account: `legs`, `registration` and `cacheSync` say which later step is left, and granting again with the same `sessionSigner` finishes it.
 
 ## What lands onchain
 

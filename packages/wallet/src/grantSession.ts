@@ -28,6 +28,7 @@ import {
   skippedLeg,
   unknownRegistryBlockReason,
   uniqueNetworks,
+  withLegDetail,
   type IntentOutcome,
   type SessionLegDeps,
   launchCacheProofs,
@@ -255,6 +256,7 @@ export async function runGrantSession(
         via: r.relayUrl ? "relay" : "eoa",
         status: "FAILED",
         reason: `could not read the registration fee: ${errorMessage(err)}`,
+        error: err,
       };
     }
     // A first-time write is two intents; the step says which one is running.
@@ -277,6 +279,7 @@ export async function runGrantSession(
       const failed: IntentOutcome = {
         status: "FAILED",
         reason: `could not read the registry: ${read.error}`,
+        error: read.cause,
       };
       registryDone.set(r.chainId, Promise.resolve(failed));
       const leg = legFromOutcome(r.chainId, "registry", failed);
@@ -361,7 +364,7 @@ export async function runGrantSession(
         try {
           calls = [registerCall(n, await deps.registrationFee(n))];
         } catch (err) {
-          return { status: "FAILED", reason: `could not read the registration fee: ${errorMessage(err)}` };
+          return { status: "FAILED", reason: `could not read the registration fee: ${errorMessage(err)}`, error: err };
         }
       }
       // Per chain, like the authorization: the account's approvals are its own
@@ -402,10 +405,15 @@ export async function runGrantSession(
   const accountLegs = networks.map(async (n) => {
     const outcome = await accountDone.get(n.chainId)!;
     if (outcome) return legFromOutcome(n.chainId, "account", outcome);
-    return skippedLeg(
-      n.chainId,
-      "account",
-      `registry write on chain ${registryNetwork(n).chainId} did not confirm; authorization not attempted`,
+    // Skipped because the registry leg it waits for did not confirm: what that
+    // leg reported is why this one never ran.
+    return withLegDetail(
+      skippedLeg(
+        n.chainId,
+        "account",
+        `registry write on chain ${registryNetwork(n).chainId} did not confirm; authorization not attempted`,
+      ),
+      await registryDone.get(registryNetwork(n).chainId),
     );
   });
 

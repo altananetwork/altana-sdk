@@ -123,8 +123,10 @@ export async function quoteGrantSession(
   adminSigner: Signer,
   opts: GrantSessionOptions,
   config: GrantSessionConfig,
+  /** The reads behind the quote. Internal: unit tests pass fakes. */
+  base: SessionLegDeps = realSessionLegDeps,
 ): Promise<SessionQuote> {
-  const { deps, lines } = quotingDeps();
+  const { deps, lines } = quotingDeps(base);
   const { onStatus: _ignored, ...quiet } = opts;
   await runGrantSession(wallet, adminSigner, { ...quiet, ...(quiet.populateCache === false ? {} : { populateCache: "await" }) }, config, deps);
   return withBalances(lines, config.networks);
@@ -136,8 +138,10 @@ export async function quoteRevokeSession(
   adminSigner: Signer,
   sessionOrPublicKey: Session | Hex,
   options: Omit<RevokeSessionOptions, "onStatus">,
+  /** The reads behind the quote. Internal: unit tests pass fakes. */
+  base: SessionLegDeps = realSessionLegDeps,
 ): Promise<SessionQuote> {
-  const { deps, lines } = quotingDeps();
+  const { deps, lines } = quotingDeps(base);
   await runRevokeSession(wallet, adminSigner, sessionOrPublicKey, { ...options, populateCache: "await" }, deps);
   return withBalances(lines, options.networks);
 }
