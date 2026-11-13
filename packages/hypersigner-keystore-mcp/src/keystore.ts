@@ -247,9 +247,8 @@ export const L2_CACHES: Record<string, L2CacheConfig> = {
     key: "celo",
     chainId: 42220,
     chain: celo,
-    // Celo mainnet has no cache deployed yet; the entry exists so the tools can
-    // say that rather than resolving to a codeless address.
-    cache: ZERO_ADDRESS,
+    // KeyStoreCacheOPStack 1.1.1, anchored to the Ethereum KeyStore.
+    cache: "0xF939d7D3a2b8262aD8662c71Dec38119058d5a06",
     rpcUrl: "https://celo-rpc.publicnode.com",
     explorerUrl: "https://celoscan.io",
     currencySymbol: "CELO",

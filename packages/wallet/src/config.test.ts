@@ -58,7 +58,7 @@ describe("CELO_SEPOLIA (cached registry on Sepolia)", () => {
   });
 });
 
-describe("CELO (mainnet shape, cache pending)", () => {
+describe("CELO (mainnet)", () => {
   test("registry on Ethereum, mainnet relay, cache sentinel", () => {
     expect(CELO.chainId).toBe(42220);
     expect(CELO.relayUrl).toBe(RELAY_URL);
@@ -66,7 +66,7 @@ describe("CELO (mainnet shape, cache pending)", () => {
     expect(CELO.keyStoreController).toBe(ETHEREUM.keyStoreController);
     if (CELO.registry?.kind !== "cached") throw new Error("CELO must be a cached network");
     expect(CELO.registry.l1).toBe(ETHEREUM);
-    expect(CELO.registry.keyStoreCache).toBe(KEYSTORE_CACHE_UNSET);
+    expect(CELO.registry.keyStoreCache).toBe("0xF939d7D3a2b8262aD8662c71Dec38119058d5a06");
     expect(CELO.explorer).toBe("https://celoscan.io");
   });
 });

@@ -438,16 +438,25 @@ export type PopulateKeyCall = {
 };
 
 /**
+ * Whether an `eth_getProof` error says the endpoint does not keep state for
+ * the requested block. Each provider words it differently.
+ */
+export function isProofWindowRefusal(text: string): boolean {
+  return /proof window|distance to target block|archive requests|historical state|unknown state|missing trie node|state .* is not available|pruned/i.test(
+    text,
+  );
+}
+
+/**
  * Builds the `populateKey` call that proves (user, publicKey)'s current L1
  * KeyStore state into an L2 cache: the RLP-encoded L1 header the L2 anchors,
  * the account proof for the KeyStore and the storage proof for the packed
  * Key slot, all fetched at the anchored block. Send it from any funded L2
  * account, or as a wallet call through the network's relay.
  *
- * The L1 RPC must serve `eth_getProof` for the anchored block. Public
- * endpoints often only serve the latest few blocks and answer "distance to
- * target block exceeds maximum proof window" otherwise; point the L1 client
- * at an endpoint with historical proofs when that happens.
+ * The L1 RPC must serve `eth_getProof` for the anchored block, about 100
+ * blocks behind head. Public endpoints often only serve the newest blocks;
+ * `buildProofClient` picks the registry network's `proofRpcUrls` for this.
  */
 export async function buildPopulateKeyCall(
   args: BuildPopulateKeyCallArgs,
@@ -469,13 +478,12 @@ export async function buildPopulateKeyCall(
     });
   } catch (err) {
     const text = err instanceof Error ? err.message : String(err);
-    if (/proof window|distance to target block/i.test(text)) {
+    if (isProofWindowRefusal(text)) {
       throw new Error(
-        `The L1 RPC refused eth_getProof at block ${l1Block.number} (the block the L2 ` +
-          `anchors): ${text.split("\n")[0]}. This endpoint only serves proofs for its ` +
-          `newest blocks. Use an L1 RPC with a proof window that covers the anchor (for ` +
-          `Sepolia, https://0xrpc.io/sep or https://eth-sepolia.api.onfinality.io/public) ` +
-          `by overriding the registry network's publicRpcUrl or passing l1Client.`,
+        `The registry chain's RPC refused eth_getProof at block ${l1Block.number} (the ` +
+          `block the L2 anchors): ${text.split("\n")[0]}. The endpoint only serves proofs ` +
+          `for its newest blocks. Use an RPC that keeps a few hundred blocks of state by ` +
+          `setting the registry network's proofRpcUrls or passing l1Client.`,
         { cause: err },
       );
     }

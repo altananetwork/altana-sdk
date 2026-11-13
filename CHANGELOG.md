@@ -31,6 +31,22 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Added
 
+- **Celo mainnet.** `CELO` carries the deployed KeyStoreCache
+  (`0xF939d7D3a2b8262aD8662c71Dec38119058d5a06`, KeyStoreCacheOPStack 1.1.1,
+  anchored to the Ethereum KeyStore), so a grant or revoke on Celo proves the
+  session into the cache. The relay on Celo takes its fee in CELO, USDC or
+  USDT, and the Ethereum KeyStore write is paid from the wallet's Celo
+  balance. `@altananetwork/hypersigner-keystore-mcp` carries the same cache
+  for `ALTANA_CHAIN=celo`.
+- **`proofRpcUrls` on `NetworkConfig`.** A cache proof is built at the block
+  the L2 anchors, about 100 blocks behind the registry chain's head, and
+  Ethereum's default public RPC does not serve `eth_getProof` there.
+  `ETHEREUM.proofRpcUrls` lists endpoints that do; `syncSessionToCache`,
+  `grantSession`, `revokeSession` and the session quotes try them in order and
+  then `publicRpcUrl`. Set your own list on the registry network, or keep
+  passing `l1Client`. Networks without the field read from `publicRpcUrl` as
+  before.
+
 - **`quoteExecute`.** `client.quoteExecute` (and the standalone `quoteExecute`) takes the same
   options as `execute` and returns the relay's quote for those exact calls without sending
   them: the maximum fee, the token it is charged in, the native value the calls carry and any
@@ -252,6 +268,16 @@ These packages are pre-1.0. Minor versions may contain breaking changes.
 
 ### Fixed
 
+- **A price that is too old is reported as one.** The relay converts a
+  request paid in one asset and carried out in another at a Chainlink price,
+  and refuses when that price is older than its limit. It answers the refusal
+  with a revert that carries no reason, the same answer it gives when a wallet
+  cannot pay, so a wallet that could pay was told to add funds. The SDK now
+  reads the feeds the conversion depends on after such a refusal, and when one
+  is older than the relay accepts the error is `prices_stale`: "Prices are
+  temporarily unavailable, try again shortly." The feed and its age are on
+  `detail`. Any other refusal keeps the sentence it had. The feeds and the
+  limit are on `NetworkConfig.nativePriceFeed`.
 - **A quote reads a cross-chain cost per leg and per token.** A registry
   write the relay funds from an L2 is paid on that L2, and the relay prices it
   in whatever token it accepts there: the native one, or a stablecoin with 6

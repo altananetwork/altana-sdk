@@ -29,7 +29,7 @@ read dedicated RPC endpoints from env, falling back to public nodes when unset
 BSC_FORK_RPC_URL=https://.../<KEY>          # fork-x402, fork-x402-witness, fork-erc1271, fork-bep677
 BASE_FORK_RPC_URL=https://.../<KEY>         # fork-eip3009 (run by hand; not in CI)
 BSC_TESTNET_FORK_RPC_URL=https://.../<KEY>  # fork-erc8004, fork-erc8183
-CELO_SEPOLIA_FORK_RPC_URL=https://.../<KEY> # fork-celo-cache, fork-celo-x402-server (public fallback: rpc.ankr.com/celo_sepolia)
+CELO_SEPOLIA_FORK_RPC_URL=https://.../<KEY> # fork-celo-cache, fork-eip3009-celo, fork-celo-x402-server (public fallback: rpc.ankr.com/celo_sepolia)
 SEPOLIA_RPC_URL=https://.../<KEY>           # fork-celo-cache, smoke:celo-sepolia: optional override of SEPOLIA.publicRpcUrl
                                             # (must serve eth_getProof for the block Celo Sepolia anchors, about 100 behind head)
 ```
@@ -94,7 +94,8 @@ bun run --filter '@altananetwork/e2e' smoke:all
 
 Self-contained anvil mainnet forks; no env vars or funded keys needed (requires `anvil` on PATH). Run directly, e.g. `bun tests/e2e/fork-bep677.ts`.
 
-- `fork-x402.ts`, `fork-x402-witness.ts`, `fork-eip3009.ts`, `fork-erc1271.ts`: x402 payment rails against real tokens
+- `fork-x402.ts`, `fork-x402-witness.ts`, `fork-eip3009.ts`, `fork-erc1271.ts`: x402 payment rails against real tokens (`fork-eip3009.ts` forks Base and is not in `fork:all`)
+- `fork-eip3009-celo.ts` (in `fork:all`): the EIP-3009 rail with a CONTRACT signer — Celo Sepolia's real USDC calling the real IthacaAccount's `isValidSignature` for a session key, which no unit test can prove. It carries its own control: without the token approved as the key's signature checker the transfer is refused with `FiatTokenV2: invalid signature`, the exact string behind a live 500, and with it the same signature settles. This is the coverage CI lost when Base left `fork:all`
 - `fork-native-receive.ts` (in `fork:all`): pins the EIP-7702 native-receive limitation — a 2300-gas-stipend payout (`.transfer()`/`.send()`) to a delegated wallet reverts, full-gas `call{value:}` succeeds, and Venus vBNB `redeem` reproduces the real-world failure (issue #55)
 - `fork-bep677.ts`: BEP-677 scaled-UI-amount display in `client.balances` (mock BEP-677 tokens + real USDT on a BSC fork)
 - `fork-celo-cache.ts` (in `fork:all`): Celo Sepolia fork with KeyStoreCacheOPStack 1.1.1 deployed from `fixtures/KeyStoreCacheOPStack-1.1.1.json` (compiled from altana-keystore `main`, commit `64ac831`); pins the `L1Block` predeploy to a fresh Sepolia block, builds a real Sepolia proof for a wallet registered on the Sepolia KeyStore with the SDK's `buildPopulateKeyCall`, and asserts `isValidKey` true, the freshness rule (stale after the anchor moves), `computeKeyPackedSlot` against the contract, and the SDK's refusal of registry calls on Celo Sepolia

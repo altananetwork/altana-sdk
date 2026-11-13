@@ -37,6 +37,20 @@ describe("withoutUrls", () => {
   });
 });
 
+describe("startAnvil", () => {
+  /**
+   * The failure this guard replaces cost three CI runs to understand: an unset
+   * CELO_SEPOLIA_FORK_RPC_URL arrived as an empty string, `??` kept it, and
+   * anvil reported a refused connection to the working directory.
+   */
+  test("an empty fork URL is refused, by name, before anvil is asked", () => {
+    for (const empty of ["", "   "]) {
+      expect(() => startAnvil(empty, 8598)).toThrow(/empty --fork-url/);
+      expect(() => startAnvil(empty, 8598)).toThrow(/`\|\|`/);
+    }
+  });
+});
+
 describe("waitForAnvil", () => {
   test("a probe that answers at once returns, and says nothing", async () => {
     const fake = { kill: () => {}, url: "http://127.0.0.1:1", port: 1, said: () => "", exitCode: () => undefined };
@@ -79,7 +93,14 @@ describe("waitForAnvil", () => {
   test.skipIf(!anvilOnPath)("a real anvil told to fork nothing explains itself", async () => {
     const anvil = startAnvil("http://127.0.0.1:1/unreachable-fork-url", 8599);
     try {
-      const err = await waitForAnvil(anvil, undefined, { attempts: 40, everyMs: 250 }).catch((e: Error) => e);
+      // Wait for anvil to give up first. It binds the port before it checks the
+      // fork, so a probe can win that race, see a live port and return — which
+      // is how this case failed once in about eight runs when it probed first.
+      for (let i = 0; i < 100 && anvil.exitCode() === undefined; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      expect(anvil.exitCode()).not.toBeUndefined();
+      const err = await waitForAnvil(anvil, undefined, { attempts: 2, everyMs: 50 }).catch((e: Error) => e);
       expect(err).toBeInstanceOf(Error);
       expect(err.message).toContain("anvil did not become ready");
       // That it noticed the exit rather than waiting out the clock: 40 * 250ms

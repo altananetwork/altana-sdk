@@ -309,11 +309,31 @@ describe("registry write funded from the L2, on the wire", () => {
     failStatusAt?: number;
     /** The 17:22 shape: the source leg landed, the destination never ran. */
     sourceReceiptOnly?: boolean;
+    /** How old each price feed's newest answer is, in seconds. A feed left out cannot be read. */
+    feedAges?: { eth?: number; celo?: number };
   }) {
     let prepares = 0;
     let sends = 0;
     const requests: Recorded[] = [];
     const same = (a: string, b: string | undefined) => b !== undefined && a.replace(/\/$/, "") === b.replace(/\/$/, "");
+    // Each feed's chain, at one fixed time: the feed's answer is `age` seconds
+    // behind the newest block, which is how the SDK measures it.
+    const NOW = 1_800_000_000n;
+    const feedAnswer = (
+      req: { method: string; params: any },
+      feed: { address: Address } | undefined,
+      age: number | undefined,
+    ): unknown | undefined => {
+      if (!feed || age === undefined) return undefined;
+      if (req.method === "eth_getBlockByNumber")
+        return { number: "0x1", hash: "0x" + "33".repeat(32), timestamp: numberToHex(NOW), transactions: [] };
+      if (req.method === "eth_call" && String(req.params[0].to).toLowerCase() === feed.address.toLowerCase())
+        return encodeAbiParameters(
+          [{ type: "uint80" }, { type: "int256" }, { type: "uint256" }, { type: "uint256" }, { type: "uint80" }],
+          [1n, 7_000_000n, NOW - BigInt(age), NOW - BigInt(age), 1n],
+        );
+      return undefined;
+    };
     globalThis.fetch = (async (url: any, init?: RequestInit) => {
       const u = String(url);
       const body = JSON.parse(String(init?.body));
@@ -321,7 +341,15 @@ describe("registry write funded from the L2, on the wire", () => {
       const answers = reqs.map((req: { id: number; method: string; params: any }) => {
         requests.push({ url: u, method: req.method, params: req.params });
         const ok = (result: unknown) => ({ jsonrpc: "2.0", id: req.id, result });
+        const celoFeed = CELO_SEPOLIA.nativePriceFeed;
+        if (same(u, celoFeed?.publicRpcUrl)) {
+          const answer = feedAnswer(req, celoFeed, o.feedAges?.celo);
+          if (answer !== undefined) return ok(answer);
+          throw new Error(`celo price feed rpc got ${req.method}`);
+        }
         if (same(u, SEPOLIA.publicRpcUrl)) {
+          const answer = feedAnswer(req, SEPOLIA.nativePriceFeed, o.feedAges?.eth);
+          if (answer !== undefined) return ok(answer);
           if (req.method === "eth_chainId") return ok(numberToHex(SEPOLIA.chainId));
           if (req.method === "eth_getBalance") return ok(numberToHex(o.balance));
           if (req.method === "eth_call") {
@@ -553,6 +581,86 @@ describe("registry write funded from the L2, on the wire", () => {
     // Both balances, the stranded ETH included, are in the log where they belong.
     expect(String(error?.detail)).toContain("0.000122407502849367 ETH on Sepolia");
     expect(String(error?.detail)).toContain("intent reverted: 0x");
+  });
+
+  /**
+   * The mainnet fork rehearsal, 2026-11-10, section 6.4. With the relay's
+   * limit forced to 60 s it logged `price for celo is 390s old at the
+   * chainlink feed, limit is 60s`, dropped the only route that could pay, and
+   * answered the same `intent reverted: 0x` as the test above. Nothing in the
+   * response says which of the two happened, so the SDK reads the feeds.
+   */
+  describe("a price the relay converts with is too old", () => {
+    const funded = {
+      [numberToHex(SEPOLIA.chainId)]: [{ address: "native", balance: "0x0", type: "native", metadata: { symbol: "ETH", decimals: 18 } }],
+      [numberToHex(CELO_SEPOLIA.chainId)]: [
+        { address: "native", balance: numberToHex(300n * 10n ** 18n), type: "native", metadata: { symbol: "CELO", decimals: 18 } },
+      ],
+    };
+    const refusedWrite = async (feedAges: { eth?: number; celo?: number }, assets: unknown = funded) => {
+      const signer = createPrivateKeySigner();
+      mockRegistryWire({ balance: 0n, activeKeys: [("0x" + "01".repeat(32)) as Hex], prepareError: "intent reverted: 0x", assets, feedAges });
+      const thrown = await submitRegistryWrite(SEPOLIA, {
+        walletAddress: signer.address,
+        adminSigner: signer,
+        calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+      }).then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      return altanaErrorOf(thrown);
+    };
+    const limit = SEPOLIA.nativePriceFeed!.maxAgeSecs;
+
+    test("the destination's price is too old: the sentence is about prices, not the wallet", async () => {
+      const error = await refusedWrite({ eth: limit + 24, celo: 120 });
+      expect(error?.code).toBe("prices_stale");
+      expect(error?.message).toBe("Prices are temporarily unavailable, try again shortly.");
+      expect(error?.action).toBe("Try again in a few minutes.");
+      // A wallet holding 300 CELO is not told to add CELO, and the asset it
+      // cannot act on is not named.
+      expect(error?.message).not.toContain("Not enough");
+      expect(error?.message).not.toContain("ETH");
+      // The figures are for the log.
+      expect(String(error?.detail)).toContain(`The price for ETH is ${limit + 24}s old at its feed`);
+      expect(String(error?.detail)).toContain(`the relay's limit is ${limit}s`);
+      expect(String(error?.detail)).toContain("intent reverted: 0x");
+    });
+
+    test("the price of what the wallet pays with is too old", async () => {
+      const error = await refusedWrite({ eth: 120, celo: limit + 1 });
+      expect(error?.code).toBe("prices_stale");
+      expect(error?.message).toBe("Prices are temporarily unavailable, try again shortly.");
+      expect(String(error?.detail)).toContain(
+        `The price for ${CELO_SEPOLIA.chain.nativeCurrency.symbol} is ${limit + 1}s old at its feed`,
+      );
+    });
+
+    test("fresh prices: the same revert keeps the sentence it had", async () => {
+      const error = await refusedWrite({ eth: limit, celo: 120 });
+      const symbol = CELO_SEPOLIA.chain.nativeCurrency.symbol;
+      expect(error?.code).toBe("insufficient_funds");
+      expect(error?.message).toBe(
+        `Not enough ${symbol} to pay for registering this key on Sepolia: you have 300 ${symbol}. ` +
+          `Add ${symbol} on ${CELO_SEPOLIA.chain.name}.`,
+      );
+      expect(String(error?.detail)).not.toContain("old at its feed");
+    });
+
+    test("feeds that cannot be read say nothing", async () => {
+      const error = await refusedWrite({});
+      expect(error?.code).toBe("insufficient_funds");
+      expect(error?.message).not.toContain("Prices");
+    });
+
+    test("a wallet holding none of the asset whose price is old is short of funds, not of a price", async () => {
+      const empty = {
+        [numberToHex(SEPOLIA.chainId)]: [{ address: "native", balance: "0x0", type: "native", metadata: { symbol: "ETH", decimals: 18 } }],
+        [numberToHex(CELO_SEPOLIA.chainId)]: [{ address: "native", balance: "0x0", type: "native", metadata: { symbol: "CELO", decimals: 18 } }],
+      };
+      const error = await refusedWrite({ eth: 120, celo: limit + 600 }, empty);
+      expect(error?.code).toBe("insufficient_funds");
+    });
   });
 
   test("a wallet with no ETH on Sepolia asks the relay to front each registration fee, paid in native", async () => {
