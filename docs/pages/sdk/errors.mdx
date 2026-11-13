@@ -81,9 +81,48 @@ If you need the onchain reason, look up the userOp yourself. You have `callsId`;
 | **A wallet's operations running into each other.** The relay picks an intent's nonce by reading the account's nonce onchain and remembers nothing between requests, so an operation prepared before it can see the previous one is handed a nonce the account rejects. | `InvalidNonce(InvalidNonce)` out of `prepare the call`, on a wallet's second operation. Not about how close together the calls arrive: nothing is reserved, and waiting for the previous operation to confirm does not help either, because the relay's own view lags the receipts it hands out. | The SDK retries a prepare rejected this way, three times over twelve seconds, so this normally never reaches you. If it does, the wallet is busier than that window: space the operations, or drive them through one caller. |
 | **A contract paid the wallet native coin with `.transfer()` / `.send()`.** An Altana wallet is an EOA delegated (EIP-7702) to the account contract, and running that code costs more than the 2300-gas stipend those Solidity primitives forward — so the *paying contract* reverts, with empty revert data. Known case: Venus core-pool vBNB `redeem` (its BNB payout is a `.transfer()`). All ERC-20 payouts are unaffected. | The call works from a plain EOA but reverts from the wallet, and the trace shows an out-of-gas or empty revert inside a native-coin send to the wallet's address. | Nothing wallet-side can add gas to someone else's `.transfer()`. Use the protocol's wrapped-token path instead (WBNB on Venus), a gateway that pays with a full-gas `call` (Venus's NativeTokenGateway, where deployed), or receive to a plain EOA. |
 
-## Errors the SDK throws
+## Relay failures: `AltanaError`
 
-There is no error class and no error code: every one of these is a plain `Error`, so match on the message if you must branch on them.
+A failure the relay reports is thrown as an `AltanaError`. Its `message` is one sentence a person can act on; branch on `code`, never on the text.
+
+```ts
+import { isAltanaError } from "@altananetwork/sdk";
+
+try {
+  await client.execute({ session, calls });
+} catch (err) {
+  if (isAltanaError(err) && err.code === "session_expired") {
+    // ask the user to grant a new session
+  }
+  throw err;
+}
+```
+
+| Field | What it holds |
+|---|---|
+| `code` | The cause, as a value to branch on (table below). |
+| `message` | The whole sentence: what happened and what to do next. |
+| `statement`, `action` | The two halves of the sentence, for an app that lays them out separately. |
+| `detail` | Everything the SDK knows about the failure. For logs, not for screens. |
+| `relayMessage`, `cause` | The relay's own words and the original error. |
+
+| `code` | Meaning | Example sentence |
+|---|---|---|
+| `insufficient_funds` | The wallet cannot pay for the operation. | `Not enough tBNB to pay for this: needs about 0.001717 tBNB, you have 0 tBNB. Add tBNB on BNB Smart Chain Testnet.` |
+| `quote_expired` | The relay's price aged out before the call was sent. | `The price for this expired before it was sent. Try again, and it will be priced afresh.` |
+| `session_expired` | The session key's expiry has passed. Checked before anything is sent. | `This session expired at 12:28 UTC. Grant a new session to continue.` |
+| `spend_limit_exceeded` | The session's spend cap does not cover this. | `This session key's spending limit does not cover this. Grant a new session key with a higher limit, as limits cannot be raised.` |
+| `call_not_permitted` | The session is not permitted to make the call. | `This session key is not allowed to make this call. Grant a new session key that allows it, as permissions cannot be widened.` |
+| `relay_unreachable` | No answer from the relay. | `Could not reach the Altana relay. Check the connection and try again.` |
+| `chain_not_served` | The relay has no entry for the chain. | `Altana does not serve this chain yet. Switch to a chain it serves, or point the SDK at a relay that serves this one.` |
+| `wallet_unknown_to_relay` | The relay has no record of the wallet. | `Invalid authorization item. Create a new wallet to continue.` |
+| `price_unavailable` | The relay could not price the fee token. | `No price was available for the fee token just now, so this could not be priced. Try again in a moment, or pay the fee in another token the relay accepts.` |
+| `prices_stale` | A price the relay converts with is older than it accepts. | `Prices are temporarily unavailable, try again shortly.` |
+| `unknown` | Anything else. The relay's own words lead. | |
+
+## Other errors the SDK throws
+
+These are plain `Error`s raised before the relay is involved, so match on the message if you must branch on them.
 
 ### Configuration
 
