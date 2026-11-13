@@ -27,11 +27,13 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { VERSION } from "./version.js";
 import { formatBalance } from "./balanceFormat.js";
+import { revokeFailureText, revokeReport } from "./revokeReport.js";
 import { createPublicClient, formatUnits, http, parseEther, parseUnits, type Address, type Hex } from "viem";
 import { keccak256 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import {
   createClient,
+  SessionRevokeError,
   deserializeSession,
   serializeSession,
   signerFromPrivateKey,
@@ -828,6 +830,8 @@ tool(
       address: admin.address,
     };
 
+    // One chain: this throws when the account did not authorize the key, so
+    // nothing below runs and no session is stored for a grant that failed.
     const session = await client.grantSession({
       wallet,
       signer: adminSigner,
@@ -880,6 +884,9 @@ tool(
               // (or sessionName) to verify_authorization to confirm the
               // session is recognized in the public registry.
               keyId,
+              // The account authorization: the key works from this
+              // transaction on.
+              ...(session.transactionHash ? { transactionHash: session.transactionHash } : {}),
               // `granted` only when every leg confirmed. The legs carry each
               // step's transaction hash (the grant pays a KeyStore
               // registration fee) and, on cached networks, the registry
@@ -909,7 +916,8 @@ tool(
 );
 
 // revoke_session — admin pulls authority on-chain. Local artifacts (keychain
-// entry + metadata file) are deleted after the on-chain tx confirms.
+// entry + metadata file) are deleted once the revoke went through; a revoke
+// that failed keeps them, so it can be run again by name.
 tool(
   "revoke_session",
   {
@@ -917,7 +925,8 @@ tool(
     description:
       "Admin revokes a previously-granted session on-chain. After this " +
       "confirms, the smart-account contract rejects any further calls " +
-      "from that key. Local artifacts are also deleted.",
+      "from that key, and the local session is deleted. A revoke that " +
+      "fails keeps the local session so it can be run again.",
     inputSchema: {
       sessionName: z.string(),
       feeToken: z
@@ -940,19 +949,38 @@ tool(
 
     // SDK revokeSession accepts a public key (hex) to identify the session.
     // It revokes on every chain of this network's environment, wherever the
-    // account holds the key.
-    const result = await revokeClient.revokeSession({
-      wallet,
-      signer: adminSigner,
-      session: stored.publicKey,
-      ...(feeToken !== undefined ? { feeToken: assertFeeToken(feeToken) } : {}),
-    });
+    // account holds the key, and answers for this network: `chainId` makes
+    // the call throw when the revoke failed here.
+    let result;
+    try {
+      result = await revokeClient.revokeSession({
+        wallet,
+        signer: adminSigner,
+        session: stored.publicKey,
+        chainId: NETWORK.chainId,
+        ...(feeToken !== undefined ? { feeToken: assertFeeToken(feeToken) } : {}),
+      });
+    } catch (err) {
+      // Nothing local is touched: the session is still needed to try again.
+      if (!(err instanceof SessionRevokeError)) throw err;
+      throw new Error(
+        revokeFailureText({
+          sessionName,
+          networkName: NETWORK.chain.name,
+          reason: err.message,
+          legs: err.result.legs,
+        }),
+        { cause: err },
+      );
+    }
 
-    // Clean up local artifacts regardless of on-chain status — if the
-    // revoke confirmed, the session is dead; if it didn't, retrying will
-    // re-issue and we'd rather not have stale state.
-    await deleteSessionKey(sessionName);
-    await deleteSession(sessionName);
+    // Revoked on this network. The local key and metadata go unless another
+    // chain still holds the key, in which case they are what a retry needs.
+    const report = revokeReport(result.legs);
+    if (report.forgetLocal) {
+      await deleteSessionKey(sessionName);
+      await deleteSession(sessionName);
+    }
 
     return {
       content: [
@@ -961,9 +989,14 @@ tool(
           text: JSON.stringify(
             {
               sessionName,
-              status: result.status,
+              status: report.status,
               keyId: result.keyId,
+              ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
               legs: jsonSafe(result.legs),
+              ...(report.notRevokedOn.length > 0 ? { notRevokedOn: report.notRevokedOn } : {}),
+              ...(report.notChecked.length > 0 ? { notChecked: report.notChecked } : {}),
+              localSession: report.forgetLocal ? "deleted" : "kept",
+              ...(report.note ? { note: report.note } : {}),
             },
             null,
             2,
