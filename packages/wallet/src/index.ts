@@ -8,6 +8,7 @@ export type {
   ClientExecuteOptions,
   ClientGrantSessionOptions,
   ClientRevokeSessionOptions,
+  GrantChainSelector,
   ClientQuoteGrantSessionOptions,
   ClientQuoteRevokeSessionOptions,
   ClientRegisterSessionKeyOptions,
@@ -72,6 +73,10 @@ export { grantSession } from "./grantSession.js";
 export type { GrantSessionConfig } from "./grantSession.js";
 export { revokeSession } from "./revokeSession.js";
 export type { RevokeSessionResult, RevokeSessionOptions } from "./revokeSession.js";
+// What client.revokeSession returns, and what it throws when the revoke did
+// not go through on the chain the call named.
+export { SessionRevokeError } from "./internal/oneChain.js";
+export type { ClientRevokeSessionResult, LegacyRevokeStatus } from "./internal/oneChain.js";
 // Failures a person can act on: one plain sentence with the next step, and a
 // typed code to branch on. The long form stays on the error as `detail`, for
 // a debug log, and never reaches a screen.
