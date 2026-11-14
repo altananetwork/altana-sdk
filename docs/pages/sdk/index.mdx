@@ -27,7 +27,7 @@ New to the SDK? Start with [Setup](/sdk/setup), then follow [Create a smart agen
 |---|---|
 | [`grantSession`](/sdk/grant-session) | Authorize an agent key with scoped permissions: spend caps, allowed contracts, expiry. |
 | [`execute`](/sdk/execute) | Send calls from the wallet, signed by the admin key or a session key. |
-| [`revokeSession`](/sdk/revoke-session) | Revoke a session key. One transaction; immediate on the chain where the key is registered. |
+| [`revokeSession`](/sdk/revoke-session) | Revoke a session key on every chain that holds it. The account stops accepting the key as soon as its revoke confirms. |
 
 ## Reads & Chains
 

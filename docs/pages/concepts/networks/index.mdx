@@ -7,9 +7,9 @@ description: Supported mainnet chains, RPC endpoints, and deployed contract addr
 
 Altana is multi-chain. The SDK ships a config per network, importable from
 `@altananetwork/sdk`. **BNB Smart Chain is the default**; Ethereum is
-supported for wallet execution and L1 cross-chain proofs; Base is supported as the L2
-Keystore cache for cross-chain verification; Celo is an L2 execution
-network, with its Keystore on Ethereum and a Keystore cache on Celo.
+supported for wallet execution and L1 cross-chain proofs; Celo is an L2 execution
+network, with its Keystore on Ethereum and a Keystore cache on Celo; Base is supported as the L2
+Keystore cache for cross-chain verification.
 
 Building against testnet? See [Testnet](/concepts/networks/testnet) for BNB
 Smart Chain Testnet and Celo Sepolia.
@@ -24,8 +24,8 @@ To browse what these contracts have recorded, open the [Keystore Explorer](/expl
 | --- | --- | --- | --- |
 | `BNB` | BNB Smart Chain | 56 | Default wallet execution network with a standalone Keystore |
 | `ETHEREUM` | Ethereum | 1 | Wallet execution network and L1 Keystore source for cross-chain proofs |
-| `BASE` | Base | 8453 | L2 Keystore cache for cross-chain session verification |
 | `CELO` | Celo | 42220 | L2: wallet execution, Keystore on Ethereum, Keystore cache on Celo |
+| `BASE` | Base | 8453 | L2 Keystore cache for cross-chain session verification |
 
 ## BNB Smart Chain: `BNB`
 
@@ -53,18 +53,6 @@ KeyStore contracts:
 | KeyStore | `0xb70fDa90C1d576Ba8399946a0c10ECD9d9Ea923b` |
 | KeyStoreController | `0x30a188Eecf14F4142B0d828ce838C9E1134e7FaA` |
 
-## Base: `BASE`
-
-Used for cross-chain session-key verification when operating on Ethereum. Not used by BNB.
-
-Base is a verification target, not an execution chain. It hosts a KeyStore cache and no relay, so `BASE` cannot be passed to `createClient` and you cannot send transactions there through the SDK. Use it with [`ensureKeyCached`](/sdk/sync-to-l2) to read Ethereum-granted authority from Base.
-
-| Contract | Address |
-| --- | --- |
-| KeyStoreCache | `0x6572427ED530BadcF7375Cf9A4709D8d2b0E7E0a` |
-
-Chain id 8453 · RPC `https://base-rpc.publicnode.com`.
-
 ## Celo: `CELO`
 
 Celo is an [L2 network](/concepts/keystore#reaching-other-chains): wallets
@@ -85,11 +73,27 @@ CELO, and its Keystore writes on Ethereum are paid from the same balance;
 - **Relay:** `https://relay.altana.network`
 - **Keystore:** Ethereum (chain 1), addresses above
 
+| Contract | Address |
+| --- | --- |
+| KeyStoreCache (KeyStoreCacheOPStack 1.1.1) | `0xF939d7D3a2b8262aD8662c71Dec38119058d5a06` |
+
 [ERC-8004 agent identity](/sdk/erc8004):
 
 | Contract | Address |
 | --- | --- |
 | AgentIdentity registry | `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432` |
+
+## Base: `BASE`
+
+Used for cross-chain session-key verification when operating on Ethereum. Not used by BNB.
+
+Base is a verification target, not an execution chain. It hosts a KeyStore cache and no relay, so `BASE` cannot be passed to `createClient` and you cannot send transactions there through the SDK. Use it with [`ensureKeyCached`](/sdk/sync-to-l2) to read Ethereum-granted authority from Base.
+
+| Contract | Address |
+| --- | --- |
+| KeyStoreCache | `0x6572427ED530BadcF7375Cf9A4709D8d2b0E7E0a` |
+
+Chain id 8453 · RPC `https://base-rpc.publicnode.com`.
 
 > Addresses are the source of truth in the SDK's
 > [`packages/wallet/src/config.ts`](https://github.com/altananetwork/altana-sdk/blob/main/packages/wallet/src/config.ts).
