@@ -273,17 +273,27 @@ async function eventually(read: () => Promise<boolean>, timeoutMs = 90_000): Pro
   }
 }
 
+/** One JSON-RPC call to the relay. A call that does not answer in time is tried again: these are reads. */
 async function relayRpc<T>(method: string, params: unknown[]): Promise<T> {
-  const res = await fetch(RELAY_URL, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-    signal: AbortSignal.timeout(20_000),
-  });
-  if (!res.ok) throw new Error(`the relay answered HTTP ${res.status} to ${method}`);
-  const body = (await res.json()) as { result?: T; error?: { message?: string } };
-  if (body.error || body.result === undefined) throw new Error(`the relay refused ${method}: ${body.error?.message ?? "no result"}`);
-  return body.result;
+  let last: unknown;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const res = await fetch(RELAY_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!res.ok) throw new Error(`the relay answered HTTP ${res.status} to ${method}`);
+      const body = (await res.json()) as { result?: T; error?: { message?: string } };
+      if (body.error || body.result === undefined) throw new Error(`the relay refused ${method}: ${body.error?.message ?? "no result"}`);
+      return body.result;
+    } catch (err) {
+      last = err;
+      if (attempt < 3) await sleep(3_000);
+    }
+  }
+  throw new Error(`the relay did not answer ${method} in three tries: ${(last as Error)?.message ?? last}`, { cause: last });
 }
 
 // ── Contracts read directly ─────────────────────────────────────────────────
@@ -425,7 +435,11 @@ const record: {
   wallets: {},
 };
 
+/** False until the wallets are in the record: a run that dies before that must not overwrite an earlier run's record. */
+let recordReady = false;
+
 function saveRecord(): void {
+  if (!recordReady) return;
   mkdirSync(OUT_DIR, { recursive: true, mode: 0o700 });
   writeFileSync(RECORD_FILE, clean(JSON.stringify(record, jsonSafe, 2)));
 }
@@ -1238,15 +1252,19 @@ async function stepCharge(ctx: Ctx, facts: Facts, final = true): Promise<void> {
 
   // The registry writes, as their own transactions state them.
   const registryWrites: RegistryWrite[] = [];
+  /** False when a write's own transaction could not be read for what was fronted: the conversion is then not judged. */
+  let writesReadable = true;
   for (const w of writes) {
     const [receipt, intent] = await Promise.all([
       regPub.getTransactionReceipt({ hash: w.transactionHash }),
       intentOf(regPub, w.transactionHash, ctx.wallet.address),
     ]);
-    if (!intent) throw new Error(`the ${w.kind} write ${w.transactionHash} is not a relay intent of this wallet; its funding cannot be read`);
-    const fronted = intent.funded.filter((f) => isNative(f.token)).reduce((s, f) => s + f.amount, 0n);
-    if (fronted === 0n) throw new Error(`the ${w.kind} write ${w.transactionHash} carries no fronted ${NATIVE}`);
-    if (!isNative(intent.paymentToken)) throw new Error(`the ${w.kind} write paid its fee in ${intent.paymentToken}, not ${NATIVE}`);
+    const fronted = intent?.funded.filter((f) => isNative(f.token)).reduce((s, f) => s + f.amount, 0n) ?? 0n;
+    if (!intent || fronted === 0n || !isNative(intent.paymentToken)) {
+      writesReadable = false;
+      info(p, `what was fronted for the ${w.kind} write could not be read from ${txLink(sdkRegistry, w.transactionHash)}`);
+      continue;
+    }
     // The fee the KeyStore took is the one in force at the write's block; an RPC without that state answers with today's.
     const registrationFee = await regPub
       .readContract({ address: sdkRegistry.keyStoreController, abi: CONTROLLER_ABI, functionName: "getRegistrationFeeInWei", blockNumber: receipt.blockNumber })
@@ -1259,7 +1277,7 @@ async function stepCharge(ctx: Ctx, facts: Facts, final = true): Promise<void> {
   let nativeAt: { price: UsdPrice; updatedAt: bigint } = { price: nativeRead.price, updatedAt: nativeRead.updatedAt };
   const locked = escrows.reduce((s, e) => s + e.amount, 0n);
   let report: ReturnType<typeof chargeReport> | undefined;
-  if (registryWrites.length > 0 && escrows.length === registryWrites.length) {
+  if (writesReadable && registryWrites.length > 0 && escrows.length === registryWrites.length) {
     // The relay keeps a price for a few minutes and a quote lives a little longer, so the price it
     // charged at is the feed's answer at the lock or, when that answer was only just written, the
     // one before it. No older answer is considered.
@@ -1317,14 +1335,21 @@ async function stepCharge(ctx: Ctx, facts: Facts, final = true): Promise<void> {
   if (ctx.role === "usdc" && !usdcFeed) info(p, "USDC is taken as $1 here");
 
   for (const e of escrows) info(p, `escrow ${e.status}: ${amountText(e.amount, ctx.token)}  ${txLink(sdkNetwork, e.transactionHash)}`);
-  for (const [i, w] of registryWrites.entries()) {
-    info(p, `${w.kind} write on ${sdkRegistry.chain.name}: fronted ${formatEther(w.fronted)} ${NATIVE}, relay fee ${formatEther(w.relayFee)}, gas ${w.gasUsed} at ${formatGwei(w.effectiveGasPrice)} gwei, KeyStore fee ${formatEther(w.registrationFee)}  ${txLink(sdkRegistry, writes[i]!.transactionHash)}`);
+  for (const w of registryWrites) {
+    info(p, `${w.kind} write on ${sdkRegistry.chain.name}: fronted ${formatEther(w.fronted)} ${NATIVE}, relay fee ${formatEther(w.relayFee)}, gas ${w.gasUsed} at ${formatGwei(w.effectiveGasPrice)} gwei, KeyStore fee ${formatEther(w.registrationFee)}  ${txLink(sdkRegistry, writes.find((x) => x.kind === w.kind)?.transactionHash)}`);
   }
   if (report) {
     for (const line of report.lines) info(p, line);
     info(p, `prices are the feeds' answers written ${lockTime - nativeAt.updatedAt}s (${NATIVE}) and ${tokenAt.updatedAt === 0n ? "n/a" : `${lockTime - tokenAt.updatedAt}s`} (${ctx.token.symbol}) before the lock`);
-  } else if (registryWrites.length > 0) {
-    info(p, `${escrows.length} escrow(s) for ${registryWrites.length} registry write(s): they cannot be paired, so the conversion margin is not judged`);
+  } else if (writes.length > 0) {
+    info(p, `${escrows.length} escrow(s) and ${registryWrites.length} readable registry write(s) of ${writes.length}: they cannot be paired, so the conversion margin is not judged`);
+  }
+  if (authorization === undefined) info(p, "the relay fee of the authorization could not be read from its transaction and is not in the total");
+  // The same thing from the other side: what the wallet's balance says, whatever the transactions say.
+  const heldAtGrant = ctx.rec.data.balanceAtGrant === undefined ? undefined : BigInt(String(ctx.rec.data.balanceAtGrant));
+  const heldNow = await tokenBalance(ctx.token, ctx.wallet.address);
+  if (heldAtGrant !== undefined && heldAtGrant >= heldNow) {
+    info(p, `balance check: ${amountText(heldAtGrant, ctx.token)} before the grant, ${amountText(heldNow, ctx.token)} now, so ${amountText(heldAtGrant - heldNow, ctx.token)} (${usd(heldAtGrant - heldNow)}) has left the wallet in all, the session's one cent and its own fee included`);
   }
 
   ctx.rec.data.charge = {
@@ -1602,6 +1627,12 @@ async function runWallet(ctx: Ctx, facts: Facts, centTo: Address, steps: readonl
       for (const line of described.message.split("\n")) console.log(`${ctx.prefix}       | ${line}`);
       for (const cause of described.causes) console.log(`${ctx.prefix}       <- ${cause}`);
       if (described.detail) console.log(`${ctx.prefix}       detail: ${described.detail.split("\n")[0]}`);
+      if (step === "charge") {
+        // Reading the charge sends nothing. Failing to read it must not leave the session unrevoked.
+        console.log(`${ctx.prefix}     the charge could not be read; the run goes on to the revoke.`);
+        saveRecord();
+        continue;
+      }
       console.log(`${ctx.prefix}     stopped here. Run the same command with --resume to continue from "${step}"; the session key is on file.`);
       saveRecord();
       return;
@@ -1669,6 +1700,7 @@ async function main(): Promise<void> {
     };
   });
 
+  recordReady = true;
   if (opts.send && !MAINNET && !opts.resume) await fundTestnetWallet(ctxs[0]!, facts);
   for (const ctx of ctxs) await walletChecks(ctx, facts, note[ctx.role], centTo);
   record.preconditions.failed = failed;
@@ -1703,6 +1735,11 @@ async function main(): Promise<void> {
     );
   }
   if (failed > 0) throw new Error(`${failed} check(s) marked FAIL above stand in the way. Nothing was signed or sent.`);
+  if (start) {
+    // The steps about to run again replace their rows from the earlier run; the ones before them stay.
+    const stepOf = (label: string) => label.split(" (")[0] as Step;
+    ctx.rec.rows = ctx.rec.rows.filter((r) => steps.indexOf(stepOf(r.step)) < steps.indexOf(start!));
+  }
   if (!start) {
     console.log(`\n${ctx.prefix}every step of the earlier run is done; nothing to resume`);
   } else {
