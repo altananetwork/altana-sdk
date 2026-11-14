@@ -1684,7 +1684,7 @@ async function main(): Promise<void> {
     const earlier = previous?.wallets?.[role];
     const rec: WalletRecord =
       earlier && lower(earlier.address) === lower(walletAddresses[role])
-        ? { ...earlier, rows: earlier.rows.filter((r) => r.status === "PASS" || r.status === "INFO") }
+        ? { ...earlier, rows: [...earlier.rows] }
         : { role, address: walletAddresses[role], token: token.symbol, steps: {}, rows: [], data: {} };
     record.wallets[role] = rec;
     return {
