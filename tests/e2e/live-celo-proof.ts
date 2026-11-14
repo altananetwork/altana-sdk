@@ -1127,7 +1127,8 @@ async function stepRegister(ctx: Ctx): Promise<void> {
   }
   ctx.rec.data.registryWrites = writes;
   if (leg && leg.status !== "CONFIRMED") {
-    throw new Error(`the KeyStore registration is ${leg.status}${leg.reason ? `: ${leg.reason}` : ""}`);
+    // The SDK's own sentence when it gave one: that is what says why.
+    throw new Error(leg.reason ?? `the KeyStore registration is ${leg.status}`);
   }
   if (leg?.transactionHash) writes.push({ kind: "session", transactionHash: leg.transactionHash });
   if (leg?.sourceTransactionHash) ctx.rec.data.sourceTransactionHash = leg.sourceTransactionHash;
@@ -1212,11 +1213,11 @@ async function escrowsOf(wallet: Address, escrow: Address, from: bigint, to: big
  * chains: the relay's fee in each of the wallet's transactions on Celo, and
  * what it locked in escrow for the writes on the registry chain.
  */
-async function stepCharge(ctx: Ctx, facts: Facts): Promise<void> {
+async function stepCharge(ctx: Ctx, facts: Facts, final = true): Promise<void> {
   const p = ctx.prefix;
   const grant = ctx.rec.data.grant as { transactionHash?: Hex } | undefined;
   if (!grant?.transactionHash) {
-    row(ctx, { step: "charge", chain: "", link: "", status: "INFO", note: "no grant on record; nothing was charged" });
+    if (final) row(ctx, { step: "charge", chain: "", link: "", status: "INFO", note: "no grant on record; nothing was charged" });
     return;
   }
   const writes = (ctx.rec.data.registryWrites ?? []) as WriteOnRecord[];
@@ -1305,14 +1306,14 @@ async function stepCharge(ctx: Ctx, facts: Facts): Promise<void> {
   }
   const total = legs.reduce((s, l) => s + l.amount, 0n);
   const width = Math.max(...legs.map((l) => l.leg.length), 5);
-  console.log(`${p}     CHARGED FOR THE GRANT, in ${ctx.token.symbol} (${ctx.token.symbol} at ${priceText(tokenAt.price)}, the Chainlink answer at the time)`);
+  console.log(`${p}     CHARGED FOR THE GRANT${final ? "" : " SO FAR"}, in ${ctx.token.symbol} (${ctx.token.symbol} at ${priceText(tokenAt.price)}, the Chainlink answer at the time)`);
   for (const l of legs) console.log(`${p}       ${l.leg.padEnd(width)}  ${amountText(l.amount, ctx.token).padStart(28)}  ${usd(l.amount).padStart(9)}  ${l.link}`);
   console.log(`${p}       ${"TOTAL".padEnd(width)}  ${amountText(total, ctx.token).padStart(28)}  ${usd(total).padStart(9)}`);
   const registryLeft = await regPub.getBalance({ address: ctx.wallet.address });
   if (registryLeft > 0n) {
     info(p, `of what was locked, ${formatEther(registryLeft)} ${NATIVE} (${dollars(usdValue(registryLeft, 18, nativeAt.price))}) is in the wallet on ${sdkRegistry.chain.name}: the unused part of the gas budget, and it is the wallet's`);
   }
-  if (!mirror?.transactionHash) info(p, "the cache proof is not in this total: it has not been sent");
+  if (!mirror?.transactionHash) info(p, final ? "the cache proof is not in this total: it was not sent" : "the cache proof is still to come and is not in this total; the final figure follows the mirror step");
   if (ctx.role === "usdc" && !usdcFeed) info(p, "USDC is taken as $1 here");
 
   for (const e of escrows) info(p, `escrow ${e.status}: ${amountText(e.amount, ctx.token)}  ${txLink(sdkNetwork, e.transactionHash)}`);
@@ -1351,6 +1352,7 @@ async function stepCharge(ctx: Ctx, facts: Facts): Promise<void> {
         }
       : {}),
   };
+  if (!final) return;
   row(ctx, {
     step: "charge",
     chain: "",
@@ -1569,6 +1571,10 @@ async function runWallet(ctx: Ctx, facts: Facts, centTo: Address, steps: readonl
       await run[step]();
       ctx.rec.steps[step] = "PASS";
       delete ctx.rec.error;
+      // The number that matters most, as soon as it exists: the mirror step that follows takes 15 to 30 minutes.
+      if (step === "register" && steps.includes("mirror")) {
+        await stepCharge(ctx, facts, false).catch((err) => info(ctx.prefix, `the charge so far could not be read yet: ${clean((err as Error).message).split("\n")[0]}`));
+      }
     } catch (err) {
       const described = describeError(err, secrets);
       const code = altanaErrorOf(err)?.code ?? described.code;
