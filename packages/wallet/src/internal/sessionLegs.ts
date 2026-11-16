@@ -110,6 +110,8 @@ export type SessionLegDeps = {
       calls: readonly Call[];
       /** Called before each intent: `root` then `session` on a first-time write. */
       onStep?: (step: "root" | "session") => void;
+      /** Called when an intent's payment is locked and the registry chain is slow; the wait goes on. */
+      onWaiting?: (step: "root" | "session") => void;
       /** What a quote taken before this said the payer pays, for wording a failure. */
       expectedCost?: { chainId: number; token: Address; amount: bigint };
     },
@@ -202,6 +204,7 @@ export const realSessionLegDeps: SessionLegDeps = {
         adminSigner: args.adminSigner,
         calls: args.calls,
         ...(args.onStep ? { onStep: args.onStep } : {}),
+        ...(args.onWaiting ? { onWaiting: args.onWaiting } : {}),
         ...(args.expectedCost ? { expectedCost: args.expectedCost } : {}),
       });
       return {

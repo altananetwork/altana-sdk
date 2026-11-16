@@ -218,6 +218,13 @@ export type CacheSyncReport = {
 export type GrantSessionStatus =
   | "registry-write"
   /**
+   * The payment for a KeyStore write is locked on the L2 and the registry
+   * chain has not run the write within the usual wait. Nothing has failed: the
+   * SDK keeps waiting, and the relay either completes the write or returns the
+   * payment. `detail.step` says which write of a first registration it is.
+   */
+  | "registry-write-pending"
+  /**
    * The background KeyStore registration did not confirm. `detail.reason`
    * carries the relay's own words. The session is still live on the account:
    * the account enforces the key locally, and the KeyStore entry is the public
@@ -232,6 +239,8 @@ export type GrantSessionStatus =
 export type RevokeSessionStatus =
   | "discovery"
   | "registry-write"
+  /** As in `GrantSessionStatus`: the payment is locked and the KeyStore write is still being waited for. */
+  | "registry-write-pending"
   | "account-revoke"
   | "cache-sync"
   | "done";
@@ -240,7 +249,7 @@ export type RevokeSessionStatus =
 export type SessionStatusDetail = {
   chainId: number;
   /**
-   * `registry-write` only, and only on a wallet's first registry write, which
+   * `registry-write` and `registry-write-pending`, on a wallet's first registry write, which
    * is two sequential intents: `root` is `initialRegisterKey`, `session` is
    * `registerKey`. The event name is unchanged, so a consumer that ignores
    * `step` simply sees `registry-write` twice, which is what happened.

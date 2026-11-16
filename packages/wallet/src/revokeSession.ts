@@ -228,6 +228,9 @@ export async function runRevokeSession(
       wallet,
       adminSigner,
       calls: [buildRevokeKeyCall({ walletAddress: wallet.address, keyId, network: r })],
+      // The payment is locked on the L2 and the registry chain is slow: the
+      // revoke is still being waited for.
+      onWaiting: (step) => onStatus?.("registry-write-pending", { chainId: r.chainId, step }),
     });
     registryDone.set(r.chainId, done);
     registryLegs.push(done.then((o) => legFromOutcome(r.chainId, "registry", o, o.via)));

@@ -100,8 +100,9 @@ type ClientGrantSessionOptions = {
    */
   populateCache?: boolean | "await";
   /** Progress, per chain where it applies. */
-  onStatus?: (status: "registry-write" | "account-authorization" | "cache-sync" | "done",
-              detail?: { chainId: number }) => void;
+  onStatus?: (status: "registry-write" | "registry-write-pending" | "registry-write-failed"
+                      | "account-authorization" | "cache-sync" | "done",
+              detail?: { chainId: number; step?: "root" | "session"; reason?: string }) => void;
   /**
    * The token(s) the session may pay relay fees in, one address or a list.
    * Each gets a daily spend cap added to the session (default one whole
@@ -170,6 +171,8 @@ For every chain you grant on, the SDK runs up to three legs:
 3. **Cache.** On an L2, the proof of the Keystore entry into its KeyStoreCache, as a wallet call through the same relay (see [`syncSessionToCache`](/sdk/sync-to-l2#syncsessiontocache)). It follows the Keystore write. Skipped with `register: false` or `populateCache: false`.
 
 On an L2, `grantSession` does not make the user wait for the Keystore write or the proof: it returns as soon as the account authorization is confirmed, which is when the session is usable (nothing in `execute` reads the Keystore or the cache). The Keystore write confirms shortly after. The proof can only be built once the L2 has anchored the L1 block of that write, which takes 15 to 30 minutes on Celo. The registry and cache legs read `PENDING` meanwhile, and `registration` and `cacheSync` resolve with the finished legs. Neither rejects; a step that fails is a `FAILED` leg there. If your process exits first, the session still works, and granting again with the same `sessionSigner` finishes what is left ([`syncSessionToCache`](/sdk/sync-to-l2#syncsessiontocache) submits a proof on its own). Pass `populateCache: "await"` to return only once every proof is in.
+
+The payment for a Keystore write is held on the L2 before the relay carries the write to the L1. If the relay is slow there, the SDK does not give up while that payment is held: it reports `registry-write-pending` once, keeps waiting for up to 65 minutes, and then goes on with the session key and the proof. The relay either completes the write or returns the payment. If your process stopped in the meantime, [`registerSessionKey`](#registering-the-session-key) registers what is missing and proves it into the cache.
 
 ## What it costs
 

@@ -2106,13 +2106,38 @@ export async function blockNumberOfWrite(args: {
  * code as terminal risks a duplicate submission. The raw code is returned
  * as `statusCode` whenever one was observed — including on a timed-out
  * PENDING, where its absence means the relay never answered at all.
+ *
+ * A timed-out PENDING also carries the receipts the relay had reported by
+ * then. On a bundle that spans two chains that is the difference between
+ * "nothing happened" and "the payment is locked on the source chain and the
+ * destination has not run yet", and only the receipts can tell them apart.
+ *
+ * `whileFundsLocked` is for exactly that second case. A funded cross-chain
+ * write locks the payer's funds on the source chain first and runs on the
+ * destination after. When the first deadline passes with the source leg mined
+ * and the bundle still in flight, giving up would abandon a payment the relay
+ * is still holding: it will either finish the write or return the payment once
+ * its refund period is over. So the wait goes on, more slowly, until
+ * `whileFundsLocked.timeoutMs` (measured from the start). A bundle with no
+ * mined source leg is not extended: nothing is locked, and nothing is owed an
+ * answer.
  */
 export async function waitForCalls(
   client: ReturnType<typeof buildRelayClient>,
   callsId: Hex,
   timeoutMs = 240_000,
   pollIntervalMs = 2_000,
-  opts: { chainId?: number } = {},
+  opts: {
+    chainId?: number;
+    whileFundsLocked?: {
+      /** The longest the whole wait may take, from its start. */
+      timeoutMs: number;
+      /** Poll cadence once the wait has been extended. Default 10s. */
+      pollIntervalMs?: number;
+      /** Called once, when the first deadline passes and the wait goes on. */
+      onWaiting?: (sourceReceipts: readonly RelayReceipt[]) => void;
+    };
+  } = {},
 ): Promise<{
   status: string;
   statusCode?: number;
@@ -2123,14 +2148,34 @@ export async function waitForCalls(
   /** Receipts on other chains: the source legs of a multichain bundle. */
   sourceReceipts?: readonly RelayReceipt[];
 }> {
-  const deadline = Date.now() + timeoutMs;
+  const startedAt = Date.now();
+  let deadline = startedAt + timeoutMs;
+  let interval = pollIntervalMs;
+  let extended = false;
   let lastCode: number | undefined;
+  let lastReceipts: readonly RelayReceipt[] | undefined;
   const wantChain = opts.chainId ?? client.chain?.id;
-  while (Date.now() < deadline) {
+  /** Receipts of legs that were mined and succeeded on a chain other than the intent's own. */
+  const lockedOnSource = () =>
+    (lastReceipts ?? []).filter(
+      (r) => r.chainId !== undefined && Number(r.chainId) !== wantChain && (r.status === undefined || Number(r.status) === 1),
+    );
+  for (;;) {
+    if (Date.now() >= deadline) {
+      const patience = opts.whileFundsLocked;
+      const inFlight = lastCode !== undefined && lastCode >= 100 && lastCode < 200;
+      if (extended || !patience || !inFlight || lockedOnSource().length === 0) break;
+      if (startedAt + patience.timeoutMs <= Date.now()) break;
+      extended = true;
+      deadline = startedAt + patience.timeoutMs;
+      interval = patience.pollIntervalMs ?? 10_000;
+      patience.onWaiting?.(lockedOnSource());
+    }
     try {
       const status: any = await getCallsStatus(client as any, { id: callsId });
       const code = status?.status;
       if (typeof code === "number") lastCode = code;
+      if (Array.isArray(status?.receipts)) lastReceipts = status.receipts as readonly RelayReceipt[];
       if ((typeof code === "number" && code >= 200 && code < 300) || code === "CONFIRMED") {
         const receipts = (status?.receipts ?? []) as readonly RelayReceipt[];
         const own = receiptOnChain(receipts, wantChain) ?? receipts[0];
@@ -2156,7 +2201,13 @@ export async function waitForCalls(
     } catch {
       // Transient relay errors — keep polling.
     }
-    await new Promise((r) => setTimeout(r, pollIntervalMs));
+    await new Promise((r) => setTimeout(r, Math.max(0, Math.min(interval, deadline - Date.now()))));
   }
-  return { status: "PENDING", ...(lastCode !== undefined ? { statusCode: lastCode } : {}) };
+  const source = lockedOnSource();
+  return {
+    status: "PENDING",
+    ...(lastCode !== undefined ? { statusCode: lastCode } : {}),
+    ...(lastReceipts && lastReceipts.length > 0 ? { receipts: lastReceipts } : {}),
+    ...(source.length > 0 ? { sourceReceipts: source } : {}),
+  };
 }

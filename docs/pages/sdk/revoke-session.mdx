@@ -44,7 +44,8 @@ type ClientRevokeSessionOptions = {
   signer: Signer;                 // the wallet's admin signer
   session: Session | Hex;         // the Session object or just its public key
   feeToken?: Address | readonly Address[];  // one token to force, or a list to choose from
-  onStatus?: (status: "discovery" | "registry-write" | "account-revoke" | "cache-sync" | "done",
+  onStatus?: (status: "discovery" | "registry-write" | "registry-write-pending" | "account-revoke"
+                      | "cache-sync" | "done",
               detail?: { chainId: number }) => void;
   chainId?: number;               // the chain the call answers for; see below
 };

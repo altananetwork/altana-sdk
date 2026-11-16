@@ -32,6 +32,7 @@ import {
   KEYSTORE_CACHE_UNSET,
   type KeyStoreRegistry,
   type NetworkConfig,
+  networkByChainId,
 } from "../config.js";
 import { hasRawPrivateKey, type Signer } from "./signer.js";
 import { isPasskeySigner } from "./passkey.js";
@@ -197,6 +198,19 @@ export type SubmitRegistryCallsArgs = {
    */
   onStep?: (step: "root" | "session") => void;
   /**
+   * Called when an intent's payment is locked on the funding chain and the
+   * registry chain has not run it within the usual wait. The write is still
+   * owed an answer, so the wait goes on (see `FUNDED_WRITE_PATIENCE_MS`).
+   */
+  onWaiting?: (step: "root" | "session") => void;
+  /**
+   * How long each intent is waited for. `waitMs` and `pollMs` are the usual
+   * wait (240s, every 2s); `patienceMs` and `patientPollMs` the longer one that
+   * follows while the payment is locked (`FUNDED_WRITE_PATIENCE_MS`, every
+   * 10s). For tests, and for a caller with a reason to wait differently.
+   */
+  timing?: RegistryWriteTiming;
+  /**
    * What the caller's own quote said the payer pays, on the chain the payer
    * pays from. Used only to word a failure, where the relay has stopped
    * quoting and the figure cannot be read any other way.
@@ -225,6 +239,35 @@ export async function submitRegistryCalls(
 }
 
 /**
+ * How long a funded registry write is waited for once its payment is locked on
+ * the funding chain.
+ *
+ * The relay locks the payer's funds on the L2 first and runs the write on the
+ * registry chain after. When that second half is slow (the relay's signers on
+ * the registry chain paused for lack of gas, on 2026-11-14 on Ethereum), the
+ * bundle stays in flight for as long as the relay keeps it: it finishes the
+ * write, or returns the payment once its refund period is over, which is one
+ * hour on mainnet. Stopping at the usual four minutes abandoned a payment the
+ * relay then went on to use: the root key was registered ten minutes later
+ * and the session key's write, which only this call would have sent, never
+ * was. A little over the refund period means the wait ends with an answer.
+ */
+export const FUNDED_WRITE_PATIENCE_MS = 65 * 60_000;
+
+/** See `SubmitRegistryCallsArgs.timing`. */
+export type RegistryWriteTiming = {
+  waitMs?: number;
+  pollMs?: number;
+  patienceMs?: number;
+  patientPollMs?: number;
+};
+
+/** A chain's name for a sentence, or its id when the SDK has no config for it. */
+function chainLabel(chainId: number): string {
+  return networkByChainId(chainId)?.chain.name ?? `chain ${chainId}`;
+}
+
+/**
  * Why a relayed write did not confirm, in enough detail to chase it.
  *
  * `relay reported status FAILED` was the whole of it, and it is the fourth
@@ -243,11 +286,42 @@ const STATUS_CODE_MEANING: Record<number, string> = {
   500: " (PartiallyReverted)",
 };
 
+/** Source-chain legs that were mined and succeeded: where a funded write's payment is locked. */
+function lockedLegs(
+  chainId: number,
+  result: { receipts?: readonly RelayReceipt[] },
+): readonly RelayReceipt[] {
+  return (result.receipts ?? []).filter(
+    (r) => r.chainId !== undefined && Number(r.chainId) !== chainId && (r.status === undefined || Number(r.status) === 1),
+  );
+}
+
+/** The wait ended with the bundle still in flight and the payment locked: not failed, held. */
+function isPaymentHeld(chainId: number, result: { status: string; receipts?: readonly RelayReceipt[] }): boolean {
+  return result.status === "PENDING" && lockedLegs(chainId, result).length > 0;
+}
+
 function describeRelayFailure(
   callsId: Hex,
   chainId: number,
   result: { status: string; statusCode?: number; receipts?: readonly RelayReceipt[] },
 ): string {
+  const locked = lockedLegs(chainId, result);
+  if (isPaymentHeld(chainId, result)) {
+    // Still in flight with the payment locked: not a failure yet, and the one
+    // thing the payer needs to hear is where their money is. The sentence
+    // comes first; what follows is for whoever chases the bundle.
+    const from = chainLabel(Number(locked[0]!.chainId));
+    const to = chainLabel(chainId);
+    return (
+      `The KeyStore update on ${to} has not completed yet. The payment for it is held on ${from} ` +
+      `and comes back if the update does not complete. ` +
+      `(the relay still reports the bundle in flight` +
+      `${result.statusCode !== undefined ? `, statusCode ${result.statusCode}` : ""}; bundle ${callsId}; ` +
+      `${locked.map((r) => `${chainLabel(Number(r.chainId))}: locked${r.transactionHash ? ` in ${r.transactionHash}` : ""}`).join("; ")}; ` +
+      `nothing has been mined on ${to} yet)`
+    );
+  }
   const parts = [`the relay reported status ${result.status}`];
   if (result.statusCode !== undefined) {
     parts.push(`statusCode ${result.statusCode}${STATUS_CODE_MEANING[result.statusCode] ?? ""}`);
@@ -305,7 +379,10 @@ async function submitOneRelayedWrite(args: {
   calls: readonly Call[];
   /** The caller's own quote, for wording a failure. See `SubmitRegistryCallsArgs`. */
   expectedCost?: { chainId: number; token: Address; amount: bigint };
-}): Promise<RootRegistrationLeg> {
+  /** The payment is locked and the registry chain is slow; the wait goes on. */
+  onWaiting?: () => void;
+  timing?: RegistryWriteTiming;
+}): Promise<RootRegistrationLeg & { paymentHeld?: true }> {
   const { registry, walletAddress, adminSigner, calls, registryClient } = args;
   try {
     const requiredFunds = await planRegistryFunding({
@@ -332,8 +409,13 @@ async function submitOneRelayedWrite(args: {
       // and pay the fee twice.
       skipFirstActionPrepend: true,
     });
-    const result = await waitForCalls(args.relayClient, callsId, undefined, undefined, {
+    const result = await waitForCalls(args.relayClient, callsId, args.timing?.waitMs, args.timing?.pollMs, {
       chainId: registry.chainId,
+      whileFundsLocked: {
+        timeoutMs: args.timing?.patienceMs ?? FUNDED_WRITE_PATIENCE_MS,
+        ...(args.timing?.patientPollMs !== undefined ? { pollIntervalMs: args.timing.patientPollMs } : {}),
+        ...(args.onWaiting ? { onWaiting: () => args.onWaiting!() } : {}),
+      },
     });
     const block =
       result.status === "CONFIRMED"
@@ -349,6 +431,7 @@ async function submitOneRelayedWrite(args: {
       ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
       ...(block?.blockNumber !== undefined ? { blockNumber: block.blockNumber } : {}),
       ...(result.status !== "CONFIRMED" ? { reason: describeRelayFailure(callsId, registry.chainId, result) } : {}),
+      ...(isPaymentHeld(registry.chainId, result) ? { paymentHeld: true as const } : {}),
     };
   } catch (err) {
     // The sentence a person reads is the failure's own. This context is for
@@ -403,7 +486,7 @@ export async function submitRegistryWrite(
     let rootRegistration: RootRegistrationLeg | undefined;
     if (prepend.length > 0) {
       args.onStep?.("root");
-      rootRegistration = await submitOneRelayedWrite({
+      const { paymentHeld, ...root } = await submitOneRelayedWrite({
         relayClient,
         registryClient,
         registry,
@@ -411,16 +494,23 @@ export async function submitRegistryWrite(
         adminSigner,
         calls: prepend,
         ...(args.expectedCost ? { expectedCost: args.expectedCost } : {}),
+        ...(args.onWaiting ? { onWaiting: () => args.onWaiting!("root") } : {}),
+        ...(args.timing ? { timing: args.timing } : {}),
       });
-      if (rootRegistration.status !== "CONFIRMED") {
+      rootRegistration = root;
+      if (root.status !== "CONFIRMED") {
         return {
           via: "relay",
           chainId: registry.chainId,
           status: "FAILED",
           rootRegistration,
-          reason:
-            `the root registration (initialRegisterKey) did not confirm, so the session ` +
-            `key's registerKey was not attempted: ${rootRegistration.reason ?? "no reason reported"}`,
+          // A held payment leads with the sentence a person needs; which of the
+          // two intents it was is bookkeeping and follows it.
+          reason: paymentHeld
+            ? `${root.reason ?? ""} This was the wallet's first registration (initialRegisterKey); ` +
+              `the session key's registerKey waits for it and was not sent.`
+            : `the root registration (initialRegisterKey) did not confirm, so the session ` +
+              `key's registerKey was not attempted: ${root.reason ?? "no reason reported"}`,
         };
       }
       // The session intent must NOT prepend the registration again. Leaving
@@ -453,7 +543,14 @@ export async function submitRegistryWrite(
       submittingKey: { type: "secp256k1", publicKey: adminSigner.publicKey, role: "admin" },
       network: registry,
     });
-    const result = await waitForCalls(relayClient, callsId, undefined, undefined, { chainId: registry.chainId });
+    const result = await waitForCalls(relayClient, callsId, args.timing?.waitMs, args.timing?.pollMs, {
+      chainId: registry.chainId,
+      whileFundsLocked: {
+        timeoutMs: args.timing?.patienceMs ?? FUNDED_WRITE_PATIENCE_MS,
+        ...(args.timing?.patientPollMs !== undefined ? { pollIntervalMs: args.timing.patientPollMs } : {}),
+        ...(args.onWaiting ? { onWaiting: () => args.onWaiting!("session") } : {}),
+      },
+    });
     const block =
       result.status === "CONFIRMED"
         ? await blockNumberOfWrite({
@@ -476,11 +573,14 @@ export async function submitRegistryWrite(
       ...(rootRegistration ? { rootRegistration } : {}),
       ...(result.status !== "CONFIRMED"
         ? {
-            reason: rootHandled
-              ? `the session key's registerKey did not confirm. The root registration DID ` +
-                `confirm, so retrying grantSession sends registerKey only. ` +
-                describeRelayFailure(callsId, registry.chainId, result)
-              : describeRelayFailure(callsId, registry.chainId, result),
+            reason: isPaymentHeld(registry.chainId, result)
+              ? describeRelayFailure(callsId, registry.chainId, result) +
+                (rootHandled ? ` The root registration did confirm, so granting again sends registerKey only.` : "")
+              : rootHandled
+                ? `the session key's registerKey did not confirm. The root registration DID ` +
+                  `confirm, so retrying grantSession sends registerKey only. ` +
+                  describeRelayFailure(callsId, registry.chainId, result)
+                : describeRelayFailure(callsId, registry.chainId, result),
           }
         : {}),
     };
