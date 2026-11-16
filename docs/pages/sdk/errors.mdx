@@ -166,6 +166,7 @@ Passing a signer the SDK cannot use produces a multi-line message naming every s
 
 | Message | Cause |
 |---|---|
+| `The KeyStore update on <chain> has not completed yet. The payment for it is held on <chain> and comes back if the update does not complete. ...` | The relay took the payment on the L2 and had not finished the write on the L1 after 65 minutes of waiting. Nothing is lost: the relay completes the write or returns the payment. Call `registerSessionKey` (or `revokeSession` again) later; it only sends what is still missing. |
 | `Refusing to send a call to <address> on <chain>: that is the KeyStore/KeyStoreController address of <Keystore chain> ...` | A call targeted the Keystore or Controller address on an L2. Those contracts are on the L1; `grantSession`, `revokeSession` and `registerSessionKey` write them there. |
 | `Registry writes on <chain> are direct transactions from the admin's private key ... A passkey (P256) admin cannot sign one. ...` | Passkey wallet on an L2 testnet, where Keystore writes are direct transactions on Sepolia. Grant with `register: false`. |
 | `Registry writes on <chain> are sent directly from the admin key, so the KeyStore records the sender as the wallet. The signer's address (...) is not the wallet address (...)` | On a testnet L1 (Sepolia) the admin key must be the wallet's own key. |
