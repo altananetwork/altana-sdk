@@ -355,6 +355,32 @@ behaves differently:
   reported. Grants on BNB Chain and Ethereum, where the write is part of the
   same transaction, are unchanged.
 
+- **A Keystore registration the relay reports as not done is checked in the
+  Keystore.** A signed request can be delivered by a sender other than the
+  relay, and on Ethereum one was: the session key's registration landed,
+  delivered by another sender earlier in the same block, the relay's own
+  transaction then failed and it reported status 500, and the SDK sent no
+  cache proof for a key that was registered (Celo mainnet, 2026-11-16). When
+  the relay reports a registration as not done, the SDK now reads the
+  Keystore; if the key is there, the registry leg is `CONFIRMED` with the
+  transaction that registered it, and the session key's write and the cache
+  proof go ahead. If the Keystore cannot be read, the failure stands and its
+  reason says the check was not made.
+
+- **The price preview of a first registration counts the root key once, and
+  prices a wallet that holds only a stablecoin.** `quoteGrantSession` quoted
+  the session key's write with the root key's registration added to it, then
+  added the root key's write again. On mainnet that combined request does not
+  fit one intent's gas, so the relay could not price it, and a wallet holding
+  only USDC on Celo was told it needed CELO. A first registration is now
+  priced as the two writes the grant sends, one key each.
+
+- **A wallet that holds a stablecoin and none of its chain's currency is told
+  its real balance.** A failure the SDK words as a shortfall on a funded write
+  named the chain's own currency even when the wallet held only USDC there
+  ("you have 0 CELO"). It now names the token the wallet holds, with its
+  balance.
+
 - **A price that is too old is reported as one.** The relay converts a
   request paid in one asset and carried out in another at a Chainlink price,
   and refuses when that price is older than its limit. It answers the refusal

@@ -53,7 +53,7 @@ classifies by band, the same way viem does):
 | `200`–`299` | success | Surfaced as `CONFIRMED`. |
 | `300`–`499` | rejected before inclusion | Terminal, surfaced as `FAILED` immediately. Nothing reached the chain. Most common cause of `300`: the session's spend cap cannot cover the relay fee (the cap pays fees too — see [grantSession](/sdk/grant-session)), or a relay policy refused the bundle. |
 | `500`–`699` | failed on-chain | Terminal, surfaced as `FAILED`. `500` is a revert; `600` a partial failure. |
-| anything else | unknown | The SDK keeps polling rather than guessing — `FAILED` is the "safe to resubmit" signal, and misreading an unknown code could cause a duplicate submission. A timeout then returns `PENDING` with the odd code in `statusCode`. |
+| anything else | unknown | The SDK keeps polling rather than guessing: `FAILED` is terminal, and misreading an unknown code as terminal could lead to the same operation being submitted twice. A timeout then returns `PENDING` with the odd code in `statusCode`. |
 
 :::warning[`PENDING` means the outcome is genuinely unknown]
 With `noWait: true` you get `PENDING` immediately: that is expected, and you poll later using `callsId`.
@@ -65,7 +65,9 @@ Terminal rejections no longer hide here: a bundle the relay has refused returns 
 
 ## What `FAILED` carries
 
-A bundle the relay refused before it reached a block is thrown as an error, with the relay's status code in the message: `3xx`/`4xx` means fee, cap or relay policy, so fix the session or funding and resubmit. `FAILED` as a result means the transaction landed and reverted, and it comes with `statusCode` (`5xx`/`6xx`) when the relay reported one. There is no revert string on the result; for the on-chain reason, use the table below and the explorer.
+A bundle the relay refused before it reached a block is thrown as an error, with the relay's status code in the message: `3xx`/`4xx` means fee, cap or relay policy, so fix the session or funding and resubmit. `FAILED` as a result means the relay's transaction landed and reverted, and it comes with `statusCode` (`5xx`/`6xx`) when the relay reported one. There is no revert string on the result; for the on-chain reason, use the table below and the explorer.
+
+For a KeyStore registration (`grantSession` and `registerSessionKey` on a network whose KeyStore lives on another chain), the SDK does not stop at the relay's status: when the relay reports the registration as not done, the SDK reads the KeyStore. If the key is there, the registry leg is `CONFIRMED`, with the transaction that registered it, and the mirror proof goes ahead.
 
 If you need the onchain reason, look up the userOp yourself. You have `callsId`; the wallet address and chain are yours. Search the wallet address on the chain's explorer ([BscScan](https://bscscan.com) for BNB, [Etherscan](https://etherscan.io) for Ethereum) and inspect the most recent transaction to the account. The revert reason is in the trace.
 

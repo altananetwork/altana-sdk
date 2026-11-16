@@ -36,7 +36,12 @@ import {
 } from "../config.js";
 import { hasRawPrivateKey, type Signer } from "./signer.js";
 import { isPasskeySigner } from "./passkey.js";
-import { buildFirstActionPrepend } from "./keystore.js";
+import {
+  buildFirstActionPrepend,
+  KEY_REGISTERED_EVENT,
+  readIsValidKey,
+  registeredKeyIdOf,
+} from "./keystore.js";
 import type { RootRegistrationLeg } from "./sessions.js";
 import {
   blockNumberOfWrite,
@@ -181,6 +186,11 @@ export type RegistryWriteResult = {
   rootRegistration?: RootRegistrationLeg;
   /** Why the write failed, in the relay's or the chain's own words. */
   reason?: string;
+  /**
+   * Set when the relay did not report the write as done but the KeyStore holds
+   * it: what the relay said. See `registrationOnChain`.
+   */
+  relayReported?: { status: string; statusCode?: number };
 };
 
 export type SubmitRegistryCallsArgs = {
@@ -353,6 +363,86 @@ function describeRelayFailure(
   return parts.join("; ");
 }
 
+/** What the KeyStore says about a registration the relay did not report as done. */
+type OnChainCheck =
+  /** Every key is valid in the KeyStore: the write happened. */
+  | { held: true; blockNumber: bigint; transactionHash?: Hex }
+  /** At least one key is not there. */
+  | { held: false }
+  /** The KeyStore could not be read, so it is not known. */
+  | { held: "unknown"; reason: string };
+
+/** The widest block range searched for the transaction that delivered a write. */
+const DELIVERY_SEARCH_MAX_BLOCKS = 10_000;
+
+/**
+ * Where a registration the relay did not report as done stands in the
+ * KeyStore itself.
+ *
+ * A signed request can be delivered by a sender other than the relay. On
+ * Ethereum a transaction waits in public before it is included, anyone who
+ * reads it there can send the same request first, and the Orchestrator runs
+ * the first copy it receives. The relay then sees its own transaction fail and
+ * reports the write as failed although the key was registered. That happened
+ * on Celo mainnet on 2026-11-16: the session key's `registerKey` was delivered
+ * by another sender earlier in the same block, the relay reported status 500,
+ * and the SDK sent no mirror proof for a key that was in the KeyStore. The
+ * KeyStore is the record, so it is what decides.
+ *
+ * Applies only to calls the SDK can read back (`initialRegisterKey`,
+ * `registerKey`); anything else returns undefined and keeps the relay's word.
+ * The block returned is the one to anchor a proof at or past: the delivering
+ * transaction's when its event is found, otherwise the block the KeyStore was
+ * read at, where the key was already present.
+ */
+async function registrationOnChain(args: {
+  registryClient: PublicClient;
+  registry: NetworkConfig;
+  walletAddress: Address;
+  calls: readonly Call[];
+  /** When the intent was sent (ms), to bound the search for the delivering transaction. */
+  sentAt: number;
+}): Promise<OnChainCheck | undefined> {
+  const keyIds = args.calls.map((c) => registeredKeyIdOf(c.data));
+  if (keyIds.length === 0 || keyIds.some((k) => k === undefined)) return undefined;
+  let readAt: bigint;
+  try {
+    readAt = await args.registryClient.getBlockNumber();
+    for (const keyId of keyIds as Hex[]) {
+      const valid = await readIsValidKey(args.registryClient, args.registry, args.walletAddress, keyId, readAt);
+      if (!valid) return { held: false };
+    }
+  } catch (err) {
+    return { held: "unknown", reason: err instanceof Error ? err.message.split("\n")[0]! : String(err) };
+  }
+  // The transaction that delivered it, for the report. Best effort: the key is
+  // in the KeyStore either way, and `readAt` is a valid anchor without it.
+  try {
+    const span = BigInt(Math.min(DELIVERY_SEARCH_MAX_BLOCKS, Math.ceil((Date.now() - args.sentAt) / 1000) + 64));
+    const logs = await args.registryClient.getLogs({
+      address: args.registry.keyStore,
+      event: KEY_REGISTERED_EVENT,
+      args: { user: args.walletAddress, keyId: keyIds[keyIds.length - 1]! },
+      fromBlock: readAt > span ? readAt - span : 0n,
+      toBlock: readAt,
+    });
+    const last = logs[logs.length - 1];
+    if (last?.transactionHash && last.blockNumber !== null && last.blockNumber !== undefined) {
+      return { held: true, blockNumber: last.blockNumber, transactionHash: last.transactionHash };
+    }
+  } catch {
+    // Some public RPCs refuse log ranges; fall through to the read block.
+  }
+  return { held: true, blockNumber: readAt };
+}
+
+/** The clause added to a failure when the KeyStore could not be read to check it. */
+function uncheckedClause(check: OnChainCheck | undefined): string {
+  return check?.held === "unknown"
+    ? `; the KeyStore could not be read to check whether the key was registered anyway (${check.reason})`
+    : "";
+}
+
 /**
  * One relayed registry intent, reported as a root-registration outcome.
  *
@@ -394,6 +484,7 @@ async function submitOneRelayedWrite(args: {
       // `calls` is the registration itself, so its fee is counted once.
       skipFirstActionPrepend: true,
     });
+    const sentAt = Date.now();
     const callsId = await submitCalls(args.relayClient, walletAddress, adminSigner, calls, {
       feeToken: NATIVE_TOKEN,
       requiredFunds,
@@ -417,21 +508,35 @@ async function submitOneRelayedWrite(args: {
         ...(args.onWaiting ? { onWaiting: () => args.onWaiting!() } : {}),
       },
     });
-    const block =
-      result.status === "CONFIRMED"
-        ? await blockNumberOfWrite({
-            relayBlockNumber: result.blockNumber,
-            transactionHash: result.transactionHash,
-            publicClient: registryClient,
-          })
-        : undefined;
+    if (result.status !== "CONFIRMED") {
+      // The relay judges by its own transaction; the KeyStore is the record.
+      const onChain = await registrationOnChain({ registryClient, registry, walletAddress, calls, sentAt });
+      if (onChain?.held === true) {
+        return {
+          status: "CONFIRMED",
+          callsId,
+          blockNumber: onChain.blockNumber,
+          ...(onChain.transactionHash ? { transactionHash: onChain.transactionHash } : {}),
+        };
+      }
+      return {
+        status: "FAILED",
+        callsId,
+        ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
+        reason: describeRelayFailure(callsId, registry.chainId, result) + uncheckedClause(onChain),
+        ...(isPaymentHeld(registry.chainId, result) ? { paymentHeld: true as const } : {}),
+      };
+    }
+    const block = await blockNumberOfWrite({
+      relayBlockNumber: result.blockNumber,
+      transactionHash: result.transactionHash,
+      publicClient: registryClient,
+    });
     return {
-      status: result.status === "CONFIRMED" ? "CONFIRMED" : "FAILED",
+      status: "CONFIRMED",
       callsId,
       ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
-      ...(block?.blockNumber !== undefined ? { blockNumber: block.blockNumber } : {}),
-      ...(result.status !== "CONFIRMED" ? { reason: describeRelayFailure(callsId, registry.chainId, result) } : {}),
-      ...(isPaymentHeld(registry.chainId, result) ? { paymentHeld: true as const } : {}),
+      ...(block.blockNumber !== undefined ? { blockNumber: block.blockNumber } : {}),
     };
   } catch (err) {
     // The sentence a person reads is the failure's own. This context is for
@@ -532,6 +637,7 @@ export async function submitRegistryWrite(
       // Counted in the root intent already, when there was one.
       ...(rootHandled ? { skipFirstActionPrepend: true } : {}),
     });
+    const sentAt = Date.now();
     const callsId = await submitCalls(relayClient, walletAddress, adminSigner, calls, {
       // Only when we registered the root ourselves. With no root intent the
       // prepend stays submitCalls's job, as it has always been.
@@ -551,6 +657,28 @@ export async function submitRegistryWrite(
         ...(args.onWaiting ? { onWaiting: () => args.onWaiting!("session") } : {}),
       },
     });
+    const onChain =
+      result.status !== "CONFIRMED"
+        ? await registrationOnChain({ registryClient, registry, walletAddress, calls, sentAt })
+        : undefined;
+    if (onChain?.held === true) {
+      // Done, by another sender. No funding fields: the relay counts its own
+      // transaction as failed and returns the locked payment once its refund
+      // period is over, so the wallet did not end up paying from the L2.
+      return {
+        via: "relay",
+        chainId: registry.chainId,
+        status: "CONFIRMED",
+        callsId,
+        blockNumber: onChain.blockNumber,
+        ...(onChain.transactionHash ? { transactionHash: onChain.transactionHash } : {}),
+        ...(rootRegistration ? { rootRegistration } : {}),
+        relayReported: {
+          status: result.status,
+          ...(result.statusCode !== undefined ? { statusCode: result.statusCode } : {}),
+        },
+      };
+    }
     const block =
       result.status === "CONFIRMED"
         ? await blockNumberOfWrite({
@@ -573,14 +701,15 @@ export async function submitRegistryWrite(
       ...(rootRegistration ? { rootRegistration } : {}),
       ...(result.status !== "CONFIRMED"
         ? {
-            reason: isPaymentHeld(registry.chainId, result)
-              ? describeRelayFailure(callsId, registry.chainId, result) +
-                (rootHandled ? ` The root registration did confirm, so granting again sends registerKey only.` : "")
-              : rootHandled
-                ? `the session key's registerKey did not confirm. The root registration DID ` +
-                  `confirm, so retrying grantSession sends registerKey only. ` +
-                  describeRelayFailure(callsId, registry.chainId, result)
-                : describeRelayFailure(callsId, registry.chainId, result),
+            reason:
+              (isPaymentHeld(registry.chainId, result)
+                ? describeRelayFailure(callsId, registry.chainId, result) +
+                  (rootHandled ? ` The root registration did confirm, so granting again sends registerKey only.` : "")
+                : rootHandled
+                  ? `the session key's registerKey did not confirm. The root registration DID ` +
+                    `confirm, so retrying grantSession sends registerKey only. ` +
+                    describeRelayFailure(callsId, registry.chainId, result)
+                  : describeRelayFailure(callsId, registry.chainId, result)) + uncheckedClause(onChain),
           }
         : {}),
     };

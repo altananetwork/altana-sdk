@@ -67,9 +67,11 @@ export type QuoteLine = {
   charges?: readonly LegCharge[];
   /**
    * Registry legs on a wallet's FIRST write: that write is two sequential
-   * intents, so `fee`, `value` and `needed` above are the sum of both, and this
-   * is the root (`initialRegisterKey`) intent's own share. Absent on every
-   * later write, which is one intent.
+   * intents, so `fee`, `value`, `needed`, `needs` and `charges` above are the
+   * sum of both, and this is the root (`initialRegisterKey`) intent's own
+   * share. The session key's intent cannot be quoted until the root key exists,
+   * so it is priced as the root's: one key each, at the same fee. Absent on
+   * every later write, which is one intent.
    */
   rootRegistration?: Pick<QuoteLine, "fee" | "feeToken" | "value" | "needed" | "neededFromRelay" | "fundedFromChainId" | "needs" | "charges">;
   /**
@@ -218,24 +220,35 @@ export function quotingDeps(base: SessionLegDeps = realSessionLegDeps): {
             });
           };
           // A wallet's first registry write is submitted as two sequential
-          // intents (see submitRegistryWrite), so it costs two fees and must be
-          // quoted as two. Quoting one would under-report the first-time path.
+          // intents (see submitRegistryWrite), the root key's and then the
+          // session key's, so it costs two fees and is quoted as two.
           const prepend = await buildFirstActionPrepend({
             publicClient: registryClient,
             network: registry,
             walletAddress: args.wallet.address,
             adminPublicKey: args.adminSigner.publicKey,
           });
-          const q = await quoteOne(args.calls);
-          Object.assign(line, pickQuote(q));
-          if (prepend.length > 0) {
+          if (prepend.length === 0) {
+            Object.assign(line, pickQuote(await quoteOne(args.calls)));
+          } else {
+            // The session key's intent cannot be quoted before the root key
+            // exists: KeyStore refuses registerKey for a wallet with no root, so
+            // the relay's simulation reverts. Quoting it with the root prepended
+            // is not that intent either. It is the pair in one intent, which
+            // counted the root twice and, on mainnet, does not fit one intent's
+            // gas and reverts with no reason, which a USDC-only wallet then saw
+            // as "Not enough CELO" (2026-11-16). Each intent registers one key
+            // at the same fee, so the session intent is priced as the root's.
             const root = await quoteOne(prepend, true);
-            line.fee = q.fee + root.fee;
-            line.value = q.value + root.value;
-            line.needed = q.nativeNeeded + root.nativeNeeded;
-            line.neededFromRelay = q.nativeNeededFromRelay || root.nativeNeededFromRelay;
-            line.needs = mergeNeeds(q.needs, root.needs);
-            line.rootRegistration = pickQuote(root);
+            const rootLine = pickQuote(root);
+            Object.assign(line, rootLine);
+            line.fee = root.fee * 2n;
+            line.value = root.value + sumValue(args.calls);
+            line.needed = root.nativeNeeded * 2n;
+            line.neededFromRelay = root.nativeNeededFromRelay;
+            line.needs = mergeNeeds(root.needs, root.needs);
+            if (rootLine.charges) line.charges = rootLine.charges.map((c) => ({ ...c, fee: c.fee * 2n }));
+            line.rootRegistration = rootLine;
           }
         } else {
           const plan = planRegistryWrite(registry, args.adminSigner, args.wallet.address);
