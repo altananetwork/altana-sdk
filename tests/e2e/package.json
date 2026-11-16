@@ -15,7 +15,7 @@
     "fork:x402": "bun run fork-x402.ts",
     "fork:x402-witness": "bun run fork-x402-witness.ts",
     "fork:eip3009": "bun run fork-eip3009.ts",
-    "comment:fork:all": "The CI fork set. Base is not in it: unsupported until we have RPCs (Doris 2026-10-28) — fork-eip3009 still runs by name, as fork:eip3009. fork-eip3009-celo carries the EIP-3009 contract-signer case instead, on a chain we support.",
+    "comment:fork:all": "The CI fork set. Base is not in it: unsupported until we have RPCs (Doris 2026-10-28) \u2014 fork-eip3009 still runs by name, as fork:eip3009. fork-eip3009-celo carries the EIP-3009 contract-signer case instead, on a chain we support.",
     "fork:all": "bun run fork-erc1271.ts && bun run fork-x402.ts && bun run fork-x402-witness.ts && bun run fork-erc8004.ts && bun run fork-erc8183.ts && bun run fork-native-receive.ts && bun run fork-x402-server.ts && bun run fork-celo-cache.ts && bun run fork-eip3009-celo.ts && bun run fork-celo-x402-server.ts",
     "fork:native-receive": "bun run fork-native-receive.ts",
     "demo:b402": "bun run demo-b402.ts",
@@ -44,7 +44,11 @@
     "serve:x402-celo": "bun run build:x402 && bun run serve-x402-celo.ts",
     "live:celo-first": "bun run live-celo-first-grant.ts",
     "live:app-lane": "bun run live-app-nonce-lane.ts",
-    "live:one-chain": "bun run live-one-chain-grants.ts"
+    "live:one-chain": "bun run live-one-chain-grants.ts",
+    "live:celo-proof": "bun run live-celo-proof.ts",
+    "live:celo-proof:mainnet-dry": "bun run live-celo-proof.ts --network celo",
+    "live:celo-proof:mainnet-celo": "bun run live-celo-proof.ts --network celo --wallet celo --send --i-am-doris",
+    "live:celo-proof:mainnet-usdc": "bun run live-celo-proof.ts --network celo --wallet usdc --send --i-am-doris"
   },
   "dependencies": {
     "@altananetwork/hypersigner-keystore-mcp": "workspace:*",

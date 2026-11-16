@@ -117,3 +117,26 @@ bun run --filter '@altananetwork/e2e' smoke:celo-passkey
 ```bash
 bun run --filter '@altananetwork/e2e' smoke:celo-fee-currency
 ```
+
+## Celo live proof
+
+`live-celo-proof.ts` runs the whole life of a session on Celo from a wallet that holds nothing on the KeyStore chain: grant, a session transfer of about one cent straight after the grant, the KeyStore registration, the mirror into the KeyStoreCache, what the grant cost leg by leg in the wallet's own token and in dollars at the Chainlink price, and the revoke with its mirror. There are two wallets, one per run: `--wallet celo` holds CELO only, `--wallet usdc` holds USDC only and no CELO at all. It ends with a table of every step (chain, transaction link, seconds since the grant started, result) and writes the same as JSON under `tests/e2e/.out/`.
+
+Without `--send` it is a dry run: it prints the addresses and balances, checks the relay, the fee tokens, the KeyStoreCache, the registry chain's gas price, the proof RPCs and the price feeds, estimates the registration from the live fee, gas price and prices next to each balance, asks the relay for a quote, and signs and sends nothing.
+
+```bash
+# Celo mainnet, from the repo root. The scripts read .env.mainnet from beside the repository themselves.
+bun run live:celo-proof:mainnet-dry     # read-only, both wallets
+bun run live:celo-proof:mainnet-celo    # the CELO wallet, with real funds
+bun run live:celo-proof:mainnet-usdc    # the USDC wallet, with real funds
+
+# Celo Sepolia, from tests/e2e (throwaway wallets, funded from TEST_FUNDER_KEY)
+bun run live:celo-proof -- --network celo-sepolia
+bun run live:celo-proof -- --network celo-sepolia --wallet usdc --send
+```
+
+A send on `--network celo` spends real funds. It needs `--i-am-doris` (the mainnet scripts pass it) and a phrase typed at an interactive terminal, and it refuses when the chain id is not 42220 or the relay is not `https://relay.altana.network`.
+
+Nothing is swept: what is left stays in the wallet unless `--sweep-to <address>` is passed. The session's one cent goes to `--send-cent-to` (the deployer on mainnet, the testnet funder on Celo Sepolia). The session lasts 24 hours and may only make that transfer.
+
+A step the wallet cannot pay for is reported as `NOT RUN` with the SDK's own sentence and the run goes on; any other failure stops the run. Either way the session key is kept beside the JSON record (mode 600), and the same command with `--resume` continues from the first step not done (`--resume --from revoke` starts at a named step). `--help` prints every flag.

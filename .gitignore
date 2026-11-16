@@ -20,6 +20,8 @@ docs/public/skill.md
 tests/e2e/.live-hire-*.json
 tests/e2e/.live-erc8004-*.json
 tests/e2e/.sweep.env
+# live-celo-proof records and the session keys kept beside them
+tests/e2e/.out/
 docs/pages/changelog.md
 
 # Generated per build by scripts/stamp-build.mjs; a committed copy would be
