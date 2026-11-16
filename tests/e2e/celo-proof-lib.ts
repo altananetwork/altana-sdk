@@ -447,6 +447,91 @@ export function estimateRegistration(i: {
   return { fronted, lock, usd: usdValue(lock, i.token.decimals, i.token.price) };
 }
 
+/**
+ * The mainnet relay's gas wallets on the registry chain. The same three
+ * addresses on every chain it serves; read off the chain, they hold no secret.
+ * The testnet relay's are not listed, so the check below runs on mainnet only.
+ */
+export const RELAY_GAS_WALLETS: Partial<Record<ProofNetwork, readonly Address[]>> = {
+  celo: [
+    "0xDE3136c489B3371de8180D4c94c0238150e2c5b4",
+    "0x53187EAb26Dad0e82598D4f7aC9C349665FB2Faa",
+    "0x0B479179781640C1C62FE845dCAab1689CB4985C",
+  ],
+};
+
+/**
+ * The relay's rule for a gas wallet on a chain with no fixed minimum, which is
+ * what Ethereum has (altana-relay-mainnet `src/transactions/signer.rs`,
+ * `MIN_SIGNER_GAS` and `TOP_UP_MULTIPLIER`): a wallet is used only while it
+ * holds 10M gas at the max fee, where the max fee is twice the base fee plus
+ * the tip, and a paused wallet is topped up from the funder with three times
+ * that, in one piece. If the relay's config gives the chain a fixed minimum,
+ * these two constants are what to change.
+ */
+export const RELAY_MIN_SIGNER_GAS = 10_000_000n;
+export const RELAY_TOP_UP_MULTIPLIER = 3n;
+
+export type RelayFunds = {
+  /** The relay can send the write and front its funds right now. */
+  ok: boolean;
+  /** What a gas wallet must hold to be used, at this gas price. */
+  minimum: bigint;
+  /** What the funder is asked for to top one wallet up. */
+  refill: bigint;
+  /** Gas wallets at or above the minimum. */
+  usable: number;
+  /** Why not, in words, when `ok` is false. */
+  reason?: string;
+};
+
+/**
+ * Whether the relay can carry a registry write right now: a gas wallet it will
+ * use, or a funder able to top one up, and a funder able to front the write.
+ *
+ * 2026-11-14 on Ethereum: three gas wallets at about 0.0042 ETH, a funder at
+ * 0.0094 ETH, base fee 0.29 gwei. The minimum was 0.006 ETH and a top-up 0.018
+ * ETH, so every wallet was paused and none could be refilled. The relay took
+ * the payment on Celo and sent nothing on Ethereum for fourteen minutes. Its
+ * health check said "rpc ok" throughout, which is why this is read here.
+ */
+export function relayFunds(i: {
+  gasWallets: readonly bigint[];
+  funder: bigint;
+  baseFeePerGas: bigint;
+  priorityFeePerGas: bigint;
+  /** What the funder fronts for the writes this run will send. */
+  toFront: bigint;
+}): RelayFunds {
+  const maxFee = 2n * i.baseFeePerGas + i.priorityFeePerGas;
+  const minimum = RELAY_MIN_SIGNER_GAS * maxFee;
+  const refill = minimum * RELAY_TOP_UP_MULTIPLIER;
+  const usable = i.gasWallets.filter((b) => b >= minimum).length;
+  if (usable > 0) {
+    if (i.funder >= i.toFront) return { ok: true, minimum, refill, usable };
+    return { ok: false, minimum, refill, usable, reason: "the funder holds less than these writes need fronted" };
+  }
+  if (i.funder < refill) {
+    return {
+      ok: false,
+      minimum,
+      refill,
+      usable,
+      reason: "every gas wallet is under the minimum for this gas price, and the funder holds less than one top-up",
+    };
+  }
+  if (i.funder - refill < i.toFront) {
+    return {
+      ok: false,
+      minimum,
+      refill,
+      usable,
+      reason: "the funder can top one gas wallet up, but not also front these writes",
+    };
+  }
+  return { ok: true, minimum, refill, usable };
+}
+
 /** `(a / b - 1)` in basis points, to two decimals. */
 export function overBps(a: bigint, b: bigint): number {
   if (b <= 0n) throw new Error("overBps: the base is not positive");

@@ -27,6 +27,7 @@ import {
   usdText,
   usdValue,
   type UsdPrice,
+  relayFunds,
 } from "./celo-proof-lib.js";
 import registryIntent from "./fixtures/registry-intent-sepolia.json" with { type: "json" };
 
@@ -546,5 +547,46 @@ describe("chargeReport", () => {
     expect(() =>
       chargeReport({ token: celo, native: eth, writes: [], locked: 1n, marginBps: 200, toleranceBps: 25 }),
     ).toThrow(/no registry write/);
+  });
+});
+
+describe("relayFunds", () => {
+  // Ethereum, 2026-11-14 18:19 UTC: what the relay held when it took a payment on Celo and sent nothing for 14 minutes.
+  const stalled = {
+    gasWallets: [parseEther("0.0042"), parseEther("0.004123"), parseEther("0.004157")],
+    funder: parseEther("0.009427"),
+    baseFeePerGas: 290_000_000n,
+    priorityFeePerGas: 5_000n,
+    toFront: parseEther("0.0019"),
+  };
+
+  test("the 14 Nov state is refused: every gas wallet under the minimum, the funder under one top-up", () => {
+    const f = relayFunds(stalled);
+    expect(f.ok).toBe(false);
+    expect(f.usable).toBe(0);
+    // 10M gas at 2 x 0.29 gwei: about 0.0058 ETH each, 0.0174 ETH for a top-up.
+    expect(f.minimum).toBeGreaterThan(parseEther("0.0057"));
+    expect(f.minimum).toBeLessThan(parseEther("0.0059"));
+    expect(f.refill).toBe(f.minimum * 3n);
+    expect(f.reason).toContain("less than one top-up");
+  });
+
+  test("the same wallets at that morning's gas are usable", () => {
+    const f = relayFunds({ ...stalled, baseFeePerGas: 110_000_000n });
+    expect(f.ok).toBe(true);
+    expect(f.usable).toBe(3);
+  });
+
+  test("a funder that can top a wallet up makes paused wallets fine, if it can still front the writes", () => {
+    expect(relayFunds({ ...stalled, funder: parseEther("0.03") }).ok).toBe(true);
+    const tight = relayFunds({ ...stalled, funder: parseEther("0.018") });
+    expect(tight.ok).toBe(false);
+    expect(tight.reason).toContain("not also front");
+  });
+
+  test("usable gas wallets do not help a funder that cannot front the writes", () => {
+    const f = relayFunds({ ...stalled, baseFeePerGas: 110_000_000n, funder: parseEther("0.001") });
+    expect(f.ok).toBe(false);
+    expect(f.reason).toContain("fronted");
   });
 });

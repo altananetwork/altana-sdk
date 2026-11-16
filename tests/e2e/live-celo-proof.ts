@@ -136,6 +136,8 @@ import {
   type StepStatus,
   type SummaryRow,
   type UsdPrice,
+  RELAY_GAS_WALLETS,
+  relayFunds,
 } from "./celo-proof-lib.js";
 import { describeLeg } from "./session-legs.js";
 import { testnetEnvFile } from "./testnet-env.js";
@@ -708,7 +710,45 @@ async function relayAndChainChecks(): Promise<Facts> {
   if (!usdcFeed) info(p, "USDC is taken as $1: this network has no USDC/USD feed in the script");
   info(p, `registration fee ${formatEther(registrationFee)} ${NATIVE} per key (${dollars(usdValue(registrationFee, 18, nativePrice.price))})`);
 
-  record.preconditions.relay = { health, escrow, funder, feeRecipient: celoCaps.fees?.recipient, quoteConfig, feeTokens: tokens.map((t) => `${t.symbol ?? t.uid} ${t.address}`) };
+  // Can the relay actually pay on the registry chain? Its health check does not say.
+  const gasWallets = RELAY_GAS_WALLETS[opts.network];
+  let relayMoney: Record<string, unknown> | undefined;
+  if (!gasWallets) {
+    info(p, `the relay's gas wallets on ${sdkRegistry.chain.name} are not listed for ${opts.network}: whether it can pay there is not checked`);
+  } else {
+    const [balances, funderBalance] = await Promise.all([
+      Promise.all(gasWallets.map((a) => regPub.getBalance({ address: a }))),
+      regPub.getBalance({ address: funder }),
+    ]);
+    // The most this run can ask for: a wallet's first registration, both writes.
+    const toFront = estimateRegistration({
+      registrationFee,
+      baseFeePerGas: baseFee,
+      priorityFeePerGas: tip,
+      firstTime: true,
+      native: { decimals: 18, price: nativePrice.price },
+      token: { decimals: 18, price: nativePrice.price },
+      marginBps: 0,
+    }).fronted;
+    const funds = relayFunds({ gasWallets: balances, funder: funderBalance, baseFeePerGas: baseFee, priorityFeePerGas: tip, toFront });
+    info(
+      p,
+      `relay on ${sdkRegistry.chain.name}: gas wallets hold ${balances.map((b) => formatEther(b)).join(", ")} ${NATIVE}; ` +
+        `each needs ${formatEther(funds.minimum)} at this gas price; a top-up is ${formatEther(funds.refill)}; ` +
+        `the funder holds ${formatEther(funderBalance)} and these writes need about ${formatEther(toFront)} fronted`,
+    );
+    check(
+      p,
+      funds.ok,
+      funds.ok
+        ? `the relay can pay on ${sdkRegistry.chain.name}: ${funds.usable > 0 ? `${funds.usable} of ${balances.length} gas wallets are usable` : "its funder can top a gas wallet up"}`
+        : `the relay cannot pay on ${sdkRegistry.chain.name} right now: ${funds.reason}. ` +
+            `A registration would lock the payment on Celo and wait. Fund the relay's gas tank ${funder}, or run when gas is lower`,
+    );
+    relayMoney = { gasWallets: balances, funder: funderBalance, minimum: funds.minimum, refill: funds.refill, toFront, ok: funds.ok, ...(funds.reason ? { reason: funds.reason } : {}) };
+  }
+
+  record.preconditions.relay = { health, escrow, funder, feeRecipient: celoCaps.fees?.recipient, quoteConfig, feeTokens: tokens.map((t) => `${t.symbol ?? t.uid} ${t.address}`), ...(relayMoney ? { money: relayMoney } : {}) };
   record.preconditions.cache = { address: CACHE, version };
   record.preconditions.registry = { baseFeeGwei: formatGwei(baseFee), tipGwei: tipRead === undefined ? null : formatGwei(tip), registrationFee };
   record.preconditions.prices = { native: priceText(nativePrice.price), celo: priceText(celoPrice.price), usdc: priceText(usdcPrice.price) };
