@@ -339,6 +339,22 @@ behaves differently:
 
 ### Fixed
 
+- **A slow relay no longer leaves a paid registration half done.** A Keystore
+  write funded from an L2 locks the payment on the L2 first and runs on the L1
+  after. When the relay was slow on the L1, the SDK stopped waiting at four
+  minutes, reported the write as failed with "nothing was mined on any chain"
+  while the payment sat in the escrow, and never sent the session key's write
+  or the cache proof, even though the relay went on to register the wallet's
+  first key (Celo mainnet, 2026-11-14). The SDK now keeps waiting while the
+  payment is held, for up to 65 minutes, reports the new `onStatus` event
+  `registry-write-pending` once, and then goes on with the session key and the
+  proof. If the wait ends first, the reason says where the payment is: "The
+  KeyStore update on Ethereum has not completed yet. The payment for it is held
+  on Celo and comes back if the update does not complete." A timed-out
+  `PENDING` from `waitForCalls` now carries the receipts the relay had
+  reported. Grants on BNB Chain and Ethereum, where the write is part of the
+  same transaction, are unchanged.
+
 - **A price that is too old is reported as one.** The relay converts a
   request paid in one asset and carried out in another at a Chainlink price,
   and refuses when that price is older than its limit. It answers the refusal

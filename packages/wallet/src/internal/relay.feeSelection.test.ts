@@ -309,11 +309,16 @@ describe("registry write funded from the L2, on the wire", () => {
     failStatusAt?: number;
     /** The 17:22 shape: the source leg landed, the destination never ran. */
     sourceReceiptOnly?: boolean;
+    /** A slow relay: for this long after the first status poll, every bundle is "in flight" with only its source leg mined. */
+    pendingForMs?: number;
+    /** A relay that never finishes: always in flight, only the source leg mined. */
+    pendingForever?: boolean;
     /** How old each price feed's newest answer is, in seconds. A feed left out cannot be read. */
     feedAges?: { eth?: number; celo?: number };
   }) {
     let prepares = 0;
     let sends = 0;
+    let firstPollAt: number | undefined;
     const requests: Recorded[] = [];
     const same = (a: string, b: string | undefined) => b !== undefined && a.replace(/\/$/, "") === b.replace(/\/$/, "");
     // Each feed's chain, at one fixed time: the feed's answer is `age` seconds
@@ -372,6 +377,25 @@ describe("registry write funded from the L2, on the wire", () => {
         }
         if (req.method === "wallet_getAssets") return ok(o.assets ?? {});
         if (req.method === "wallet_sendPreparedCalls") return ok({ id: "0xabc" });
+        if (
+          req.method === "wallet_getCallsStatus" &&
+          (o.pendingForever || (o.pendingForMs !== undefined && Date.now() < (firstPollAt ??= Date.now()) + o.pendingForMs))
+        )
+          return ok({
+            id: "0xabc",
+            status: 100,
+            receipts: [
+              {
+                chainId: numberToHex(CELO_SEPOLIA.chainId),
+                blockNumber: "0x10",
+                blockHash: "0x" + "11".repeat(32),
+                gasUsed: "0x73c17",
+                status: "0x1",
+                transactionHash: CELO_TX,
+                logs: [],
+              },
+            ],
+          });
         if (req.method === "wallet_getCallsStatus")
           return ok({
             id: "0xabc",
@@ -844,6 +868,59 @@ describe("registry write funded from the L2, on the wire", () => {
     // Not the no-receipt branch: there IS one, and saying otherwise sends the
     // reader to the relay when a successful source transaction exists.
     expect(reason).not.toContain("no receipt at all");
+  });
+
+  // Celo mainnet, 2026-11-14. The relay locked the payment on Celo and then
+  // sat on the Ethereum half for 14 minutes: its signers there were paused for
+  // lack of gas. The SDK stopped waiting at four minutes, called it failed and
+  // never sent the session key's write; the relay registered the root key ten
+  // minutes later with nobody left to follow it up.
+  test("a relay that is slow on the registry chain is waited for, and the session key is still registered", async () => {
+    const signer = createPrivateKeySigner();
+    const wire = mockRegistryWire({ balance: 0n, activeKeys: [], pendingForMs: 150 });
+    const waits: string[] = [];
+    const written = await submitRegistryWrite(SEPOLIA, {
+      walletAddress: signer.address,
+      adminSigner: signer,
+      calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+      // The usual wait is over long before the relay answers; only the wait
+      // that goes on while the payment is locked can see the confirmation.
+      timing: { waitMs: 30, pollMs: 5, patienceMs: 5_000, patientPollMs: 5 },
+      onWaiting: (step) => waits.push(step),
+    });
+    expect(written.status).toBe("CONFIRMED");
+    expect(written.rootRegistration?.status).toBe("CONFIRMED");
+    // The app was told once that the first write is being waited for.
+    expect(waits).toEqual(["root"]);
+    // And the session key's write was sent after it: both intents were prepared.
+    expect(wire.prepares()).toHaveLength(2);
+  });
+
+  test("a relay that never finishes says where the payment is, and nothing about a failure on chain", async () => {
+    const signer = createPrivateKeySigner();
+    const wire = mockRegistryWire({ balance: 0n, activeKeys: [], pendingForever: true });
+    const written = await submitRegistryWrite(SEPOLIA, {
+      walletAddress: signer.address,
+      adminSigner: signer,
+      calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+      timing: { waitMs: 20, pollMs: 5, patienceMs: 120, patientPollMs: 5 },
+    });
+    expect(written.status).toBe("FAILED");
+    const sentence =
+      `The KeyStore update on ${SEPOLIA.chain.name} has not completed yet. The payment for it is held on ` +
+      `${CELO_SEPOLIA.chain.name} and comes back if the update does not complete.`;
+    // The sentence leads, for the root's own reason and for the write's.
+    expect(written.rootRegistration?.reason?.startsWith(sentence)).toBe(true);
+    expect(written.reason?.startsWith(sentence)).toBe(true);
+    // What follows is for whoever chases it: the bundle and the locking transaction.
+    expect(written.reason).toContain("bundle 0xabc");
+    expect(written.reason).toContain(CELO_TX);
+    // The payment WAS mined, on the source chain. Saying nothing was is what
+    // the 2026-11-14 run printed while 29 CELO sat in the escrow.
+    expect(written.reason).not.toContain("no receipt at all");
+    expect(written.reason).not.toContain("nothing was mined on any chain");
+    // The session key's write waits for the root, so it was never prepared.
+    expect(wire.prepares()).toHaveLength(1);
   });
 
   test("each intent reports its own step, in order", async () => {
