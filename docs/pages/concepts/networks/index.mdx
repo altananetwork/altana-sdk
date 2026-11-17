@@ -7,8 +7,8 @@ description: Supported mainnet chains, RPC endpoints, and deployed contract addr
 
 Altana is multi-chain. The SDK ships a config per network, importable from
 `@altananetwork/sdk`. **BNB Smart Chain is the default**; Ethereum is
-supported for wallet execution and L1 cross-chain proofs; Celo is an L2 execution
-network, with its Keystore on Ethereum and a Keystore cache on Celo; Base is supported as the L2
+supported for wallet execution and L1 cross-chain proofs; Celo is supported for
+wallet execution with its own Keystore; Base is supported as the L2
 Keystore cache for cross-chain verification.
 
 Building against testnet? See [Testnet](/concepts/networks/testnet) for BNB
@@ -24,7 +24,7 @@ To browse what these contracts have recorded, open the [Keystore Explorer](/expl
 | --- | --- | --- | --- |
 | `BNB` | BNB Smart Chain | 56 | Default wallet execution network with a standalone Keystore |
 | `ETHEREUM` | Ethereum | 1 | Wallet execution network and L1 Keystore source for cross-chain proofs |
-| `CELO` | Celo | 42220 | L2: wallet execution, Keystore on Ethereum, Keystore cache on Celo |
+| `CELO` | Celo | 42220 | Wallet execution network with a standalone Keystore |
 | `BASE` | Base | 8453 | L2 Keystore cache for cross-chain session verification |
 
 ## BNB Smart Chain: `BNB`
@@ -55,27 +55,26 @@ KeyStore contracts:
 
 ## Celo: `CELO`
 
-Celo is an [L2 network](/concepts/keystore#reaching-other-chains): wallets
-execute through the Altana relay on Celo, their sessions are recorded in the
-Ethereum Keystore (`CELO.keyStore` and `CELO.keyStoreController` are the
-Ethereum contracts above; `registryNetwork(CELO)` is `ETHEREUM`) and proven
-into the Keystore cache on Celo, where they are read with one `eth_call`. A
-wallet created for `CELO` is provisioned on Ethereum in the same call.
+Celo keeps its own Keystore, like BNB Smart Chain: a session is recorded on
+Celo in the same transaction that authorizes it, and the registration fee is
+paid in CELO. A wallet created for `CELO` is also provisioned on Ethereum in
+the same call, so it can act there later.
 
-The relay on Celo takes its fee in CELO or in a stablecoin the wallet holds:
-USDC or USDT, priced live. A wallet funded with either transacts without
-CELO, and its Keystore writes on Ethereum are paid from the same balance;
-`client.feeCurrencies()` returns the current list and rates.
+The relay on Celo takes its own fee in CELO or in a stablecoin the wallet
+holds: USDC or USDT, priced live. `client.feeCurrencies()` returns the current
+list and rates.
 
 - **Chain id:** 42220
 - **Public RPC:** `https://celo-rpc.publicnode.com`
 - **Explorer:** https://celoscan.io
 - **Relay:** `https://relay.altana.network`
-- **Keystore:** Ethereum (chain 1), addresses above
+
+KeyStore contracts:
 
 | Contract | Address |
 | --- | --- |
-| KeyStoreCache (KeyStoreCacheOPStack 1.1.1) | `0xF939d7D3a2b8262aD8662c71Dec38119058d5a06` |
+| KeyStore | `0x83b30935f36d6ccf9B1ec3b5E47F2866b97cd27c` |
+| KeyStoreController | `0x47bA5fc2A5b0CcB24BA3fAC9D4B59400eE9fd1D6` |
 
 [ERC-8004 agent identity](/sdk/erc8004):
 

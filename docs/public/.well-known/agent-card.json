@@ -1,7 +1,7 @@
 {
   "protocolVersion": "0.3.0",
   "name": "Altana Wallet Agent",
-  "description": "Runs a non-custodial Altana agentic wallet on Celo. Creates the wallet from a private key or a passkey, pays gas in CELO or any fee token the relay accepts, grants and revokes timeboxed session keys recorded in the Ethereum KeyStore and mirrored into the Celo KeyStoreCache, and pays for HTTP resources over x402.",
+  "description": "Runs a non-custodial Altana agentic wallet on Celo. Creates the wallet from a private key or a passkey, pays gas in CELO or any fee token the relay accepts, grants and revokes timeboxed session keys recorded in the KeyStore on Celo, and pays for HTTP resources over x402.",
   "version": "0.10.0",
   "provider": {
     "organization": "Altana",
@@ -28,7 +28,7 @@
     {
       "id": "create-wallet",
       "name": "Create an agentic wallet",
-      "description": "Creates a smart agentic wallet on Celo from a private key or a passkey. The address is the same on Celo and on the Ethereum chain that holds its KeyStore registry.",
+      "description": "Creates a smart agentic wallet on Celo from a private key or a passkey. The address is the same on Celo and on Ethereum, where the wallet is set up in the same call.",
       "tags": [
         "wallet",
         "eip-7702",
@@ -54,7 +54,7 @@
     {
       "id": "session-keys",
       "name": "Grant and revoke session keys",
-      "description": "Grants a timeboxed session key scoped to named contracts, selectors and spend caps, records it in the Ethereum KeyStore paid from the Celo balance, proves it into the Celo KeyStoreCache, and revokes it.",
+      "description": "Grants a timeboxed session key scoped to named contracts, selectors and spend caps, records it in the KeyStore on Celo in the same transaction, paid in CELO, and revokes it.",
       "tags": [
         "session-keys",
         "delegation",

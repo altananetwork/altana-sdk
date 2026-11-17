@@ -7,10 +7,10 @@
  * celo-sepolia). Sepolia and Base Sepolia are not in the map below and
  * are therefore not selectable.
  *
- * Celo and Celo Sepolia are cached-registry networks: their KeyStore lives
- * on Ethereum / Sepolia and is mirrored into a KeyStoreCache on the Celo
- * chain. Registry reads for those go to the registry chain (see
- * registryNetwork); the cache is reported alongside.
+ * Every chain listed here keeps its own KeyStore, Celo and Celo Sepolia
+ * included: registry reads and writes happen on the chain itself. A network
+ * that keeps its registry on another chain (Base Sepolia, not selectable) is
+ * described with that chain and its cache; see registryNetwork.
  */
 import {
   BNB,
@@ -105,13 +105,18 @@ export function fundingSteps(
   const symbol = network.chain.nativeCurrency.symbol;
   const faucet = faucetHint(network.chainId);
   const others = (opts.feeSymbols ?? []).filter((s) => s !== symbol);
+  // A chain with its own KeyStore takes the registration fee in its native
+  // token, whatever the relay accepts for its own fee: the wallet needs some.
+  const registersHere = !isCachedRegistry(network);
   steps.push(
     `Send some ${symbol}` +
-      (others.length > 0 ? `, or any of ${others.join(", ")},` : "") +
+      (others.length > 0 && !registersHere ? `, or any of ${others.join(", ")},` : "") +
       ` to ${address} on ${network.chain.name}` +
       (faucet ? ` (faucet: ${faucet})` : "") +
       (others.length > 0
-        ? `. The relay takes its fee in whichever of these tokens the wallet holds, so no ${symbol} is needed when it holds one of the others`
+        ? registersHere
+          ? `. Registering a key in the KeyStore is paid in ${symbol}, so the wallet needs some; the relay's own fee can also be paid in ${others.join(", ")}`
+          : `. The relay takes its fee in whichever of these tokens the wallet holds, so no ${symbol} is needed when it holds one of the others`
         : "") +
       `. Your smart agentic wallet will be activated automatically when you make your first transaction.`,
   );

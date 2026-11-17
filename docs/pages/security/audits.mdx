@@ -9,12 +9,13 @@ The Altana Keystore contracts were audited by [CertiK](https://www.certik.com), 
 
 Scope was `KeyStore.sol` and `KeyStoreCacheOPStack.sol`, plus six further files listed in the report: the onchain registry that stores session-key permissions, and the L2 cache contract that mirrors them to an L2. These are the contracts that decide whether an agent is authorized to act.
 
-The KeyStore is deployed from the audited source and source-verified, exact match, on Ethereum and BNB Smart Chain. The cache on Celo is KeyStoreCacheOPStack 1.1.1: the audited contract with one fix made after the audit, on 19 August 2026, to how it decodes the storage value a proof carries. Its source is verified, exact match, on Sourcify. You can read each one directly:
+The KeyStore is deployed from the audited source and source-verified, exact match, on Ethereum, BNB Smart Chain and Celo. The cache on Celo is KeyStoreCacheOPStack 1.1.1: the audited contract with one fix made after the audit, on 19 August 2026, to how it decodes the storage value a proof carries. Its source is verified, exact match, on Sourcify. You can read each one directly:
 
 | Network | Contract | Verified source |
 | --- | --- | --- |
 | Ethereum | KeyStore | [Etherscan](https://etherscan.io/address/0xb70fDa90C1d576Ba8399946a0c10ECD9d9Ea923b#code) |
 | BNB Smart Chain | KeyStore | [BscScan](https://bscscan.com/address/0x6572427ED530BadcF7375Cf9A4709D8d2b0E7E0a#code) |
+| Celo | KeyStore | [Celoscan](https://celoscan.io/address/0x83b30935f36d6ccf9B1ec3b5E47F2866b97cd27c#code) |
 | Celo | KeyStoreCacheOPStack 1.1.1 | [Sourcify](https://repo.sourcify.dev/42220/0xF939d7D3a2b8262aD8662c71Dec38119058d5a06) · [Celoscan](https://celoscan.io/address/0xF939d7D3a2b8262aD8662c71Dec38119058d5a06) |
 
 Addresses for every deployed contract are listed under [Networks & Addresses](/concepts/networks).

@@ -182,13 +182,13 @@ describe("grantSession picks one chain", () => {
 
   test("a one-chain grant on a cached network touches that network and its registry chain, nothing else", async () => {
     const { client, log } = clientOf([BNB, CELO_SEPOLIA, BASE_SEPOLIA]);
-    const session = await client.grantSession({ ...grantArgs(), chainId: CELO_SEPOLIA.chainId });
+    const session = await client.grantSession({ ...grantArgs(), chainId: BASE_SEPOLIA.chainId });
     await session.registration;
     await session.cacheSync;
 
-    expect(log.account).toEqual([CELO_SEPOLIA.chainId]);
+    expect(log.account).toEqual([BASE_SEPOLIA.chainId]);
     expect(log.registry).toEqual([SEPOLIA.chainId]);
-    expect([...log.touched].sort((a, b) => a - b)).toEqual([CELO_SEPOLIA.chainId, SEPOLIA.chainId]);
+    expect([...log.touched].sort((a, b) => a - b)).toEqual([BASE_SEPOLIA.chainId, SEPOLIA.chainId]);
   });
 
   test("chainId and chainIds together are refused before anything is sent", async () => {
@@ -218,7 +218,7 @@ describe("a one-chain grant that went through", () => {
   });
 
   test("keeps everything the multi-chain result has", async () => {
-    const { client } = clientOf([CELO_SEPOLIA]);
+    const { client } = clientOf([BASE_SEPOLIA]);
     const args = grantArgs();
     const session = await client.grantSession(args);
 
@@ -227,7 +227,7 @@ describe("a one-chain grant that went through", () => {
     expect(session.walletAddress).toBe(WALLET.address);
     expect(session.keyId).toMatch(/^0x[0-9a-f]{64}$/);
     expect(session.keyHash).toMatch(/^0x[0-9a-f]{64}$/);
-    expect(session.transactionHash).toBe(hashOn(CELO_SEPOLIA.chainId));
+    expect(session.transactionHash).toBe(hashOn(BASE_SEPOLIA.chainId));
     expect((await session.registration).map((l) => l.status)).toEqual(["CONFIRMED"]);
     expect((await session.cacheSync).map((l) => l.status)).toEqual(["CONFIRMED"]);
   });
@@ -305,8 +305,8 @@ describe("a one-chain grant whose account leg did not confirm throws", () => {
 
   test("on a cached network a failed authorization throws, and the KeyStore write is never attempted", async () => {
     const original = relayError();
-    const { client, log } = clientOf([CELO_SEPOLIA], {
-      account: { [CELO_SEPOLIA.chainId]: { status: "FAILED", reason: original.message, error: original } },
+    const { client, log } = clientOf([BASE_SEPOLIA], {
+      account: { [BASE_SEPOLIA.chainId]: { status: "FAILED", reason: original.message, error: original } },
     });
 
     expect(await thrownBy(() => client.grantSession(grantArgs()))).toBe(original);
@@ -317,7 +317,7 @@ describe("a one-chain grant whose account leg did not confirm throws", () => {
 
 describe("a one-chain grant with a live key never throws", () => {
   test("cached network: a background registration that fails is reported, not thrown", async () => {
-    const { client } = clientOf([CELO_SEPOLIA], {
+    const { client } = clientOf([BASE_SEPOLIA], {
       registry: { [SEPOLIA.chainId]: { status: "FAILED", reason: "the relay could not source the funds" } },
     });
     const seen: { status: GrantSessionStatus; reason?: string }[] = [];
@@ -328,8 +328,8 @@ describe("a one-chain grant with a live key never throws", () => {
     });
 
     // At return the key is live and the write is still running.
-    expect(session.transactionHash).toBe(hashOn(CELO_SEPOLIA.chainId));
-    expect(legKinds(session)).toEqual(["account:11142220:CONFIRMED", "registry:11155111:PENDING", "cache:11142220:PENDING"]);
+    expect(session.transactionHash).toBe(hashOn(BASE_SEPOLIA.chainId));
+    expect(legKinds(session)).toEqual(["account:84532:CONFIRMED", "registry:11155111:PENDING", "cache:84532:PENDING"]);
 
     const registration = await session.registration;
     expect(registration.map((l) => `${l.chainId}:${l.status}:${l.reason}`)).toEqual([
@@ -340,26 +340,26 @@ describe("a one-chain grant with a live key never throws", () => {
   });
 
   test("cached network: the same holds when the caller waits for the proofs", async () => {
-    const { client } = clientOf([CELO_SEPOLIA], {
+    const { client } = clientOf([BASE_SEPOLIA], {
       registry: { [SEPOLIA.chainId]: { status: "FAILED", reason: "reverted" } },
     });
 
     const session = await client.grantSession({ ...grantArgs(), populateCache: "await" });
 
     expect(session.status).toBe("failed");
-    expect(session.transactionHash).toBe(hashOn(CELO_SEPOLIA.chainId));
-    expect(legKinds(session)).toEqual(["account:11142220:CONFIRMED", "registry:11155111:FAILED", "cache:11142220:SKIPPED"]);
+    expect(session.transactionHash).toBe(hashOn(BASE_SEPOLIA.chainId));
+    expect(legKinds(session)).toEqual(["account:84532:CONFIRMED", "registry:11155111:FAILED", "cache:84532:SKIPPED"]);
   });
 
   test("cached network: a registry that cannot be read does not throw, the key is on the account", async () => {
-    const { client, log } = clientOf([CELO_SEPOLIA], {
+    const { client, log } = clientOf([BASE_SEPOLIA], {
       registryReadError: { [SEPOLIA.chainId]: new Error("HTTP request failed") },
     });
 
     const session = await client.grantSession(grantArgs());
 
-    expect(log.account).toEqual([CELO_SEPOLIA.chainId]);
-    expect(session.transactionHash).toBe(hashOn(CELO_SEPOLIA.chainId));
+    expect(log.account).toEqual([BASE_SEPOLIA.chainId]);
+    expect(session.transactionHash).toBe(hashOn(BASE_SEPOLIA.chainId));
     expect(session.status).toBe("failed");
     const registry = session.legs.find((l) => l.kind === "registry")!;
     expect(registry.status).toBe("FAILED");
@@ -546,8 +546,8 @@ describe("revokeSession answers for one chain", () => {
   });
 
   test("it throws when the named chain's registry leg failed, even with the account revoked", async () => {
-    const { client } = clientOf([CELO_SEPOLIA], {
-      holds: [CELO_SEPOLIA.chainId],
+    const { client } = clientOf([BASE_SEPOLIA], {
+      holds: [BASE_SEPOLIA.chainId],
       registryValid: [SEPOLIA.chainId],
       registry: { [SEPOLIA.chainId]: { status: "FAILED", reason: "reverted" } },
     });

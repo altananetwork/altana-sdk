@@ -15,15 +15,15 @@ import type { Address, Chain } from "viem";
  * Where a network's KeyStore registry lives.
  *
  * - `local`: the KeyStore and Controller are deployed on the network itself
- *   (BNB, Ethereum, BNB testnet). Registry writes batch into the same relay
+ *   (BNB, Ethereum, Celo, BNB testnet, Celo Sepolia). Registry writes batch into the same relay
  *   intent as the wallet's own calls. This is the default when `registry` is
  *   omitted from a NetworkConfig.
  * - `cached`: the network has no KeyStore of its own. Authority is rooted in
  *   the registry of another chain (`l1`) and proven into a KeyStoreCache
  *   contract deployed on this network (`keyStoreCache`). Registry writes go
  *   to `l1`; decisions are read from `l1`; the cache is the proof target and
- *   the read surface for third parties on this chain. Celo (mainnet and
- *   Sepolia) uses this shape.
+ *   the read surface for third parties on this chain. Base Sepolia uses
+ *   this shape.
  */
 export type KeyStoreRegistry =
   | { kind: "local" }
@@ -99,6 +99,14 @@ export type NetworkConfig = {
    * Registry topology. Omitted means `{ kind: "local" }`. See KeyStoreRegistry.
    */
   registry?: KeyStoreRegistry;
+  /**
+   * Chains a wallet created on this network is also set up on, so it can act
+   * there later without being created again. Only chains with a relay are
+   * used. A passkey wallet can only be set up at creation (the key that signs
+   * its setup is discarded), so leaving a chain out here closes it to passkey
+   * wallets created on this network alone.
+   */
+  provisionAlso?: readonly NetworkConfig[];
   /**
    * The feed the relay prices this network's native asset from when it
    * converts between assets. Unset where the relay converts nothing to or
@@ -216,39 +224,33 @@ export const SEPOLIA: NetworkConfig = {
 
 /**
  * Celo Sepolia (chain 11142220). Wallets run through the Altana testnet
- * relay with fees in CELO; session keys are registered in the Sepolia
- * KeyStore and proven into the KeyStoreCacheOPStack contract on Celo Sepolia
- * through the OP-stack `L1Block` predeploy. Fund wallets from
+ * relay with fees in CELO. Celo Sepolia keeps its own KeyStore: keys are
+ * registered there, in the same request that authorizes them, and the
+ * registration fee is paid in CELO. Fund wallets from
  * https://faucet.celo.org/celo-sepolia.
  *
  * Addresses sourced from the Altana KeyStore deployment manifest:
- *   <altana-keystore>/deployments/celo-sepolia.json
+ *   <altana-keystore>/deployments/celo-sepolia-keystore.json
  */
 export const CELO_SEPOLIA: NetworkConfig = {
   chain: celoSepolia,
   chainId: 11142220,
-  keyStore: SEPOLIA.keyStore,
-  keyStoreController: SEPOLIA.keyStoreController,
+  keyStore: "0xCC3df52B6aD826781AAD86EcEB1459ed0b1Ae3F6",
+  keyStoreController: "0x54eAb49d805336DB8591BAAF9ac630D0A58Ad2cD",
   publicRpcUrl: "https://forno.celo-sepolia.celo-testnet.org",
   explorer: "https://sepolia.celoscan.io",
   relayUrl: TESTNET_RELAY_URL,
-  registry: {
-    kind: "cached",
-    l1: SEPOLIA,
-    // KeyStoreCacheOPStack 1.1.1, deployed 2026-09-09 (deploy block 35678512).
-    // Source: <altana-keystore>/deployments/celo-sepolia.json.
-    keyStoreCache: "0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD",
-  },
+  provisionAlso: [SEPOLIA],
   // Celo Sepolia has no Chainlink deployment, so the testnet relay prices
   // CELO from the feed on Celo.
   nativePriceFeed: { ...CELO_USD_FEED, maxAgeSecs: TESTNET_MAX_PRICE_AGE_SECS },
 };
 
 /**
- * Base Sepolia (chain 84532). Same shape as Celo Sepolia: wallets run through
- * the Altana testnet relay with fees in ETH, session keys are registered in
- * the Sepolia KeyStore and proven into the KeyStoreCacheOPStack contract on
- * Base Sepolia through the OP-stack `L1Block` predeploy.
+ * Base Sepolia (chain 84532). Wallets run through the Altana testnet relay
+ * with fees in ETH. It has no KeyStore of its own: session keys are
+ * registered in the Sepolia KeyStore and proven into the KeyStoreCacheOPStack
+ * contract on Base Sepolia through the OP-stack `L1Block` predeploy.
  *
  * Addresses sourced from the Altana KeyStore deployment manifest:
  *   <altana-keystore>/deployments/base-sepolia.json
@@ -272,26 +274,22 @@ export const BASE_SEPOLIA: NetworkConfig = {
 
 /**
  * Celo (chain 42220). Wallets run through the Altana relay with fees in
- * CELO, USDC or USDT; session keys are registered in the Ethereum KeyStore
- * and proven into the KeyStoreCacheOPStack contract on Celo through the
- * OP-stack `L1Block` predeploy.
+ * CELO, USDC or USDT. Celo keeps its own KeyStore: keys are registered
+ * there, in the same request that authorizes them, and the registration fee
+ * is paid in CELO.
  *
- * `keyStoreCache` is KeyStoreCacheOPStack 1.1.1, deployed 2026-11-11 and
- * anchored to the Ethereum KeyStore above.
+ * Addresses sourced from the Altana KeyStore deployment manifest:
+ *   <altana-keystore>/deployments/celo.json
  */
 export const CELO: NetworkConfig = {
   chain: celo,
   chainId: 42220,
-  keyStore: ETHEREUM.keyStore,
-  keyStoreController: ETHEREUM.keyStoreController,
+  keyStore: "0x83b30935f36d6ccf9B1ec3b5E47F2866b97cd27c",
+  keyStoreController: "0x47bA5fc2A5b0CcB24BA3fAC9D4B59400eE9fd1D6",
   publicRpcUrl: "https://celo-rpc.publicnode.com",
   explorer: "https://celoscan.io",
   relayUrl: RELAY_URL,
-  registry: {
-    kind: "cached",
-    l1: ETHEREUM,
-    keyStoreCache: "0xF939d7D3a2b8262aD8662c71Dec38119058d5a06",
-  },
+  provisionAlso: [ETHEREUM],
   nativePriceFeed: { ...CELO_USD_FEED, maxAgeSecs: MAINNET_MAX_PRICE_AGE_SECS },
 };
 

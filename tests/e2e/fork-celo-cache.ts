@@ -6,7 +6,7 @@
  * predeploy) with the released KeyStoreCacheOPStack 1.1.1 (bytecode compiled
  * from altana-keystore `main`, see fixtures/KeyStoreCacheOPStack-1.1.1.json)
  * deployed on the fork and anchored to the Sepolia KeyStore that
- * `CELO_SEPOLIA.registry.l1` names:
+ * mirrored config below names:
  *
  *   1. Deploys the cache with the Sepolia KeyStore as constructor argument
  *      and checks `VERSION()` and `l1KeyStore()`.
@@ -35,7 +35,7 @@
  *                              (default: one registered in Aug 2026).
  *
  * Before deploying its own cache it also reads the LIVE Celo Sepolia cache
- * (CELO_SEPOLIA.registry.keyStoreCache) on the fork: version, anchor, and the
+ * (0xB100…deeD) on the fork: version, anchor, and the
  * first key ever proven into it (the deployer's root key), so a redeploy or a
  * wrong address in the config fails here rather than in a user's grant.
  *
@@ -73,6 +73,19 @@ import { buildRelayClient, submitCalls } from "../../packages/wallet/src/interna
 import { buildAdditionalRegisterCall } from "../../packages/wallet/src/internal/keystore.js";
 import cacheArtifact from "./fixtures/KeyStoreCacheOPStack-1.1.1.json" with { type: "json" };
 import { startAnvil, waitForAnvil } from "./anvil.js";
+
+/**
+ * Celo Sepolia as a network that mirrors the Sepolia KeyStore: the shape this
+ * test is about. The SDK's own CELO_SEPOLIA keeps its KeyStore on Celo Sepolia;
+ * the KeyStoreCacheOPStack deployed there on 2026-09-09 is still live, and it
+ * is the same contract Base Sepolia's mirror runs, so it stays tested here.
+ */
+const MIRRORED: NetworkConfig = {
+  ...CELO_SEPOLIA,
+  keyStore: SEPOLIA.keyStore,
+  keyStoreController: SEPOLIA.keyStoreController,
+  registry: { kind: "cached", l1: SEPOLIA, keyStoreCache: "0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD" },
+};
 
 // `||`, not `??`: an unset GitHub Actions secret arrives as an empty string.
 const CELO_RPC = process.env.CELO_SEPOLIA_FORK_RPC_URL || "https://forno.celo-sepolia.celo-testnet.org";
@@ -128,12 +141,12 @@ async function main() {
 
     // ── 0. The live cache the SDK config points at. ──
     log("\n▶ Reading the live Celo Sepolia cache from the SDK config ...");
-    const liveCache = keyStoreCacheOf(CELO_SEPOLIA);
-    assert((await l2.getCode({ address: liveCache })) !== undefined, `code at CELO_SEPOLIA.registry.keyStoreCache (${liveCache})`);
+    const liveCache = keyStoreCacheOf(MIRRORED);
+    assert((await l2.getCode({ address: liveCache })) !== undefined, `code at MIRRORED.registry.keyStoreCache (${liveCache})`);
     const liveVersion = await l2.readContract({ address: liveCache, abi: CACHE_ABI, functionName: "VERSION" });
     const liveL1 = await l2.readContract({ address: liveCache, abi: CACHE_ABI, functionName: "l1KeyStore" });
     assert(liveVersion === "1.1.1", `live cache VERSION is 1.1.1 (got ${liveVersion})`);
-    assert(liveL1.toLowerCase() === SEPOLIA.keyStore.toLowerCase(), "live cache is anchored to CELO_SEPOLIA.registry.l1.keyStore");
+    assert(liveL1.toLowerCase() === SEPOLIA.keyStore.toLowerCase(), "live cache is anchored to MIRRORED.registry.l1.keyStore");
     const liveEntry = await readCachedKey(l2, liveCache, LIVE_CACHED_USER, LIVE_CACHED_KEY_ID);
     assert(liveEntry.publicKey.length > 2 && keccak256(liveEntry.publicKey) === LIVE_CACHED_KEY_ID, "the first proven key is cached with keyId == keccak256(publicKey)");
     assert(liveEntry.isRoot && !liveEntry.revoked && liveEntry.expiry === 0, "it is a live root key");
@@ -161,15 +174,15 @@ async function main() {
     assert(l1KeyStore.toLowerCase() === SEPOLIA.keyStore.toLowerCase(), "cache anchored to the Sepolia KeyStore");
     log(`  ✓ cache ${cache} VERSION ${version}, l1KeyStore ${l1KeyStore}`);
 
-    // The SDK config with the fork's cache filled in: what CELO_SEPOLIA looks
+    // The SDK config with the fork's cache filled in: what MIRRORED looks
     // like once the deployment address is published.
     const network: NetworkConfig = {
-      ...CELO_SEPOLIA,
+      ...MIRRORED,
       publicRpcUrl: ANVIL_URL,
       registry: { kind: "cached", l1: SEPOLIA, keyStoreCache: cache },
     };
     let refused = "";
-    try { keyStoreCacheOf({ ...CELO_SEPOLIA, registry: { kind: "cached", l1: SEPOLIA, keyStoreCache: "0x0000000000000000000000000000000000000000" } }); } catch (e) { refused = (e as Error).message; }
+    try { keyStoreCacheOf({ ...MIRRORED, registry: { kind: "cached", l1: SEPOLIA, keyStoreCache: "0x0000000000000000000000000000000000000000" } }); } catch (e) { refused = (e as Error).message; }
     assert(/no KeyStoreCache address configured/.test(refused), "keyStoreCacheOf refuses an unset cache address");
     assert(keyStoreCacheOf(network) === cache, "keyStoreCacheOf returns the fork's address");
 
@@ -253,7 +266,7 @@ async function main() {
       });
     } catch (e) { refusal = (e as Error).message; }
     assert(/KeyStoreController address of Sepolia/.test(refusal), `refused with the registry-target message (got: ${refusal.slice(0, 120)})`);
-    assert((await l2.getCode({ address: CELO_SEPOLIA.keyStoreController })) === undefined, "and indeed there is no code at that address on Celo Sepolia");
+    assert((await l2.getCode({ address: MIRRORED.keyStoreController })) === undefined, "and indeed there is no code at that address on Celo Sepolia");
     log("  ✓ refused before reaching the relay; no code at the Controller address on Celo Sepolia");
 
     // The encoded slot key is what eth_getProof was asked for.

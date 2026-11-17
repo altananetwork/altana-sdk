@@ -26,6 +26,8 @@ const USDC: Address = "0x01C5C0122039549AD1493B8220cABEdD739BC44E";
 const USDM: Address = "0xdE9e4C3ce781b4bA68120d6261cbad65ce0aB00b";
 const USDT_BNB: Address = "0x55d398326f99059fF775485246999027B3197955";
 const CALLS = [{ to: WALLET, value: 0n, data: "0x" as Hex }];
+/** What a KeyStore on the network itself asks per key, in the mocked chain. */
+const LOCAL_REGISTRATION_FEE = 200_000_000_000_000n;
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -61,7 +63,15 @@ function assetsAnswer(chainId: number, native: bigint, tokens: Record<string, bi
 type Recorded = { url: string; method: string; params: any };
 
 /** Plays the relay for `network` and refuses everything else. Returns every request made. */
-function mockWire(o: { network: NetworkConfig; capabilities: unknown; assets: unknown }) {
+function mockWire(o: {
+  network: NetworkConfig;
+  capabilities: unknown;
+  assets: unknown;
+  /** The wallet's keys in the network's own KeyStore. Default: one, so nothing is prepended. */
+  keys?: Hex[];
+  /** The relay refuses every prepare with this message. */
+  prepareError?: string;
+}) {
   const requests: Recorded[] = [];
   const same = (a: string, b: string | undefined) =>
     b !== undefined && a.replace(/\/$/, "") === b.replace(/\/$/, "");
@@ -71,10 +81,24 @@ function mockWire(o: { network: NetworkConfig; capabilities: unknown; assets: un
     const reqs = Array.isArray(body) ? body : [body];
     const answers = reqs.map((req: { id: number; method: string; params: any }) => {
       requests.push({ url: u, method: req.method, params: req.params });
+      // An admin intent on a chain with its own KeyStore asks it whether the wallet has registered yet.
+      // This wallet has, so nothing is prepended. No balance is ever read here.
+      if (same(u, o.network.publicRpcUrl) && !same(u, o.network.relayUrl)) {
+        if (req.method === "eth_chainId") return { jsonrpc: "2.0", id: req.id, result: numberToHex(o.network.chainId) };
+        if (req.method === "eth_call" && String(req.params[0].to).toLowerCase() === o.network.keyStore.toLowerCase())
+          return { jsonrpc: "2.0", id: req.id, result: encodeAbiParameters([{ type: "bytes32[]" }], [o.keys ?? [("0x" + "01".repeat(32)) as Hex]]) };
+        // A wallet with no keys yet registers first: the SDK reads the fee to send with it.
+        if (req.method === "eth_call" && String(req.params[0].to).toLowerCase() === o.network.keyStoreController.toLowerCase())
+          return { jsonrpc: "2.0", id: req.id, result: encodeAbiParameters([{ type: "uint256" }], [LOCAL_REGISTRATION_FEE]) };
+        throw new Error(`public rpc got ${req.method}`);
+      }
       if (!same(u, o.network.relayUrl)) throw new Error(`unexpected request to ${u}: ${req.method}`);
       if (req.method === "wallet_getCapabilities") return { jsonrpc: "2.0", id: req.id, result: o.capabilities };
       if (req.method === "wallet_getAssets") return { jsonrpc: "2.0", id: req.id, result: o.assets };
-      if (req.method === "wallet_prepareCalls") return { jsonrpc: "2.0", id: req.id, result: prepared };
+      if (req.method === "wallet_prepareCalls")
+        return o.prepareError
+          ? { jsonrpc: "2.0", id: req.id, error: { code: 3, message: o.prepareError, data: "0x" } }
+          : { jsonrpc: "2.0", id: req.id, result: prepared };
       if (req.method === "wallet_sendPreparedCalls") return { jsonrpc: "2.0", id: req.id, result: { id: "0xabc" } };
       throw new Error(`relay got ${req.method}`);
     });
@@ -84,6 +108,13 @@ function mockWire(o: { network: NetworkConfig; capabilities: unknown; assets: un
     requests,
     methods: () => requests.map((r) => r.method),
     publicRpcRequests: () => requests.filter((r) => same(r.url, o.network.publicRpcUrl)),
+    /** Public RPC requests other than the KeyStore's own "has this wallet registered" read. */
+    balanceReads: () =>
+      requests.filter(
+        (r) =>
+          same(r.url, o.network.publicRpcUrl) &&
+          !(r.method === "eth_chainId" || (r.method === "eth_call" && String(r.params[0].to).toLowerCase() === o.network.keyStore.toLowerCase())),
+      ),
     wireFeeToken: () => {
       const prepare = requests.find((c) => c.method === "wallet_prepareCalls");
       if (!prepare) throw new Error("no wallet_prepareCalls reached the relay");
@@ -201,7 +232,8 @@ describe("fee token on the wire", () => {
       network: CELO_SEPOLIA,
     });
     expect(wire.wireFeeToken()?.toLowerCase()).toBe(USDC.toLowerCase());
-    expect(wire.publicRpcRequests()).toEqual([]);
+    // The balances come from the relay; the chain is only asked whether the wallet has registered.
+    expect(wire.balanceReads()).toEqual([]);
   });
 
   test("feeToken list with nothing that qualifies: throws before the relay is asked to prepare", async () => {
@@ -218,7 +250,7 @@ describe("fee token on the wire", () => {
         network: CELO_SEPOLIA,
       }),
     ).rejects.toThrow(/named in `feeToken` .* is a fee token the relay accepts/);
-    expect(wire.methods()).toEqual(["wallet_getCapabilities"]);
+    expect(wire.methods().filter((m) => m.startsWith("wallet_"))).toEqual(["wallet_getCapabilities"]);
   });
 
   test("feeToken: [] names nothing, so the session rule applies", async () => {
@@ -248,8 +280,9 @@ describe("fee token on the wire", () => {
       network: CELO_SEPOLIA,
     });
     expect(wire.wireFeeToken()).toBeUndefined();
-    // No balance lookup either: the relay decides.
-    expect(wire.methods()).toEqual(["wallet_getCapabilities", "wallet_prepareCalls", "wallet_sendPreparedCalls"]);
+    // No balance lookup either: the relay decides. The one chain read is the KeyStore's.
+    expect(wire.methods().filter((m) => m.startsWith("wallet_"))).toEqual(["wallet_getCapabilities", "wallet_prepareCalls", "wallet_sendPreparedCalls"]);
+    expect(wire.balanceReads()).toEqual([]);
   });
 
   test("feeToken named: sent as is, for a session too", async () => {
@@ -266,6 +299,57 @@ describe("fee token on the wire", () => {
     });
     expect(wire.wireFeeToken()?.toLowerCase()).toBe(NATIVE_TOKEN);
     expect(wire.methods()).toEqual(["wallet_getCapabilities", "wallet_prepareCalls", "wallet_sendPreparedCalls"]);
+  });
+});
+
+// Celo keeps its own KeyStore, and the KeyStore takes its fee in CELO whatever
+// the relay accepts for its own fee. A wallet holding only USDC cannot make its
+// first registration, and the sentence must not send it to buy more USDC.
+describe("a first action on a chain with its own KeyStore", () => {
+  test("the registration is prepended, with the fee and its margin as value", async () => {
+    const signer = createPrivateKeySigner();
+    const wire = mockWire({
+      network: CELO_SEPOLIA,
+      capabilities: chainCapabilities(CELO_SEPOLIA.chainId, []),
+      assets: assetsAnswer(CELO_SEPOLIA.chainId, 10n ** 18n, {}),
+      keys: [],
+    });
+    await submitCallsDetailed(buildRelayClient(CELO_SEPOLIA), signer.address, signer, CALLS, {
+      submittingKey: adminKey(signer),
+      network: CELO_SEPOLIA,
+    });
+    const prepare = wire.requests.find((r) => r.method === "wallet_prepareCalls")!.params[0];
+    expect(prepare.calls).toHaveLength(2);
+    expect(String(prepare.calls[0].to).toLowerCase()).toBe(CELO_SEPOLIA.keyStoreController.toLowerCase());
+    expect(BigInt(prepare.calls[0].value)).toBe(registrationValueFor(LOCAL_REGISTRATION_FEE));
+    // No funding from another chain is asked for: the wallet pays on Celo.
+    expect(prepare.capabilities?.requiredFunds).toBeUndefined();
+  });
+
+  test("a wallet holding only USDC is asked for the chain's own currency, and nothing else", async () => {
+    const signer = createPrivateKeySigner();
+    mockWire({
+      network: CELO_SEPOLIA,
+      capabilities: chainCapabilities(CELO_SEPOLIA.chainId, [feeToken("usdc", USDC, 6, "USDC")]),
+      assets: assetsAnswer(CELO_SEPOLIA.chainId, 0n, { [USDC]: 5_000_000n }),
+      keys: [],
+      prepareError: "intent reverted: 0x",
+    });
+    const thrown = await submitCallsDetailed(buildRelayClient(CELO_SEPOLIA), signer.address, signer, CALLS, {
+      submittingKey: adminKey(signer),
+      network: CELO_SEPOLIA,
+    }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    const error = altanaErrorOf(thrown);
+    const native = CELO_SEPOLIA.chain.nativeCurrency.symbol;
+    expect(error?.code).toBe("insufficient_funds");
+    expect(error?.message).toBe(
+      `Not enough ${native} to pay for this: needs about 0.00022 ${native}, you have 0 ${native}. ` +
+        `Add ${native} on ${CELO_SEPOLIA.chain.name}.`,
+    );
+    expect(error?.message).not.toContain("USDC");
   });
 });
 
@@ -526,6 +610,8 @@ describe("registry write funded from the L2, on the wire", () => {
       },
     });
     const thrown = await submitRegistryWrite(SEPOLIA, {
+      // Paid from Celo Sepolia: the chain a failure speaks about.
+      fundFrom: CELO_SEPOLIA,
       walletAddress: signer.address,
       adminSigner: signer,
       calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
@@ -568,6 +654,8 @@ describe("registry write funded from the L2, on the wire", () => {
       },
     });
     const thrown = await submitRegistryWrite(SEPOLIA, {
+      // Paid from Celo Sepolia: the chain a failure speaks about.
+      fundFrom: CELO_SEPOLIA,
       walletAddress: signer.address,
       adminSigner: signer,
       calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
@@ -600,6 +688,8 @@ describe("registry write funded from the L2, on the wire", () => {
       },
     });
     const thrown = await submitRegistryWrite(SEPOLIA, {
+      // Paid from Celo Sepolia: the chain a failure speaks about.
+      fundFrom: CELO_SEPOLIA,
       walletAddress: signer.address,
       adminSigner: signer,
       calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
@@ -648,6 +738,8 @@ describe("registry write funded from the L2, on the wire", () => {
       },
     });
     const thrown = await submitRegistryWrite(SEPOLIA, {
+      // Paid from Celo Sepolia: the chain a failure speaks about.
+      fundFrom: CELO_SEPOLIA,
       walletAddress: signer.address,
       adminSigner: signer,
       calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
@@ -691,6 +783,8 @@ describe("registry write funded from the L2, on the wire", () => {
       const signer = createPrivateKeySigner();
       mockRegistryWire({ balance: 0n, activeKeys: [("0x" + "01".repeat(32)) as Hex], prepareError: "intent reverted: 0x", assets, feedAges });
       const thrown = await submitRegistryWrite(SEPOLIA, {
+        // Paid from Celo Sepolia: the chain a failure speaks about.
+        fundFrom: CELO_SEPOLIA,
         walletAddress: signer.address,
         adminSigner: signer,
         calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
