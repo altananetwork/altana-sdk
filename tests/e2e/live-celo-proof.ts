@@ -9,7 +9,8 @@
  *   3. use      the session sends a transaction
  *   4. revoke   the key is no longer valid in the KeyStore, and the session
  *               is refused
- *   5. grant    a second session: one more key
+ *   5. grant    a second session: one more key. Skipped, and said so, when
+ *               the wallet cannot pay for it
  *   6. revoke   the second session too, so the run leaves nothing usable
  *   7. cost     what the wallet paid at each step, in CELO and in dollars at
  *               the price the KeyStore controller reads, split into
@@ -275,22 +276,31 @@ async function main() {
     console.log(`    ${network.explorer}/tx/${revoked.transactionHash} [${ms()}]`);
 
     console.log("\n[6] grantSession (a second session: one more key)");
-    const second = await step(
-      "second grant",
-      1n,
-      () => client.grantSession({ wallet, signer: admin, sessionSigner: signerFromPrivateKey(generatePrivateKey()), permissions, expiry, chainId: CHAIN_ID }),
-      (r) => r.transactionHash,
-    );
-    printLegs(second.legs);
-    assertStatus(second, "granted", "second grant");
-    await settles(() => readIsValidKey(pub, network, wallet.address, second.keyId), "the second session key is valid in the KeyStore");
-    console.log(`    ${network.explorer}/tx/${second.transactionHash} [${ms()}]`);
+    const secondSigner = signerFromPrivateKey(generatePrivateKey());
+    const secondQuote = await client.quoteGrantSession({ wallet, signer: admin, sessionSigner: secondSigner, permissions, expiry, chainId: CHAIN_ID });
+    const secondShort = secondQuote.balances.filter((b) => !b.sufficient);
+    if (secondShort.length > 0) {
+      // A step the wallet cannot pay for is an outcome, not a failure of the proof.
+      console.log(`    not run: the wallet holds ${formatEther(await balanceOf())} ${SYMBOL}, and one more key needs ${formatEther(registrationValueFor(fee))} ${SYMBOL} with the request plus the relay's fee`);
+      for (const b of secondShort) if (b.reason) console.log(`    ${b.reason}`);
+    } else {
+      const second = await step(
+        "second grant",
+        1n,
+        () => client.grantSession({ wallet, signer: admin, sessionSigner: secondSigner, permissions, expiry, chainId: CHAIN_ID }),
+        (r) => r.transactionHash,
+      );
+      printLegs(second.legs);
+      assertStatus(second, "granted", "second grant");
+      await settles(() => readIsValidKey(pub, network, wallet.address, second.keyId), "the second session key is valid in the KeyStore");
+      console.log(`    ${network.explorer}/tx/${second.transactionHash} [${ms()}]`);
 
-    console.log("\n[7] revokeSession (second session)");
-    const revokedSecond = await step("revoke the second", 0n, () => client.revokeSession({ wallet, signer: admin, session: second }), (r) => r.transactionHash);
-    assertStatus(revokedSecond, "revoked", "second revoke");
-    await settles(async () => !(await readIsValidKey(pub, network, wallet.address, second.keyId)), "no session key of this run is valid anymore");
-    console.log(`    ${network.explorer}/tx/${revokedSecond.transactionHash} [${ms()}]`);
+      console.log("\n[7] revokeSession (second session)");
+      const revokedSecond = await step("revoke the second", 0n, () => client.revokeSession({ wallet, signer: admin, session: second }), (r) => r.transactionHash);
+      assertStatus(revokedSecond, "revoked", "second revoke");
+      await settles(async () => !(await readIsValidKey(pub, network, wallet.address, second.keyId)), "no session key of this run is valid anymore");
+      console.log(`    ${network.explorer}/tx/${revokedSecond.transactionHash} [${ms()}]`);
+    }
   } finally {
     printCosts(rows, usd, price, registrationsQuoted === 2n);
     if (!MAINNET) await sweep(pub, adminKey, wallet.address, funder!.address);
