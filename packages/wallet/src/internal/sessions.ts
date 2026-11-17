@@ -11,6 +11,7 @@
 
 import type { Address, Hex } from "viem";
 import type { Signer } from "./signer.js";
+import type { CachedKey } from "../syncKeyToL2.js";
 
 /** A single allowed call rule. AND semantics between the optional fields. */
 export type CallPermission =
@@ -54,28 +55,222 @@ export type Session = {
 };
 
 /**
- * What grantSession returns: the live Session, plus provenance for the grant
- * itself.
+ * One step of a multi-chain grant or revoke, on one chain.
  *
- * The hash is not on Session because a Session outlives the transaction that
- * created it. Integrators persist it, hand it to an agent process, and pass it
- * to execute() for days afterwards. A transaction hash sitting on it that long
- * describes something that already happened, so it belongs to the grant's
- * result, not to the session.
+ * - `account`: the key authorized on (or revoked from) the account on `chainId`.
+ * - `registry`: the KeyStore write on the registry chain `chainId`. `via:
+ *   "bundled"` means it rode in the account leg's intent on the same chain,
+ *   with the same transaction hash.
+ * - `cache`: the proof of the registry state into the KeyStoreCache on the
+ *   cached network `chainId`.
  *
- * Assignable to Session, so every existing caller keeps working unchanged.
+ * `SKIPPED` means there was nothing to do (already registered, not
+ * registered, no cache configured) or a leg it depends on did not confirm;
+ * `reason` says which.
+ */
+export type SessionLeg = {
+  chainId: number;
+  kind: "account" | "registry" | "cache";
+  /** `PENDING`: a cache proof still running after the call returned; `cacheSync` resolves with its outcome. */
+  status: "CONFIRMED" | "FAILED" | "SKIPPED" | "PENDING";
+  /** Registry legs: how the write reached the registry chain. */
+  via?: "relay" | "eoa" | "bundled";
+  transactionHash?: Hex;
+  /** Registry legs: the block the write landed in. */
+  blockNumber?: bigint;
+  /** Registry legs: the L2 whose balance paid for the write, when the relay funded it from there. */
+  fundedFromChainId?: number;
+  /** Registry legs: the source-chain transaction that locked the funds. */
+  sourceTransactionHash?: Hex;
+  /** Cache legs: the cache the proof went to. */
+  keyStoreCache?: Address;
+  /** Cache legs: the registry-chain block the accepted proof was built against. */
+  l1BlockNumber?: bigint;
+  /** Cache legs: the cache entry after the proof, when one was read. */
+  cachedKey?: CachedKey;
+  /**
+   * Registry legs: the first-time root registration, when the write needed one.
+   *
+   * A first registry write is two sequential intents, `initialRegisterKey` then
+   * `registerKey`, because the pair exceeds the gas one intent is quoted for.
+   * The leg's own fields always describe the SESSION write (`registerKey`), so
+   * `blockNumber` stays the block a cache proof must be anchored at or past;
+   * the root write's outcome lives here.
+   *
+   * `status: "CONFIRMED"` on a FAILED leg is the recoverable case: the root
+   * landed, so a retry of grantSession sends only `registerKey`.
+   */
+  rootRegistration?: RootRegistrationLeg;
+  /** Why the leg was skipped or failed. */
+  reason?: string;
+  /**
+   * revokeSession only: the leg failed because the chain could not be read, so
+   * nothing was sent there and whether the key lives there is unknown.
+   */
+  unread?: true;
+};
+
+/** The root (`initialRegisterKey`) half of a first-time registry write. */
+export type RootRegistrationLeg = {
+  status: "CONFIRMED" | "FAILED";
+  transactionHash?: Hex;
+  blockNumber?: bigint;
+  /** Relay bundle id, on the relay path. */
+  callsId?: Hex;
+  reason?: string;
+};
+
+/** A leg of revokeSession. */
+export type RevokeLeg = SessionLeg;
+/** A leg of grantSession. */
+export type GrantLeg = SessionLeg;
+
+/**
+ * What grantSession returns: the Session, plus how the grant went on every
+ * chain it was asked for.
+ *
+ * `status` is `granted` only when every leg confirmed or had nothing to do.
+ * Any failed leg makes it `failed`, and `legs` says which chain and why.
+ * Granting again with the same `sessionSigner` is safe: a key already in the
+ * registry is not written twice.
+ *
+ * Assignable to Session. Check `status` before handing the session to an agent.
  */
 export type GrantSessionResult = Session & {
+  /** The session's KeyStore keyId: `keccak(publicKey)`. */
+  keyId: Hex;
   /**
-   * The transaction that carried the grant, when the relay reported one.
-   * Optional: the relay can confirm an intent without surfacing a receipt.
+   * The session's key hash **on the account**, which is what the account
+   * contract indexes keys by and what `getKey`/`Authorized` use.
+   *
+   * It is not the `keyId`: the KeyStore keys entries by `keccak(publicKey)`
+   * and the account by `keccak(abi.encode(keyType, keccak(encodedPublicKey)))`.
+   * Calling the account's `getKey` with a `keyId` reverts `KeyDoesNotExist()`
+   * whether or not the session is live, so checking a grant on-chain needs
+   * this value (`evidence/2026-10-15-demo-grant-did-authorize-on-celo.md`).
+   */
+  keyHash: Hex;
+  status: "granted" | "failed";
+  legs: GrantLeg[];
+  /**
+   * The transaction that authorized the key on the account. Set by a grant on
+   * one chain (`client.grantSession` without `chainIds`); a grant on several
+   * chains has one per chain, in `legs`.
    */
   transactionHash?: Hex;
+  /**
+   * The cache legs once every proof has finished (or been skipped). Resolves
+   * at once with `populateCache: "await"` or false; never rejects: a proof
+   * that fails is a `FAILED` leg here. A process that exits first leaves the
+   * session usable; `syncSessionToCache` submits the proof later.
+   */
+  cacheSync: Promise<GrantLeg[]>;
+  /**
+   * The registry legs once the KeyStore registration has finished.
+   *
+   * On a network with a cached registry the account authorization goes first
+   * and the KeyStore write runs in the background, so its leg reads `PENDING`
+   * in `legs` at return and resolves here. Never rejects: a registration that
+   * fails is a `FAILED` leg here, and `onStatus("registry-write-failed")`
+   * reports it too. Resolves at once when no registration was deferred.
+   *
+   * The session is usable as soon as this call returns, registration or not.
+   */
+  registration: Promise<GrantLeg[]>;
+};
+
+/**
+ * Outcome of a registry write on the registry chain of a cached network.
+ * `via` says how it got there: through that chain's relay, as a direct
+ * transaction from the admin key (relay-less registry chains such as
+ * Sepolia), or `skipped` when there was nothing to write.
+ */
+export type RegistryWriteReport = {
+  chainId: number;
+  via: "relay" | "eoa" | "skipped";
+  status: "CONFIRMED" | "FAILED" | "PENDING" | "SKIPPED";
+  transactionHash?: Hex;
+  /** Block the write landed in; proofs into the cache are anchored at or past it. */
+  blockNumber?: bigint;
+  /** The L2 whose balance paid for the write, when the relay funded it from there. */
+  fundedFromChainId?: number;
+  /** The source-chain transaction that locked the funds. */
+  sourceTransactionHash?: Hex;
+  /** Why the write was skipped or failed, when it was. */
+  reason?: string;
+};
+
+/** Outcome of proving a registry entry into a cached network's KeyStoreCache. */
+export type CacheSyncReport = {
+  chainId: number;
+  status: "CONFIRMED" | "FAILED" | "SKIPPED";
+  keyStoreCache?: Address;
+  transactionHash?: Hex;
+  /** Registry-chain block the accepted proof was built against. */
+  l1BlockNumber?: bigint;
+  /** The cache entry after the proof, when one was read. */
+  cachedKey?: CachedKey;
+  /** Why the proof was skipped or failed, when it was. */
+  reason?: string;
+};
+
+/** Progress of grantSession. Per-chain phases carry the chain in `detail`. */
+export type GrantSessionStatus =
+  | "registry-write"
+  /**
+   * The payment for a KeyStore write is locked on the L2 and the registry
+   * chain has not run the write within the usual wait. Nothing has failed: the
+   * SDK keeps waiting, and the relay either completes the write or returns the
+   * payment. `detail.step` says which write of a first registration it is.
+   */
+  | "registry-write-pending"
+  /**
+   * The background KeyStore registration did not confirm. `detail.reason`
+   * carries the relay's own words. The session is still live on the account:
+   * the account enforces the key locally, and the KeyStore entry is the public
+   * record of it, so this says "unverifiable by third parties", not "unusable".
+   */
+  | "registry-write-failed"
+  | "account-authorization"
+  | "cache-sync"
+  | "done";
+
+/** Progress of revokeSession. Per-chain phases carry the chain in `detail`. */
+export type RevokeSessionStatus =
+  | "discovery"
+  | "registry-write"
+  /** As in `GrantSessionStatus`: the payment is locked and the KeyStore write is still being waited for. */
+  | "registry-write-pending"
+  | "account-revoke"
+  | "cache-sync"
+  | "done";
+
+/** The chain a per-chain progress event is about. */
+export type SessionStatusDetail = {
+  chainId: number;
+  /**
+   * `registry-write` and `registry-write-pending`, on a wallet's first registry write, which
+   * is two sequential intents: `root` is `initialRegisterKey`, `session` is
+   * `registerKey`. The event name is unchanged, so a consumer that ignores
+   * `step` simply sees `registry-write` twice, which is what happened.
+   */
+  step?: "root" | "session";
+  /** `registry-write-failed` only: why it failed, in the relay's words. */
+  reason?: string;
 };
 
 /** Options for grantSession. */
 export type GrantSessionOptions = {
   permissions: SessionPermissions;
+  /**
+   * What your own quote said this will cost the payer, in the token and on the
+   * chain the payer pays from (`quoteGrantSession`'s line for the funding
+   * chain). Used only to word a failure: the relay will not quote for a
+   * request it has already refused, so without it a shortfall can be stated
+   * as "you have 4.1 CELO" but not as "needs about 16.2 CELO".
+   */
+  expectedCost?: { chainId: number; token: Address; amount: bigint };
+
   /** Unix epoch seconds. Most apps use Date.now()/1000 + N. */
   expiry: number;
   /**
@@ -99,6 +294,55 @@ export type GrantSessionOptions = {
    * registered later with `registerSessionKey`.
    */
   register?: boolean;
+  /**
+   * Cached networks only. After the L1 KeyStore write and the account
+   * authorization, prove the new entry into each L2 KeyStoreCache (default
+   * true). The proof is a wallet call through the network's relay, paid from
+   * the wallet like the other legs. It waits for the L2 to anchor the
+   * Keystore write's block, up to half an hour on Celo Sepolia, so by default
+   * it keeps running after grantSession has returned: the leg reads `PENDING`
+   * and `cacheSync` resolves with the finished cache legs. The session is
+   * usable as soon as grantSession returns; nothing in `execute` reads the
+   * cache. Pass "await" to return only once the proofs are in, or false to
+   * skip them and call `syncSessionToCache` yourself later.
+   */
+  populateCache?: boolean | "await";
+  /**
+   * Progress callback: a registry write per registry chain, an account
+   * authorization per network, a cache proof per cached network, then `done`.
+   */
+  onStatus?: (status: GrantSessionStatus, detail?: SessionStatusDetail) => void;
+  /**
+   * When `feeToken` is passed to grantSession (one address or a list), each
+   * named token gets a daily spend cap in the session's permissions so the
+   * session can pay relay fees in it. This is that cap, in the token's smallest
+   * unit, applied to each added token; default one whole token per day.
+   * Tokens already capped keep their cap.
+   */
+  feeSpendLimit?: bigint;
+  /**
+   * Tokens this session will pay x402 with. For each one, the same intent that
+   * authorizes the session also makes the two approvals an x402 payment needs,
+   * so the session can pay straight away instead of after two follow-up
+   * transactions.
+   *
+   * A payment from a smart account is an ERC-1271 signature, and the account
+   * accepts a session key's signature only from a contract it has approved as a
+   * signature checker for that key, so:
+   *
+   *  - the token is approved to Permit2, which is how Permit2 moves it, and
+   *  - Permit2 and the token are both approved as signature checkers for this
+   *    key, which covers the permit2 rail (Permit2 calls back) and the eip3009
+   *    rail (the token calls back).
+   *
+   * Without them a payment fails at settlement, not at signing, and reverts
+   * with no reason naming either approval. See `checkX402Approvals`, which
+   * reads the same two things before paying.
+   *
+   * Per chain, like the authorization itself. Does nothing for a session that
+   * will not pay x402.
+   */
+  x402Tokens?: readonly Address[];
 };
 
 /**

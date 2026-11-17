@@ -11,9 +11,9 @@ import { Eyebrow } from '../../components/Eyebrow'
 
 Two different things can go wrong, and they surface differently.
 
-**Failures before submission throw.** Bad configuration, an unsupported signer, a chain with no relay. These are JavaScript `Error`s with a message string. Catch them with `try/catch`.
+**Failures before submission throw.** Bad configuration, an unsupported signer, a chain with no relay, or a relay rejection (e.g. an unaccepted `feeToken`). These are JavaScript `Error`s with a message string. Catch them with `try/catch`. When the relay rejects a request, the thrown error **leads with the relay's own reason** (e.g. `The relay rejected the request to prepare the call: fee token not supported: 0x…`) instead of a generic "Invalid parameters"; the original error is preserved on `.cause`. For the rejections people hit most, the message also says what to do: an unfunded wallet, a session with no spend limit for the token being spent, an exhausted cap, or an unaccepted fee token (see the table under [Chain and relay](#chain-and-relay)).
 
-**Failures at or after submission do not throw.** [`execute`](/sdk/execute) and [`revokeSession`](/sdk/revoke-session) return an `ExecuteResult` with `status: "FAILED"`. Nothing is raised. If you only wrap calls in `try/catch`, you will not notice these.
+**Failures at or after submission do not throw.** [`execute`](/sdk/execute) returns an `ExecuteResult` with `status: "FAILED"`. A [`grantSession`](/sdk/grant-session) on several chains (`chainIds`) returns `status: "failed"` with the failing step in `legs` (each leg carries `chainId`, `kind`, `status` and `reason`), and so does a [`revokeSession`](/sdk/revoke-session) that failed on a chain other than the one the call answers for; there, even a relay rejection is reported on its leg rather than thrown. Nothing is raised. If you only wrap calls in `try/catch`, you will not notice these.
 
 ```ts
 const result = await client.execute({ wallet, signer, calls });
@@ -22,7 +22,7 @@ if (result.status !== "CONFIRMED") {
 }
 ```
 
-[`grantSession`](/sdk/grant-session) is the exception: it throws `Session grant did not confirm: status=<status>` (with the relay code appended when one was observed, e.g. `status=FAILED (relay code 300)`) rather than returning a failed result, because there is no useful `Session` object to hand back.
+A [`grantSession`](/sdk/grant-session) on one chain is the exception: when the account did not authorize the key it throws `Session grant did not confirm: status=<status>` (with the relay code appended when one was observed, e.g. `status=FAILED (relay code 300)`) rather than returning a failed result, because there is no useful `Session` object to hand back. [`revokeSession`](/sdk/revoke-session) throws a `SessionRevokeError` in the same way when the revoke failed on the chain the call answers for; the full result is on `error.result`.
 
 ## Reading `ExecuteResult`
 
@@ -53,7 +53,7 @@ classifies by band, the same way viem does):
 | `200`–`299` | success | Surfaced as `CONFIRMED`. |
 | `300`–`499` | rejected before inclusion | Terminal, surfaced as `FAILED` immediately. Nothing reached the chain. Most common cause of `300`: the session's spend cap cannot cover the relay fee (the cap pays fees too — see [grantSession](/sdk/grant-session)), or a relay policy refused the bundle. |
 | `500`–`699` | failed on-chain | Terminal, surfaced as `FAILED`. `500` is a revert; `600` a partial failure. |
-| anything else | unknown | The SDK keeps polling rather than guessing — `FAILED` is the "safe to resubmit" signal, and misreading an unknown code could cause a duplicate submission. A timeout then returns `PENDING` with the odd code in `statusCode`. |
+| anything else | unknown | The SDK keeps polling rather than guessing: `FAILED` is terminal, and misreading an unknown code as terminal could lead to the same operation being submitted twice. A timeout then returns `PENDING` with the odd code in `statusCode`. |
 
 :::warning[`PENDING` means the outcome is genuinely unknown]
 With `noWait: true` you get `PENDING` immediately: that is expected, and you poll later using `callsId`.
@@ -65,7 +65,9 @@ Terminal rejections no longer hide here: a bundle the relay has refused returns 
 
 ## What `FAILED` carries
 
-`FAILED` comes with `statusCode` when the relay reported one, which splits the diagnosis in two: `3xx`/`4xx` means nothing reached the chain (fee, cap, or relay policy — fix the session or funding and resubmit), while `5xx`/`6xx` means it reverted on-chain. There is still no revert string or receipt on the result; for the on-chain reason, use the table below and the explorer.
+A bundle the relay refused before it reached a block is thrown as an error, with the relay's status code in the message: `3xx`/`4xx` means fee, cap or relay policy, so fix the session or funding and resubmit. `FAILED` as a result means the relay's transaction landed and reverted, and it comes with `statusCode` (`5xx`/`6xx`) when the relay reported one. There is no revert string on the result; for the on-chain reason, use the table below and the explorer.
+
+For a KeyStore registration (`grantSession` and `registerSessionKey` on a network whose KeyStore lives on another chain), the SDK does not stop at the relay's status: when the relay reports the registration as not done, the SDK reads the KeyStore. If the key is there, the registry leg is `CONFIRMED`, with the transaction that registered it, and the mirror proof goes ahead.
 
 If you need the onchain reason, look up the userOp yourself. You have `callsId`; the wallet address and chain are yours. Search the wallet address on the chain's explorer ([BscScan](https://bscscan.com) for BNB, [Etherscan](https://etherscan.io) for Ethereum) and inspect the most recent transaction to the account. The revert reason is in the trace.
 
@@ -75,14 +77,54 @@ If you need the onchain reason, look up the userOp yourself. You have `callsId`;
 |---|---|---|
 | **Policy revert.** The session exceeded its spend cap, called a contract outside `permissions.calls`, or is past `expiry`. | The session worked before and stopped, or fails only for certain calls or amounts. Read the key onchain with `isValidKey`; check your `spend` limits against the token's decimals. | Grant a new session with the right scope. Permissions are fixed at grant and cannot be widened. |
 | **Wrong decimals in a spend cap.** A cap orders of magnitude smaller than intended. | Small payments revert against a limit that reads as generous. Extremely common on BNB Chain, where stablecoins use 18 decimals rather than 6. | See the decimals warning on [grantSession](/sdk/grant-session). |
-| **Unfunded counterfactual wallet.** The wallet has no native balance to pay for the first transaction. | Happens on the very first `execute` for a new wallet. `createWallet` does not touch the chain, so the address exists but holds nothing. | Send native tokens to `wallet.address` first. See [createWallet](/sdk/create-wallet). |
+| **Unfunded counterfactual wallet.** The wallet has no native balance for the first transaction, which pays the KeyStore registration fee and the relay fee in native currency. | Happens on the very first `execute` (or `grantSession`) for a new wallet, and it **throws** rather than returning `FAILED`: the relay's simulation reverts with no reason, and the message names the balance and what the calls send. `createWallet` does not touch the chain, so the address exists but holds nothing. | Send native tokens to `wallet.address` first; on a test chain the message links the faucet. See [createWallet](/sdk/create-wallet). |
 | **Session doesn't match the grant.** The restored `Session`'s values drifted from what was granted. | Every `execute` with that session fails, including ones that previously worked. Usually follows a lossy JSON round-trip (bigints turned into numbers, re-cased hex). | Persist with `serializeSession` and restore with `deserializeSession` — see [grantSession](/sdk/grant-session#persisting-a-session). |
-| **Relay rejection.** The relay refused the bundle before inclusion. | `FAILED` within seconds with `statusCode` in the 300–499 band. The most common case is a session spend cap too small to cover the relay fee — the cap pays fees as well as the agent's spending. | Raise the cap (or fix the input) and resubmit; nothing reached the chain. |
+| **Relay rejection.** The relay refused the bundle before inclusion. | `execute` throws when the relay refused the bundle and nothing reached a block; the message carries the relay's status code. A `FAILED` result with a receipt is a transaction that landed and reverted. The most common case is a session spend cap too small to cover the relay fee: the cap pays fees as well as the agent's spending. | Raise the cap (or fix the input) and resubmit; nothing reached the chain. |
+| **A wallet's operations running into each other.** The relay picks an intent's nonce by reading the account's nonce onchain and remembers nothing between requests, so an operation prepared before it can see the previous one is handed a nonce the account rejects. | `InvalidNonce(InvalidNonce)` out of `prepare the call`, on a wallet's second operation. Not about how close together the calls arrive: nothing is reserved, and waiting for the previous operation to confirm does not help either, because the relay's own view lags the receipts it hands out. | The SDK retries a prepare rejected this way, three times over twelve seconds, so this normally never reaches you. If it does, the wallet is busier than that window: space the operations, or drive them through one caller. |
 | **A contract paid the wallet native coin with `.transfer()` / `.send()`.** An Altana wallet is an EOA delegated (EIP-7702) to the account contract, and running that code costs more than the 2300-gas stipend those Solidity primitives forward — so the *paying contract* reverts, with empty revert data. Known case: Venus core-pool vBNB `redeem` (its BNB payout is a `.transfer()`). All ERC-20 payouts are unaffected. | The call works from a plain EOA but reverts from the wallet, and the trace shows an out-of-gas or empty revert inside a native-coin send to the wallet's address. | Nothing wallet-side can add gas to someone else's `.transfer()`. Use the protocol's wrapped-token path instead (WBNB on Venus), a gateway that pays with a full-gas `call` (Venus's NativeTokenGateway, where deployed), or receive to a plain EOA. |
 
-## Errors the SDK throws
+## Relay failures: `AltanaError`
 
-There is no error class and no error code: every one of these is a plain `Error`, so match on the message if you must branch on them.
+A failure the relay reports is thrown as an `AltanaError`. Its `message` is one sentence a person can act on; branch on `code`, never on the text.
+
+```ts
+import { isAltanaError } from "@altananetwork/sdk";
+
+try {
+  await client.execute({ session, calls });
+} catch (err) {
+  if (isAltanaError(err) && err.code === "session_expired") {
+    // ask the user to grant a new session
+  }
+  throw err;
+}
+```
+
+| Field | What it holds |
+|---|---|
+| `code` | The cause, as a value to branch on (table below). |
+| `message` | The whole sentence: what happened and what to do next. |
+| `statement`, `action` | The two halves of the sentence, for an app that lays them out separately. |
+| `detail` | Everything the SDK knows about the failure. For logs, not for screens. |
+| `relayMessage`, `cause` | The relay's own words and the original error. |
+
+| `code` | Meaning | Example sentence |
+|---|---|---|
+| `insufficient_funds` | The wallet cannot pay for the operation. | `Not enough tBNB to pay for this: needs about 0.001717 tBNB, you have 0 tBNB. Add tBNB on BNB Smart Chain Testnet.` |
+| `quote_expired` | The relay's price aged out before the call was sent. | `The price for this expired before it was sent. Try again, and it will be priced afresh.` |
+| `session_expired` | The session key's expiry has passed. Checked before anything is sent. | `This session expired at 12:28 UTC. Grant a new session to continue.` |
+| `spend_limit_exceeded` | The session's spend cap does not cover this. | `This session key's spending limit does not cover this. Grant a new session key with a higher limit, as limits cannot be raised.` |
+| `call_not_permitted` | The session is not permitted to make the call. | `This session key is not allowed to make this call. Grant a new session key that allows it, as permissions cannot be widened.` |
+| `relay_unreachable` | No answer from the relay. | `Could not reach the Altana relay. Check the connection and try again.` |
+| `chain_not_served` | The relay has no entry for the chain. | `Altana does not serve this chain yet. Switch to a chain it serves, or point the SDK at a relay that serves this one.` |
+| `wallet_unknown_to_relay` | The relay has no record of the wallet. | `Invalid authorization item. Create a new wallet to continue.` |
+| `price_unavailable` | The relay could not price the fee token. | `No price was available for the fee token just now, so this could not be priced. Try again in a moment, or pay the fee in another token the relay accepts.` |
+| `prices_stale` | A price the relay converts with is older than it accepts. | `Prices are temporarily unavailable, try again shortly.` |
+| `unknown` | Anything else. The relay's own words lead. | |
+
+## Other errors the SDK throws
+
+These are plain `Error`s raised before the relay is involved, so match on the message if you must branch on them.
 
 ### Configuration
 
@@ -98,8 +140,16 @@ There is no error class and no error code: every one of these is a plain `Error`
 
 | Message | Cause |
 |---|---|
-| `No Altana relay serves chain <id> (<name>). ...` | The chain has no relay and cannot execute. `BASE` is read-only in this sense: it is an L2 cache target, not an execution chain. |
+| `No Altana relay serves chain <id> (<name>). ...` | The chain has no relay and cannot execute. `BASE` is read-only in this sense: it is an L2 cache target. [`holdings`](/sdk/balances#discovering-holdings) throws this too, since discovery goes through the relay. |
+| `The Altana relay at <url> does not serve chain <id> (its wallet_getCapabilities has no entry for it). ...` | `createWallet` / `createPasskeyWallet` reached a relay that does not list the chain. Set `relayUrl` to a relay that serves it. |
+| `The relay rejected the request to ...: fee token not supported ... (fee tokens the relay accepts on <chain>: ...)` | `feeToken` named a token the relay does not take on that chain. The message lists the tokens it does accept, read live. Omit `feeToken` and the relay charges one the wallet holds, or set one from the list (`client.feeCurrencies()` returns it). |
 | `Balance for <address> did not reach <n> wei within <ms>ms` | A funding wait timed out. |
+| `The relay rejected the request to <doing>: its simulation reverted with no reason on <chain> (chainId <id>), simulating <n> calls to <address>, sending <amount> … (relay: 0x)` | The relay's simulation reverted with no reason bytes, so the response says nothing about the cause. The message names the chain, the calls and what they send, and then the wallet's native balance there: **`the wallet cannot pay for it`** when the balance is below what the calls send (fund it; on a test chain the faucet is in the message), or **`the wallet's balance is not the cause`** when it is above. The second reads as "look elsewhere": the `.transfer()` row above is one such cause. |
+| `… intent reverted: NoSpendPermissions(…) NoSpendPermissions: the session has no spend limit for a token this transaction spends. …` | The session was granted without a spend limit for the token being spent. Relay fees are native, so a session with only token caps fails here on every transaction; a native-capped session fails here when it sends an ERC-20 it has no cap for. Grant a new session — see [grantSession](/sdk/grant-session). |
+| `… intent reverted: ExceededSpendLimit(…) ExceededSpendLimit: the session's spend cap for <token> is exhausted …` | The calls themselves exceed the session's cap for that token this period. Almost always the decimals mistake (18 on BNB Chain). A cap too small for the relay fee surfaces later as `FAILED` with `statusCode` 300, not here. |
+| `fundNative: the relay cannot fund native currency …` | `fundNative` is deprecated and always throws: the relay's faucet mints ERC-20 fee tokens and cannot send native currency. Send it yourself from the chain's faucet (`faucetHint(chainId)`) and poll with `waitForBalance`. |
+| `The relay could not list holdings for <address> on chain <id>: <reason>` | [`holdings`](/sdk/balances#discovering-holdings): the relay's `wallet_getAssets` call failed. `<reason>` is the relay's own message (or the transport error); the original error is on `.cause`. |
+| `The relay returned a malformed wallet_getAssets response for <address> on chain <id>: <detail>` | [`holdings`](/sdk/balances#discovering-holdings): the relay answered, but not in the ERC-7811 shape the SDK expects. `<detail>` names the offending part. |
 
 ### Signers
 
@@ -110,9 +160,25 @@ Passing a signer the SDK cannot use produces a multi-line message naming every s
 | Message | Cause |
 |---|---|
 | `syncKeyToL2: tx reverted (L1Block anchor moved); refresh to retry` | The L1 anchor advanced between proof construction and inclusion. Call again. |
-| `ensureKeyCached: L2 did not anchor past L1 block <n> within <ms>ms` | Base did not catch up within 5 minutes. Base normally anchors 1 to 3 minutes behind L1. |
-| `L2 L1Block predeploy reports zero hash — chain not anchored yet` | The L2 has no anchored L1 block. |
+| `ensureKeyCached: L2 did not anchor past L1 block <n> within <ms>ms` | The L2 did not anchor the L1 block within the wait (default 30 minutes). Call `syncSessionToCache` again; the Keystore entry is already live. |
+| `L2 L1Block predeploy reports zero hash: chain not anchored yet` | The L2 has no anchored L1 block. |
 | `l2WalletClient has no account configured` / `... no chain configured` | The L2 wallet client is missing an account or chain. |
+
+### L2 networks
+
+| Message | Cause |
+|---|---|
+| `The KeyStore update on <chain> has not completed yet. The payment for it is held on <chain> and comes back if the update does not complete. ...` | The relay took the payment on the L2 and had not finished the write on the L1 after 65 minutes of waiting. Nothing is lost: the relay completes the write or returns the payment. Call `registerSessionKey` (or `revokeSession` again) later; it only sends what is still missing. |
+| `Refusing to send a call to <address> on <chain>: that is the KeyStore/KeyStoreController address of <Keystore chain> ...` | A call targeted the Keystore or Controller address on an L2. Those contracts are on the L1; `grantSession`, `revokeSession` and `registerSessionKey` write them there. |
+| `Registry writes on <chain> are direct transactions from the admin's private key ... A passkey (P256) admin cannot sign one. ...` | Passkey wallet on an L2 testnet, where Keystore writes are direct transactions on Sepolia. Grant with `register: false`. |
+| `Registry writes on <chain> are sent directly from the admin key, so the KeyStore records the sender as the wallet. The signer's address (...) is not the wallet address (...)` | On a testnet L1 (Sepolia) the admin key must be the wallet's own key. |
+| `Registry writes on <chain> are sent directly from the admin key <address>, which holds <n> but needs about <m> (registration fee plus gas). Fund ...` | The admin key needs Sepolia ETH. The message names the faucet. |
+| A `grantSession` leg `account` with `status: "SKIPPED"` and reason `registry write on chain <id> did not confirm; authorization not attempted` | The Keystore write failed (its own leg says why); the chains behind it were not authorized. A grant on one chain throws in this case. |
+| `The registry chain's RPC refused eth_getProof at block <n> (the block the L2 anchors): ...` | No configured RPC serves proofs at the anchored block. Set `proofRpcUrls` on the registry network or pass `l1Client` to `syncSessionToCache`. |
+| `syncSessionToCache: the L1 anchor moved on every one of <n> attempts ...` | Every proof missed its anchor window. Raise `maxAttempts`. |
+| `syncSessionToCache: L2 did not anchor past L1 block <n> within <ms>ms` | The L2 did not anchor the L1 block within the wait. Raise `anchorTimeoutMs`. |
+
+A failed cache proof inside `grantSession` or `revokeSession` is a `cache` leg with `status: "FAILED"` and a `reason`, and a failed Keystore write a `registry` leg; either makes the result `failed`. Calling the same function again only acts on what is still pending. Inside `registerSessionKey` the cache proof is reported in `result.cache`.
 
 ### Recovery
 

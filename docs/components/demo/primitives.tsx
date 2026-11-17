@@ -106,7 +106,7 @@ export function StatusBox({ status, children }: { status: StepStatus; children?:
   )
 }
 
-export function TxConfirmed({ hash, label }: { hash: string; label: string }) {
+export function TxConfirmed({ hash, label, explorerUrl = 'https://bscscan.com' }: { hash: string; label: string; explorerUrl?: string }) {
   return (
     <div style={{
       marginTop: '0.75rem', padding: '0.75rem 1rem', background: '#d1fae5',
@@ -115,7 +115,7 @@ export function TxConfirmed({ hash, label }: { hash: string; label: string }) {
     }}>
       <span style={{ flex: 1, wordBreak: 'break-all' }}>✓ {label}: {hash}</span>
       <a
-        href={`https://bscscan.com/tx/${hash}`}
+        href={`${explorerUrl}/tx/${hash}`}
         target="_blank"
         rel="noreferrer"
         title="View in explorer"
@@ -133,7 +133,7 @@ export function TxConfirmed({ hash, label }: { hash: string; label: string }) {
 
 export function StepCard({ number, title, description, children, completed }: {
   number: number
-  title: string
+  title: React.ReactNode
   description: React.ReactNode
   children: React.ReactNode
   completed?: boolean

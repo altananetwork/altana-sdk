@@ -1,6 +1,6 @@
 ---
 title: balances
-description: Read a wallet's on-chain balances on a given chain.
+description: Read a wallet's on-chain balances on a given chain, or discover which tokens it holds.
 ---
 
 import { Eyebrow } from '../../components/Eyebrow'
@@ -70,6 +70,47 @@ if (t.ok && t.scaled) {
 ```
 
 Scheduled multiplier changes (`newUIMultiplier()` / `effectiveAt()`, ERC-165 id `0x4bd27648`) are compared against the block timestamp of the same multicall: a change still in the future is surfaced under `scaled.pending` without being applied early; a change already effective is applied even if the token's `uiMultiplier()` lazily reports the old value.
+
+## Discovering holdings
+
+`balances` needs you to name the tokens. When you don't know what a wallet holds, ask `holdings`: it queries the Altana relay for the wallet's assets on the chain, then reads every ERC-20 it names live through the same multicall path as `balances`, so the entries are the same `TokenBalance` shape, BEP-677 scaling included.
+
+```ts
+const { native, tokens } = await client.holdings({ wallet });
+
+for (const t of tokens) {
+  if (!t.ok) continue;
+  console.log(t.symbol, t.display, t.address);
+}
+```
+
+No configuration is needed: the relay is the one already attached to the chain (`RELAY_URL` for mainnets, the testnet relay for BSC testnet). There is no indexer key to set and no token list to maintain.
+
+Tokens whose live balance is zero are dropped by default. Pass `includeZero: true` to keep them (useful for "tokens this wallet has ever held" views). Entries whose reads failed (`ok: false`) are always kept so a broken token never disappears silently.
+
+```ts
+const all = await client.holdings({ wallet, includeZero: true });
+```
+
+```ts
+client.holdings(opts: ClientHoldingsOptions): Promise<HoldingsResult>;
+
+type ClientHoldingsOptions = {
+  wallet: Wallet | Address;
+  includeZero?: boolean;          // keep zero-balance tokens; default false
+  chainId?: number;               // defaults to the client's default chain
+};
+
+type HoldingsResult = {
+  native: bigint;                 // native token balance in wei
+  tokens: TokenBalance[];         // every ERC-20 the relay lists, read live
+};
+```
+
+Two things to know:
+
+- **It needs a relay.** Discovery goes through the chain's Altana relay, so `holdings` throws `No Altana relay serves chain <id> …` on keystore-only chains, and `The relay could not list holdings for <address> on chain <id>: <reason>` when the relay call fails. See [Errors](/sdk/errors#chain-and-relay).
+- **Testnet lists what the testnet relay knows.** On BSC testnet the result is limited to the tokens the testnet relay tracks; a freshly deployed test token may not appear. Use `balances` with an explicit `tokens` list for those.
 
 ## Parameters
 

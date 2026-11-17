@@ -43,8 +43,8 @@ bun test src/sessionKeyRegistration.test.ts   # etc., per file
 - The pending section is named for the version it will become, and the
   publishable `package.json` versions on `staging` match it. The first
   user-visible change of a cycle creates the section and bumps the versions:
-  a fix starts a patch (`0.8.1`), a feature starts a minor (`0.8.0` →
-  `0.9.0`; pre-1.0, breaking changes also go in minors). A later feature
+  a fix starts a patch (`1.0.1`), a feature starts a minor (`1.0.0` →
+  `1.1.0`), and a breaking change to the sdk or mcp package starts a major. A later feature
   landing in a patch cycle raises it to the next minor — the target version
   only ever goes up within a cycle, never down.
 - CI must be green. If you're contributing from a fork, the on-chain

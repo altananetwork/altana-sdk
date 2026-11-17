@@ -12,16 +12,15 @@
  * headless path runs without an OS keychain.
  */
 
-import {
-  prepareUpgradeAccount,
-  upgradeAccount,
-} from "porto/viem/RelayActions";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import type { Address, Hex } from "viem";
+import type { Address } from "viem";
 import { type NetworkConfig } from "./config.js";
 import {
   buildRelayClient,
+  provisionAccount,
+  type ProvisioningPlan,
 } from "./internal/relay.js";
+import { provisioningNetworks } from "./internal/cachedRegistry.js";
 import {
   createPasskey,
   passkeyToPortoKey,
@@ -75,21 +74,18 @@ export async function createPasskeyWallet(
   // 3. EIP-7702 upgrade on every configured chain. The throwaway signs each
   //    chain's authorization tuple; the passkey is registered as the smart
   //    account's admin authority. Counterfactual: the setCode lands as a
-  //    preCall on each chain's first execute.
-  for (const network of opts.networks) {
-    const relayClient = buildRelayClient(network);
-    const prepared: any = await prepareUpgradeAccount(relayClient, {
-      address: walletAddress,
-      authorizeKeys: [passkeyAdminKey],
-    });
-    const signatures: Record<string, Hex> = {};
-    for (const [name, digest] of Object.entries(prepared.digests ?? {})) {
-      signatures[name] = await throwawayAccount.sign({ hash: digest as Hex });
-    }
-    await upgradeAccount(relayClient as any, {
-      context: prepared.context,
-      signatures,
-    } as any);
+  //    preCall on each chain's first execute. A cached network's registry
+  //    chain is included when it has a relay, because registry writes go
+  //    through the smart account there; so is a chain the network names in
+  //    `provisionAlso` (Celo names Ethereum). There is no second chance to
+  //    provision either once the throwaway is gone.
+  const plan: ProvisioningPlan = {
+    walletAddress,
+    authorizeKeys: [passkeyAdminKey],
+    signDigest: (digest) => throwawayAccount.sign({ hash: digest }),
+  };
+  for (const network of provisioningNetworks(opts.networks)) {
+    await provisionAccount(buildRelayClient(network), plan);
   }
 
   return {

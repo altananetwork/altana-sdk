@@ -314,6 +314,12 @@ document.getElementById("btn-grant")!.addEventListener("click", async () => {
       },
       expiry: Math.floor(Date.now() / 1000) + lifetimeSec,
     });
+    if (sessionState.status !== "granted") {
+      const failed = sessionState.legs.filter((l) => l.status === "FAILED");
+      const reasons = failed.map((l) => `chain ${l.chainId} ${l.kind}: ${l.reason ?? "failed"}`).join("; ");
+      sessionState = null;
+      throw new Error(reasons);
+    }
     log("Session granted on-chain. Wallet contract now enforces the rules.", "ok");
     markCode("code-grant", "done");
     markCode("code-execute", "active");
@@ -490,15 +496,19 @@ document.getElementById("btn-revoke")!.addEventListener("click", async () => {
       session: sessionState,
     });
     setText("revoke-status", result.status);
-    if (result.transactionHash) {
+    const accountTx = result.legs.find((l) => l.kind === "account" && l.transactionHash)?.transactionHash;
+    if (accountTx) {
       setText(
         "revoke-tx",
-        `<a href="${explorerTx(result.transactionHash)}" target="_blank">${result.transactionHash}</a>`,
+        `<a href="${explorerTx(accountTx)}" target="_blank">${accountTx}</a>`,
       );
-      log(`Session revoked: ${result.transactionHash}`, "ok");
+    }
+    if (result.status === "revoked") {
+      log(`Session revoked${accountTx ? `: ${accountTx}` : ""}`, "ok");
       markCode("code-revoke", "done");
     } else {
-      log(`Revoke status: ${result.status} (callsId ${result.callsId})`);
+      const failed = result.legs.filter((l) => l.status === "FAILED");
+      log(`Revoke failed: ${failed.map((l) => `chain ${l.chainId} ${l.kind}: ${l.reason ?? "failed"}`).join("; ")}`, "err");
     }
     show("revoke-info");
   } catch (err) {

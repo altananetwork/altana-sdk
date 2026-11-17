@@ -10,7 +10,7 @@ Every permission lives in a neutral onchain registry: openly verifiable, revocab
 - **Cross-app authorization.** Any DEX, orderbook, or protocol can read whether an agent is authorized, without integrating a specific wallet vendor.
 - **Instant revocation.** Change your mind at any point. Revoke a key in one transaction, and it takes effect before the next action.
 
-Live on mainnet across BNB Chain, Ethereum, and Base. The KeyStore contracts
+Live on mainnet across BNB Chain, Ethereum, Celo, and Base. The KeyStore contracts
 were [audited by CertiK](https://docs.altana.network/security/audits).
 
 ## Install
@@ -80,7 +80,8 @@ Beyond wallets and sessions, `@altananetwork/sdk` also covers:
 - **[Off-chain order signing](https://docs.altana.network/sdk/sign-order).** Session keys sign ERC-1271 authorizations that any contract can verify.
 - **[Reading balances](https://docs.altana.network/sdk/balances)**, including BEP-677 scaled-UI-amount tokens.
 - **[Syncing a key to an L2](https://docs.altana.network/sdk/sync-to-l2).** Prove KeyStore state to an OP Stack L2 so it can read the key without an L1 call.
-- **[BNB testnet](https://docs.altana.network/sdk/bnb-testnet)**, with a faucet helper for funding test accounts.
+- **[Testnets](https://docs.altana.network/concepts/networks/testnet)**: BNB testnet and Celo Sepolia, with faucets.
+- **[L2 networks](https://docs.altana.network/concepts/keystore#reaching-other-chains)** (Celo). Wallets run on the L2 through the relay; sessions are recorded in the L1 KeyStore and proven into a KeyStoreCache on the L2.
 
 ## Packages
 
@@ -93,7 +94,7 @@ Beyond wallets and sessions, `@altananetwork/sdk` also covers:
 
 Full docs, guides, and SDK reference: **[docs.altana.network](https://docs.altana.network/)**.
 
-- Getting started: [create a smart agentic wallet](https://docs.altana.network/getting-started/create-agentic-wallet) (passkey or private key), [connect an AI tool](https://docs.altana.network/getting-started/build-with-claude)
+- Getting started: [create a smart agentic wallet](https://docs.altana.network/getting-started/create-agentic-wallet) (passkey or private key), [build with AI](https://docs.altana.network/getting-started/build-with-claude)
 - Concepts: [KeyStore](https://docs.altana.network/concepts/keystore), [sessions](https://docs.altana.network/concepts/sessions), [how Altana compares](https://docs.altana.network/concepts/comparison)
 - SDK reference: [`createWallet`](https://docs.altana.network/sdk/create-wallet), [`createPasskeyWallet`](https://docs.altana.network/sdk/create-passkey-wallet), [`grantSession`](https://docs.altana.network/sdk/grant-session), [`execute`](https://docs.altana.network/sdk/execute), [`revokeSession`](https://docs.altana.network/sdk/revoke-session), [`recoverFromPasskey`](https://docs.altana.network/sdk/recover-from-passkey), [`balances`](https://docs.altana.network/sdk/balances)
 - Payments and jobs: [x402 (buyer)](https://docs.altana.network/sdk/x402), [x402 (seller)](https://docs.altana.network/sdk/x402-server), [ERC-8183 agent jobs](https://docs.altana.network/sdk/erc8183), [order signing](https://docs.altana.network/sdk/sign-order)

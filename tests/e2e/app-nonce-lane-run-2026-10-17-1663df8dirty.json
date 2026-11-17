@@ -1,0 +1,52 @@
+{
+  "relay": "https://relay-staging-production-2657.up.railway.app",
+  "startedAt": "2026-10-17T10:24:22.237Z",
+  "txCount": 2,
+  "sdkBuild": "1663df8+dirty",
+  "wallet": "0xe425321Ad3e45fCE38bAB6fa0c38c674792Bc690",
+  "statusEvents": [
+    "t+27.5s account-authorization chain 11142220",
+    "t+32.9s registry-write chain 11155111",
+    "t+33.3s registry-write chain 11155111 (root)",
+    "t+44.9s done",
+    "t+52.7s registry-write chain 11155111 (session)",
+    "t+76.4s cache-sync chain 11142220"
+  ],
+  "grantReturnedAt": "t+44.9s",
+  "lanes": {
+    "A": "0xa17aba7a65661b06fe329487504eac7c5a00ef213493f5e0",
+    "B": "0xa17a9ee9dbeb898be8f4c7227678cf8525d4cdd6b292b633"
+  },
+  "allSettledSeconds": 12.1,
+  "failures": [],
+  "appTxs": {
+    "A": [
+      "0x3bcbb0866afe83b440e13d4e75bebb2dd18e14bc6aa28d38b21540baaecc59f8",
+      "0xcab01adcc55f1faddbfd9c16e302089538d57af45f03820e033775456534d7ce"
+    ],
+    "B": [
+      "0x1651ae0784a50e55d0a1618d70f4e6d4c42cb6216ec0b1b33859c2329a29a133",
+      "0x679a623826b2e6d10fe3a4cf8dc95d1a3f3148a4efe4018936a7cd6379188c84"
+    ]
+  },
+  "appLaneCounters": {
+    "A": [
+      "0",
+      "1"
+    ],
+    "B": [
+      "0",
+      "1"
+    ]
+  },
+  "registryLeg": {
+    "status": "CONFIRMED",
+    "tx": "0xea8c6c318725d6eeecbdf7d15758683aebc0849460f97a620f7a6433396b7beb"
+  },
+  "registrationSourceLane": "LANE 0 (the relay's)",
+  "swept": {
+    "value": "2.516522982841914377",
+    "tx": "0xf2db154ebd59cf160c761d2c63798e386a4c6d3756a6e33d177462745c540030"
+  },
+  "verdict": "PASS: 4 transactions from two separate SDK processes on two session keys of one wallet, fired at once during a live registration, no InvalidNonce; each key on its own lane and the registration on lane 0"
+}

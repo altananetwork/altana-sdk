@@ -2,14 +2,17 @@
  * KeyStore core: ABIs, chain config, encode helpers, and read helpers.
  *
  * This is the single source of truth reused by the MCP server (./index.ts),
- * the demo gating endpoint, the demo runner, and every test. It is
- * SDK-independent (no @altananetwork/* dependency) — only viem.
+ * the demo gating endpoint, the demo runner, and every test. The KeyStore
+ * itself needs nothing but viem; the L2 cache proof is the one exception and
+ * lives in ./cache.ts, which borrows the SDK's proof builder rather than
+ * keeping a second copy of the KeyStore's storage layout (see that file).
  *
  * The KeyStore is a NON-custodial authorization registry. It stores which
  * keys are authorized for an account and their liveness (revoked / expired).
  * It does NOT store spend limits or scope — `isValidKey` answers
  * "exists AND not revoked AND not expired", nothing more.
  */
+import { registrationValueFor } from "@altananetwork/sdk";
 import {
   type Address,
   type Chain,
@@ -17,7 +20,7 @@ import {
   encodeFunctionData,
   keccak256,
 } from "viem";
-import { bsc, bscTestnet, mainnet } from "viem/chains";
+import { baseSepolia, bsc, bscTestnet, celo, celoSepolia, mainnet, sepolia } from "viem/chains";
 
 export const ZERO_ADDRESS =
   "0x0000000000000000000000000000000000000000" as Address;
@@ -137,6 +140,26 @@ export type ChainConfig = {
   rpcUrl: string;
   explorerUrl: string;
   currencySymbol: string;
+  /**
+   * The L2 whose cache mirrors this registry, when the chain was named by an L2
+   * alias. `ALTANA_CHAIN=celo-sepolia` resolves to the Sepolia registry *and*
+   * carries Celo Sepolia here, so the cache tools know which mirror is meant;
+   * `ALTANA_CHAIN=sepolia` resolves to the same registry with no L2, because
+   * several L2s are rooted in it and nothing says which.
+   */
+  l2?: L2CacheConfig;
+};
+
+/** An L2 that reads this registry through a KeyStoreCache. */
+export type L2CacheConfig = {
+  key: string;
+  chainId: number;
+  chain: Chain;
+  /** KeyStoreCacheOPStack, which accepts the proof and answers `isValidKey` locally. */
+  cache: Address;
+  rpcUrl: string;
+  explorerUrl: string;
+  currencySymbol: string;
 };
 
 export const CHAINS: Record<string, ChainConfig> = {
@@ -172,23 +195,102 @@ export const CHAINS: Record<string, ChainConfig> = {
     explorerUrl: "https://testnet.bscscan.com",
     currencySymbol: "tBNB",
   },
+  // Celo keeps its own KeyStore, like BNB Chain: keys used on Celo are
+  // registered on Celo, and the registration fee is paid in CELO.
+  celo: {
+    key: "celo",
+    chainId: 42220,
+    chain: celo,
+    keyStore: "0x83b30935f36d6ccf9B1ec3b5E47F2866b97cd27c",
+    controller: "0x47bA5fc2A5b0CcB24BA3fAC9D4B59400eE9fd1D6",
+    rpcUrl: "https://celo-rpc.publicnode.com",
+    explorerUrl: "https://celoscan.io",
+    currencySymbol: "CELO",
+  },
+  "celo-sepolia": {
+    key: "celo-sepolia",
+    chainId: 11142220,
+    chain: celoSepolia,
+    keyStore: "0xCC3df52B6aD826781AAD86EcEB1459ed0b1Ae3F6",
+    controller: "0x54eAb49d805336DB8591BAAF9ac630D0A58Ad2cD",
+    rpcUrl: "https://forno.celo-sepolia.celo-testnet.org",
+    explorerUrl: "https://sepolia.celoscan.io",
+    currencySymbol: "CELO",
+  },
+  // Sepolia KeyStore: the registry behind Base Sepolia. Base Sepolia itself
+  // has no KeyStore, only a cache mirrored from this one, so "base-sepolia"
+  // resolves here: authority for a Base Sepolia wallet is rooted in Sepolia.
+  sepolia: {
+    key: "sepolia",
+    chainId: 11155111,
+    chain: sepolia,
+    keyStore: "0x38Aaf396F462Ad3a4F38ADa653AF6bDEA55F772d",
+    controller: "0xc1525B766c134f7EB5B1d8e4a69C6Cb97Aff2379",
+    rpcUrl: "https://ethereum-sepolia-rpc.publicnode.com",
+    explorerUrl: "https://sepolia.etherscan.io",
+    currencySymbol: "SepoliaETH",
+  },
 };
 
+/**
+ * Aliases resolve to the chain that HOLDS the registry. Base Sepolia (84532)
+ * has no KeyStore of its own: its authority is rooted in the Sepolia KeyStore
+ * and mirrored into a cache on Base Sepolia, so "base-sepolia" resolves to
+ * sepolia. Encoded calls carry the resolved chainId, so a host signs them on
+ * the registry chain.
+ */
 const ALIASES: Record<string, string> = {
   bsc: "bnb",
   "56": "bnb",
   eth: "ethereum",
   mainnet: "ethereum",
   "1": "ethereum",
+  "42220": "celo",
   "bsc-testnet": "bnb-testnet",
   tbnb: "bnb-testnet",
   "97": "bnb-testnet",
+  "11155111": "sepolia",
+  "11142220": "celo-sepolia",
+  "base-sepolia": "sepolia",
+  "84532": "sepolia",
+};
+
+/**
+ * The L2 caches, keyed by the alias that names them. Only an L2 alias carries
+ * one: `base-sepolia` and `84532` mean Base Sepolia. Naming the registry chain
+ * directly (`sepolia`) leaves `l2` unset, because more than one L2 can be
+ * rooted in it and the server would be guessing.
+ *
+ * Addresses from the Altana KeyStore deployment manifests.
+ */
+export const L2_CACHES: Record<string, L2CacheConfig> = {
+  "base-sepolia": {
+    key: "base-sepolia",
+    chainId: 84532,
+    chain: baseSepolia,
+    // KeyStoreCacheOPStack, anchored to the Sepolia KeyStore.
+    cache: "0x37ebf8F17c3705568a03fB3A1629AcE7B3D95FFf",
+    rpcUrl: "https://sepolia.base.org",
+    explorerUrl: "https://sepolia.basescan.org",
+    currencySymbol: "ETH",
+  },
+};
+
+/** Which L2 cache an alias names, if any. */
+const L2_ALIASES: Record<string, string> = {
+  "base-sepolia": "base-sepolia",
+  "84532": "base-sepolia",
 };
 
 export function resolveChain(name?: string): ChainConfig {
   const k = (name ?? "bnb").toLowerCase();
-  return CHAINS[k] ?? CHAINS[ALIASES[k] ?? ""] ?? CHAINS["bnb"];
+  const l1 = CHAINS[k] ?? CHAINS[ALIASES[k] ?? ""] ?? DEFAULT_CHAIN;
+  const l2 = L2_CACHES[L2_ALIASES[k] ?? ""];
+  return l2 ? { ...l1, l2 } : l1;
 }
+
+/** The fallback for an unrecognized ALTANA_CHAIN. */
+const DEFAULT_CHAIN: ChainConfig = CHAINS.bnb as ChainConfig;
 
 /** v0 convention: keyId = keccak256(SEC1-uncompressed publicKey bytes). */
 export function deriveKeyId(publicKey: Hex): Hex {
@@ -232,7 +334,12 @@ export function buildRegisterCall(args: {
   });
   return {
     to: args.chain.controller,
-    value: args.fee,
+    // The quoted fee plus headroom for oracle drift; the controller refunds the
+    // excess to msg.sender. Imported from the SDK rather than recomputed here,
+    // for the same reason `cache.ts` imports the storage layout: the rule
+    // should be written down once, and a second copy of it is the fragile kind
+    // of duplication.
+    value: registrationValueFor(args.fee),
     data,
     chainId: args.chain.chainId,
   };

@@ -12,9 +12,13 @@
 import { readdirSync, readFileSync, existsSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getAddress } from "viem";
+import { createRequire } from "node:module";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+// viem is a dependency of the sdk package, not of the repo root, and whether
+// the installer also hoists it to the root depends on its version. Resolve it
+// from the package that declares it so the guard runs wherever it is called.
+const { getAddress } = createRequire(join(root, "packages", "wallet", "package.json"))("viem");
 const pkgsDir = join(root, "packages");
 
 const DEP_FIELDS = [

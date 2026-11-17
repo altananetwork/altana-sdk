@@ -20,7 +20,6 @@ import {
   buildClaimRefundCall,
   getErc8183Job,
   getErc8183DeliverableUrl,
-  fundNative,
   waitForBalance,
   erc8183Addresses,
   BNB_TESTNET,

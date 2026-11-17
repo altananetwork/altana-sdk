@@ -10,6 +10,7 @@
  */
 
 import {
+  decodeFunctionData,
   encodeFunctionData,
   keccak256,
   type Address,
@@ -96,6 +97,38 @@ const KEYSTORE_ABI = [
   },
 ] as const;
 
+/** KeyStore's event for a key landing, emitted by the KeyStore itself (not the controller). */
+export const KEY_REGISTERED_EVENT = {
+  type: "event",
+  name: "KeyRegistered",
+  inputs: [
+    { name: "user", type: "address", indexed: true },
+    { name: "keyId", type: "bytes32", indexed: true },
+    { name: "validator", type: "address", indexed: true },
+    { name: "expiry", type: "uint40", indexed: false },
+    { name: "isRoot", type: "bool", indexed: false },
+  ],
+} as const;
+
+/**
+ * The key a controller call registers: the `keyId` of an `initialRegisterKey`
+ * or `registerKey` call as the SDK builds them. Undefined for anything else,
+ * including calldata that does not decode, so a caller can tell "this call
+ * registers key X" from "this call is not one I can read back".
+ */
+export function registeredKeyIdOf(data: Hex | undefined): Hex | undefined {
+  if (!data || data === "0x") return undefined;
+  try {
+    const decoded = decodeFunctionData({ abi: CONTROLLER_ABI, data });
+    if (decoded.functionName === "initialRegisterKey" || decoded.functionName === "registerKey") {
+      return decoded.args[0];
+    }
+  } catch {
+    // Not a registration call.
+  }
+  return undefined;
+}
+
 const UINT40_MAX = 2 ** 40 - 1;
 
 function toUint40Expiry(expiry: number | undefined): number {
@@ -166,12 +199,15 @@ export function readIsValidKey(
   network: NetworkConfig,
   user: Address,
   keyId: Hex,
+  /** Read at this block instead of the latest. */
+  blockNumber?: bigint,
 ): Promise<boolean> {
   return publicClient.readContract({
     address: network.keyStore,
     abi: KEYSTORE_ABI,
     functionName: "isValidKey",
     args: [user, keyId],
+    ...(blockNumber !== undefined ? { blockNumber } : {}),
   }) as Promise<boolean>;
 }
 
@@ -206,10 +242,64 @@ export async function buildFirstActionPrepend(args: {
 }
 
 /**
+ * How much over the quoted registration fee to send, as a percentage.
+ *
+ * `KeyStoreController.getRegistrationFeeInWei()` is **oracle-driven**: it
+ * converts a USD fee (currently $0.50) through Chainlink's ETH/USD feed —
+ * `registrationFeeUSD * 10**feedDecimals / ethPrice` — so the wei amount moves
+ * inversely with the ETH price on every oracle round, while the controller
+ * requires `msg.value >= fee` **at inclusion**.
+ *
+ * **10%, sized against the measurement rather than against the symptom.**
+ * Chainlink ETH/USD rounds on Sepolia step at most ~1.4%, so 10% is about six
+ * times the worst observed step. The 5.49% shortfall that prompted this was a
+ * **21-hour-old payload**, not market drift — so a margin large enough to
+ * absorb staleness would be sizing for a bug instead of fixing it. The fix for
+ * that is the lifecycle rule: compute the value fresh at prepare time and
+ * never send a registry payload built in an earlier oracle round.
+ *
+ * **Overpaying is safe, which is what makes a margin the right shape for the
+ * remaining drift.** `_transferFee` forwards the fee to the treasury and
+ * refunds the excess to `msg.sender`:
+ *
+ * ```solidity
+ * require(msg.value >= fee, "Controller: insufficient fee");
+ * if (msg.value > fee) {
+ *     (bool refunded, ) = msg.sender.call{value: msg.value - fee}("");
+ *     require(refunded, "Controller: refund failed");
+ * }
+ * ```
+ *
+ * Two details of that matter here. The refund is a **full-gas `call`**, not a
+ * 2300-gas `.transfer()`, so an EIP-7702 delegated account can receive it —
+ * running account code costs more than the stipend, which is why `.transfer()`
+ * payouts fail to our wallets. And the refund is `require`d, so a refund that
+ * could not be received reverts the registration loudly rather than keeping the
+ * change.
+ *
+ * The only cost of carrying the margin is that the wallet must hold it at
+ * inclusion. `planRegistryFunding` asks for it without a change there, because
+ * it sums the calls' own `value` fields.
+ */
+export const REGISTRATION_FEE_MARGIN_PERCENT = 110n;
+
+/**
+ * The native value to send with a controller registration call: the quoted fee
+ * plus 10% of headroom for oracle drift. The excess is refunded by the
+ * controller, so this is headroom rather than a cost.
+ *
+ * It is not a substitute for a fresh quote: see the margin's note on staleness.
+ */
+export function registrationValueFor(fee: bigint): bigint {
+  return (fee * REGISTRATION_FEE_MARGIN_PERCENT) / 100n;
+}
+
+/**
  * Builds the call payload to register a wallet's admin authority in KeyStore
- * for the first time. The caller must supply msg.value >= fee (read via
- * readRegistrationFee). Use this in the first execute() so registration
- * batches with whatever the agent is actually doing.
+ * for the first time. Pass the fee as `readRegistrationFee` reports it; the
+ * call's `value` carries `registrationValueFor(fee)`, which adds headroom for
+ * oracle drift and is refunded by the controller. Use this in the first
+ * execute() so registration batches with whatever the agent is actually doing.
  *
  * `publicKey` is the SEC1-encoded public key of the admin authority — for
  * privateKey signers, the secp256k1 pubkey; for passkey signers, the P256
@@ -223,7 +313,7 @@ export function buildInitialRegisterCall(args: {
 }): { to: Address; value: bigint; data: Hex } {
   return {
     to: args.network.keyStoreController,
-    value: args.fee,
+    value: registrationValueFor(args.fee),
     data: encodeFunctionData({
       abi: CONTROLLER_ABI,
       functionName: "initialRegisterKey",
@@ -255,7 +345,7 @@ export function buildAdditionalRegisterCall(args: {
 }): { to: Address; value: bigint; data: Hex } {
   return {
     to: args.network.keyStoreController,
-    value: args.fee,
+    value: registrationValueFor(args.fee),
     data: encodeFunctionData({
       abi: CONTROLLER_ABI,
       functionName: "registerKey",

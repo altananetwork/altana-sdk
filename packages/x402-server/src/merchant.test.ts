@@ -22,7 +22,7 @@ import { buildChallenge } from "./challenge.js";
 import { createX402Merchant } from "./merchant.js";
 import { decodeXPayment } from "./decode.js";
 import { verifyPayment } from "./verify.js";
-import { U_TOKEN, USDT_BSC } from "./tokens.js";
+import { U_TOKEN, USDC_CELO_SEPOLIA, USDT_BSC, USDT_CELO_SEPOLIA } from "./tokens.js";
 import type { MerchantConfig } from "./types.js";
 
 const MERCHANT = "0x3C5f3a6cE224BB89D72f5EB4232ecC27F67B3eeA" as const;
@@ -437,5 +437,250 @@ describe("b402 wire compatibility", () => {
     );
     const body = await res.response!.json();
     expect(String(body.error)).toContain("invalid X-PAYMENT");
+  });
+});
+
+/**
+ * Settlement outcomes at the merchant boundary (#76). Real signing and real
+ * decode/verify; only the chain is faked, through the `clients` seam.
+ */
+describe("requirePayment: a broadcast payment is never answered with a fresh challenge", () => {
+  const PAYER = privateKeyToAccount(generatePrivateKey());
+
+  /** A Studio-style payment valid against the wall clock (the merchant does not take `now`). */
+  async function livePayment(nonce: `0x${string}`) {
+    const now = Math.floor(Date.now() / 1000);
+    const auth = {
+      from: PAYER.address, to: MERCHANT, value: CFG.price.toString(),
+      validAfter: String(now - 60), validBefore: String(now + 600), nonce,
+    };
+    const signature = await PAYER.signTypedData(
+      buildEip3009TypedData({
+        chainId: 56, token: U_TOKEN[56].address, name: U_TOKEN[56].name, version: U_TOKEN[56].version,
+        from: auth.from, to: auth.to, value: CFG.price, validAfter: BigInt(auth.validAfter), validBefore: BigInt(auth.validBefore), nonce,
+      }) as never,
+    );
+    const envelope = {
+      x402Version: 2, scheme: "exact", network: "eip155:56",
+      accepted: { scheme: "exact", network: "eip155:56", asset: U_TOKEN[56].address, payTo: MERCHANT, amount: CFG.price.toString(), extra: { name: U_TOKEN[56].name, version: U_TOKEN[56].version, assetTransferMethod: "eip3009" } },
+      payload: { signature, authorization: auth },
+    };
+    return Buffer.from(JSON.stringify(envelope)).toString("base64");
+  }
+
+  type Chain = {
+    /** What the receipt wait does per broadcast (indexed by call). */
+    wait: (hash: `0x${string}`) => Promise<{ transactionHash: `0x${string}`; status: "success" | "reverted" }>;
+    /** What a later direct receipt read returns. */
+    read?: () => Promise<{ status: "success" | "reverted" } | null>;
+    prepare?: (req: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  };
+  const prepared = (req: Record<string, unknown>) =>
+    ({ ...req, chainId: 56, nonce: 0, gas: 100_000n, maxFeePerGas: 2n, maxPriorityFeePerGas: 1n, type: "eip1559" });
+  function merchantOn(chain: Chain) {
+    const facilitator = privateKeyToAccount(generatePrivateKey());
+    const calls = { broadcasts: 0 };
+    const clients = {
+      public: {
+        verifyTypedData: async () => true,
+        getCode: async () => "0x",
+        getTransaction: async () => null,
+        getTransactionReceipt: async () => (chain.read ? chain.read() : null),
+        waitForTransactionReceipt: async ({ hash }: { hash: `0x${string}` }) => chain.wait(hash),
+      },
+      wallet: {
+        account: facilitator,
+        chain: undefined,
+        prepareTransactionRequest: async (req: Record<string, unknown>) =>
+          chain.prepare ? chain.prepare(req) : prepared(req),
+        sendRawTransaction: async () => { calls.broadcasts++; return "0x"; },
+      },
+    };
+    const merchant = createX402Merchant({ ...CFG, facilitator, clients: clients as never });
+    return { merchant, calls };
+  }
+  const rpcDown = Object.assign(new Error("Missing or invalid parameters.\n\nURL: http://rpc.example/?key=SECRET"), {
+    shortMessage: "Missing or invalid parameters.", details: "receipt read unavailable",
+  });
+
+  test("receipt unreadable → 200 with a pending receipt and the hash; the nonce stays claimed", async () => {
+    const { merchant, calls } = merchantOn({ wait: async () => { throw rpcDown; } });
+    const header = await livePayment(`0x${"a1".repeat(32)}`);
+
+    const first = await merchant.requirePayment(header);
+    expect(first.status).toBe(200);
+    if (first.status !== 200) return;
+    expect(first.receipt.settlement).toBe("pending");
+    expect(first.receipt.txHash).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(first.receipt.pendingReason).not.toContain("http");
+    expect(calls.broadcasts).toBe(1);
+
+    // The buyer asks again (it may never have seen the 200): no second broadcast.
+    const again = await merchant.requirePayment(header);
+    expect(again.status).toBe(200);
+    if (again.status === 200) {
+      expect(again.receipt.settlement).toBe("pending");
+      expect(again.receipt.txHash).toBe(first.receipt.txHash);
+    }
+    expect(calls.broadcasts).toBe(1);
+  });
+
+  test("pending, then the receipt becomes readable → confirmed on re-ask; a third replay is refused", async () => {
+    let reads = 0;
+    const { merchant, calls } = merchantOn({
+      wait: async () => { throw rpcDown; },
+      read: async () => (++reads >= 1 ? { status: "success" } : null),
+    });
+    const header = await livePayment(`0x${"a2".repeat(32)}`);
+    const first = await merchant.requirePayment(header);
+    expect(first.status === 200 && first.receipt.settlement).toBe("pending");
+
+    const second = await merchant.requirePayment(header);
+    expect(second.status === 200 && second.receipt.settlement).toBe("confirmed");
+    expect(second.status === 200 && second.receipt.txHash).toBe(first.status === 200 ? first.receipt.txHash : "?");
+
+    const third = await merchant.requirePayment(header);
+    expect(third.status).toBe(402);
+    expect(String(third.body?.error)).toContain("replayed authorization");
+    expect(calls.broadcasts).toBe(1);
+  });
+
+  test("pending, then the receipt shows a revert → 402 and the authorization is released", async () => {
+    let attempts = 0;
+    const { merchant, calls } = merchantOn({
+      wait: async (hash) => (++attempts === 1 ? Promise.reject(rpcDown) : { transactionHash: hash, status: "success" }),
+      read: async () => ({ status: "reverted" }),
+    });
+    const header = await livePayment(`0x${"a3".repeat(32)}`);
+    expect((await merchant.requirePayment(header)).status).toBe(200);
+    const reask = await merchant.requirePayment(header);
+    expect(reask.status).toBe(402);
+    expect(String(reask.body?.error)).toContain("reverted");
+    // Honest retry after a real failure: settles anew.
+    const retry = await merchant.requirePayment(header);
+    expect(retry.status === 200 && retry.receipt.settlement).toBe("confirmed");
+    expect(calls.broadcasts).toBe(2);
+  });
+
+  test("pre-broadcast failure → 402 without the RPC URL, and an honest retry goes through", async () => {
+    let attempts = 0;
+    const revert = Object.assign(new Error("Execution reverted with reason: insufficient balance.\n\nURL: http://rpc.example/?key=SECRET"), {
+      shortMessage: "Execution reverted with reason: insufficient balance.",
+    });
+    const { merchant, calls } = merchantOn({
+      wait: async (hash) => ({ transactionHash: hash, status: "success" }),
+      prepare: async (req) => { if (++attempts === 1) throw revert; return prepared(req); },
+    });
+    const header = await livePayment(`0x${"a4".repeat(32)}`);
+    const failed = await merchant.requirePayment(header);
+    expect(failed.status).toBe(402);
+    expect(String(failed.body?.error)).toBe("settlement failed: Execution reverted with reason: insufficient balance.");
+    expect(calls.broadcasts).toBe(0);
+
+    const retry = await merchant.requirePayment(header);
+    expect(retry.status === 200 && retry.receipt.settlement).toBe("confirmed");
+    expect(calls.broadcasts).toBe(1);
+  });
+
+  test("confirmed → replay refused, as before", async () => {
+    const { merchant, calls } = merchantOn({ wait: async (hash) => ({ transactionHash: hash, status: "success" }) });
+    const header = await livePayment(`0x${"a5".repeat(32)}`);
+    const paid = await merchant.requirePayment(header);
+    expect(paid.status === 200 && paid.receipt.settlement).toBe("confirmed");
+    const replay = await merchant.requirePayment(header);
+    expect(replay.status).toBe(402);
+    expect(String(replay.body?.error)).toContain("replayed authorization");
+    expect(calls.broadcasts).toBe(1);
+  });
+
+  test("createX402Merchant needs rpcUrl or clients", () => {
+    expect(() => createX402Merchant({ ...CFG, facilitator: privateKeyToAccount(generatePrivateKey()) })).toThrow(/rpcUrl or clients/);
+  });
+});
+
+describe("Celo Sepolia (chainId 11142220)", () => {
+  const CELO_CFG: MerchantConfig = {
+    chainId: 11142220,
+    payTo: MERCHANT,
+    price: 200_000n, // 0.2 USDC / USDT (6 decimals on Celo)
+    rails: [
+      { rail: "eip3009", token: USDC_CELO_SEPOLIA },
+      { rail: "permit2-exact", token: USDT_CELO_SEPOLIA, spender: FACILITATOR },
+    ],
+    maxTimeoutSeconds: 600,
+    resource: "https://api.example.com/audit",
+  };
+
+  test("challenge advertises eip155:11142220 with the Celo Sepolia tokens and their EIP-712 domains", () => {
+    const body = buildChallenge(CELO_CFG);
+    expect(body.accepts).toHaveLength(2);
+    for (const a of body.accepts) expect(a.network).toBe("eip155:11142220");
+    const eip3009 = body.accepts.find((a) => a.extra.assetTransferMethod === "eip3009")!;
+    expect(eip3009.asset).toBe(USDC_CELO_SEPOLIA.address);
+    expect(eip3009.extra.name).toBe("USDC");
+    expect(eip3009.extra.version).toBe("2");
+    expect(eip3009.amount).toBe("200000");
+    const permit2 = body.accepts.find((a) => a.extra.assetTransferMethod === "permit2-exact")!;
+    expect(permit2.asset).toBe(USDT_CELO_SEPOLIA.address);
+    expect(permit2.extra.spenderAddress).toBe(FACILITATOR);
+  });
+
+  test("an EOA buyer's eip3009 USDC authorization on 11142220 verifies", async () => {
+    const key = generatePrivateKey();
+    const account = privateKeyToAccount(key);
+    const auth = {
+      from: account.address,
+      to: MERCHANT as string,
+      value: CELO_CFG.price.toString(),
+      validAfter: String(NOW - 600),
+      validBefore: String(NOW + 600),
+      nonce: `0x${"22".repeat(32)}`,
+    };
+    const typed = buildEip3009TypedData({
+      chainId: 11142220,
+      token: USDC_CELO_SEPOLIA.address,
+      name: USDC_CELO_SEPOLIA.name,
+      version: USDC_CELO_SEPOLIA.version,
+      from: auth.from,
+      to: auth.to as `0x${string}`,
+      value: BigInt(auth.value),
+      validAfter: BigInt(auth.validAfter),
+      validBefore: BigInt(auth.validBefore),
+      nonce: auth.nonce as `0x${string}`,
+    });
+    const signature = await account.signTypedData(typed as never);
+    const envelope = {
+      x402Version: 2,
+      resource: CELO_CFG.resource,
+      accepted: {
+        scheme: "exact",
+        network: "eip155:11142220",
+        asset: USDC_CELO_SEPOLIA.address,
+        payTo: MERCHANT,
+        amount: CELO_CFG.price.toString(),
+        maxTimeoutSeconds: 600,
+        extra: { name: USDC_CELO_SEPOLIA.name, version: USDC_CELO_SEPOLIA.version, assetTransferMethod: "eip3009" },
+      },
+      payload: { signature, authorization: auth },
+    };
+    const header = Buffer.from(JSON.stringify(envelope)).toString("base64");
+    const decoded = decodeXPayment(header);
+    expect(decoded.rail).toBe("eip3009");
+    expect(decoded.token.toLowerCase()).toBe(USDC_CELO_SEPOLIA.address.toLowerCase());
+    const verdict = await verifyPayment(decoded, CELO_CFG, {
+      now: NOW,
+      verifySignature: (args) => verifyTypedData(args as never),
+    });
+    expect(verdict.ok, "reason" in verdict ? String(verdict.reason) : "").toBe(true);
+  });
+
+  test("a BNB-signed authorization does not verify on Celo Sepolia (domain chainId differs)", async () => {
+    const { header } = await studioPayment();
+    const decoded = decodeXPayment(header);
+    const verdict = await verifyPayment(decoded, { ...CELO_CFG, rails: [{ rail: "eip3009", token: U_TOKEN[56] }] }, {
+      now: NOW,
+      verifySignature: (args) => verifyTypedData(args as never),
+    });
+    expect(verdict.ok).toBe(false);
   });
 });

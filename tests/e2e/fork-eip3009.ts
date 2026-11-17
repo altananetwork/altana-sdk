@@ -15,7 +15,10 @@
  * `USDC.transferWithAuthorization(...bytes signature)` and assert the recipient
  * received the funds.
  *
- * Run: bun tests/e2e/fork-eip3009.ts
+ * Not in CI's fork set: Base is unsupported until we have RPCs (Doris
+ * 2026-10-28). The test is kept and still runs on demand.
+ *
+ * Run: bun run --filter '@altananetwork/e2e' fork:eip3009
  */
 
 import {
@@ -40,6 +43,7 @@ import {
   buildEip3009TypedData,
 } from "@altananetwork/sdk";
 import type { Session } from "@altananetwork/sdk";
+import { startAnvil, waitForAnvil } from "./anvil.js";
 
 const ITHACA_ACCOUNT_IMPL: Address =
   "0x4B5d20CD8a3927B500540d9BcCDDc27385c9fA79"; // same CREATE2 address on BNB/Base/Eth
@@ -47,7 +51,8 @@ const USDC: Address = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"; // Base USDC
 const USDC_NAME = "USD Coin";
 const USDC_VERSION = "2";
 const BASE_CHAIN_ID = 8453;
-const BASE_RPC = process.env.BASE_FORK_RPC_URL ?? "https://base-rpc.publicnode.com";
+// `||`, not `??`: an unset GitHub Actions secret arrives as an empty string.
+const BASE_RPC = process.env.BASE_FORK_RPC_URL || "https://base-rpc.publicnode.com";
 const ANVIL_PORT = 8548;
 const ANVIL_URL = `http://127.0.0.1:${ANVIL_PORT}`;
 
@@ -116,28 +121,12 @@ function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error(`ASSERT FAILED: ${msg}`);
 }
 
-async function waitForAnvil(): Promise<void> {
-  const probe = createPublicClient({ transport: http(ANVIL_URL) });
-  for (let i = 0; i < 60; i++) {
-    try {
-      await probe.getBlockNumber();
-      return;
-    } catch {
-      await new Promise((r) => setTimeout(r, 500));
-    }
-  }
-  throw new Error("anvil did not become ready");
-}
-
 async function main() {
   console.log(`Forking Base via anvil on ${ANVIL_URL} ...`);
-  const proc = Bun.spawn(
-    ["anvil", "--fork-url", BASE_RPC, "--port", String(ANVIL_PORT), "--silent"],
-    { stdout: "ignore", stderr: "ignore" },
-  );
+  const proc = startAnvil(BASE_RPC, ANVIL_PORT);
 
   try {
-    await waitForAnvil();
+    await waitForAnvil(proc);
     const test = createTestClient({
       mode: "anvil",
       chain: base,

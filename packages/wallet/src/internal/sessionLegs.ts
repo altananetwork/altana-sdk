@@ -1,0 +1,393 @@
+/**
+ * The chain I/O a multi-chain grant or revoke performs, behind one interface.
+ *
+ * grantSession and revokeSession decide which legs run where and in what
+ * order; every read and write they make goes through a SessionLegDeps. The
+ * public functions use `realSessionLegDeps`; unit tests pass fakes, so the
+ * orchestration is tested without mocking the relay module.
+ */
+
+import type { Address, Hex } from "viem";
+import { registryNetwork, type NetworkConfig } from "../config.js";
+import { accountHasKey, getKeys } from "./account.js";
+import { isCachedRegistry, keyStoreCacheOf, submitRegistryWrite } from "./cachedRegistry.js";
+import type { FeeTokenOption } from "./feeTokenSelection.js";
+import { readIsValidKey, readRegistrationFee } from "./keystore.js";
+import {
+  blockNumberOfWrite,
+  buildPublicClient,
+  buildRelayClient,
+  submitCalls,
+  waitForCalls,
+  type Call,
+  type KeyDescriptor,
+} from "./relay.js";
+import type { CacheSyncReport, RootRegistrationLeg, SessionLeg } from "./sessions.js";
+import type { Signer } from "./signer.js";
+import type { Wallet } from "./types.js";
+import { readCachedKey } from "../syncKeyToL2.js";
+import { proveIntoCache } from "../syncSessionToCache.js";
+
+/** Outcome of one relay intent from the wallet on one chain. */
+export type IntentOutcome = {
+  status: "CONFIRMED" | "FAILED";
+  transactionHash?: Hex;
+  /** Registry writes: the L2 whose balance paid for the write, when the relay funded it. */
+  fundedFromChainId?: number;
+  /** Registry writes: the source-chain transaction that locked the funds. */
+  sourceTransactionHash?: Hex;
+  /** Block the intent landed in; read when asked for (`needBlockNumber`). */
+  blockNumber?: bigint;
+  /** Set when a block number was asked for, the intent confirmed, and the block stayed unknown. */
+  blockNumberError?: string;
+  /** Registry writes: the root (`initialRegisterKey`) intent of a first-time write. */
+  rootRegistration?: RootRegistrationLeg;
+  reason?: string;
+  /** The relay's own status for the intent (`CONFIRMED`, `FAILED`, `PENDING`), when the relay answered. */
+  relayStatus?: string;
+  /** The relay's numeric status code, when it reported one. */
+  statusCode?: number;
+  /** The relay bundle id of the intent, once it was submitted. */
+  callsId?: Hex;
+  /** What was thrown, untouched, when the failure was a thrown error. */
+  error?: unknown;
+};
+
+/**
+ * What a leg's intent reported beyond the public leg fields: the relay's raw
+ * status and code, the bundle id, and the original thrown error.
+ */
+export type LegDetail = Pick<IntentOutcome, "relayStatus" | "statusCode" | "callsId" | "error">;
+
+// Kept beside the legs instead of on them: a leg is a plain value callers log
+// and serialize, and a thrown error does not belong in that.
+const legDetails = new WeakMap<SessionLeg, LegDetail>();
+
+/** Records what is known about the intent behind `leg`. Returns the leg. */
+export function withLegDetail(leg: SessionLeg, detail: LegDetail | undefined): SessionLeg {
+  if (!detail) return leg;
+  const kept: LegDetail = {
+    ...(detail.relayStatus !== undefined ? { relayStatus: detail.relayStatus } : {}),
+    ...(detail.statusCode !== undefined ? { statusCode: detail.statusCode } : {}),
+    ...(detail.callsId !== undefined ? { callsId: detail.callsId } : {}),
+    ...(detail.error !== undefined ? { error: detail.error } : {}),
+  };
+  if (Object.keys(kept).length > 0) legDetails.set(leg, kept);
+  return leg;
+}
+
+/** The relay status, code, bundle id and thrown error behind a leg, when any is known. */
+export function legDetail(leg: SessionLeg | undefined): LegDetail | undefined {
+  return leg ? legDetails.get(leg) : undefined;
+}
+
+export type SessionLegDeps = {
+  accountHasKey(network: NetworkConfig, wallet: Address, keyHash: Hex): Promise<boolean>;
+  isValidRegistryKey(registry: NetworkConfig, wallet: Address, keyId: Hex): Promise<boolean>;
+  registrationFee(registry: NetworkConfig): Promise<bigint>;
+  /** True when the cache on a cached network holds the key unrevoked. */
+  cacheHoldsLiveKey(network: NetworkConfig, wallet: Address, keyId: Hex): Promise<boolean>;
+  /** One admin-signed intent on `network`. Never throws: failures are an outcome. */
+  submitAccountIntent(
+    network: NetworkConfig,
+    args: {
+      wallet: Wallet;
+      adminSigner: Signer;
+      calls: readonly Call[];
+      /** The caller's fee token selector; omitted, the relay picks. */
+      feeToken?: FeeTokenOption;
+      authorizeKeys?: readonly KeyDescriptor[];
+      revokeKeys?: readonly KeyDescriptor[];
+      needBlockNumber?: boolean;
+    },
+  ): Promise<IntentOutcome>;
+  /** Registry calls on a registry chain that is not one of the account legs. Never throws. */
+  submitRegistry(
+    registry: NetworkConfig,
+    args: {
+      wallet: Wallet;
+      adminSigner: Signer;
+      calls: readonly Call[];
+      /** Called before each intent: `root` then `session` on a first-time write. */
+      onStep?: (step: "root" | "session") => void;
+      /** Called when an intent's payment is locked and the registry chain is slow; the wait goes on. */
+      onWaiting?: (step: "root" | "session") => void;
+      /** What a quote taken before this said the payer pays, for wording a failure. */
+      expectedCost?: { chainId: number; token: Address; amount: bigint };
+    },
+  ): Promise<IntentOutcome & { via: "relay" | "eoa" }>;
+  proveIntoCache(
+    wallet: Wallet,
+    adminSigner: Signer,
+    publicKey: Hex,
+    network: NetworkConfig,
+    afterL1Block: bigint | undefined,
+    feeToken?: FeeTokenOption,
+  ): Promise<CacheSyncReport>;
+  /** Waits (bounded) until this process's RPC sees the key on the account. */
+  waitForKeyVisible(network: NetworkConfig, wallet: Address, keyHash: Hex): Promise<void>;
+  sleep(ms: number): Promise<void>;
+};
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+export const realSessionLegDeps: SessionLegDeps = {
+  accountHasKey: (network, wallet, keyHash) =>
+    accountHasKey(buildPublicClient(network), wallet, keyHash),
+
+  isValidRegistryKey: (registry, wallet, keyId) =>
+    readIsValidKey(buildPublicClient(registry), registry, wallet, keyId),
+
+  registrationFee: (registry) => readRegistrationFee(buildPublicClient(registry), registry),
+
+  async cacheHoldsLiveKey(network, wallet, keyId) {
+    if (!isCachedRegistry(network)) return false;
+    const cached = await readCachedKey(
+      buildPublicClient(network),
+      keyStoreCacheOf(network),
+      wallet,
+      keyId,
+    );
+    return cached.publicKey !== "0x" && !cached.revoked;
+  },
+
+  async submitAccountIntent(network, args) {
+    try {
+      const relayClient = buildRelayClient(network);
+      const callsId = await submitCalls(relayClient, args.wallet.address, args.adminSigner, args.calls, {
+        ...(args.feeToken ? { feeToken: args.feeToken } : {}),
+        submittingKey: { type: "secp256k1", publicKey: args.adminSigner.publicKey, role: "admin" },
+        network,
+        ...(args.authorizeKeys ? { authorizeKeys: args.authorizeKeys } : {}),
+        ...(args.revokeKeys ? { revokeKeys: args.revokeKeys } : {}),
+      });
+      const result = await waitForCalls(relayClient, callsId);
+      const raw = {
+        relayStatus: result.status,
+        ...(result.statusCode !== undefined ? { statusCode: result.statusCode } : {}),
+        callsId,
+      };
+      if (result.status !== "CONFIRMED") {
+        return {
+          status: "FAILED",
+          ...raw,
+          ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
+          reason:
+            `relay status ${result.status}` +
+            (result.statusCode !== undefined ? ` (code ${result.statusCode})` : ""),
+        };
+      }
+      const block = args.needBlockNumber
+        ? await blockNumberOfWrite({
+            relayBlockNumber: result.blockNumber,
+            transactionHash: result.transactionHash,
+            publicClient: buildPublicClient(network),
+          })
+        : undefined;
+      return {
+        status: "CONFIRMED",
+        ...raw,
+        ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
+        ...(block?.blockNumber !== undefined ? { blockNumber: block.blockNumber } : {}),
+        ...(block && "blockNumberError" in block ? { blockNumberError: block.blockNumberError } : {}),
+      };
+    } catch (err) {
+      return { status: "FAILED", reason: errorMessage(err), error: err };
+    }
+  },
+
+  async submitRegistry(registry, args) {
+    const via = registry.relayUrl ? "relay" : "eoa";
+    try {
+      const written = await submitRegistryWrite(registry, {
+        walletAddress: args.wallet.address,
+        adminSigner: args.adminSigner,
+        calls: args.calls,
+        ...(args.onStep ? { onStep: args.onStep } : {}),
+        ...(args.onWaiting ? { onWaiting: args.onWaiting } : {}),
+        ...(args.expectedCost ? { expectedCost: args.expectedCost } : {}),
+      });
+      return {
+        via: written.via,
+        status: written.status === "CONFIRMED" ? "CONFIRMED" : "FAILED",
+        ...(written.transactionHash ? { transactionHash: written.transactionHash } : {}),
+        ...(written.blockNumber !== undefined ? { blockNumber: written.blockNumber } : {}),
+        ...(written.blockNumberError ? { blockNumberError: written.blockNumberError } : {}),
+        ...(written.fundedFromChainId !== undefined ? { fundedFromChainId: written.fundedFromChainId } : {}),
+        ...(written.sourceTransactionHash ? { sourceTransactionHash: written.sourceTransactionHash } : {}),
+        ...(written.rootRegistration ? { rootRegistration: written.rootRegistration } : {}),
+        ...(written.callsId ? { callsId: written.callsId } : {}),
+        // Confirmed by the KeyStore over the relay's word: keep what the relay said, for the log.
+        ...(written.relayReported
+          ? {
+              relayStatus: written.relayReported.status,
+              ...(written.relayReported.statusCode !== undefined ? { statusCode: written.relayReported.statusCode } : {}),
+            }
+          : {}),
+        // Prefer the write's own words. `registry write status FAILED` names
+        // nothing: it is what the spine report printed for a failure whose
+        // cause was known one layer down.
+        ...(written.status !== "CONFIRMED"
+          ? { reason: written.reason ?? `registry write status ${written.status}` }
+          : {}),
+      };
+    } catch (err) {
+      return { via, status: "FAILED", reason: errorMessage(err), error: err };
+    }
+  },
+
+  proveIntoCache,
+
+  async waitForKeyVisible(network, wallet, keyHash) {
+    const publicClient = buildPublicClient(network);
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      try {
+        const { keyHashes } = await getKeys(publicClient, wallet);
+        if (keyHashes.includes(keyHash)) return;
+      } catch {
+        // Wallet may not be delegated yet on a still-stale read; retry.
+      }
+      await sleep(500);
+    }
+    // Timeout: the relay confirmed, but this process's view of the chain never
+    // caught up. The key is on-chain regardless.
+  },
+
+  sleep,
+};
+
+export function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** A read's value, or its error message with what was thrown as `cause`. */
+export async function settle<T>(p: Promise<T>): Promise<{ value: T } | { error: string; cause: unknown }> {
+  try {
+    return { value: await p };
+  } catch (err) {
+    return { error: errorMessage(err), cause: err };
+  }
+}
+
+/** Networks deduplicated by chainId, first occurrence kept. */
+export function uniqueNetworks(networks: readonly NetworkConfig[]): NetworkConfig[] {
+  const seen = new Set<number>();
+  return networks.filter((n) => {
+    if (seen.has(n.chainId)) return false;
+    seen.add(n.chainId);
+    return true;
+  });
+}
+
+/** The registry chains behind a set of networks, one per chain. */
+export function registriesOf(networks: readonly NetworkConfig[]): NetworkConfig[] {
+  return uniqueNetworks(networks.map(registryNetwork));
+}
+
+/** A leg from an intent outcome. */
+export function legFromOutcome(
+  chainId: number,
+  kind: SessionLeg["kind"],
+  outcome: IntentOutcome,
+  via?: SessionLeg["via"],
+): SessionLeg {
+  return withLegDetail(legOf(chainId, kind, outcome, via), outcome);
+}
+
+function legOf(
+  chainId: number,
+  kind: SessionLeg["kind"],
+  outcome: IntentOutcome,
+  via?: SessionLeg["via"],
+): SessionLeg {
+  return {
+    chainId,
+    kind,
+    status: outcome.status,
+    ...(via ? { via } : {}),
+    ...(outcome.transactionHash ? { transactionHash: outcome.transactionHash } : {}),
+    ...(outcome.blockNumber !== undefined ? { blockNumber: outcome.blockNumber } : {}),
+    ...(outcome.fundedFromChainId !== undefined ? { fundedFromChainId: outcome.fundedFromChainId } : {}),
+    ...(outcome.sourceTransactionHash ? { sourceTransactionHash: outcome.sourceTransactionHash } : {}),
+    ...(outcome.rootRegistration ? { rootRegistration: outcome.rootRegistration } : {}),
+    ...(outcome.reason ? { reason: outcome.reason } : {}),
+  };
+}
+
+/** A cache leg from a CacheSyncReport. */
+/**
+ * What a cache leg's gate decided: a leg with nothing more to do (skipped,
+ * failed early), or the proof to run.
+ */
+export type CacheGate = SessionLeg | { chainId: number; prove: () => Promise<SessionLeg> };
+
+/**
+ * Starts every proof the gates let through. `now` is what to report at once
+ * (`PENDING` for a running proof); `cacheSync` resolves with the finished
+ * cache legs and never rejects.
+ */
+export function launchCacheProofs(gates: readonly CacheGate[]): { now: SessionLeg[]; cacheSync: Promise<SessionLeg[]> } {
+  const running = gates.map((g) =>
+    "prove" in g
+      ? g.prove().catch((err): SessionLeg => ({ chainId: g.chainId, kind: "cache", status: "FAILED", reason: errorMessage(err) }))
+      : Promise.resolve(g),
+  );
+  const cacheSync = Promise.all(running);
+  return {
+    now: gates.map((g) => ("prove" in g ? { chainId: g.chainId, kind: "cache", status: "PENDING" } : g)),
+    cacheSync,
+  };
+}
+
+export function legFromCacheReport(report: CacheSyncReport): SessionLeg {
+  return {
+    chainId: report.chainId,
+    kind: "cache",
+    status: report.status,
+    ...(report.transactionHash ? { transactionHash: report.transactionHash } : {}),
+    ...(report.keyStoreCache ? { keyStoreCache: report.keyStoreCache } : {}),
+    ...(report.l1BlockNumber !== undefined ? { l1BlockNumber: report.l1BlockNumber } : {}),
+    ...(report.cachedKey ? { cachedKey: report.cachedKey } : {}),
+    ...(report.reason ? { reason: report.reason } : {}),
+  };
+}
+
+/**
+ * The reason a cache proof is refused after a confirmed registry write whose block is unknown.
+ * Proving without that block would build the proof against whatever older L1 block the L2
+ * anchors, where the write is not visible yet, and the cache would reject it.
+ */
+export function unknownRegistryBlockReason(registryChainId: number, detail?: string): string {
+  return (
+    `registry block unknown on chain ${registryChainId}, proof not attempted` +
+    (detail ? ` (${detail})` : "")
+  );
+}
+
+export function skippedLeg(chainId: number, kind: SessionLeg["kind"], reason: string): SessionLeg {
+  return { chainId, kind, status: "SKIPPED", reason };
+}
+
+/** True when no leg failed. */
+export function allLegsSucceeded(legs: readonly SessionLeg[]): boolean {
+  return legs.every((l) => l.status !== "FAILED");
+}
+
+/** True when the network's cache address is configured (cached networks only). */
+export function hasCache(network: NetworkConfig): boolean {
+  if (!isCachedRegistry(network)) return false;
+  try {
+    keyStoreCacheOf(network);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const LEG_ORDER: Record<SessionLeg["kind"], number> = { account: 0, registry: 1, cache: 2 };
+
+/** Legs ordered account, registry, cache; chain order within a kind as given. */
+export function orderLegs(legs: readonly SessionLeg[]): SessionLeg[] {
+  return [...legs].sort((a, b) => LEG_ORDER[a.kind] - LEG_ORDER[b.kind]);
+}

@@ -5,14 +5,17 @@
  * "is this key authorized right now"; encode tools return ready-to-sign
  * calldata ({to, value, data, chainId}) that the HOST signs with its own key.
  *
- * Chain via ALTANA_CHAIN (default bnb; also "ethereum"). RPC overridable
- * via RPC_URL (used by the fork tests).
+ * Chain via ALTANA_CHAIN (default bnb; also "ethereum", "celo", "bnb-testnet",
+ * "celo-sepolia", "sepolia", and the alias "base-sepolia" -> sepolia: Base
+ * Sepolia keeps no KeyStore of its own, its authority is rooted in the Sepolia
+ * registry). RPC overridable via RPC_URL (used by the fork tests).
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { VERSION } from "./version.js";
 import {
   createPublicClient,
+  fallback,
   http,
   isAddress,
   isHex,
@@ -21,6 +24,7 @@ import {
   type Hex,
 } from "viem";
 import { z } from "zod";
+import { ETHEREUM } from "@altananetwork/sdk";
 import {
   buildRegisterCall,
   buildRevokeCall,
@@ -31,13 +35,29 @@ import {
   readRegistrationFee,
   resolveChain,
 } from "./keystore.js";
+import { encodeCacheProof, readCacheStatus } from "./cache.js";
 
 const CHAIN = resolveChain(process.env.ALTANA_CHAIN);
 const RPC_URL = process.env.RPC_URL || CHAIN.rpcUrl;
+/** The L2 read RPC, when the chain was named by an L2 alias. */
+const L2_RPC_URL = process.env.L2_RPC_URL || CHAIN.l2?.rpcUrl;
 const publicClient = createPublicClient({
   chain: CHAIN.chain,
   transport: http(RPC_URL),
 });
+/**
+ * The registry client a cache proof is built with. The proof is taken at the
+ * block the L2 anchors, about 100 blocks behind head, which the default
+ * Ethereum RPC does not serve; the SDK's proof endpoints do. An explicit
+ * `RPC_URL` is used as given.
+ */
+const proofClient =
+  process.env.RPC_URL || CHAIN.chainId !== ETHEREUM.chainId || !ETHEREUM.proofRpcUrls?.length
+    ? publicClient
+    : createPublicClient({
+        chain: CHAIN.chain,
+        transport: fallback([...ETHEREUM.proofRpcUrls, RPC_URL].map((url) => http(url))),
+      });
 
 function jsonText(value: unknown) {
   const text = JSON.stringify(
@@ -76,7 +96,17 @@ export function buildServer(): McpServer {
         "Neutral, non-custodial KeyStore authorization registry on " +
         `${CHAIN.chain.name} (chainId ${CHAIN.chainId}). Reads answer "is this ` +
         'key authorized right now"; encode tools return unsigned calldata for ' +
-        "YOUR wallet/SDK to sign. This server never holds a key or signs.",
+        "YOUR wallet/SDK to sign. This server never holds a key or signs. " +
+        "BNB Chain, Ethereum and Celo each keep their own KeyStore. An L2 " +
+        "without one (Base Sepolia 84532) keeps its KeyStore on the L1 and " +
+        "reads it through a cache, so ALTANA_CHAIN=base-sepolia resolves to " +
+        "sepolia. Sign encoded calls on the chainId they carry: the registry " +
+        "calls on the L1, and the one cache call on the L2. An authorization, a " +
+        "timebox or a revoke recorded on the L1 is not visible on the L2 until " +
+        "someone relays a proof of it: keystore_cache_status says whether the " +
+        "L2 has it, and keystore_encode_cache_proof encodes the call that " +
+        "carries it. Relaying is permissionless, so any funded L2 account can " +
+        "send it for any user.",
     },
   );
 
@@ -222,10 +252,31 @@ export function buildServer(): McpServer {
         role,
         expiry,
       });
+      const quotedAtBlock = await publicClient.getBlockNumber();
       return jsonText({
         ...call,
         value: call.value,
         valueHex: toHex(call.value),
+        // This payload has a shelf life, and saying so is the point.
+        //
+        // The fee is oracle-priced, so `value` was correct for the oracle round
+        // it was quoted in and the controller requires `msg.value >= fee` at
+        // INCLUSION. `value` already carries headroom for ordinary drift
+        // (Chainlink ETH/USD steps at most ~1.4% per round on Sepolia), but
+        // headroom is not a substitute for a fresh quote: the 5.49% shortfall
+        // that prompted this was a 21-hour-old payload, not market movement.
+        //
+        // Checkable rather than advisory: call `keystore_registration_quote`
+        // again and compare `feeWei` with `quotedFeeWei` below. If it differs,
+        // re-encode instead of sending this.
+        quotedFeeWei: fee,
+        quotedFeeWeiHex: toHex(fee),
+        quotedAtBlock,
+        validity:
+          "Re-encode before sending if keystore_registration_quote no longer " +
+          "reports feeWei === quotedFeeWei: the fee is oracle-priced and the " +
+          "controller checks msg.value >= fee at inclusion. Never send a " +
+          "registry payload built in an earlier oracle round.",
         decoded: {
           function: role === "root" ? "initialRegisterKey" : "registerKey",
           keyId: deriveKeyId(pk),
@@ -284,6 +335,77 @@ export function buildServer(): McpServer {
           "msg.sender must equal the user. Sign and send FROM this account.",
         nextStep:
           "Pass {to,value,data,chainId} to your wallet/SDK sign-and-send tool.",
+      });
+    },
+  );
+
+  // ───────────────── L2 cache ─────────────────
+
+  tool(
+    "keystore_cache_status",
+    {
+      title: "Is this key valid on the L2 yet?",
+      description:
+        "Reads the L2 KeyStoreCache for (user, key) and says which of three " +
+        "states it is in: never proven, proven and current, or proven against " +
+        "an L1 block the L2 has moved past (which reads as not valid until a " +
+        "fresh proof lands, even when nothing changed on the L1). Also returns " +
+        "the L1 block the L2 anchors now. Needs ALTANA_CHAIN set to an L2 " +
+        "alias (base-sepolia); naming the registry chain itself leaves " +
+        "the mirror ambiguous.",
+      inputSchema: {
+        user: z.string(),
+        keyId: z.string().optional(),
+        publicKey: z.string().optional(),
+      },
+    },
+    async ({ user, keyId, publicKey }: { user: string; keyId?: string; publicKey?: string }) => {
+      const addr = assertAddress(user);
+      const id = keyId
+        ? assertBytes32(keyId)
+        : publicKey
+          ? deriveKeyId(assertPublicKey(publicKey))
+          : (() => {
+              throw new Error("Provide either keyId or publicKey.");
+            })();
+      return jsonText(
+        await readCacheStatus({ chain: CHAIN, user: addr, keyId: id, ...(L2_RPC_URL ? { rpcUrl: L2_RPC_URL } : {}) }),
+      );
+    },
+  );
+
+  tool(
+    "keystore_encode_cache_proof",
+    {
+      title: "Encode the call that proves an L1 key onto the L2 (you sign it)",
+      description:
+        "Returns unsigned calldata for the L2 cache's populateKey: the proof " +
+        "that carries this key's CURRENT L1 KeyStore state, whether that is an " +
+        "authorization, a new expiry or a revocation, to the L2. value 0, no " +
+        "fee, and permissionless: sign and send it from ANY funded L2 account, " +
+        "not necessarily the user's. Needs the full public key, not the keyId, " +
+        "because the cache stores the key. The cache takes the proof only while " +
+        "the L2 still anchors the L1 block it was built against, so send it now " +
+        "rather than storing it.",
+      inputSchema: { user: z.string(), publicKey: z.string() },
+    },
+    async ({ user, publicKey }: { user: string; publicKey: string }) => {
+      const proof = await encodeCacheProof({
+        chain: CHAIN,
+        user: assertAddress(user),
+        publicKey: assertPublicKey(publicKey),
+        l1Client: proofClient,
+        ...(L2_RPC_URL ? { rpcUrl: L2_RPC_URL } : {}),
+      });
+      return jsonText({
+        ...proof.call,
+        decoded: { function: "populateKey", user: proof.user, keyId: proof.keyId },
+        provenAt: { l1BlockNumber: proof.l1BlockNumber, l1BlockHash: proof.l1BlockHash },
+        provenKeySlot: proof.provenKeySlot,
+        l2: proof.l2,
+        ...(proof.warning ? { warning: proof.warning } : {}),
+        mustSignAs: "Any funded account on the L2; relaying a proof is permissionless.",
+        nextStep: proof.advice,
       });
     },
   );

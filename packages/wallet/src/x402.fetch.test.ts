@@ -4,6 +4,13 @@ import { createPrivateKeySigner, type Signer } from "./internal/signer.js";
 import type { Session } from "./internal/sessions.js";
 import { fetchWithX402 } from "./x402.js";
 
+/**
+ * These tests count fetch calls by index to assert the payment wire, so the two
+ * on-chain approval reads `fetchWithX402` now makes by default would shift every
+ * index. The approval guard has its own tests in x402Approvals.test.ts.
+ */
+const NO_APPROVAL_CHECK = { checkApprovals: false } as const;
+
 const WALLET: Address = "0x1111111111111111111111111111111111111111";
 const TOKEN: Address = "0x55d398326f99059fF775485246999027B3197955";
 const PAYTO: Address = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -52,7 +59,7 @@ test("fetchWithX402 pays a 402 and retries with an X-PAYMENT header", async () =
     return new Response("paid-content", { status: 200 });
   }) as typeof fetch;
 
-  const res = await fetchWithX402(session, "https://api.example.com/resource");
+  const res = await fetchWithX402(session, "https://api.example.com/resource", undefined, NO_APPROVAL_CHECK);
   expect(res.status).toBe(200);
   expect(await res.text()).toBe("paid-content");
 
@@ -113,6 +120,7 @@ test("fetchWithX402 picks BNB permit2-exact from a real multi-option B402 402", 
   }) as typeof fetch;
 
   const res = await fetchWithX402(session, "https://pro-api.example.com/x402", undefined, {
+    ...NO_APPROVAL_CHECK,
     chainId: 56,
   });
   expect(res.status).toBe(200);
@@ -136,7 +144,7 @@ test("fetchWithX402 passes non-402 responses through untouched", async () => {
     return new Response("ok", { status: 200 });
   }) as typeof fetch;
 
-  const res = await fetchWithX402(session, "https://api.example.com/free");
+  const res = await fetchWithX402(session, "https://api.example.com/free", undefined, NO_APPROVAL_CHECK);
   expect(res.status).toBe(200);
   expect(count).toBe(1); // no retry
 });
@@ -180,7 +188,7 @@ test("fetchWithX402 sends the envelope under both X-PAYMENT and PAYMENT-SIGNATUR
     return new Response("paid-content", { status: 200 });
   }) as typeof fetch;
 
-  const res = await fetchWithX402(session, "https://api.example.com/resource");
+  const res = await fetchWithX402(session, "https://api.example.com/resource", undefined, NO_APPROVAL_CHECK);
   expect(res.status).toBe(200);
 
   const retryHeaders = new Headers(calls[1]!.init!.headers);
@@ -226,7 +234,7 @@ test("fetchWithX402 falls back to the requested URL when the 402 quotes no resou
     return new Response("paid-content", { status: 200 });
   }) as typeof fetch;
 
-  await fetchWithX402(session, "https://api.example.com/resource");
+  await fetchWithX402(session, "https://api.example.com/resource", undefined, NO_APPROVAL_CHECK);
 
   const header = new Headers(calls[1]!.init!.headers).get("X-PAYMENT")!;
   const decoded = JSON.parse(Buffer.from(header, "base64").toString("utf8"));
@@ -263,7 +271,7 @@ test("fetchWithX402 normalizes a bare-string resource from the challenge", async
     return new Response("paid-content", { status: 200 });
   }) as typeof fetch;
 
-  await fetchWithX402(session, "https://api.example.com/resource");
+  await fetchWithX402(session, "https://api.example.com/resource", undefined, NO_APPROVAL_CHECK);
 
   const header = new Headers(calls[1]!.init!.headers).get("X-PAYMENT")!;
   const decoded = JSON.parse(Buffer.from(header, "base64").toString("utf8"));

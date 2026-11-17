@@ -1,0 +1,256 @@
+/**
+ * Cached-registry helpers: which networks are cached, where their cache is,
+ * how a registry write reaches the registry chain, and the funding check
+ * that precedes a direct (EOA) write. No network I/O.
+ */
+import { describe, expect, test } from "bun:test";
+import { parseEther, type Address } from "viem";
+import type { Hex, PublicClient } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+import {
+  BASE_SEPOLIA,
+  BNB,
+  BNB_TESTNET,
+  CELO,
+  CELO_SEPOLIA,
+  ETHEREUM,
+  KEYSTORE_CACHE_UNSET,
+  SEPOLIA,
+  type NetworkConfig,
+} from "../config.js";
+import { NATIVE_TOKEN } from "../config.js";
+import { createHeadlessPasskey } from "./passkey.js";
+import { createPrivateKeySigner, signerFromPrivateKey } from "./signer.js";
+import { assertRegistryFunding, isCachedRegistry, keyStoreCacheOf, planRegistryWrite, provisioningNetworks, registryFundsRequest, planRegistryFunding } from "./cachedRegistry.js";
+import { registrationValueFor } from "./keystore.js";
+
+const DEPLOYED_CACHE: Address = "0x37ebf8F17c3705568a03fB3A1629AcE7B3D95FFf";
+
+/** A cached network with a different cache address, to check the helper reads the config. */
+const CACHED_ELSEWHERE: NetworkConfig = {
+  ...BASE_SEPOLIA,
+  registry: { kind: "cached", l1: SEPOLIA, keyStoreCache: "0x00000000000000000000000000000000000CaC4E" },
+};
+
+describe("isCachedRegistry", () => {
+  test("true for Base Sepolia, false for networks with their own KeyStore", () => {
+    expect(isCachedRegistry(BASE_SEPOLIA)).toBe(true);
+    // Celo keeps its own KeyStore, like BNB.
+    expect(isCachedRegistry(CELO_SEPOLIA)).toBe(false);
+    expect(isCachedRegistry(CELO)).toBe(false);
+    expect(isCachedRegistry(BNB)).toBe(false);
+    expect(isCachedRegistry(ETHEREUM)).toBe(false);
+    expect(isCachedRegistry(BNB_TESTNET)).toBe(false);
+    expect(isCachedRegistry(SEPOLIA)).toBe(false);
+  });
+});
+
+describe("keyStoreCacheOf", () => {
+  test("returns the cache address of a cached network", () => {
+    expect(keyStoreCacheOf(BASE_SEPOLIA)).toBe(DEPLOYED_CACHE);
+    expect(keyStoreCacheOf(CACHED_ELSEWHERE)).toBe("0x00000000000000000000000000000000000CaC4E");
+  });
+
+  test("refuses an unset cache address with a message naming the chain and the field", () => {
+    if (BASE_SEPOLIA.registry?.kind !== "cached") throw new Error("BASE_SEPOLIA must be a cached network");
+    const unset: NetworkConfig = {
+      ...BASE_SEPOLIA,
+      registry: { ...BASE_SEPOLIA.registry, keyStoreCache: KEYSTORE_CACHE_UNSET },
+    };
+    expect(() => keyStoreCacheOf(unset)).toThrow(/no KeyStoreCache address configured/);
+    expect(() => keyStoreCacheOf(unset)).toThrow(/registry\.keyStoreCache/);
+  });
+
+  test("refuses a local-registry network (there is no cache)", () => {
+    expect(() => keyStoreCacheOf(BNB)).toThrow(/keeps its KeyStore locally/);
+    expect(() => keyStoreCacheOf(CELO)).toThrow(/keeps its KeyStore locally/);
+    expect(() => keyStoreCacheOf(CELO_SEPOLIA)).toThrow(/keeps its KeyStore locally/);
+  });
+});
+
+// Sepolia as it was before the testnet relay served it: the EOA path.
+const RELAYLESS_SEPOLIA: NetworkConfig = { ...SEPOLIA, relayUrl: undefined };
+
+describe("provisioningNetworks", () => {
+  test("local networks pass through unchanged", () => {
+    expect(provisioningNetworks([BNB, ETHEREUM])).toEqual([BNB, ETHEREUM]);
+  });
+
+  test("a cached network with a relay-less registry chain adds nothing (EOA writes)", () => {
+    const relayless: NetworkConfig = {
+      ...BASE_SEPOLIA,
+      registry: { kind: "cached", l1: RELAYLESS_SEPOLIA, keyStoreCache: DEPLOYED_CACHE },
+    };
+    expect(provisioningNetworks([relayless])).toEqual([relayless]);
+  });
+
+  test("a cached network whose registry chain has a relay is provisioned there too", () => {
+    expect(provisioningNetworks([BASE_SEPOLIA])).toEqual([BASE_SEPOLIA, SEPOLIA]);
+  });
+
+  // Celo keeps its own KeyStore, and a wallet created on Celo is still set up
+  // on Ethereum: a passkey wallet cannot be set up there later.
+  test("a wallet created on Celo is also set up on Ethereum, once", () => {
+    expect(provisioningNetworks([CELO])).toEqual([CELO, ETHEREUM]);
+    expect(provisioningNetworks([ETHEREUM, CELO])).toEqual([ETHEREUM, CELO]);
+    expect(provisioningNetworks([CELO, BNB, ETHEREUM])).toEqual([CELO, ETHEREUM, BNB]);
+    expect(provisioningNetworks([CELO_SEPOLIA])).toEqual([CELO_SEPOLIA, SEPOLIA]);
+  });
+
+  test("a chain named in provisionAlso that has no relay is left out", () => {
+    const celoNextToRelayless: NetworkConfig = { ...CELO_SEPOLIA, provisionAlso: [RELAYLESS_SEPOLIA] };
+    expect(provisioningNetworks([celoNextToRelayless])).toEqual([celoNextToRelayless]);
+  });
+});
+
+describe("planRegistryWrite", () => {
+  const admin = createPrivateKeySigner();
+
+  test("relay when the registry chain has one (Celo on Ethereum), for any signer", () => {
+    const plan = planRegistryWrite(ETHEREUM, admin, admin.address);
+    expect(plan.via).toBe("relay");
+    const passkeyPlan = planRegistryWrite(ETHEREUM, createHeadlessPasskey(), "0x0000000000000000000000000000000000000001");
+    expect(passkeyPlan.via).toBe("relay");
+  });
+
+  test("relay on Sepolia, now that the testnet relay serves it", () => {
+    expect(planRegistryWrite(SEPOLIA, createHeadlessPasskey(), "0x0000000000000000000000000000000000000001").via).toBe("relay");
+  });
+
+  test("direct EOA transaction when the registry chain has no relay", () => {
+    const plan = planRegistryWrite(RELAYLESS_SEPOLIA, admin, admin.address);
+    expect(plan.via).toBe("eoa");
+    if (plan.via !== "eoa") throw new Error("unreachable");
+    expect(plan.account.address).toBe(admin.address);
+  });
+
+  test("EOA path requires signer address == wallet address", () => {
+    const other = privateKeyToAccount(
+      "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+    );
+    expect(() => planRegistryWrite(RELAYLESS_SEPOLIA, admin, other.address)).toThrow(
+      /is not the wallet address/,
+    );
+  });
+
+  test("passkey admin on a relay-less registry chain throws the documented message", () => {
+    const passkey = createHeadlessPasskey();
+    expect(() =>
+      planRegistryWrite(RELAYLESS_SEPOLIA, passkey, "0x0000000000000000000000000000000000000001"),
+    ).toThrow(/passkey \(P256\) admin cannot sign one/);
+    expect(() =>
+      planRegistryWrite(RELAYLESS_SEPOLIA, passkey, "0x0000000000000000000000000000000000000001"),
+    ).toThrow(/register: false/);
+  });
+
+  test("a signer without a raw key on a relay-less registry chain is refused", () => {
+    const real = signerFromPrivateKey(
+      "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+    );
+    const opaque = { type: real.type, address: real.address, publicKey: real.publicKey, signDigest: real.signDigest };
+    expect(() => planRegistryWrite(RELAYLESS_SEPOLIA, opaque, real.address)).toThrow(/direct transactions/);
+  });
+});
+
+describe("assertRegistryFunding", () => {
+  const address: Address = "0x0000000000000000000000000000000000000abc";
+  const fakeClient = (balance: bigint) => ({ getBalance: async () => balance });
+
+  test("passes when the balance covers fee plus the gas allowance", async () => {
+    await assertRegistryFunding(fakeClient(parseEther("0.01")), SEPOLIA, address, parseEther("0.0002"));
+  });
+
+  test("names the chain, the asset, the shortfall and the faucet when underfunded", async () => {
+    let message = "";
+    try {
+      await assertRegistryFunding(fakeClient(0n), SEPOLIA, address, parseEther("0.0002"));
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).toContain("Sepolia (chainId 11155111)");
+    expect(message).toContain(address);
+    expect(message).toContain("holds 0 ETH");
+    expect(message).toContain("needs about 0.0012 ETH");
+    expect(message).toContain("cloud.google.com/application/web3/faucet/ethereum/sepolia");
+  });
+
+  test("mainnet registry chains get no faucet line", async () => {
+    let message = "";
+    try {
+      await assertRegistryFunding(fakeClient(0n), ETHEREUM, address, 0n);
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).toContain("Ethereum (chainId 1)");
+    expect(message).not.toContain("faucet");
+  });
+});
+
+describe("registryFundsRequest", () => {
+  const fee = parseEther("0.0002");
+  test("asks for the calls' value when the wallet holds less than it", () => {
+    expect(registryFundsRequest({ balance: 0n, valueNeeded: fee * 2n })).toEqual([{ address: NATIVE_TOKEN, value: fee * 2n }]);
+  });
+  test("otherwise one wei above the balance, so the relay always funds from the wallet's own chain", () => {
+    expect(registryFundsRequest({ balance: 0n, valueNeeded: 0n })).toEqual([{ address: NATIVE_TOKEN, value: 1n }]);
+    expect(registryFundsRequest({ balance: 5n, valueNeeded: 0n })).toEqual([{ address: NATIVE_TOKEN, value: 6n }]);
+    // Some ETH, less than value plus fee: the shape that used to be left to the relay.
+    expect(registryFundsRequest({ balance: fee * 20n, valueNeeded: fee * 2n })).toEqual([{ address: NATIVE_TOKEN, value: fee * 20n + 1n }]);
+  });
+  test("a wallet rich on the registry chain is funded like any other: no threshold, no allowance", () => {
+    expect(registryFundsRequest({ balance: parseEther("1"), valueNeeded: fee })).toEqual([{ address: NATIVE_TOKEN, value: parseEther("1") + 1n }]);
+  });
+});
+
+describe("planRegistryFunding", () => {
+  const fee = parseEther("0.0002");
+  const fakeRegistryClient = (o: { balance: bigint; activeKeys: Hex[] }) =>
+    ({
+      getBalance: async () => o.balance,
+      readContract: async ({ functionName }: { functionName: string }) => {
+        if (functionName === "getKeys") return o.activeKeys;
+        if (functionName === "getRegistrationFeeInWei") return fee;
+        throw new Error(`unexpected read ${functionName}`);
+      },
+    }) as unknown as PublicClient;
+  const call = { to: SEPOLIA.keyStoreController, value: fee, data: "0x" as Hex };
+  const wallet = "0x1111111111111111111111111111111111111111" as Address;
+
+  test("counts the admin's first registration in the value the relay must front", async () => {
+    const funding = await planRegistryFunding({
+      registryClient: fakeRegistryClient({ balance: 0n, activeKeys: [] }),
+      registry: SEPOLIA,
+      walletAddress: wallet,
+      adminPublicKey: ("0x04" + "aa".repeat(64)) as Hex,
+      calls: [call],
+    });
+    // Two values, and deliberately not the same one: `call` above is a
+    // hand-built fixture carrying the bare fee, while the prepended admin
+    // registration comes from `buildInitialRegisterCall` and so carries the
+    // oracle-drift margin. That planRegistryFunding returns their sum is the
+    // propagation property -- it adds up whatever `value` the calls declare
+    // rather than recomputing a fee of its own.
+    expect(funding).toEqual([
+      { address: NATIVE_TOKEN, value: fee + registrationValueFor(fee) },
+    ]);
+  });
+
+  test("no prepend once the wallet has keys; ETH it holds there does not stop the funding", async () => {
+    const short = await planRegistryFunding({
+      registryClient: fakeRegistryClient({ balance: 0n, activeKeys: ["0x01"] }),
+      registry: SEPOLIA,
+      walletAddress: wallet,
+      adminPublicKey: "0x04",
+      calls: [call],
+    });
+    expect(short).toEqual([{ address: NATIVE_TOKEN, value: fee }]);
+    const rich = await planRegistryFunding({
+      registryClient: fakeRegistryClient({ balance: parseEther("0.05"), activeKeys: ["0x01"] }),
+      registry: SEPOLIA,
+      walletAddress: wallet,
+      adminPublicKey: "0x04",
+      calls: [call],
+    });
+    expect(rich).toEqual([{ address: NATIVE_TOKEN, value: parseEther("0.05") + 1n }]);
+  });
+});

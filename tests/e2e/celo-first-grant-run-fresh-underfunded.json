@@ -1,0 +1,20 @@
+{
+  "relay": "https://relay-staging-production-2657.up.railway.app",
+  "startedAt": "2026-10-15T16:49:50.473Z",
+  "wallet": "0x9D9e854c80497357Cf7756f75007641BcaCA2f1b",
+  "statusEvents": [
+    "t+9.1s account-authorization chain 11142220",
+    "t+14.7s registry-write chain 11155111",
+    "t+15.1s registry-write chain 11155111 (root)",
+    "t+17.9s registry-write-failed chain 11155111 — The root registration (initialRegisterKey) could not be submitted, so the session key's registerKey was not attempted. The relay rejected the request to prepare the call: its simulation reverted with no reason on Sepolia (chainId 11155111), simulating 1 call to 0xc1525B766c134f7EB5B1d8e4a69C6Cb97Aff2379, sending 0.000225576596337898 ETH; the wallet cannot pay for it: it holds 0 ETH on Sepolia and needs 0.000225576596337898 ETH the calls send plus the relay fee; it holds 0.401598539996693309 CELO on Celo Sepolia Testnet, which the relay could not use to fund it (relay: 0x)",
+    "t+26.7s done"
+  ],
+  "grantReturnedAt": "t+26.7s",
+  "celoAuthorization": {
+    "tx": "0xad0e40301e19310e9ac32e3e6dacf7d68ba96f446d710631627cd35019548204",
+    "block": "38799014",
+    "unix": 1792083002,
+    "iso": "2026-10-15T16:50:02.000Z"
+  },
+  "failure": "Error: ASSERT FAILED: and `registration` has not resolved yet"
+}

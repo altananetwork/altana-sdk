@@ -108,6 +108,12 @@ test("networkToChainId parses CAIP-2 eip155:NN and keeps legacy names", () => {
   // legacy names still resolve
   expect(networkToChainId("bsc")).toBe(56);
   expect(networkToChainId("base")).toBe(8453);
+  // Celo aliases (mainnet and Sepolia), and their CAIP-2 forms
+  expect(networkToChainId("celo")).toBe(42220);
+  expect(networkToChainId("celo-sepolia")).toBe(11142220);
+  expect(networkToChainId("eip155:42220")).toBe(42220);
+  expect(networkToChainId("eip155:11142220")).toBe(11142220);
+  expect(() => networkToChainId("celo-alfajores")).toThrow(/unsupported network/);
 });
 
 test("signX402Payment handles a real B402 permit2-exact requirement", async () => {

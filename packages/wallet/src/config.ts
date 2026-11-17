@@ -1,4 +1,4 @@
-import { base, bsc, bscTestnet, mainnet } from "viem/chains";
+import { base, baseSepolia, bsc, bscTestnet, celo, celoSepolia, mainnet, sepolia } from "viem/chains";
 import type { Address, Chain } from "viem";
 
 /**
@@ -11,31 +11,132 @@ import type { Address, Chain } from "viem";
  * lockstep.
  */
 
+/**
+ * Where a network's KeyStore registry lives.
+ *
+ * - `local`: the KeyStore and Controller are deployed on the network itself
+ *   (BNB, Ethereum, Celo, BNB testnet, Celo Sepolia). Registry writes batch into the same relay
+ *   intent as the wallet's own calls. This is the default when `registry` is
+ *   omitted from a NetworkConfig.
+ * - `cached`: the network has no KeyStore of its own. Authority is rooted in
+ *   the registry of another chain (`l1`) and proven into a KeyStoreCache
+ *   contract deployed on this network (`keyStoreCache`). Registry writes go
+ *   to `l1`; decisions are read from `l1`; the cache is the proof target and
+ *   the read surface for third parties on this chain. Base Sepolia uses
+ *   this shape.
+ */
+export type KeyStoreRegistry =
+  | { kind: "local" }
+  | { kind: "cached"; l1: NetworkConfig; keyStoreCache: Address };
+
+/**
+ * The price feed the relay reads an asset's USD price from, and how old it
+ * lets that price be.
+ *
+ * A request paid in one asset on one chain and carried out in another asset
+ * on another chain is converted at these prices, and the relay refuses to
+ * convert at one older than `maxAgeSecs`, measured at the feed's own
+ * `updatedAt`. It answers that refusal with a revert that carries no reason,
+ * so the SDK reads the same feed to tell a price that is too old from every
+ * other refusal (`internal/priceFeeds.ts`).
+ *
+ * The relay does not publish these in `wallet_getCapabilities`, so they are
+ * kept here and mirror its configuration: `pricefeed.chainlink.feeds` and
+ * `interop.cross_asset.max_price_age_secs`.
+ */
+export type PriceFeed = {
+  /** The Chainlink `<asset>/USD` aggregator. */
+  address: Address;
+  /** The chain the aggregator is on, which is not always the chain the asset is held on. */
+  chain: Chain;
+  /** Public RPC URL for reading it. */
+  publicRpcUrl: string;
+  /** The oldest price the relay converts at, in seconds. */
+  maxAgeSecs: number;
+};
+
+/** The oldest price the mainnet relay converts at, in seconds. */
+const MAINNET_MAX_PRICE_AGE_SECS = 3900;
+/** The oldest price the testnet relay converts at, in seconds. */
+const TESTNET_MAX_PRICE_AGE_SECS = 7200;
+
+/** Chainlink CELO/USD on Celo, which prices CELO for both relays. */
+const CELO_USD_FEED = {
+  address: "0x0568fD19986748cEfF3301e55c0eb1E729E0Ab7e",
+  chain: celo,
+  publicRpcUrl: "https://celo-rpc.publicnode.com",
+} as const;
+
 export type NetworkConfig = {
   chain: Chain;
   chainId: number;
+  /**
+   * KeyStore address. On a `cached` network this is the registry chain's
+   * KeyStore (the contract lives on `registry.l1`, not on this chain), kept
+   * here so readers that only know one config still find the registry.
+   */
   keyStore: Address;
+  /** KeyStoreController address. Same placement rule as `keyStore`. */
   keyStoreController: Address;
   /** Public RPC URL for reads. Override per-environment if needed. */
   publicRpcUrl: string;
+  /**
+   * RPC URLs that serve `eth_getProof` for blocks a few hundred behind head,
+   * tried in order. Set on a registry chain whose `publicRpcUrl` only serves
+   * proofs for its newest blocks: an L2 anchors the registry chain about 100
+   * blocks behind head, and the proof into its KeyStoreCache is built at that
+   * block. Omitted, proofs use `publicRpcUrl`.
+   */
+  proofRpcUrls?: readonly string[];
   /** Block explorer base URL. */
   explorer: string;
   /**
-   * Altana relay endpoint. Unset for keystore-only networks — no relay serves
+   * Altana relay endpoint. Unset for keystore-only networks: no relay serves
    * them, and any attempt to execute through them throws (see buildRelayClient).
    */
   relayUrl?: string;
+  /**
+   * Registry topology. Omitted means `{ kind: "local" }`. See KeyStoreRegistry.
+   */
+  registry?: KeyStoreRegistry;
+  /**
+   * Chains a wallet created on this network is also set up on, so it can act
+   * there later without being created again. Only chains with a relay are
+   * used. A passkey wallet can only be set up at creation (the key that signs
+   * its setup is discarded), so leaving a chain out here closes it to passkey
+   * wallets created on this network alone.
+   */
+  provisionAlso?: readonly NetworkConfig[];
+  /**
+   * The feed the relay prices this network's native asset from when it
+   * converts between assets. Unset where the relay converts nothing to or
+   * from it. See PriceFeed.
+   */
+  nativePriceFeed?: PriceFeed;
 };
 
 /** Altana relay serving all mainnets. */
 export const RELAY_URL = "https://relay.altana.network";
 
 /**
- * Altana testnet relay. Serves BSC testnet (chainId 97) only — the standalone
- * testnet account stack. Sepolia / Base Sepolia are keystore-only testnets and
- * have no relay.
+ * Altana testnet relay. Serves BSC testnet (chainId 97), Sepolia (chainId
+ * 11155111), Celo Sepolia (chainId 11142220) and Base Sepolia (chainId 84532).
  */
 export const TESTNET_RELAY_URL = "https://testnet-relay.altana.network";
+
+/**
+ * The zero address, which the relay reads as "pay the fee in the chain's
+ * native token". Pass it as `feeToken` to force native; omit `feeToken` to
+ * let the relay charge whichever accepted token the wallet holds.
+ */
+export const NATIVE_TOKEN: Address = "0x0000000000000000000000000000000000000000";
+
+/**
+ * Placeholder for a `registry.keyStoreCache` that has not been filled in.
+ * `keyStoreCacheOf` refuses it, so no proof is ever sent to the zero address.
+ */
+export const KEYSTORE_CACHE_UNSET: Address =
+  "0x0000000000000000000000000000000000000000";
 
 export const ETHEREUM: NetworkConfig = {
   chain: mainnet,
@@ -43,8 +144,24 @@ export const ETHEREUM: NetworkConfig = {
   keyStore: "0xb70fDa90C1d576Ba8399946a0c10ECD9d9Ea923b",
   keyStoreController: "0x30a188Eecf14F4142B0d828ce838C9E1134e7FaA",
   publicRpcUrl: "https://ethereum-rpc.publicnode.com",
+  // Celo anchors Ethereum 100 to 130 blocks behind head. Each of these served
+  // `eth_getProof` at the anchored block on 2026-11-13; the first two also
+  // served it 300 blocks further back.
+  proofRpcUrls: [
+    "https://eth-mainnet.public.blastapi.io",
+    "https://rpc.mevblocker.io",
+    "https://eth.drpc.org",
+    "https://0xrpc.io/eth",
+  ],
   explorer: "https://etherscan.io",
   relayUrl: RELAY_URL,
+  // Chainlink ETH/USD on Ethereum.
+  nativePriceFeed: {
+    address: "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
+    chain: mainnet,
+    publicRpcUrl: "https://ethereum-rpc.publicnode.com",
+    maxAgeSecs: MAINNET_MAX_PRICE_AGE_SECS,
+  },
 };
 
 export const BNB: NetworkConfig = {
@@ -58,7 +175,7 @@ export const BNB: NetworkConfig = {
 };
 
 /**
- * BNB Smart Chain Testnet — the full-stack Altana testnet. Standalone
+ * BNB Smart Chain Testnet, the full-stack Altana testnet. Standalone
  * ecosystem (no L1Block predeploy, so no L2 cache): keystore + account stack +
  * relay all live on chain 97. Fund wallets from https://testnet.bnbchain.org/faucet-smart.
  *
@@ -74,6 +191,145 @@ export const BNB_TESTNET: NetworkConfig = {
   explorer: "https://testnet.bscscan.com",
   relayUrl: TESTNET_RELAY_URL,
 };
+
+/**
+ * Sepolia: hosts the testnet KeyStore behind Celo Sepolia and Base Sepolia.
+ * The Altana testnet relay serves it, so KeyStore writes are relayed wallet
+ * calls with fees in Sepolia ETH:
+ * https://cloud.google.com/application/web3/faucet/ethereum/sepolia
+ *
+ * The public RPC must serve `eth_getProof` for the block Celo Sepolia
+ * anchors, which runs about 100 blocks behind head; 0xrpc.io keeps a
+ * 128-block proof window.
+ *
+ * Addresses sourced from the Altana KeyStore deployment manifest:
+ *   <altana-keystore>/deployments/sepolia.json
+ */
+export const SEPOLIA: NetworkConfig = {
+  chain: sepolia,
+  chainId: 11155111,
+  keyStore: "0x38Aaf396F462Ad3a4F38ADa653AF6bDEA55F772d",
+  keyStoreController: "0xc1525B766c134f7EB5B1d8e4a69C6Cb97Aff2379",
+  publicRpcUrl: "https://0xrpc.io/sep",
+  explorer: "https://sepolia.etherscan.io",
+  relayUrl: TESTNET_RELAY_URL,
+  // Chainlink ETH/USD on Sepolia.
+  nativePriceFeed: {
+    address: "0x694AA1769357215DE4FAC081bf1f309aDC325306",
+    chain: sepolia,
+    publicRpcUrl: "https://0xrpc.io/sep",
+    maxAgeSecs: TESTNET_MAX_PRICE_AGE_SECS,
+  },
+};
+
+/**
+ * Celo Sepolia (chain 11142220). Wallets run through the Altana testnet
+ * relay with fees in CELO. Celo Sepolia keeps its own KeyStore: keys are
+ * registered there, in the same request that authorizes them, and the
+ * registration fee is paid in CELO. Fund wallets from
+ * https://faucet.celo.org/celo-sepolia.
+ *
+ * Addresses sourced from the Altana KeyStore deployment manifest:
+ *   <altana-keystore>/deployments/celo-sepolia.json
+ */
+export const CELO_SEPOLIA: NetworkConfig = {
+  chain: celoSepolia,
+  chainId: 11142220,
+  keyStore: "0xCC3df52B6aD826781AAD86EcEB1459ed0b1Ae3F6",
+  keyStoreController: "0x54eAb49d805336DB8591BAAF9ac630D0A58Ad2cD",
+  publicRpcUrl: "https://forno.celo-sepolia.celo-testnet.org",
+  explorer: "https://sepolia.celoscan.io",
+  relayUrl: TESTNET_RELAY_URL,
+  provisionAlso: [SEPOLIA],
+  // Celo Sepolia has no Chainlink deployment, so the testnet relay prices
+  // CELO from the feed on Celo.
+  nativePriceFeed: { ...CELO_USD_FEED, maxAgeSecs: TESTNET_MAX_PRICE_AGE_SECS },
+};
+
+/**
+ * Base Sepolia (chain 84532). Wallets run through the Altana testnet relay
+ * with fees in ETH. It has no KeyStore of its own: session keys are
+ * registered in the Sepolia KeyStore and proven into the KeyStoreCacheOPStack
+ * contract on Base Sepolia through the OP-stack `L1Block` predeploy.
+ *
+ * Addresses sourced from the Altana KeyStore deployment manifest:
+ *   <altana-keystore>/deployments/base-sepolia.json
+ */
+export const BASE_SEPOLIA: NetworkConfig = {
+  chain: baseSepolia,
+  chainId: 84532,
+  keyStore: SEPOLIA.keyStore,
+  keyStoreController: SEPOLIA.keyStoreController,
+  publicRpcUrl: "https://sepolia.base.org",
+  explorer: "https://sepolia.basescan.org",
+  relayUrl: TESTNET_RELAY_URL,
+  registry: {
+    kind: "cached",
+    l1: SEPOLIA,
+    // KeyStoreCacheOPStack, deployed 2026-08-20.
+    // Source: <altana-keystore>/deployments/base-sepolia.json.
+    keyStoreCache: "0x37ebf8F17c3705568a03fB3A1629AcE7B3D95FFf",
+  },
+};
+
+/**
+ * Celo (chain 42220). Wallets run through the Altana relay with fees in
+ * CELO, USDC or USDT. Celo keeps its own KeyStore: keys are registered
+ * there, in the same request that authorizes them, and the registration fee
+ * is paid in CELO.
+ *
+ * Addresses sourced from the Altana KeyStore deployment manifest:
+ *   <altana-keystore>/deployments/celo.json
+ */
+export const CELO: NetworkConfig = {
+  chain: celo,
+  chainId: 42220,
+  keyStore: "0x83b30935f36d6ccf9B1ec3b5E47F2866b97cd27c",
+  keyStoreController: "0x47bA5fc2A5b0CcB24BA3fAC9D4B59400eE9fd1D6",
+  publicRpcUrl: "https://celo-rpc.publicnode.com",
+  explorer: "https://celoscan.io",
+  relayUrl: RELAY_URL,
+  provisionAlso: [ETHEREUM],
+  nativePriceFeed: { ...CELO_USD_FEED, maxAgeSecs: MAINNET_MAX_PRICE_AGE_SECS },
+};
+
+/**
+ * The network whose KeyStore holds this network's registry: the network
+ * itself for a local registry, `registry.l1` for a cached one. Every registry
+ * read and write in the SDK goes through this.
+ */
+export function registryNetwork(network: NetworkConfig): NetworkConfig {
+  return network.registry?.kind === "cached" ? network.registry.l1 : network;
+}
+
+/**
+ * The networks a wallet executes on, grouped by environment. Pass a group as
+ * a client's `chains` to grant and revoke session keys on every one of them.
+ * Registry-only chains (Sepolia) are not listed: they are reached as the
+ * registry of the cached networks in the group.
+ */
+export const NETWORKS: {
+  readonly mainnet: readonly NetworkConfig[];
+  readonly testnet: readonly NetworkConfig[];
+} = {
+  mainnet: [BNB, ETHEREUM, CELO],
+  testnet: [BNB_TESTNET, CELO_SEPOLIA, BASE_SEPOLIA],
+};
+
+const KNOWN_NETWORKS: readonly NetworkConfig[] = [
+  ETHEREUM,
+  BNB,
+  CELO,
+  BNB_TESTNET,
+  SEPOLIA,
+  CELO_SEPOLIA,
+  BASE_SEPOLIA,
+];
+
+/** The SDK's config for a chainId, registry-only chains included, or undefined. */
+export function networkByChainId(chainId: number): NetworkConfig | undefined {
+  return KNOWN_NETWORKS.find((n) => n.chainId === chainId);
+}
 
 /**
  * L2 cache deployment for cross-chain session-key verification.

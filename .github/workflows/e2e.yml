@@ -43,6 +43,16 @@ jobs:
       - name: Typecheck e2e (fork + demo harness)
         run: bun run --filter '@altananetwork/e2e' typecheck
 
+      - name: Publish guard (workspace ranges, address checksums)
+        # The same script every package runs in prepublishOnly, so a problem
+        # that would stop a publish stops the pull request that introduces it.
+        run: node scripts/check-publishable.mjs
+
+      - name: Install check (packed tarballs, code written for 0.9.0)
+        # Packs each publishable package, installs the tarballs into an empty
+        # project, imports them under Node and compiles a 0.9.0-style script.
+        run: node scripts/check-install.mjs
+
       - name: Unit tests
         # The sdk test files run one process per file: a bun loader bug (still
         # present in bun 1.3.14) deadlocks multi-file runs on GitHub runners
@@ -60,14 +70,20 @@ jobs:
           cd ../..
           bun run --filter '@altananetwork/x402-server' test
           bun run --filter '@altananetwork/mcp' test
+          # The e2e harness's own pure pieces — the anvil error path and the
+          # redaction that keeps a fork URL's key out of this log.
+          bun run --filter '@altananetwork/e2e' test
+          # The docs site's network choice: its networks and the page address.
+          bun run --filter '@altananetwork/docs' test
 
   fork-tests:
     name: On-chain fork tests (anvil)
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # Fork tests fork BNB + Base. They read dedicated RPC endpoints from the
-    # BSC_FORK_RPC_URL / BASE_FORK_RPC_URL secrets (falling back to public nodes
-    # only for local runs without them). With dedicated RPCs they run reliably,
+    # Fork tests fork BNB, Base and Celo Sepolia. They read dedicated RPC
+    # endpoints from the BSC_FORK_RPC_URL / BASE_FORK_RPC_URL /
+    # CELO_SEPOLIA_FORK_RPC_URL secrets (falling back to public nodes only for
+    # local runs without them). With dedicated RPCs they run reliably,
     # so this is now a required gate rather than informational.
     #
     # Skipped on PRs from forks: GitHub never exposes secrets to fork PRs, so
@@ -97,11 +113,24 @@ jobs:
           bun run --filter '@altananetwork/sdk' build
           bun run --filter '@altananetwork/x402-server' build
 
-      - name: Run fork tests (ERC-1271, permit2, permit2-witness, eip3009, ERC-8004, ERC-8183, native-receive)
+      # Here as well as in build-and-check: this is the only job with anvil on
+      # PATH, so it is the only one where the case that starts a real one runs.
+      - name: Harness unit tests, including the real-anvil case
+        run: bun run --filter '@altananetwork/e2e' test
+
+      # No Base: unsupported until we have RPCs (Doris 2026-10-28). fork-eip3009
+      # still exists and still runs by name (fork:eip3009), just not here.
+      - name: Run fork tests (ERC-1271, permit2, permit2-witness, ERC-8004, ERC-8183, native-receive, x402-server, Celo Sepolia cache, Celo Sepolia eip3009, Celo Sepolia x402-server)
         env:
           BSC_FORK_RPC_URL: ${{ secrets.BSC_FORK_RPC_URL }}
-          BASE_FORK_RPC_URL: ${{ secrets.BASE_FORK_RPC_URL }}
           # fork-erc8004 and fork-erc8183 fork BSC *testnet* (the deployments
           # they exercise). Falls back to a public node when the secret is unset.
           BSC_TESTNET_FORK_RPC_URL: ${{ secrets.BSC_TESTNET_FORK_RPC_URL }}
+          # fork-celo-cache, fork-eip3009-celo and fork-celo-x402-server fork
+          # Celo Sepolia
+          # (public fallback: https://rpc.ankr.com/celo_sepolia). fork-celo-cache
+          # also reads Sepolia; SEPOLIA_RPC_URL overrides SEPOLIA.publicRpcUrl
+          # and must serve eth_getProof for the block Celo Sepolia anchors.
+          CELO_SEPOLIA_FORK_RPC_URL: ${{ secrets.CELO_SEPOLIA_FORK_RPC_URL }}
+          SEPOLIA_RPC_URL: ${{ secrets.SEPOLIA_RPC_URL }}
         run: bun run --filter '@altananetwork/e2e' fork:all

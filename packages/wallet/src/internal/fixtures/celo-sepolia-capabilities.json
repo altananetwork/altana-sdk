@@ -1,0 +1,55 @@
+{
+ "0xaa044c": {
+  "contracts": {
+   "orchestrator": {
+    "address": "0xcb5cef3c54aa90e9a7ad602a258d3d360cc862b9",
+    "version": "0.5.5"
+   },
+   "accountImplementation": {
+    "address": "0x33ad2f49ab9f122f5f0fdf579f575724eff353de",
+    "version": "0.5.10"
+   },
+   "legacyOrchestrators": [],
+   "legacyAccountImplementations": [],
+   "accountProxy": {
+    "address": "0x4f4dde38da9f8abbb96c48ca520b992d4badc3d6",
+    "version": null
+   },
+   "simulator": {
+    "address": "0x3006de101e96e85272d5b5ad07a9738fa7678008",
+    "version": null
+   },
+   "funder": {
+    "address": "0xb248602eaadd9c3e2db4575c4e4d58003b7a2740",
+    "version": null
+   },
+   "escrow": {
+    "address": "0xcd075ceb5cd463a9233a8085fc915767139f655c",
+    "version": null
+   }
+  },
+  "fees": {
+   "recipient": "0xb248602eaadd9c3e2db4575c4e4d58003b7a2740",
+   "quoteConfig": {
+    "constantRate": 1,
+    "gas": {
+     "intentBuffer": 0,
+     "txBuffer": 0
+    },
+    "ttl": 120,
+    "rateTtl": 300
+   },
+   "tokens": [
+    {
+     "uid": "celo",
+     "address": "0x0000000000000000000000000000000000000000",
+     "decimals": 18,
+     "feeToken": true,
+     "interop": false,
+     "symbol": "ETH",
+     "nativeRate": "0xde0b6b3a7640000"
+    }
+   ]
+  }
+ }
+}

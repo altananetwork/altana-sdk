@@ -2,9 +2,10 @@ import { type NetworkConfig } from "./config.js";
 import { createPrivateKeySigner, type Signer } from "./internal/signer.js";
 import {
   buildRelayClient,
-  registerAccount,
+  planAccountProvisioning,
+  provisionAccount,
 } from "./internal/relay.js";
-import type { Address } from "viem";
+import { provisioningNetworks } from "./internal/cachedRegistry.js";
 import type { Wallet } from "./internal/types.js";
 
 export type CreateWalletOptions = {
@@ -47,9 +48,17 @@ export type CreateWalletResult = Wallet & {
  * The caller is responsible for funding the wallet address before the first
  * on-chain action.
  *
- * Multichain only works for signers that yield a deterministic address
- * across chains (private-key signers). For passkeys across chains, use
- * createPasskeyWallet, which reuses a single throwaway EOA.
+ * Every signer type is multichain. The wallet's address and the key that
+ * signs each chain's EIP-7702 authorization are decided once, before the
+ * loop, so a passkey wallet gets one throwaway EOA for all of its chains
+ * rather than one per chain. See `planAccountProvisioning`.
+ *
+ * A cached network whose registry chain has a relay (Base Sepolia, rooted in
+ * Sepolia) is provisioned on that registry chain too: the wallet has the
+ * same address and the same admin there, and its registry writes go through
+ * its own smart account. A network can also name chains to set the wallet up
+ * on for later (`provisionAlso`: Celo names Ethereum). A relay-less registry chain needs no provisioning;
+ * writes there come from the admin EOA.
  *
  * Custody follows the signer. Altana never persists keys.
  */
@@ -61,23 +70,15 @@ export async function createWallet(
   }
   const signer = opts.signer ?? createPrivateKeySigner();
 
-  let walletAddress: Address | undefined;
-  for (const network of opts.networks) {
-    const relayClient = buildRelayClient(network);
-    const { walletAddress: addr } = await registerAccount(relayClient, signer);
-    if (walletAddress && addr !== walletAddress) {
-      throw new Error(
-        `createWallet: signer produced a different address on chain ` +
-          `${network.chainId} (${addr}) than on the first chain ` +
-          `(${walletAddress}). Multichain createWallet needs a signer with a ` +
-          `deterministic address; use createPasskeyWallet for passkeys.`,
-      );
-    }
-    walletAddress = addr;
+  // One plan for the whole wallet: the address every chain provisions, and
+  // the key that signs every chain's authorization over it.
+  const plan = planAccountProvisioning(signer);
+  for (const network of provisioningNetworks(opts.networks)) {
+    await provisionAccount(buildRelayClient(network), plan);
   }
 
   return {
-    address: walletAddress!,
+    address: plan.walletAddress,
     signer,
   };
 }

@@ -1,6 +1,6 @@
 ---
 title: Welcome
-description: Noncustodial authorization infrastructure for agentic workflows. Give agents provable, revocable authority to act onchain. Live on mainnet across BNB Chain, Ethereum, and Base.
+description: Altana is the self-custodial stack for agentic finance, enabling AI agents to execute across any open protocol under user-defined rules. Live on mainnet across BNB Chain, Ethereum, Celo, and Base.
 showOutline: false
 showAiCta: false
 content:
@@ -26,12 +26,9 @@ import {
   </h1>
 
   <div className="home-intro">
-    Altana is noncustodial authorization infrastructure for agentic workflows.<br />
-    Give an agent provable, revocable authority to act onchain, scoped by spend
-    caps, allowed contracts, and expiry you set, never your keys.<br />
-    Every permission lives in an open onchain Keystore that any app or agent can
-    verify, not a vendor backend you have to trust.<br />
-    Build with the TypeScript SDK, or operate through Claude, Cursor, or any MCP client.
+    <p>Altana is the self-custodial stack for agentic finance, enabling AI agents to execute across any open protocol under user-defined rules.</p>
+    <p>Give an agent provable, revocable authority to act onchain, scoped by spend caps, allowed contracts, and expiry you set, never your keys.<br />Every permission lives in an open onchain Keystore that any app or agent can verify, not a vendor backend you have to trust.</p>
+    <p>Build with the TypeScript SDK, or operate through Claude, Cursor, or any MCP client.</p>
   </div>
 
   <div className="home-proof">
@@ -43,6 +40,9 @@ import {
       </a>
       <a href="/concepts/networks#ethereum-ethereum" title="Ethereum on Networks & Addresses">
         <img src="/chains/ethereum.svg" alt="Ethereum" style={{ height: 20 }} className="invert-dark" />
+      </a>
+      <a href="/concepts/networks#celo-celo" title="Celo on Networks & Addresses">
+        <img src="/chains/celo.svg" alt="Celo" style={{ height: 18 }} />
       </a>
       <a href="/concepts/networks#base-base" title="Base on Networks & Addresses">
         <img src="/chains/base.svg" alt="Base" style={{ height: 16 }} />
@@ -83,7 +83,7 @@ import {
   <a href="/getting-started/build-with-claude">
     <span className="path-icon"><SparkIcon /></span>
     <span className="path-copy">
-      <span className="path-title">Connect an AI tool</span>
+      <span className="path-title">Build with AI</span>
       <span className="path-desc">Operate wallets from Claude, Cursor, or Codex. No code.</span>
     </span>
     <span className="path-arrow">→</span>
@@ -163,7 +163,7 @@ https://docs.altana.network/llms-full.txt
       TypeScript, BNB Smart Chain by default.
     </div>
     <div className="pathway-links">
-      <a href="/sdk/bnb">Setup on BNB Smart Chain <span>→</span></a>
+      <a href="/sdk/setup">Setup: choose a chain <span>→</span></a>
       <a href="/sdk/create-wallet">createWallet <span>→</span></a>
       <a href="/sdk/grant-session">grantSession <span>→</span></a>
       <a href="/sdk/execute">execute <span>→</span></a>

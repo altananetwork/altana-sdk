@@ -1,0 +1,75 @@
+---
+title: Setup
+description: Install the SDK, choose a chain, create a client.
+---
+
+# Setup
+
+The SDK works the same way on every chain. You install it, pick the chain
+config, and create a client. Everything after that (wallets, sessions,
+execution) is the same code.
+
+## Install
+
+```bash
+npm install @altananetwork/sdk viem
+```
+
+## Choose a chain
+
+```ts
+import { createClient, BNB, signerFromPrivateKey } from "@altananetwork/sdk";
+
+const client = createClient({ chains: [BNB] }); // or ETHEREUM, CELO, BNB_TESTNET, CELO_SEPOLIA, BASE_SEPOLIA
+const signer = signerFromPrivateKey(process.env.PRIVATE_KEY as `0x${string}`);
+
+const wallet = await client.createWallet({ signer });
+console.log(wallet.address);
+```
+
+| Config | Chain | Chain id | Fund `wallet.address` with |
+| --- | --- | --- | --- |
+| `BNB` | BNB Smart Chain (default) | 56 | BNB |
+| `ETHEREUM` | Ethereum | 1 | ETH |
+| `CELO` | Celo | 42220 | CELO |
+| `BNB_TESTNET` | BNB Smart Chain Testnet | 97 | test BNB: [faucet](https://testnet.bnbchain.org/faucet-smart) |
+| `CELO_SEPOLIA` | Celo Sepolia | 11142220 | test CELO: [faucet](https://faucet.celo.org/celo-sepolia) |
+| `BASE_SEPOLIA` | Base Sepolia | 84532 | Base Sepolia ETH. Keystore writes on Sepolia are paid from this balance; ETH on Sepolia is not used |
+
+BNB Smart Chain, Ethereum and Celo are standalone: the [Keystore](/concepts/keystore) is
+on the chain itself. Base Sepolia is an L2: the Keystore is on Sepolia and a KeyStoreCache
+on the L2 mirrors it. The SDK handles the L1 write and the
+proof into the cache inside [`grantSession`](/sdk/grant-session) and
+[`revokeSession`](/sdk/revoke-session). The L1 write is paid from the wallet's balance on
+the L2: the relay takes the registration fee and its own fee there and funds the write on
+the L1. `BASE` is also exported, for the L2
+Keystore cache used by [`ensureKeyCached`](/sdk/sync-to-l2).
+
+## Multiple chains
+
+`createClient` accepts several chains. A wallet has the same address on all
+of them. Calls pick one with `chainId` and use the default chain without it.
+A session is granted on one chain, or on several with `chainIds`, and revoked
+wherever it lives:
+
+```ts
+import { createClient, NETWORKS } from "@altananetwork/sdk";
+
+const client = createClient({ chains: [...NETWORKS.mainnet], defaultChainId: 56 });
+
+await client.execute({ /* ... */, chainId: 42220 });      // one chain: Celo
+await client.grantSession({ /* ... */ });                  // the default chain: BNB
+await client.grantSession({ /* ... */, chainId: 42220 });  // one chain: Celo
+await client.grantSession({ /* ... */, chainIds: [56, 42220] });  // several in one call
+await client.revokeSession({ wallet, signer, session });   // wherever the key lives
+```
+
+`NETWORKS.mainnet` is BNB, Ethereum and Celo; `NETWORKS.testnet` is BNB
+testnet, Celo Sepolia and Base Sepolia. `networkByChainId(id)` returns the
+config for any chain the SDK knows, Sepolia included.
+
+## What's next
+
+- [Create a smart agentic wallet](/getting-started/create-agentic-wallet). The full walkthrough.
+- [Grant a session](/sdk/grant-session). Scoped, time-bounded keys for AI agents.
+- [Networks & Addresses](/concepts/networks) and [Testnet](/concepts/networks/testnet). RPCs, explorers, faucets, contract addresses.

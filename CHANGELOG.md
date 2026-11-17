@@ -1,16 +1,616 @@
 # Changelog
 
-Notable changes to `@altananetwork/sdk` and `@altananetwork/mcp`.
+Notable changes to `@altananetwork/sdk`, `@altananetwork/mcp`,
+`@altananetwork/x402-server` and `@altananetwork/hypersigner-keystore-mcp`.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions below are the `@altananetwork/sdk` version; the matching
 `@altananetwork/mcp` version is noted where it differs.
 
-These packages are pre-1.0. Minor versions may contain breaking changes.
+From 1.0.0 the sdk and mcp packages follow semantic versioning: a breaking
+change is a major version. `@altananetwork/x402-server` and
+`@altananetwork/hypersigner-keystore-mcp` are still 0.x, where a minor
+version may contain breaking changes.
 
 > This changelog starts at 0.7.0. Entries for earlier versions were
 > reconstructed from commit history after the fact, so they summarize what
 > shipped rather than itemizing every change.
+
+## [1.0.0] - 2026-11-17
+
+`@altananetwork/mcp` 1.0.0, `@altananetwork/x402-server` 0.3.0,
+`@altananetwork/hypersigner-keystore-mcp` 0.3.0
+
+### Upgrading from 0.9.0
+
+Code written for 0.9.0 compiles and runs against 1.0.0; CI installs the
+packed packages and compiles such a script on every pull request. What
+behaves differently:
+
+- **Revoke.** `client.revokeSession` revokes on every chain of the client
+  that holds the key, throws a `SessionRevokeError` when it failed on the
+  chain the call answers for, and reports `status: "revoked"`, not
+  `"CONFIRMED"`.
+- **Grant result.** `GrantSessionResult` gains `status`, `legs`,
+  `registration` and `cacheSync`. On BNB Chain and Ethereum nothing else
+  changes. On a network that mirrors another chain's Keystore (Base Sepolia)
+  the call returns once the account authorized the key; the Keystore write
+  and the cache proof finish in the background.
+- **Errors.** A relay failure is thrown as an `AltanaError` with a `code` and
+  one plain sentence; the relay's own words are on `relayMessage` and
+  `cause`. Branch on `code`, not on message text.
+- **`execute`.** A bundle the relay refused with no receipt throws instead
+  of returning `FAILED`.
+- **Fee token.** With no `feeToken` the relay charges whichever accepted
+  token the wallet holds. On BNB Chain and Ethereum that is still the native
+  token; on Celo it can be CELO, USDC or USDT. The Keystore registration fee
+  is always paid in the chain's native token.
+- **x402.** `signX402Payment` signs a v2 envelope when the requirement names
+  no version. `fetchWithX402` reads the session's approvals first and
+  refuses when one is missing (`checkApprovals: false` skips the reads).
+- **`@altananetwork/x402-server`.** A payment that was broadcast but whose
+  receipt could not be read is answered `200` with `settlement: "pending"`,
+  not `402`. Deliver on `"confirmed"` if delivery must wait for the chain.
+- **`fundNative`** always throws; fund wallets from a faucet or your own
+  wallet.
+- **MCP.** `deadlineMinutes` must be positive, `revoke_session` revokes on
+  every chain of the environment that holds the key, and a failed grant is
+  not saved as a session.
+- **Licence.** `@altananetwork/x402-server` and
+  `@altananetwork/hypersigner-keystore-mcp` are Apache-2.0, as the sdk and
+  mcp packages already were.
+
+### Breaking
+
+- **Session grant and revoke report per chain; a grant still goes to one
+  chain.** `client.grantSession` grants on one chain, `chainId` or the
+  client's default chain, as in 0.9.0: it returns `transactionHash` and
+  throws when the account on that chain did not authorize the key (the
+  original error, or `Session grant did not confirm: status=<STATUS>`). Pass
+  `chainIds: number[]` instead to grant on several chains in one call; that
+  form does not throw for a failed chain. Calls written for 0.9.0 keep
+  working unchanged. New in `GrantSessionResult`: `keyId`, `keyHash`,
+  `status: "granted" | "failed"`, `legs` (one per step per chain),
+  `registration` and `cacheSync`; on an L2 a result with `status: "failed"`
+  is a live key whose Keystore write or cache proof is left.
+  `client.revokeSession` revokes on every chain of the client that holds the
+  key. It still accepts `chainId` (deprecated: it names the chain the call
+  answers for, default the client's default chain, and does not narrow the
+  revoke), returns `transactionHash` for that chain, and throws a
+  `SessionRevokeError` when the revoke failed there instead of returning
+  `status: "FAILED"`. Its result is now `{ keyId, status: "revoked" |
+  "failed", legs, cacheSync }` rather than an `ExecuteResult`: `status` no
+  longer reads `"CONFIRMED"`, so code that waits for that value must compare
+  against `"revoked"`. The low-level `grantSession` / `revokeSession`
+  functions take `{ networks }` instead of `{ network }` and never throw for
+  a failed leg. `onStatus` receives the chain as a second argument.
+
+### Added
+
+- **Celo and Celo Sepolia, each with its own KeyStore.** `CELO` (chain 42220)
+  and `CELO_SEPOLIA` (chain 11142220) are execution networks whose KeyStore is
+  on the chain itself, as on BNB Chain: a grant registers the key and
+  authorizes it in one relay transaction, a revoke undoes both in one, and the
+  registration fee is paid in CELO. The relay on Celo takes its own fee in
+  CELO, USDC or USDT. A wallet created for Celo is also set up on Ethereum
+  (Sepolia on testnet), through the new `NetworkConfig.provisionAlso`, so a
+  passkey wallet can act there later. A wallet that lacks the CELO for a
+  registration is told what it needs and has, and asked for CELO only.
+  `@altananetwork/mcp` (`ALTANA_CHAIN=celo`, `celo-sepolia`) and
+  `@altananetwork/hypersigner-keystore-mcp` read and encode against Celo's
+  KeyStore. Covered by unit tests, the `fork:celo-keystore` fork test against
+  the deployed contracts and the `smoke:celo-sepolia` live test.
+- **`proofRpcUrls` on `NetworkConfig`.** A cache proof is built at the block
+  the L2 anchors, about 100 blocks behind the registry chain's head, and
+  Ethereum's default public RPC does not serve `eth_getProof` there.
+  `ETHEREUM.proofRpcUrls` lists endpoints that do; `syncSessionToCache`,
+  `grantSession`, `revokeSession` and the session quotes try them in order and
+  then `publicRpcUrl`. Set your own list on the registry network, or keep
+  passing `l1Client`. Networks without the field read from `publicRpcUrl` as
+  before.
+
+- **`quoteExecute`.** `client.quoteExecute` (and the standalone `quoteExecute`) takes the same
+  options as `execute` and returns the relay's quote for those exact calls without sending
+  them: the maximum fee, the token it is charged in, the native value the calls carry and any
+  shortfall. Size a "send everything" call as balance minus the quoted fee instead of guessing.
+- **ERC-8004 agent identity on Celo.** The identity registry is now its own
+  address record, `ERC8004_ADDRESSES`, read with `erc8004Registry(chainId)`,
+  and it carries Celo (42220, `0x8004A169…`) and Celo Sepolia (11142220,
+  `0x8004A818…`) alongside BNB Chain and BNB testnet. Every entry point and the
+  MCP tools built on them therefore work on Celo:
+  `registerErc8004Agent`, `setErc8004AgentUri`, `getErc8004Agent`,
+  `erc8004RegisterPermissions` and the two call builders. The registry moved out
+  of `ERC8183_ADDRESSES` because Celo has the registry and none of the ERC-8183
+  job-escrow stack; `Erc8183Addresses.registry` still names the same contract
+  and now reads it from the new record, so the two cannot drift.
+- **`@altananetwork/x402-server`: settle through a hosted facilitator.**
+  `facilitatorService` points a merchant at one, which broadcasts the payment
+  and pays the gas, so a merchant can take payments without an RPC or a funded
+  key. Celo runs the one its own documentation points at:
+  `CELO_FACILITATOR_URL` (42220) and `CELO_SEPOLIA_FACILITATOR_URL`
+  (11142220); `facilitatorSupported` reads its open `GET /supported` and
+  `supportsExactOn` answers whether it serves a chain. The choice is per rail:
+  `facilitatorService.rails` decides what goes there and everything else
+  settles from the merchant's key, so one route covers both paths.
+  `facilitatorRails` and `facilitatorAssets` read what a facilitator claims per
+  asset from `GET /supported` — Celo's mainnet facilitator lists `eip3009` for
+  USDC, USDT and USAT and `permit2` for wARS, wBRL and wCOP — and the new
+  receipt field `settledVia` (`"facilitator"` or `"merchant"`) reports which
+  route settled a payment, so a seller states the route instead of inferring it
+  from the rail. Verification stays local either way, since the merchant's own
+  is ERC-1271-aware and a facilitator's need not be. `POST /settle` needs an
+  `X-API-Key`, and a 401 says so rather than looking like a rejected payment.
+- **`@altananetwork/hypersigner-keystore-mcp`: an L1 key, readable on an L2.**
+  The server encoded L1 KeyStore calls only, so an authorize, a timebox or a
+  revoke it produced was invisible to anything on the L2: an L2 rooted in the
+  KeyStore reads authority through a `KeyStoreCache`, and the cache knows only
+  what someone has proven into it. `keystore_cache_status` reads that cache and
+  separates the three states a caller otherwise conflates: never proven, proven
+  at the block the L2 anchors, and proven at another one. The third matters
+  because `isValidKey` answers only for the anchored block, so one anchor update
+  makes a correct entry read as not valid until a fresh proof lands. And
+  `keystore_encode_cache_proof` returns the unsigned `populateKey` call that
+  carries the key's current L1 state across. Relaying is permissionless, so any
+  funded L2 account can send it for any user, and the server still signs nothing.
+  An L2 alias now also names its mirror: `ALTANA_CHAIN=base-sepolia` resolves to
+  the Sepolia registry and Base Sepolia's cache, while `ALTANA_CHAIN=sepolia`
+  resolves to the same registry with no L2, because more than one L2 can be rooted in it.
+  `L2_RPC_URL` overrides the L2 read RPC.
+- **A session key can pay x402 straight after it is granted.** A payment from a
+  smart account is an ERC-1271 signature, and `IthacaAccount.isValidSignature`
+  accepts a session key's only from a contract the account has approved as a
+  signature checker *for that key*; the permit2 rails additionally need the
+  token approved to Permit2, which moves it with an ordinary `transferFrom`.
+  Neither was part of granting a session, and missing either failed at
+  settlement rather than at signing, reverting with no reason naming an
+  approval, so a merchant reported
+  `settlement failed: Execution reverted for an unknown reason`.
+  `grantSession` now takes `x402Tokens`: for each token, the same intent that
+  authorizes the session approves the token to Permit2 and approves both Permit2
+  and the token as checkers for that key, per chain, in one transaction.
+  `checkX402Approvals(session, requirement)` reads the same two things and says
+  which is missing and the call that sets it; `approvedSignatureCheckers` and
+  `x402SignatureChecker` are exported alongside it, as are the
+  `buildSetCheckerApprovalCall` and `buildApproveTokenForPermit2Call` builders.
+- **Keystore writes paid from the wallet's own chain.** On a network that
+  mirrors another chain's Keystore (Base Sepolia), `grantSession`,
+  `revokeSession` and `registerSessionKey` need no ETH on the Keystore chain:
+  the SDK asks the relay to pay the Sepolia write, registration fee and relay
+  fee, from the wallet's balance on the L2 it acts on under the same single
+  signature, always. ETH the wallet holds on
+  Sepolia is not used. Registry legs and quote lines carry `fundedFromChainId`
+  and `sourceTransactionHash`; quotes charge the line to the L2 balance.
+
+- **Relay fees in the token the wallet holds.** The SDK no longer names the
+  native token on every call. With no `feeToken`, a wallet (admin) key sends
+  none and the relay charges whichever of its accepted tokens the wallet
+  holds (on Celo: CELO, USDC, USDT, USDm, EURm or KESm, priced from Celo's
+  own oracle), so a wallet funded with a stablecoin transacts without CELO.
+  A session key pays from its spend caps: the SDK keeps the capped tokens the
+  relay accepts on the chain and names the one the wallet holds the most of,
+  failing before anything is sent when the wallet holds none of them.
+  `feeToken` now also takes a list: pay with the first listed token the relay
+  accepts and the wallet holds. `grantSession` with `feeToken` (one address
+  or a list) adds a daily spend cap for each (default one whole token,
+  `feeSpendLimit` overrides) so the session can pay fees in it.
+  `ExecuteResult` gains `feeToken`, the token the relay charged, read from
+  the intent it quoted. New `client.feeCurrencies()` (and
+  `feeCurrencies({ network })`) lists what a chain's relay accepts with each
+  token's rate and the relay's `rateTtl`; `formatFeeAmount` prints an amount
+  with its symbol; `NATIVE_TOKEN` is exported. A "fee token not supported"
+  rejection now names the tokens the relay accepts on that chain, read live.
+  MCP: `create_wallet` names the accepted fee tokens in its funding steps;
+  the new `list_fee_currencies` tool lists them (with the wallet's balance of
+  each when a wallet is named); `wallet_execute`, `session_execute` and
+  `grant_session` and `revoke_session` take `feeToken` as one address or a list, and the two
+  execute tools report the token charged.
+
+  Behaviour change: on Celo a wallet holding both CELO and a stablecoin used
+  to pay every fee in CELO and now pays in whichever of the two the relay
+  values higher. Pass `feeToken: NATIVE_TOKEN` to keep paying in CELO. On
+  every other chain the relay accepts native only, so nothing changes.
+- **Grant on several chains in one call, and revoke wherever the key is.**
+  `grantSession` takes `chainIds` to act on a set of networks, and
+  `revokeSession` always does. Revoke discovers, in parallel, which chains' accounts hold the key and
+  which Keystores list it, then revokes on each: one account leg per chain
+  holding the key, one registry leg per Keystore chain (shared by the L2s
+  behind it, bundled into the account intent when the Keystore chain is itself
+  one of the chains), and one post-revocation cache proof per L2. Grant writes
+  the Keystore once per registry chain, then authorizes the session on each
+  chain and proves it into each L2 cache. Both return a per-chain report
+  (`legs`, each with `chainId`, `kind`, `status`, `transactionHash`, `reason`)
+  and a binary `status` (`granted` / `revoked` or `failed`), never throw for a
+  failed leg, and are safe to call again: a retry only acts on what is still
+  pending. Passkey sessions are now revocable (the revoke used a secp256k1
+  descriptor for every key). New `client.quoteGrantSession` /
+  `client.quoteRevokeSession` (and `quoteGrantSession`, `quoteRevokeSession`,
+  `quoteCalls`) price each leg through the relay's `prepareCalls` without
+  signing, with the payers' balances; each line and balance reports
+  `needed`, the native amount including the fee, not only the registration
+  fee (the relay's own figure when it reports the wallet short). New account reads `getKeys`, `getKey`,
+  `accountHasKey`, `keyHashForSessionOrKey`, `keyIdForSessionOrKey`. New
+  configs `BASE_SEPOLIA` (chain 84532, L1 Sepolia, KeyStoreCacheOPStack
+  `0x37ebf8F17c3705568a03fB3A1629AcE7B3D95FFf`). `SEPOLIA` now carries the
+  testnet relay URL, so Sepolia KeyStore writes are relayed wallet calls
+  (passkey wallets can register there) instead of direct transactions from
+  the admin key. New `NETWORKS` (`mainnet`:
+  BNB, Ethereum, Celo; `testnet`: BNB testnet, Celo Sepolia, Base Sepolia)
+  and `networkByChainId`. The MCP `revoke_session` tool revokes across the
+  whole mainnet or testnet group of its chain.
+
+- **L2 execution networks with a mirrored KeyStore (Base Sepolia).** A network can
+  keep its KeyStore on its L1 and mirror it into a KeyStoreCache on the L2:
+  `NetworkConfig` gains an optional `registry` field naming the L1 and the
+  cache (absent means the KeyStore is on the chain itself, so existing
+  configs are untouched), plus `registryNetwork(network)`, `isCachedRegistry`,
+  `keyStoreCacheOf` and `provisioningNetworks`. On an L2 `grantSession` runs
+  three steps (L1 KeyStore write, account authorization through the L2
+  relay, proof into the L2 cache through the OP-stack `L1Block` predeploy)
+  and reports the first and last on the result (`registry`, `cache`);
+  `revokeSession` runs them in reverse and returns the same reports
+  (`RevokeSessionResult`); `registerSessionKey` and `recoverFromPasskey` read
+  and write the L1. New `client.syncSessionToCache` (and
+  `syncSessionToCache`) submits the proof as a wallet call through the L2
+  relay, waiting for the anchor and retrying when it moves;
+  `GrantSessionOptions` gains `populateCache` and `onStatus`. The
+  proof building blocks are exported: `buildPopulateKeyCall`,
+  `waitForL1Anchor`, `readL1Anchor`, `computeKeyPackedSlot`. New configs
+  `BASE_SEPOLIA` (chain 84532, L1 Sepolia) and `SEPOLIA` (chain 11155111). Per-chain
+  faucet map (`FAUCET_URLS`, `faucetHint`, `CELO_SEPOLIA_FAUCET_URL`), x402
+  aliases `celo` / `celo-sepolia`, and docs (own and mirrored Keystore in Keystore, grant,
+  revoke, sync and errors). Covered by unit tests, two anvil fork tests
+  (`fork-celo-cache`: KeyStoreCacheOPStack 1.1.1 accepts a real Sepolia proof
+  built by the SDK; `fork-celo-x402-server`) and two live smoke scripts.
+
+- **`@altananetwork/mcp`: `ALTANA_CHAIN=celo-sepolia` / `celo`.** Chain
+  selection moved to `network.ts`. Every selectable chain keeps its own
+  KeyStore, which `wallet_verification` and `verify_authorization` read and
+  `grant_session` and `revoke_session` write in the account's own
+  transaction; `create_wallet` names what to fund, including the native token
+  the registration fee is paid in.
+
+- **`@altananetwork/x402-server`: Celo tokens.** `USDC_CELO`,
+  `USDC_CELO_SEPOLIA` (Circle USDC, EIP-712 domain `USDC` / `2`, 6 decimals,
+  both rails) and `USDT_CELO`, `USDT_CELO_SEPOLIA` (6 decimals, permit2-exact
+  only). Settlement through viem's Celo chains is a standard EIP-1559
+  transaction, pinned by a unit test and the Celo Sepolia fork test.
+
+- **`@altananetwork/hypersigner-keystore-mcp`: `sepolia`, `celo` and
+  `celo-sepolia` chains, and the `base-sepolia` alias.** `ALTANA_CHAIN=sepolia`
+  is the registry behind Base Sepolia, with `base-sepolia` / `84532` resolving
+  to it; `celo` / `42220` and `celo-sepolia` / `11142220` are chains with
+  their own KeyStore.
+
+- **`client.holdings()` discovers which tokens a wallet holds.** `balances`
+  needs an explicit token list; `holdings` asks the Altana relay for the
+  wallet's assets on the chain (`wallet_getAssets`) and then reads every
+  ERC-20 it names live, so the entries are the same `TokenBalance` shape as
+  `balances`, BEP-677 display scaling included. Zero balances are dropped
+  unless `includeZero: true`; tokens whose reads fail stay in the list as
+  `ok: false`. No configuration: the relay already attached to the chain is
+  used, so there is no indexer key and no token list to maintain. The MCP
+  `wallet_balance` tool gains `discover: true`, which returns the discovered
+  list flagged `discovered: true`, and the `wallet-balance` slash command
+  now shows every token the wallet holds. Token reads are also chunked
+  (40 tokens per multicall, at most 3 in flight) so a wallet with hundreds
+  of tokens does not burst-fire calls at a public RPC. (#78)
+
+### Changed
+
+- **Relay failures are `AltanaError`s.** Every failure the relay reports is
+  thrown as an `AltanaError`: `code` to branch on (`insufficient_funds`,
+  `quote_expired`, `session_expired`, `spend_limit_exceeded`,
+  `call_not_permitted`, `relay_unreachable`, `chain_not_served`,
+  `wallet_unknown_to_relay`, `price_unavailable`, `prices_stale`,
+  `unknown`), `message` as one sentence a person can act on, `statement` and
+  `action` as its two halves, `detail` for a log, and the relay's own words
+  on `relayMessage` and `cause`. `isAltanaError` recognises one across
+  package copies. `classifyRelayFailure`, `explainRelayFailure` and
+  `withFailureContext` are exported for apps that map failures themselves,
+  and `sdkBuild` names the commit a build came from.
+- **A session that has run out says when.** A session used after its expiry
+  is refused before anything is sent: "This session expired at 12:28 UTC.
+  Grant a new session to continue." The relay's "key hash is unknown" for the
+  same case reads the same.
+- **A wallet the relay has no record of says what to do.** "Invalid
+  authorization item. Create a new wallet to continue." (`wallet_unknown_to_relay`).
+- `grantSession` and `revokeSession` return as soon as the Keystore write and the account legs are confirmed, which is when the session is usable (or stopped). The L2 cache proofs, which wait for the L2 to anchor the Keystore block (15 to 30 minutes on Celo Sepolia), keep running in the background: their legs read `PENDING` and the new `cacheSync` promise resolves with them once they are in. `populateCache: "await"` restores the blocking behaviour. `SessionLeg.status` gains `PENDING`.
+
+- **`fetchWithX402` reads a session's x402 approvals before paying** and refuses
+  when one is missing, naming it, rather than settling into a revert. It fails
+  open: only a read that succeeds and shows a gap stops the payment, so an
+  unreachable RPC or a chain the SDK has no config for leaves the call exactly
+  as it was. Two `eth_call`s, no gas. `checkApprovals: false` skips them —
+  worth setting if you count requests in tests, since the reads add two.
+
+- Relay rejections for an account the relay has not registered now say to create the wallet with `client.createWallet` first.
+- When the relay's simulation reverts without a reason, the SDK reads the wallet's balances through the relay and says which chain cannot pay for the call, and which chains it could not be funded from. Session quotes label such legs "could not be quoted" instead of "fee unknown".
+- Relay rejections carrying an `Error(string)` or `Panic` revert show the message ("Cache: bad storage proof") instead of the hex data.
+- Session quotes price the cache-proof legs with a key the wallet already has in the Keystore instead of asking the relay to simulate a proof that does not exist yet. On a first grant the leg is marked `deferred` (priced once the registry write lands), no longer reported as a failure.
+
+- **Hire expiry is documented and pinned, and the MCP deadline option is
+  described.** `hireErc8183Agent` sets `expiredAt = now + disputeWindow +
+  deadlineSeconds`; the formula is now the exported `erc8183ExpiredAt`,
+  covered by a unit test, and the ERC-8183 docs gain a "Deadline and
+  expiry" section: what the seller window means, the per-chain dispute
+  windows (900 s testnet, 7 days mainnet), when `claimRefund` opens, and
+  an interop warning that providers on bnbagent < 0.4.6 read a 24 h
+  testnet window and silently skip shorter jobs (pass
+  `deadlineSeconds: 86400 + <window>` or have them upgrade; upstream
+  bnbagent-sdk #83). The MCP tool's `deadlineMinutes` now carries a
+  description, must be positive, and is rounded to whole seconds
+  (a fractional value used to throw a `BigInt` RangeError).
+  `deadlineSeconds` must be a positive integer. The default padding is
+  unchanged on purpose: baking another SDK's stale 24 h constant into
+  ours would make testnet jobs diverge from the policy they bind. (#82)
+
+### Fixed
+
+- **A slow relay no longer leaves a paid registration half done.** A Keystore
+  write funded from an L2 locks the payment on the L2 first and runs on the L1
+  after. When the relay was slow on the L1, the SDK stopped waiting at four
+  minutes, reported the write as failed with "nothing was mined on any chain"
+  while the payment sat in the escrow, and never sent the session key's write
+  or the cache proof, even though the relay went on to register the wallet's
+  first key (Celo mainnet, 2026-11-14). The SDK now keeps waiting while the
+  payment is held, for up to 65 minutes, reports the new `onStatus` event
+  `registry-write-pending` once, and then goes on with the session key and the
+  proof. If the wait ends first, the reason says where the payment is: "The
+  KeyStore update on Ethereum has not completed yet. The payment for it is held
+  on Celo and comes back if the update does not complete." A timed-out
+  `PENDING` from `waitForCalls` now carries the receipts the relay had
+  reported. Grants on BNB Chain and Ethereum, where the write is part of the
+  same transaction, are unchanged.
+
+- **A Keystore registration the relay reports as not done is checked in the
+  Keystore.** A signed request can be delivered by a sender other than the
+  relay, and on Ethereum one was: the session key's registration landed,
+  delivered by another sender earlier in the same block, the relay's own
+  transaction then failed and it reported status 500, and the SDK sent no
+  cache proof for a key that was registered (Celo mainnet, 2026-11-16). When
+  the relay reports a registration as not done, the SDK now reads the
+  Keystore; if the key is there, the registry leg is `CONFIRMED` with the
+  transaction that registered it, and the session key's write and the cache
+  proof go ahead. If the Keystore cannot be read, the failure stands and its
+  reason says the check was not made.
+
+- **The price preview of a first registration counts the root key once, and
+  prices a wallet that holds only a stablecoin.** `quoteGrantSession` quoted
+  the session key's write with the root key's registration added to it, then
+  added the root key's write again. On mainnet that combined request does not
+  fit one intent's gas, so the relay could not price it, and a wallet holding
+  only USDC on Celo was told it needed CELO. A first registration is now
+  priced as the two writes the grant sends, one key each.
+
+- **A wallet that holds a stablecoin and none of its chain's currency is told
+  its real balance.** A failure the SDK words as a shortfall on a funded write
+  named the chain's own currency even when the wallet held only USDC there
+  ("you have 0 CELO"). It now names the token the wallet holds, with its
+  balance.
+
+- **A price that is too old is reported as one.** The relay converts a
+  request paid in one asset and carried out in another at a Chainlink price,
+  and refuses when that price is older than its limit. It answers the refusal
+  with a revert that carries no reason, the same answer it gives when a wallet
+  cannot pay, so a wallet that could pay was told to add funds. The SDK now
+  reads the feeds the conversion depends on after such a refusal, and when one
+  is older than the relay accepts the error is `prices_stale`: "Prices are
+  temporarily unavailable, try again shortly." The feed and its age are on
+  `detail`. Any other refusal keeps the sentence it had. The feeds and the
+  limit are on `NetworkConfig.nativePriceFeed`.
+- **A quote reads a cross-chain cost per leg and per token.** A registry
+  write the relay funds from an L2 is paid on that L2, and the relay prices it
+  in whatever token it accepts there: the native one, or a stablecoin with 6
+  decimals. The SDK used to reduce a two-leg quote to one number by adding the
+  legs' fees together and charging the total to the payer's **native** balance
+  on the funding chain. That only worked while one unit of the source asset
+  repaid one unit of the destination asset, which is what the testnet relay's
+  own config arranged; it is not true at real prices, and it is not true at
+  all when the source leg is priced in a stablecoin. Worse, both legs report
+  the same zero address for "native", so the old sum was adding CELO wei to
+  ETH wei without anything looking wrong.
+
+  A `QuoteLine` now carries `needs`: what the payer must hold, per chain and
+  per token, and `charges`: what each of the relay's legs charges in its own
+  token. `quote.balances` has one row per token with its own `token`,
+  `symbol` and `decimals`, read as an ERC-20 balance when the token is one
+  (and reporting `sufficient: false` with a `reason` when that read fails,
+  never a short answer dressed as a safe one). `formatQuoteLine` says "pays
+  2.845288560627534961 CELO on Celo Sepolia" instead of labelling a CELO
+  amount with the registry chain's symbol. For a multichain quote only the
+  funding chain is charged: the relay's funder pays on the destination and
+  the escrow repays it, so counting the destination leg as well charged the
+  payer twice.
+
+  `fee`, `feeToken` and `needed` stay, as the figures for the chain the payer
+  pays from, and `needed` is the native part of `needs` — so a leg charged in
+  a stablecoin reports `needed: 0n` and the real amount in `needs`. A quote
+  whose legs the relay does not tag with chains behaves exactly as before.
+
+- **A wallet's first session key registers reliably again.** That first
+  registry write is two KeyStore calls, `initialRegisterKey` then
+  `registerKey`, and they were bundled into one relayed intent.
+  `initialRegisterKey` alone costs about 1.08M gas on a cold account, which
+  left `registerKey` too little of the intent's budget: it ran out of gas and
+  the Orchestrator returned `CallError()`, surfacing as a failed
+  `grantSession` with nothing naming gas. The two calls now go as two
+  sequential intents, each quoted for its own gas. They do not need to be
+  atomic — the direct (no-relay) registry path has always sent one
+  transaction per call — and if the first lands and the second fails, a retry
+  of `grantSession` reads KeyStore, finds the admin key, and sends only
+  `registerKey`. `SessionLeg` gains an optional `rootRegistration` carrying
+  the first intent's outcome; the leg's own `transactionHash` and
+  `blockNumber` still describe the session key's write, so cache proofs
+  anchor where they did before. `onStatus("registry-write", detail)` now
+  carries `detail.step` of `"root"` or `"session"` on a first write; the
+  event name is unchanged, so a consumer ignoring `step` simply sees it
+  twice. `quoteSession` prices both intents and sums them, and a registry
+  line gains `rootRegistration` with the first intent's own share.
+
+- **A failed registry write says what went wrong.** The leg's `reason` was
+  `registry write status FAILED`, which named neither the chain's revert nor
+  the relay's message, both of which were available one layer down. It now
+  carries the write's own words.
+
+- **A registration fee quoted a moment ago is no longer refused at inclusion.**
+  `KeyStoreController.getRegistrationFeeInWei()` is oracle-priced — a USD fee
+  converted through Chainlink's ETH/USD feed — so the wei amount moves with
+  every oracle round, while the controller requires `msg.value >= fee` at
+  **inclusion**. A registration call now carries the quoted fee plus **10%**,
+  via the exported `registrationValueFor`, and `requiredFunds` and the quote
+  line follow it because both sum the calls' own `value`. Overpaying costs
+  nothing: the controller refunds the excess to `msg.sender` with a full-gas
+  `call`, which an EIP-7702 delegated account can receive, and the refund is
+  `require`d so a failure reverts loudly rather than keeping the change.
+  10% is sized against the measurement rather than the symptom: Chainlink
+  ETH/USD steps at most ~1.4% per round on Sepolia, so this is about six times
+  the worst step. It is deliberately not large enough to absorb a stale
+  payload, because that is a lifecycle problem rather than a pricing one —
+  `keystore_encode_register_key` now returns `quotedFeeWei` and `quotedAtBlock`
+  with it, so a caller can compare against `keystore_registration_quote` and
+  re-encode rather than send a payload built in an earlier oracle round.
+
+- **Mirror proofs work again after Glamsterdam.** Ethereum Sepolia's block
+  headers gained `blockAccessListHash` and `slotNumber` at block 11856337, so
+  the SDK's header RLP encoder no longer reproduced the block hash and
+  `buildPopulateKeyCall` refused to build any proof against a post-fork anchor
+  ("RLP header encoding does not hash to block hash; block schema likely
+  changed"). That guard was right and is why this was a readable diagnosis
+  rather than an on-chain revert. Both fields are now encoded, appended in that
+  order and **only when present**, so pre-fork headers and anything already in
+  a cache keep verifying — three of the four chains the SDK reads do not carry
+  them yet. The deployed `KeyStoreCacheOPStack` needed no change: it hashes the
+  header's raw bytes and reads `stateRoot` at index 3 with no field-count
+  check, confirmed by static call against the live contract. Existing cache
+  entries, `isValidKey` and session registration were never affected; only
+  building a new proof was.
+
+- **Sepolia works again after EIP-7708.** Ethereum Sepolia activated
+  Glamsterdam at block 11856337, and every ETH transfer now also emits a real
+  ERC-20 `Transfer` log from the system address
+  `0xfffffffffffffffffffffffffffffffffffffffe`. The relay builds `assetDiffs`
+  from simulation logs, so that log arrived as
+  `{"address":"0xff..fe","type":"erc20"}` with no `symbol` — the address has no
+  code, so the relay's `decimals()`/`symbol()`/`name()` multicall reverts and
+  those fields stay absent. Every variant of porto's asset-diff schema requires
+  a `symbol`, so porto rejected the **whole** response and every
+  `grantSession` registry leg on Sepolia failed. The SDK's relay transport now
+  removes those entries before porto validates, on every response that carries
+  `assetDiffs` (`wallet_prepareCalls` and `wallet_getCallsHistory`), dropping
+  an account's entry when the system address was its only diff. They are
+  dropped rather than relabelled because the relay synthesises its own native
+  diff from `0xee..ee`: the two logs describe one movement, so mapping the
+  system address onto the native asset would double every ETH balance change.
+  A response carrying no such entry is returned unchanged, by identity.
+
+- **A passkey wallet can be created on a cached-registry network.**
+  `createWallet({ signer: passkey })` refused on Celo Sepolia and Base Sepolia
+  with "signer produced a different address on chain 11155111". Those networks
+  provision two chains, the network and the KeyStore chain behind it, and
+  `createWallet` asked each chain for a wallet address separately. A passkey
+  has no EOA, so the throwaway secp256k1 that stands in for one was generated
+  per chain, giving the wallet a different address on each. The address and the
+  key that signs the EIP-7702 authorization over it are now decided once per
+  wallet (`planAccountProvisioning`) and used on every chain
+  (`provisionAccount`); `createPasskeyWallet` shares the same step. A passkey
+  wallet therefore has one address, with the passkey as admin, on the network
+  and on its registry chain, where its registry writes go through the relay
+  from its own account.
+- **A wallet's second operation no longer fails on the nonce.** The relay
+  chooses an intent's nonce by reading the account's nonce on chain at `latest`
+  and remembers nothing between requests, so an operation prepared before the
+  wallet's previous one is visible to the relay was given a nonce the account
+  rejected, and `grantSession`, `revokeSession` and `execute` came back with
+  `InvalidNonce(InvalidNonce)`. Waiting for the previous operation was not
+  enough: the relay's own read lags the receipts it hands out. A prepare
+  rejected for its nonce is now retried, up to three times over twelve seconds,
+  with nothing signed or sent in between; live on Celo Sepolia four
+  back-to-back operations on one wallet each succeeded on the attempt after the
+  rejection. Any other rejection is still the caller's answer immediately. The
+  SDK does not supply the nonce itself, although the relay would honour it: a
+  counterfactual wallet's first intent gets a random sequence key and every
+  intent after the delegation lands uses key 0, so counting up from the
+  previous nonce is wrong exactly when it matters.
+- **`signX402Payment` signs a v2 envelope when the requirement names no
+  version.** A v2 `PaymentRequirements` carries no `x402Version` of its own (it
+  lives on the 402 body), so a caller handing `signX402Payment` an `accepts[]`
+  entry straight from a challenge had nothing to copy down and got a v1
+  envelope, which real v2 facilitators refuse for its format before looking at
+  the signature. Celo's answers `invalid_format`, "data did not match any
+  variant of untagged enum FacilitatorVerifyRequest", which points nowhere near
+  the version. The default is now 2; the requirement's own version still wins,
+  and the new `opts.x402Version` overrides both for a v1 merchant that does not
+  say so. `fetchWithX402` already stamped the body's version and is unchanged.
+
+- **Cache proofs no longer start before the L2 has anchored the registry
+  write.** A relayed KeyStore write took its block number from a public RPC
+  receipt lookup; when that lookup failed (the node had not indexed the
+  transaction yet) the error was swallowed and the cache proof was built
+  right away against an older L1 block, where the key did not exist, so the
+  cache rejected it. The block number now comes from the relay's own call
+  status receipt (`waitForCalls` returns it), with a retried RPC lookup only
+  as a fallback. If it stays unknown, the cache step of `grantSession`,
+  `revokeSession` and `registerSessionKey` fails with "registry block
+  unknown, proof not attempted" instead of proving. `syncSessionToCache`
+  (as used by those three) also refuses to submit a proof whose storage
+  value shows the key absent: it waits for the next anchor and rebuilds it.
+
+- **An empty revert from the relay no longer reads as a balance shortfall it
+  is not.** When the relay's simulation reverted with no reason bytes (a bare
+  `0x`), the SDK read the wallet's native balances and worded the rejection as
+  a shortfall either way, so a wallet holding 1 ETH while the call sent
+  0.000376 ETH was told its balance "does not cover" the call. A bare `0x` now
+  gets its own message: it says the simulation reverted with no reason, names
+  the chain and the calls it simulated with what they send, and adds the
+  balance only as what it is. A balance below the value the calls send still
+  reads as a shortfall, with the chain's faucet where there is one; a balance
+  above it says the balance is not the cause. `shortfallMessage` is replaced
+  by `emptyRevertMessage` and `balanceClause`.
+
+- **`NoSpendPermissions` and `ExceededSpendLimit` explain themselves.** Both
+  reached callers as a bare contract error, and on the fee path as a raw
+  32-byte selector. `NoSpendPermissions` now says the session has no spend
+  limit for a token the transaction spends, that relay fees need a native
+  limit with headroom even for a session that only sends tokens, and that
+  permissions cannot be widened on an existing session. `ExceededSpendLimit`
+  names the token whose cap is exhausted and points at the decimals trap.
+  Both match the decoded name and the raw selector. (#83)
+
+- **`fundNative` is deprecated and always throws.** The relay's faucet only
+  mints ERC-20 fee tokens; a native request sent a zero-value transaction to
+  `0x0` and the helper returned its hash as if the wallet had been funded. It
+  now throws, naming the address to fund and the chain's public faucet where
+  there is one. `waitForBalance` is unchanged. Removal in a later release.
+  (#83)
+
+- **Relay rejections now lead with the relay's actual reason.** A rejected
+  request (for example an unaccepted `feeToken`) used to surface only
+  viem's generic `Invalid parameters were provided to the RPC method`,
+  while the relay's real explanation sat several `.cause` levels deep where
+  nobody found it. The submit path now extracts that reason and throws with
+  it up front — e.g. `The relay rejected the request to prepare the call:
+  fee token not supported: 0x…` — keeping the original error on `.cause`.
+  Fee-token requests get an extra hint that relay fees are paid in the
+  native currency (BNB), not `$U`. The execute and errors docs document the
+  fee model. No behavior change to successful calls. (#72)
+
+- **`@altananetwork/x402-server`: a payment whose receipt could not be read is
+  no longer reported as failed.** When the settlement transaction was broadcast
+  but the RPC failed to return its receipt (error or timeout), the merchant
+  answered 402 "settlement failed" with a fresh challenge and forgot the
+  authorization. Every x402 buyer answers a fresh challenge by signing a new
+  authorization, so the buyer paid twice for one request, and the first
+  transaction hash was discarded. Settlement now returns
+  `settlement: "pending"` with the hash once a transaction is out, and the
+  merchant answers 200 with that receipt; the same authorization sent again
+  while pending is re-checked and answered with the same settlement instead of
+  a replay rejection. The same classification applies when the broadcast
+  response itself is lost and the node reports the transaction as already
+  known. Receipt waits are bounded by the new `settleTimeoutMs` option
+  (default 60s), `clients` lets a merchant inject its own viem clients, and
+  settlement error text no longer embeds the facilitator's RPC URL.
+  Reproduced and covered on a BNB-mainnet fork in `fork-x402-server`, which
+  now runs in CI. Reported in #76.
 
 ## [0.9.0] - 2026-09-02
 

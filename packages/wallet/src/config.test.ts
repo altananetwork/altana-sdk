@@ -1,0 +1,162 @@
+/**
+ * Network configs: Celo and Celo Sepolia with their own KeyStore, the Base
+ * Sepolia cached-registry shape, the Sepolia registry config, and the
+ * invariants the rest of the SDK relies on
+ * (registryNetwork, the not-deployed sentinel, checksummed literals).
+ */
+import { describe, expect, test } from "bun:test";
+import { getAddress } from "viem";
+import {
+  BASE_SEPOLIA,
+  BNB,
+  BNB_TESTNET,
+  CELO,
+  CELO_SEPOLIA,
+  ETHEREUM,
+  KEYSTORE_CACHE_UNSET,
+  NETWORKS,
+  RELAY_URL,
+  SEPOLIA,
+  TESTNET_RELAY_URL,
+  networkByChainId,
+  registryNetwork,
+  type NetworkConfig,
+} from "./config.js";
+
+describe("SEPOLIA (testnet registry chain)", () => {
+  test("carries the testnet KeyStore and the testnet relay", () => {
+    expect(SEPOLIA.chainId).toBe(11155111);
+    expect(SEPOLIA.chain.id).toBe(11155111);
+    expect(SEPOLIA.keyStore).toBe("0x38Aaf396F462Ad3a4F38ADa653AF6bDEA55F772d");
+    expect(SEPOLIA.keyStoreController).toBe("0xc1525B766c134f7EB5B1d8e4a69C6Cb97Aff2379");
+    expect(SEPOLIA.relayUrl).toBe(TESTNET_RELAY_URL);
+    expect(SEPOLIA.registry).toBeUndefined();
+    expect(SEPOLIA.explorer).toBe("https://sepolia.etherscan.io");
+  });
+});
+
+describe("CELO_SEPOLIA (its own KeyStore)", () => {
+  test("executes through the testnet relay and keeps its registry on Celo Sepolia", () => {
+    expect(CELO_SEPOLIA.chainId).toBe(11142220);
+    expect(CELO_SEPOLIA.chain.id).toBe(11142220);
+    expect(CELO_SEPOLIA.relayUrl).toBe(TESTNET_RELAY_URL);
+    expect(CELO_SEPOLIA.registry).toBeUndefined();
+    expect(registryNetwork(CELO_SEPOLIA)).toBe(CELO_SEPOLIA);
+    expect(CELO_SEPOLIA.explorer).toBe("https://sepolia.celoscan.io");
+  });
+
+  test("its KeyStore and Controller are its own, not Sepolia's", () => {
+    expect(CELO_SEPOLIA.keyStore).not.toBe(SEPOLIA.keyStore);
+    expect(CELO_SEPOLIA.keyStoreController).not.toBe(SEPOLIA.keyStoreController);
+  });
+
+  test("a wallet created there is also set up on Sepolia", () => {
+    expect(CELO_SEPOLIA.provisionAlso).toEqual([SEPOLIA]);
+  });
+});
+
+describe("CELO (mainnet, its own KeyStore)", () => {
+  test("mainnet relay, registry on Celo itself", () => {
+    expect(CELO.chainId).toBe(42220);
+    expect(CELO.relayUrl).toBe(RELAY_URL);
+    expect(CELO.registry).toBeUndefined();
+    expect(registryNetwork(CELO)).toBe(CELO);
+    expect(CELO.keyStore).not.toBe(ETHEREUM.keyStore);
+    expect(CELO.keyStoreController).not.toBe(ETHEREUM.keyStoreController);
+    expect(CELO.explorer).toBe("https://celoscan.io");
+  });
+
+  test("a wallet created there is also set up on Ethereum", () => {
+    expect(CELO.provisionAlso).toEqual([ETHEREUM]);
+  });
+});
+
+describe("registryNetwork", () => {
+  test("returns the network itself for local registries", () => {
+    for (const n of [BNB, ETHEREUM, CELO, BNB_TESTNET, SEPOLIA, CELO_SEPOLIA]) {
+      expect(registryNetwork(n)).toBe(n);
+    }
+  });
+
+  test("returns the L1 for cached registries", () => {
+    expect(registryNetwork(BASE_SEPOLIA)).toBe(SEPOLIA);
+  });
+
+  test("a spread override keeps the registry", () => {
+    const custom: NetworkConfig = { ...BASE_SEPOLIA, publicRpcUrl: "http://localhost:8545" };
+    expect(registryNetwork(custom)).toBe(SEPOLIA);
+  });
+});
+
+describe("existing networks are untouched", () => {
+  test("BNB, ETHEREUM and BNB_TESTNET have no registry field (local by default)", () => {
+    expect(BNB.registry).toBeUndefined();
+    expect(ETHEREUM.registry).toBeUndefined();
+    expect(BNB_TESTNET.registry).toBeUndefined();
+  });
+
+  test("the unset placeholder is the zero address", () => {
+    expect(KEYSTORE_CACHE_UNSET).toBe("0x0000000000000000000000000000000000000000");
+  });
+});
+
+describe("BASE_SEPOLIA (cached registry on Sepolia)", () => {
+  test("executes through the testnet relay, registry on Sepolia, OP-stack cache", () => {
+    expect(BASE_SEPOLIA.chainId).toBe(84532);
+    expect(BASE_SEPOLIA.chain.id).toBe(84532);
+    expect(BASE_SEPOLIA.relayUrl).toBe(TESTNET_RELAY_URL);
+    expect(BASE_SEPOLIA.keyStore).toBe(SEPOLIA.keyStore);
+    expect(BASE_SEPOLIA.keyStoreController).toBe(SEPOLIA.keyStoreController);
+    if (BASE_SEPOLIA.registry?.kind !== "cached") throw new Error("BASE_SEPOLIA must be cached");
+    expect(BASE_SEPOLIA.registry.l1).toBe(SEPOLIA);
+    // keyStoreCacheOPStack in <altana-keystore>/deployments/base-sepolia.json, not the gate.
+    expect(BASE_SEPOLIA.registry.keyStoreCache).toBe("0x37ebf8F17c3705568a03fB3A1629AcE7B3D95FFf");
+  });
+});
+
+describe("NETWORKS", () => {
+  test("groups execution networks by environment, registry-only chains excluded", () => {
+    expect(NETWORKS.mainnet.map((n) => n.chainId)).toEqual([56, 1, 42220]);
+    expect(NETWORKS.testnet.map((n) => n.chainId)).toEqual([97, 11142220, 84532]);
+    for (const n of [...NETWORKS.mainnet, ...NETWORKS.testnet]) {
+      expect(n.relayUrl).toBeDefined();
+    }
+  });
+
+  test("on testnet, Base Sepolia keeps its registry on Sepolia and Celo Sepolia on itself", () => {
+    expect(registryNetwork(BASE_SEPOLIA)).toBe(SEPOLIA);
+    expect(registryNetwork(CELO_SEPOLIA)).toBe(CELO_SEPOLIA);
+  });
+
+  test("every mainnet network keeps its own KeyStore", () => {
+    for (const n of NETWORKS.mainnet) expect(registryNetwork(n)).toBe(n);
+    expect(new Set(NETWORKS.mainnet.map((n) => n.keyStore)).size).toBe(NETWORKS.mainnet.length);
+  });
+});
+
+describe("networkByChainId", () => {
+  test("finds every SDK network, registry-only chains included", () => {
+    for (const n of [ETHEREUM, BNB, CELO, BNB_TESTNET, SEPOLIA, CELO_SEPOLIA, BASE_SEPOLIA]) {
+      expect(networkByChainId(n.chainId)).toBe(n);
+    }
+  });
+
+  test("returns undefined for an unknown chain", () => {
+    expect(networkByChainId(8453)).toBeUndefined();
+    expect(networkByChainId(0)).toBeUndefined();
+  });
+});
+
+describe("EIP-55", () => {
+  test("every address literal in the configs is checksummed", () => {
+    const configs = [BNB, ETHEREUM, BNB_TESTNET, SEPOLIA, CELO_SEPOLIA, BASE_SEPOLIA, CELO];
+    for (const c of configs) {
+      for (const addr of [c.keyStore, c.keyStoreController]) {
+        expect(getAddress(addr)).toBe(addr);
+      }
+      if (c.registry?.kind === "cached") {
+        expect(getAddress(c.registry.keyStoreCache)).toBe(c.registry.keyStoreCache);
+      }
+    }
+  });
+});

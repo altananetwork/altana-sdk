@@ -1,0 +1,43 @@
+{
+  "comment": "The assetDiffs block of a post-Glamsterdam wallet_prepareCalls on Ethereum Sepolia (11155111 = 0xaa36a7). The 0xff..fe entry is the real EIP-7708 Transfer log: type erc20, no symbol and no decimals, because 0xff..fe has no code so the relay's decimals()/symbol()/name() multicall reverts. It duplicates the native entry above it, which the relay synthesises from 0xee..ee. Shape and reasoning: celo-harness/evidence/2026-10-06-eip7708-asset-diff-proposal.md",
+  "capabilities": {
+    "assetDiffs": {
+      "0xaa36a7": [
+        [
+          "0xb248602eaadd9c3e2db4575c4e4d58003b7a2740",
+          [
+            {
+              "address": null,
+              "type": null,
+              "symbol": "ETH",
+              "decimals": 18,
+              "value": "0x1",
+              "direction": "outgoing",
+              "fiat": { "currency": "usd", "value": "0.000000000000000001" },
+              "recipients": []
+            },
+            {
+              "address": "0xfffffffffffffffffffffffffffffffffffffffe",
+              "type": "erc20",
+              "value": "0x1",
+              "direction": "outgoing",
+              "recipients": []
+            }
+          ]
+        ],
+        [
+          "0x0000000000000000000000000000000000000001",
+          [
+            {
+              "address": "0xfffffffffffffffffffffffffffffffffffffffe",
+              "type": "erc20",
+              "value": "0x1",
+              "direction": "incoming",
+              "recipients": []
+            }
+          ]
+        ]
+      ]
+    }
+  }
+}

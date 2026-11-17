@@ -9,7 +9,7 @@
  */
 
 import type { Address, Hex } from "viem";
-import { type NetworkConfig } from "./config.js";
+import { registryNetwork, type NetworkConfig } from "./config.js";
 import type { Signer } from "./internal/signer.js";
 import type { PasskeySigner, PasskeyWebAuthnFns } from "./internal/passkey.js";
 import type { Wallet, ExecuteResult } from "./internal/types.js";
@@ -18,19 +18,34 @@ import type {
   GrantSessionOptions,
   GrantSessionResult,
 } from "./internal/sessions.js";
-import type { Call } from "./internal/relay.js";
+import type { Call, CallsQuote } from "./internal/relay.js";
 import {
   createWallet as createWalletImpl,
   type CreateWalletResult,
 } from "./createWallet.js";
 import { createPasskeyWallet as createPasskeyWalletImpl } from "./createPasskeyWallet.js";
 import { recoverFromPasskey as recoverFromPasskeyImpl } from "./recoverFromPasskey.js";
-import { execute as executeImpl } from "./execute.js";
-import { grantSession as grantSessionImpl } from "./grantSession.js";
-import { revokeSession as revokeSessionImpl } from "./revokeSession.js";
+import { execute as executeImpl, quoteExecute as quoteExecuteImpl } from "./execute.js";
+import { feeCurrencies as feeCurrenciesImpl, type FeeCurrenciesResult } from "./feeCurrencies.js";
+import { runGrantSession } from "./grantSession.js";
+import { runRevokeSession } from "./revokeSession.js";
+import { realSessionLegDeps, type SessionLegDeps } from "./internal/sessionLegs.js";
+import { oneChainGrant, oneChainRevoke, type ClientRevokeSessionResult } from "./internal/oneChain.js";
 import { registerSessionKey as registerSessionKeyImpl } from "./registerSessionKey.js";
 import type { RegisterSessionKeyResult } from "./registerSessionKey.js";
+import type { RevokeSessionOptions } from "./revokeSession.js";
+import {
+  quoteGrantSession as quoteGrantSessionImpl,
+  quoteRevokeSession as quoteRevokeSessionImpl,
+  type SessionQuote,
+} from "./quoteSession.js";
+import {
+  syncSessionToCache as syncSessionToCacheImpl,
+  type SyncSessionToCacheOptions,
+  type SyncSessionToCacheResult,
+} from "./syncSessionToCache.js";
 import { balances as balancesImpl, type BalancesResult } from "./balances.js";
+import { holdings as holdingsImpl, type HoldingsResult } from "./holdings.js";
 import {
   signOrder as signOrderImpl,
   signOrderTypedData as signOrderTypedDataImpl,
@@ -82,42 +97,104 @@ export type ClientExecuteOptions =
       wallet: Wallet;
       signer: Signer;
       calls: Call | readonly Call[];
-      feeToken?: Address;
+      /** One token to force, or a list to pay with the first accepted and held. */
+      feeToken?: Address | readonly Address[];
       noWait?: boolean;
     } & ChainSelector)
   | ({
       session: Session;
       calls: Call | readonly Call[];
-      feeToken?: Address;
+      feeToken?: Address | readonly Address[];
       noWait?: boolean;
     } & ChainSelector);
 
-export type ClientGrantSessionOptions = {
+/**
+ * Where a grant goes: one chain (`chainId`, default the client's default
+ * chain) or several (`chainIds`). Passing both is an error.
+ */
+export type GrantChainSelector =
+  | {
+      /** The one chain to grant on. Defaults to the client's default chain. */
+      chainId?: number;
+      chainIds?: never;
+    }
+  | {
+      /** Grant on each of these chains in one call. */
+      chainIds: readonly number[];
+      chainId?: never;
+    };
+
+type GrantSessionArgs = {
   wallet: Wallet;
   signer: Signer;
-  feeToken?: Address;
-} & GrantSessionOptions &
-  ChainSelector;
+  /**
+   * The fee token(s) for the grant itself, and the tokens the session may pay
+   * fees in: each gets a daily spend cap added to the session's permissions
+   * (see `feeSpendLimit`). One address or a list.
+   */
+  feeToken?: Address | readonly Address[];
+} & GrantSessionOptions;
 
+export type ClientGrantSessionOptions = GrantSessionArgs & GrantChainSelector;
+
+/**
+ * Revokes on every chain the client was configured with: the SDK finds the
+ * chains whose account holds the key.
+ */
 export type ClientRevokeSessionOptions = {
   wallet: Wallet;
   signer: Signer;
   session: Session | Hex;
-  feeToken?: Address;
-} & ChainSelector;
+  /** One token to force, or a list to pay with the first accepted and held. */
+  feeToken?: Address | readonly Address[];
+  onStatus?: RevokeSessionOptions["onStatus"];
+  /**
+   * The chain whose outcome the call answers for: the returned
+   * `transactionHash` is that chain's, and the call throws when the revoke
+   * failed there. Defaults to the client's default chain.
+   *
+   * @deprecated It does not limit the revoke to that chain: the key is
+   * revoked on every chain of the client that holds it. Kept so calls written
+   * for 0.9.0 keep working.
+   */
+  chainId?: number;
+};
+
+export type ClientQuoteGrantSessionOptions = Omit<GrantSessionArgs, "onStatus"> & GrantChainSelector;
+export type ClientQuoteRevokeSessionOptions = Omit<ClientRevokeSessionOptions, "onStatus">;
 
 export type ClientRegisterSessionKeyOptions = {
   wallet: Wallet;
   signer: Signer;
   session: Session;
-  feeToken?: Address;
+  /** One token to force, or a list to pay with the first accepted and held. */
+  feeToken?: Address | readonly Address[];
 } & ChainSelector;
+
+/**
+ * L2 only: prove a session key's registry state into the L2 KeyStoreCache. See syncSessionToCache.
+ */
+export type ClientSyncSessionToCacheOptions = {
+  wallet: Wallet;
+  /** The wallet's admin signer; the proof is a wallet call it signs. */
+  signer: Signer;
+  session: Session | Hex;
+} & Omit<SyncSessionToCacheOptions, "network"> &
+  ChainSelector;
 
 export type ClientBalancesOptions = {
   wallet: Wallet | Address;
   /** ERC-20 tokens to include. BEP-677 display scaling is applied automatically. */
   tokens?: readonly Address[];
 } & ChainSelector;
+
+export type ClientHoldingsOptions = {
+  wallet: Wallet | Address;
+  /** Keep tokens the relay lists but whose live balance is zero. Default false. */
+  includeZero?: boolean;
+} & ChainSelector;
+
+export type ClientFeeCurrenciesOptions = ChainSelector;
 
 export type ClientApproveSignatureCheckerOptions = {
   wallet: Wallet;
@@ -141,6 +218,11 @@ export type ClientFetchWithX402Options = {
   init?: RequestInit;
   /** Preferred rail when a chain offers several (defaults to "permit2"). */
   preferRail?: FetchWithX402Options["preferRail"];
+  /**
+   * Read the session's two on-chain approvals before paying (default true), and
+   * refuse rather than settle into a revert. See `checkX402Approvals`.
+   */
+  checkApprovals?: boolean;
 } & ChainSelector;
 
 export type Client = {
@@ -157,13 +239,54 @@ export type Client = {
     opts?: ClientRecoverFromPasskeyOptions,
   ): Promise<CreateWalletResult & { signer: PasskeySigner }>;
   execute(opts: ClientExecuteOptions): Promise<ExecuteResult>;
+  /** What `execute` would be charged for these calls, from the relay's quote; nothing is signed or sent. */
+  quoteExecute(opts: ClientExecuteOptions): Promise<CallsQuote>;
+  /**
+   * Grant a session on one chain: `chainId`, or the client's default chain.
+   * Resolves with the session and `transactionHash` once the account on that
+   * chain has authorized the key, and throws when it did not.
+   *
+   * Pass `chainIds` to grant on several chains in one call. That form never
+   * throws for a failed chain: check `status` and `legs`.
+   */
   grantSession(opts: ClientGrantSessionOptions): Promise<GrantSessionResult>;
-  revokeSession(opts: ClientRevokeSessionOptions): Promise<ExecuteResult>;
+  /**
+   * Revoke a session everywhere it lives across the client's chains. Throws a
+   * `SessionRevokeError` when the revoke failed on `chainId` (default: the
+   * client's default chain); a failure on any other chain is reported in
+   * `status` and `legs`.
+   */
+  revokeSession(opts: ClientRevokeSessionOptions): Promise<ClientRevokeSessionResult>;
+  /** What grantSession would cost on the same chains, one line per leg, plus the balances that pay it. */
+  quoteGrantSession(opts: ClientQuoteGrantSessionOptions): Promise<SessionQuote>;
+  /** What revokeSession would cost, one line per leg, plus the balances that pay it. */
+  quoteRevokeSession(opts: ClientQuoteRevokeSessionOptions): Promise<SessionQuote>;
   /** Lazily register a session key granted with `register: false`. Idempotent. */
   registerSessionKey(
     opts: ClientRegisterSessionKeyOptions,
   ): Promise<RegisterSessionKeyResult>;
+  /**
+   * L2 only: prove a session key's registry entry (or
+   * revocation) into the network's KeyStoreCache as a wallet call through
+   * the network's relay. grantSession and revokeSession do this themselves;
+   * call it to retry a proof they reported as failed, or after
+   * `populateCache: false`.
+   */
+  syncSessionToCache(
+    opts: ClientSyncSessionToCacheOptions,
+  ): Promise<SyncSessionToCacheResult>;
   balances(opts: ClientBalancesOptions): Promise<BalancesResult>;
+  /**
+   * Discover which tokens the wallet holds on a chain. Asks the Altana relay
+   * for the wallet's assets, then reads each one live (BEP-677 aware).
+   */
+  holdings(opts: ClientHoldingsOptions): Promise<HoldingsResult>;
+  /**
+   * The tokens the relay accepts as payment for its fee on a chain, read
+   * live, with the rate each is priced at. Omit `feeToken` on any call and
+   * the relay charges whichever of these the wallet holds.
+   */
+  feeCurrencies(opts?: ClientFeeCurrenciesOptions): Promise<FeeCurrenciesResult>;
 
   /** Sign a protocol digest with a session key (offline, chain-independent). */
   signOrder(opts: { session: Session; appDigest: Hex }): Promise<Hex>;
@@ -193,6 +316,18 @@ export type Client = {
  * await client.execute({ wallet, signer: wallet.signer, chainId: 56, calls });
  */
 export function createClient(opts: CreateClientOptions): Client {
+  return createClientWith(opts, {});
+}
+
+/**
+ * createClient with the chain I/O of grant and revoke injected. Internal:
+ * unit tests call it with fakes. Not exported from the package.
+ */
+export function createClientWith(
+  opts: CreateClientOptions,
+  io: { sessionLegs?: SessionLegDeps },
+): Client {
+  const sessionLegs = io.sessionLegs ?? realSessionLegDeps;
   const chains = opts.chains;
   if (!chains || chains.length === 0) {
     throw new Error("createClient: at least one chain is required.");
@@ -226,6 +361,38 @@ export function createClient(opts: CreateClientOptions): Client {
       );
     }
     return network;
+  }
+
+  /**
+   * The networks a grant goes to. `one` is set for a grant on a single chain
+   * (`chainId`, or the default chain), which is the form that throws.
+   */
+  function grantTarget(
+    o: { chainId?: number; chainIds?: readonly number[] },
+    fn: string,
+  ): { networks: NetworkConfig[]; one?: number } {
+    if (o.chainId !== undefined && o.chainIds !== undefined) {
+      throw new Error(
+        `${fn}: pass \`chainId\` to grant on one chain or \`chainIds\` to grant on several, not both.`,
+      );
+    }
+    if (o.chainIds !== undefined) return { networks: o.chainIds.map((id) => resolve(id)) };
+    const network = resolve(o.chainId);
+    return { networks: [network], one: network.chainId };
+  }
+
+  function grantOptions(o: GrantSessionOptions): GrantSessionOptions {
+    return {
+      permissions: o.permissions,
+      expiry: o.expiry,
+      ...(o.sessionSigner ? { sessionSigner: o.sessionSigner } : {}),
+      ...(o.register !== undefined ? { register: o.register } : {}),
+      ...(o.populateCache !== undefined ? { populateCache: o.populateCache } : {}),
+      ...(o.onStatus ? { onStatus: o.onStatus } : {}),
+      ...(o.feeSpendLimit !== undefined ? { feeSpendLimit: o.feeSpendLimit } : {}),
+      ...(o.x402Tokens ? { x402Tokens: o.x402Tokens } : {}),
+      ...(o.expectedCost ? { expectedCost: o.expectedCost } : {}),
+    };
   }
 
   return {
@@ -268,28 +435,63 @@ export function createClient(opts: CreateClientOptions): Client {
       return executeImpl(o.wallet, o.signer, o.calls, execOpts);
     },
 
-    grantSession(o) {
-      return grantSessionImpl(
+    quoteExecute(o) {
+      const quoteOpts = { network: resolve(o.chainId), ...(o.feeToken ? { feeToken: o.feeToken } : {}) };
+      if ("session" in o) return quoteExecuteImpl(o.session, o.calls, quoteOpts);
+      return quoteExecuteImpl(o.wallet, o.signer, o.calls, quoteOpts);
+    },
+
+    async grantSession(o) {
+      const target = grantTarget(o, "grantSession");
+      const result = await runGrantSession(
         o.wallet,
         o.signer,
+        grantOptions(o),
+        { networks: target.networks, ...(o.feeToken ? { feeToken: o.feeToken } : {}) },
+        sessionLegs,
+      );
+      // Several chains: the result says how each went, and nothing throws.
+      // One chain: the account leg there decides, as it did up to 0.9.0.
+      return target.one === undefined ? result : oneChainGrant(result, target.one);
+    },
+
+    async revokeSession(o) {
+      const named = resolve(o.chainId);
+      const result = await runRevokeSession(
+        o.wallet,
+        o.signer,
+        o.session,
         {
-          permissions: o.permissions,
-          expiry: o.expiry,
-          ...(o.sessionSigner ? { sessionSigner: o.sessionSigner } : {}),
-          ...(o.register !== undefined ? { register: o.register } : {}),
-        },
-        {
-          network: resolve(o.chainId),
+          networks: chains,
           ...(o.feeToken ? { feeToken: o.feeToken } : {}),
+          ...(o.onStatus ? { onStatus: o.onStatus } : {}),
         },
+        sessionLegs,
+      );
+      return oneChainRevoke(result, named.chainId, registryNetwork(named).chainId);
+    },
+
+    // A quote reports a leg it could not price as a line with a reason. It
+    // never takes the throwing path of a one-chain grant.
+    async quoteGrantSession(o) {
+      const target = grantTarget(o, "quoteGrantSession");
+      return quoteGrantSessionImpl(
+        o.wallet,
+        o.signer,
+        grantOptions(o),
+        { networks: target.networks, ...(o.feeToken ? { feeToken: o.feeToken } : {}) },
+        sessionLegs,
       );
     },
 
-    revokeSession(o) {
-      return revokeSessionImpl(o.wallet, o.signer, o.session, {
-        network: resolve(o.chainId),
-        ...(o.feeToken ? { feeToken: o.feeToken } : {}),
-      });
+    quoteRevokeSession(o) {
+      return quoteRevokeSessionImpl(
+        o.wallet,
+        o.signer,
+        o.session,
+        { networks: chains, ...(o.feeToken ? { feeToken: o.feeToken } : {}) },
+        sessionLegs,
+      );
     },
 
     registerSessionKey(o) {
@@ -299,11 +501,30 @@ export function createClient(opts: CreateClientOptions): Client {
       });
     },
 
+    syncSessionToCache(o) {
+      const { wallet, signer, session, chainId, ...rest } = o;
+      return syncSessionToCacheImpl(wallet, signer, session, {
+        network: resolve(chainId),
+        ...rest,
+      });
+    },
+
     balances(o) {
       return balancesImpl(o.wallet, {
         network: resolve(o.chainId),
         ...(o.tokens !== undefined ? { tokens: o.tokens } : {}),
       });
+    },
+
+    holdings(o) {
+      return holdingsImpl(o.wallet, {
+        network: resolve(o.chainId),
+        ...(o.includeZero !== undefined ? { includeZero: o.includeZero } : {}),
+      });
+    },
+
+    feeCurrencies(o = {}) {
+      return feeCurrenciesImpl({ network: resolve(o.chainId) });
     },
 
     signOrder(o) {
@@ -352,6 +573,7 @@ export function createClient(opts: CreateClientOptions): Client {
       return fetchWithX402Impl(o.session, o.url, o.init, {
         chainId: o.chainId ?? defaultChainId,
         ...(o.preferRail ? { preferRail: o.preferRail } : {}),
+        ...(o.checkApprovals !== undefined ? { checkApprovals: o.checkApprovals } : {}),
       });
     },
   };

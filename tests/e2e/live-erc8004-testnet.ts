@@ -125,7 +125,10 @@ async function main() {
     },
     expiry: Math.floor(Date.now() / 1000) + HOUR,
   });
-  console.log(`    session ${session.publicKey.slice(0, 20)}… granted (tx ${session.transactionHash})`);
+  if (session.status !== "granted") {
+    throw new Error(`grantSession failed: ${JSON.stringify(session.legs, (_k, v) => (typeof v === "bigint" ? v.toString() : v))}`);
+  }
+  console.log(`    session ${session.publicKey.slice(0, 20)}… granted (tx ${session.legs.find((l) => l.kind === "account")?.transactionHash})`);
   for (const p of erc8004RegisterPermissions(97)) {
     console.log(`    allowed: ${(p as { signature: string }).signature} @ ${(p as { to: Address }).to}`);
   }
@@ -180,6 +183,9 @@ async function main() {
     },
     expiry: Math.floor(Date.now() / 1000) + HOUR,
   });
+  if (unscoped.status !== "granted") {
+    throw new Error(`grantSession failed: ${JSON.stringify(unscoped.legs, (_k, v) => (typeof v === "bigint" ? v.toString() : v))}`);
+  }
   let rejected = false;
   try {
     const bad = await registerErc8004Agent(

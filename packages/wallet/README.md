@@ -144,7 +144,50 @@ Registration is two-phase because the record embeds the id the mint assigns.
 `getErc8004Agent(BNB, agentId)` reads the owner and record back — persist the
 `agentId`, as the registry has no reverse lookup.
 
+`ERC8004_ADDRESSES` lists the registry per network and `erc8004Registry(chainId)`
+reads one. Identity is its own registry: where the ERC-8183 job escrow above is
+also deployed, `ERC8183_ADDRESSES[chainId].registry` names the same contract.
+
 Full reference: [ERC-8004 agent identity](https://docs.altana.network/sdk/erc8004).
+
+
+### Networks
+
+```ts
+import { BNB, ETHEREUM, BASE, BNB_TESTNET, CELO_SEPOLIA, BASE_SEPOLIA, SEPOLIA, CELO, NETWORKS } from "@altananetwork/sdk";
+```
+
+| Export | Chain | Role |
+| --- | --- | --- |
+| `BNB` | BNB Smart Chain (56) | Default. Wallet execution, local KeyStore |
+| `ETHEREUM` | Ethereum (1) | Wallet execution, L1 KeyStore for cross-chain proofs |
+| `BASE` | Base (8453) | L2 KeyStore cache, read-only (`ensureKeyCached`) |
+| `BNB_TESTNET` | BNB testnet (97) | Full-stack testnet |
+| `CELO_SEPOLIA` | Celo Sepolia (11142220) | Full-stack testnet |
+| `BASE_SEPOLIA` | Base Sepolia (84532) | Testnet L2. KeyStore on Sepolia, cache on Base Sepolia |
+| `SEPOLIA` | Sepolia (11155111) | Testnet L1 KeyStore, served by the testnet relay |
+| `CELO` | Celo (42220) | Wallet execution, local KeyStore |
+
+On `BNB`, `ETHEREUM`, `CELO`, `BNB_TESTNET` and `CELO_SEPOLIA` the KeyStore
+is on the chain itself and a grant is one relay transaction. On an L2
+(`BASE_SEPOLIA`) the KeyStore is on the L1 and a KeyStoreCache on the L2
+mirrors it: `grantSession` authorizes the account through the L2 relay, which
+is when the session is usable, then
+writes the L1 KeyStore and proves the entry into the L2 cache. `grantSession` grants on one chain (`chainId`, or the
+client's default chain) and returns `transactionHash`; pass `chainIds` to
+grant on several at once (`NETWORKS.mainnet` / `NETWORKS.testnet` list the
+groups). `revokeSession` finds the chains of the client whose account holds
+the key and revokes on each. Both report one leg per step per chain with a
+binary `status`.
+`client.syncSessionToCache` runs the proof on its own. Reads go to
+`registryNetwork(network)`, the L1. The L1 KeyStore write is paid from the
+wallet's balance on the L2, so the wallet needs no ETH on the L1.
+
+The relay takes its fee in a token the wallet holds: the chain's native token
+everywhere, and on Celo also USDC or USDT, priced live. Omit `feeToken` and the relay charges whichever accepted
+token the wallet holds; the result's `feeToken` says which.
+`client.feeCurrencies()` lists what a chain's relay accepts. See
+https://docs.altana.network/sdk/setup.
 
 ## Documentation
 

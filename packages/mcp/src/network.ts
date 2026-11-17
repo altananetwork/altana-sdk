@@ -1,0 +1,137 @@
+/**
+ * Chain selection for the MCP server.
+ *
+ * One server process serves one chain, picked at startup through the
+ * ALTANA_CHAIN env var. Every chain listed here executes through an Altana
+ * relay (mainnet relay for mainnets, testnet relay for bnb-testnet and
+ * celo-sepolia). Sepolia and Base Sepolia are not in the map below and
+ * are therefore not selectable.
+ *
+ * Every chain listed here keeps its own KeyStore, Celo and Celo Sepolia
+ * included: registry reads and writes happen on the chain itself. A network
+ * that keeps its registry on another chain (Base Sepolia, not selectable) is
+ * described with that chain and its cache; see registryNetwork.
+ */
+import {
+  BNB,
+  BNB_TESTNET,
+  CELO,
+  CELO_SEPOLIA,
+  ETHEREUM,
+  NETWORKS as SDK_NETWORKS,
+  faucetHint,
+  isCachedRegistry,
+  registryNetwork,
+  type NetworkConfig,
+} from "@altananetwork/sdk";
+
+export const NETWORKS: Readonly<Record<string, NetworkConfig>> = {
+  bnb: BNB,
+  "56": BNB,
+  ethereum: ETHEREUM,
+  "1": ETHEREUM,
+  "bnb-testnet": BNB_TESTNET,
+  "bsc-testnet": BNB_TESTNET,
+  "97": BNB_TESTNET,
+  celo: CELO,
+  "42220": CELO,
+  "celo-sepolia": CELO_SEPOLIA,
+  "11142220": CELO_SEPOLIA,
+};
+
+/** The names to advertise in errors and docs, in the order users meet them. */
+export const SUPPORTED_CHAINS = "bnb (default), ethereum, bnb-testnet, celo, celo-sepolia";
+
+export type ResolvedNetwork = {
+  network: NetworkConfig;
+  /** The chain whose KeyStore holds this network's registry. Same as `network` on local-registry chains. */
+  registry: NetworkConfig;
+  /** The lower-cased value that was asked for. */
+  requested: string;
+  /** False when `requested` was unknown and the default (BNB) was used instead. */
+  recognized: boolean;
+};
+
+/** Resolve ALTANA_CHAIN (name or chainId, case-insensitive) to a network. Unknown values fall back to BNB. */
+export function resolveNetwork(raw: string | undefined): ResolvedNetwork {
+  const requested = (raw || "bnb").toLowerCase();
+  const network = NETWORKS[requested];
+  if (!network) {
+    return { network: BNB, registry: BNB, requested, recognized: false };
+  }
+  return { network, registry: registryNetwork(network), requested, recognized: true };
+}
+
+/**
+ * Every execution network in the same environment as `network` (the SDK's
+ * mainnet or testnet group). A session revoke acts on all of them: the SDK
+ * finds the chains whose account holds the key. A network outside both
+ * groups is returned alone.
+ */
+export function networkGroup(network: NetworkConfig): readonly NetworkConfig[] {
+  for (const group of [SDK_NETWORKS.mainnet, SDK_NETWORKS.testnet]) {
+    if (group.some((n) => n.chainId === network.chainId)) return group;
+  }
+  return [network];
+}
+
+/** One-line description for the startup log: the chain, and the registry chain when it differs. */
+export function describeNetwork(network: NetworkConfig): string {
+  const base = `${network.chain.name} (chainId ${network.chainId})`;
+  if (!isCachedRegistry(network)) return base;
+  const registry = network.registry.l1;
+  return `${base}; KeyStore on ${registry.chain.name} (chainId ${registry.chainId}); cache ${network.registry.keyStoreCache}`;
+}
+
+/**
+ * Funding guidance for a freshly created wallet on this network: the
+ * network's faucet when it has one, and for a cached network whose registry
+ * chain has no relay, the registry chain too (registry writes are direct
+ * transactions from the wallet's key there).
+ */
+export function fundingSteps(
+  network: NetworkConfig,
+  address: string,
+  opts: {
+    /**
+     * The fee tokens the network's relay accepts, native first, as
+     * `feeCurrencies()` lists them. With more than the native token, the
+     * wallet can be funded with any of them instead.
+     */
+    feeSymbols?: readonly string[];
+  } = {},
+): string[] {
+  const steps: string[] = [];
+  const symbol = network.chain.nativeCurrency.symbol;
+  const faucet = faucetHint(network.chainId);
+  const others = (opts.feeSymbols ?? []).filter((s) => s !== symbol);
+  // A chain with its own KeyStore takes the registration fee in its native
+  // token, whatever the relay accepts for its own fee: the wallet needs some.
+  const registersHere = !isCachedRegistry(network);
+  steps.push(
+    `Send some ${symbol}` +
+      (others.length > 0 && !registersHere ? `, or any of ${others.join(", ")},` : "") +
+      ` to ${address} on ${network.chain.name}` +
+      (faucet ? ` (faucet: ${faucet})` : "") +
+      (others.length > 0
+        ? registersHere
+          ? `. Registering a key in the KeyStore is paid in ${symbol}, so the wallet needs some; the relay's own fee can also be paid in ${others.join(", ")}`
+          : `. The relay takes its fee in whichever of these tokens the wallet holds, so no ${symbol} is needed when it holds one of the others`
+        : "") +
+      `. Your smart agentic wallet will be activated automatically when you make your first transaction.`,
+  );
+  if (isCachedRegistry(network) && !network.registry.l1.relayUrl) {
+    const registry = network.registry.l1;
+    const registrySymbol = registry.chain.nativeCurrency.symbol;
+    const registryFaucet = faucetHint(registry.chainId);
+    steps.push(
+      `This network keeps its KeyStore registry on ${registry.chain.name}, which has no relay: ` +
+        `grant_session and revoke_session send the registry write directly from this wallet's ` +
+        `key there. Also send a little ${registrySymbol} (about 0.01) to ${address} on ` +
+        `${registry.chain.name}` +
+        (registryFaucet ? ` (faucet: ${registryFaucet})` : "") +
+        `.`,
+    );
+  }
+  return steps;
+}

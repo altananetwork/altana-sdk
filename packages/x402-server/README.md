@@ -43,6 +43,8 @@ Bun.serve({
   async fetch(req) {
     const { response, receipt } = await merchant.guard(req);
     if (response) return response;             // 402 (challenge or rejection)
+    // receipt.settlement is "confirmed", or "pending" when the transfer was
+    // broadcast but its receipt could not be read yet (see below).
     return Response.json({ data: await doTheWork(), tx: receipt.txHash });
   },
 });
@@ -67,9 +69,95 @@ the signature check to the settling contract, so an invalid signature reverts
 the settlement and the request is refused. Replay is impossible: EIP-3009
 nonces and the Permit2 nonce bitmap burn on-chain.
 
+## When the receipt cannot be read
+
+Settlement broadcasts the transfer, then waits for the receipt (`settleTimeoutMs`,
+default 60s). If the broadcast itself fails, nothing happened: the buyer gets a
+402 and may pay again. If the broadcast succeeded but the receipt cannot be read
+(RPC error, timeout), the payment is **not** treated as failed: the request is
+answered 200 with `receipt.settlement === "pending"` and the transaction hash.
+Answering with a fresh challenge here would make the buyer sign a second
+authorization and pay twice, since every x402 client answers a challenge with a
+new nonce.
+
+A pending payment almost always lands. Serve the request and reconcile against
+`receipt.txHash` later, or hold delivery yourself until the hash confirms:
+
+```ts
+const { response, receipt } = await merchant.guard(req);
+if (response) return response;
+if (receipt.settlement === "pending") {
+  // Not a 402 (no `accepts`): the buyer must not sign a new authorization.
+  return Response.json({ status: "pending", tx: receipt.txHash }, { status: 503, headers: { "retry-after": "5" } });
+}
+```
+
+A buyer that never received its answer can send the same `X-PAYMENT` again: while
+the settlement is pending the merchant re-reads the receipt and answers 200
+(`confirmed` or still `pending`) with the same hash instead of a replay
+rejection. Once confirmed, a replay is refused as before. This bookkeeping is
+per process. Behind a load balancer the on-chain nonce still stops a second
+transfer, but the rejection reads `settlement failed: ... authorization is
+used` rather than `replayed authorization`.
+
+If one facilitator key settles concurrent requests, give it viem's nonce
+manager (`privateKeyToAccount(key, { nonceManager })`) so two settlements never
+race for the same nonce. To bring your own transports or a custom signer, pass
+`clients: { public, wallet }` instead of `rpcUrl`.
+
 ## Verified end-to-end
 
 `tests/e2e/fork-x402-server.ts` runs both buyer families against a real
 BNB-mainnet fork (genuine $U, USDT and Permit2 bytecode): Studio-envelope
-eip3009 settlement, Altana session-key permit2-witness settlement, and replay
-refusal. Run it with `bun run fork:x402-server` from `tests/e2e`.
+eip3009 settlement, Altana session-key permit2-witness settlement, replay
+refusal, and a settlement whose receipt read fails (exactly one transfer lands,
+the buyer is never re-challenged). Run it with `bun run fork:x402-server` from
+`tests/e2e`; CI runs it on every push.
+
+## Celo
+
+Token configs ship for Celo mainnet (`USDC_CELO`, `USDT_CELO`, chain 42220)
+and Celo Sepolia (`USDC_CELO_SEPOLIA`, `USDT_CELO_SEPOLIA`, chain 11142220).
+USDC is Circle's native deployment (EIP-712 domain `USDC` / `2`) and serves
+both rails; USDT on Celo has no EIP-3009 and is permit2-exact only. Both are
+6 decimals. Pass viem's `celo` / `celoSepolia` as `chain`; settlement
+transactions come out as standard EIP-1559 (no fee currency is ever set).
+Covered end to end by `tests/e2e/fork-celo-x402-server.ts`.
+
+### Celo's facilitator
+
+Celo runs a hosted facilitator that broadcasts the payment and pays the gas, so
+a merchant can take payments without an RPC or a funded key:
+`CELO_FACILITATOR_URL` (42220) and `CELO_SEPOLIA_FACILITATOR_URL` (11142220).
+Point a merchant at one with `facilitatorService: { url, apiKey }`;
+`facilitatorSupported` reads its open `GET /supported`. `POST /settle` needs an
+`X-API-Key`, issued at https://x402.celo.org against a signed message.
+
+The choice is per rail: `facilitatorService.rails` decides what goes there and
+everything else settles from the merchant's own key. A facilitator declares what
+it takes per asset in `GET /supported`, which `facilitatorRails` and
+`facilitatorAssets` read — Celo's mainnet facilitator lists `eip3009` for USDC,
+USDT and USAT and `permit2` for wARS, wBRL and wCOP. Verification stays local
+either way, because the merchant's is ERC-1271 aware and a facilitator's need
+not be.
+
+The receipt says which route settled a payment: `settledVia` is `"facilitator"`
+or `"merchant"`, recorded by whichever one broadcast it. Read it rather than
+deriving the route from the rail, because the rail does not imply it.
+
+Tokens are named by address throughout, because a ticker does not identify one:
+on Celo, `USD₮` is both a 6-decimal contract with the EIP-3009 surface (what
+`USDT_CELO` points at, and what pays x402) and an 18-decimal contract in the
+FeeCurrencyDirectory that pays gas. They report the same `symbol()` and the same
+`name()`. `USAT` splits the same way.
+
+The rail follows from who verifies the signature.
+`Permit2.permitWitnessTransferFrom` verifies through ERC-1271, so
+`permit2-exact` carries an Altana smart account's signature with Permit2 as the
+approved checker; an EIP-3009 token verifies `transferWithAuthorization` in its
+own code, so the `eip3009` rail carries one with the token as the checker.
+Circle's USDC verifies through `SignatureChecker`, so both rails carry a smart
+account's signature.
+`tests/e2e/live-x402-celo-facilitator.ts` checks both against the live
+facilitator, and `tests/e2e/fork-eip3009-celo.ts` is the on-chain A/B for the
+token's ERC-1271 path.

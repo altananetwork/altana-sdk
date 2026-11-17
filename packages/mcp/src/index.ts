@@ -10,8 +10,8 @@
  * Tools:
  *   - Identity:  about_altana
  *   - Bootstrap: create_wallet
- *   - Inspect:   list_wallets, wallet_balance, wallet_verification,
- *                verify_authorization, list_sessions
+ *   - Inspect:   list_wallets, wallet_balance, list_fee_currencies,
+ *                wallet_verification, verify_authorization, list_sessions
  *   - Operate:   wallet_execute, grant_session, revoke_session, session_execute
  *   - Pay:       x402_request
  *   - Jobs:      erc8183_create_job, erc8183_job_status, erc8183_settle,
@@ -26,12 +26,16 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { VERSION } from "./version.js";
-import { createPublicClient, formatEther, formatUnits, http, parseEther, parseUnits, type Address, type Hex } from "viem";
+import { formatBalance } from "./balanceFormat.js";
+import { revokeFailureText, revokeReport } from "./revokeReport.js";
+import { createPublicClient, formatUnits, http, parseEther, parseUnits, type Address, type Hex } from "viem";
 import { keccak256 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import {
   createClient,
+  SessionRevokeError,
   deserializeSession,
+  serializeSession,
   signerFromPrivateKey,
   fetchWithX402,
   hireErc8183Agent,
@@ -45,9 +49,9 @@ import {
   decodeErc8004AgentUri,
   encodeErc8004AgentUri,
   withErc8004Registration,
-  ETHEREUM,
-  BNB,
-  BNB_TESTNET,
+  isCachedRegistry,
+  isCachedKeyValid,
+  readCachedKey,
 } from "@altananetwork/sdk";
 import type { Signer, Wallet } from "@altananetwork/sdk";
 import {
@@ -68,6 +72,8 @@ import {
   type SessionPermissions,
 } from "./sessions.js";
 import { searchSkills, getSkill } from "./skills.js";
+import { SUPPORTED_CHAINS, describeNetwork, fundingSteps, networkGroup, resolveNetwork } from "./network.js";
+import { acceptedFeeSymbols, feeCurrenciesPayload } from "./feeCurrencies.js";
 import {
   assertErc8004Permissions,
   buildRegistrationFile,
@@ -78,40 +84,82 @@ import {
 
 // ---------- network ---------------------------------------------------------
 
-// Chain is selected at startup via the ALTANA_CHAIN env var. Defaults to BNB
-// Chain. Set ALTANA_CHAIN=ethereum to operate on Ethereum, or
-// ALTANA_CHAIN=bnb-testnet for the BSC testnet stack. All chains execute
-// through the Altana relay (mainnet relay for mainnets, testnet relay for
-// bnb-testnet — see the SDK config's relayUrl). One MCP process serves one
-// chain; restart with a different ALTANA_CHAIN to switch. Sepolia/Base Sepolia
-// are keystore-only (no relay) and so are not selectable here.
-const NETWORKS = {
-  bnb: BNB,
-  "56": BNB,
-  ethereum: ETHEREUM,
-  "1": ETHEREUM,
-  "bnb-testnet": BNB_TESTNET,
-  "bsc-testnet": BNB_TESTNET,
-  "97": BNB_TESTNET,
-} as const;
-
-const requestedChain = (process.env.ALTANA_CHAIN || "bnb").toLowerCase();
-const NETWORK = NETWORKS[requestedChain as keyof typeof NETWORKS] ?? BNB;
-if (!(requestedChain in NETWORKS)) {
+// Chain is selected at startup via the ALTANA_CHAIN env var (see network.ts
+// for the map). Defaults to BNB Chain. All selectable chains execute through
+// an Altana relay (mainnet relay for mainnets, testnet relay for bnb-testnet
+// and celo-sepolia). One MCP process serves one chain; restart with a
+// different ALTANA_CHAIN to switch. Sepolia and Base Sepolia are not in the
+// ALTANA_CHAIN map, so they are not selectable here.
+//
+// Every selectable chain keeps its own KeyStore, so `registryClient` reads
+// the chain itself. A network that keeps its registry on another chain would
+// be read there, and the verification tools would add a `cache` block
+// describing what its local cache currently holds.
+const resolved = resolveNetwork(process.env.ALTANA_CHAIN);
+const NETWORK = resolved.network;
+const REGISTRY = resolved.registry;
+if (!resolved.recognized) {
   console.error(
-    `[altana-mcp] Unknown ALTANA_CHAIN="${requestedChain}". ` +
-      `Supported: bnb (default), ethereum, bnb-testnet. Falling back to bnb.`,
+    `[altana-mcp] Unknown ALTANA_CHAIN="${resolved.requested}". ` +
+      `Supported: ${SUPPORTED_CHAINS}. Falling back to bnb.`,
   );
 }
-console.error(
-  `[altana-mcp] network: ${NETWORK.chain.name} (chainId ${NETWORK.chainId})`,
-);
+console.error(`[altana-mcp] network: ${describeNetwork(NETWORK)}`);
 
 const client = createClient({ chains: [NETWORK] });
+// Revocation reaches every chain of this environment, not only NETWORK: a key
+// granted on another chain of the group is revoked there too.
+const revokeClient = createClient({ chains: [...networkGroup(NETWORK)] });
 const publicClient = createPublicClient({
   chain: NETWORK.chain,
   transport: http(NETWORK.publicRpcUrl),
 });
+// Reads of the KeyStore registry. Same as publicClient on chains with a local
+// registry; the registry chain's client on cached networks.
+const registryClient =
+  REGISTRY === NETWORK
+    ? publicClient
+    : createPublicClient({ chain: REGISTRY.chain, transport: http(REGISTRY.publicRpcUrl) });
+
+/**
+ * On a cached network, what the local KeyStoreCache holds for (wallet, keyId).
+ * `fresh` is the cache's own isValidKey: true only while the cache entry was
+ * proven at the registry block the chain currently anchors, so a `false`
+ * here with `cached: true` and `revoked: false` means the entry needs a new
+ * proof (grant_session and revoke_session submit one; the SDK's
+ * syncSessionToCache retries it). Undefined on local-registry chains.
+ */
+async function cacheBlock(addr: Address, keyId: Hex) {
+  if (!isCachedRegistry(NETWORK)) return undefined;
+  const cache = NETWORK.registry.keyStoreCache;
+  const base = { chainId: NETWORK.chainId, registryChainId: REGISTRY.chainId };
+  try {
+    const [entry, fresh] = await Promise.all([
+      readCachedKey(publicClient, cache, addr, keyId),
+      isCachedKeyValid(publicClient, cache, addr, keyId),
+    ]);
+    const cached = entry.publicKey !== "0x" && entry.publicKey.length > 2;
+    return {
+      ...base,
+      deployed: true,
+      keyStoreCache: cache,
+      cached,
+      revoked: entry.revoked,
+      expiry: entry.expiry,
+      ...(entry.expiry ? { expiresAt: new Date(entry.expiry * 1000).toISOString() } : {}),
+      isRoot: entry.isRoot,
+      sourceBlockNumber: entry.sourceBlockNumber.toString(),
+      fresh,
+    };
+  } catch (err) {
+    return {
+      ...base,
+      deployed: true,
+      keyStoreCache: cache,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
 
 // ---------- KeyStore (read-only inspection tools) --------------------------
 
@@ -151,11 +199,19 @@ function assertAddress(value: string): Address {
   }
   return value as Address;
 }
+/** A `feeToken` tool input: one address, or a list to choose from. */
+function assertFeeToken(value: string | string[]): Address | Address[] {
+  return Array.isArray(value) ? value.map(assertAddress) : assertAddress(value);
+}
 function assertBytes32(value: string): Hex {
   if (!/^0x[0-9a-fA-F]{64}$/.test(value)) {
     throw new Error(`Not a valid 0x-prefixed 32-byte hex: ${value}`);
   }
   return value as Hex;
+}
+/** bigint-safe copy for JSON.stringify (report structs carry block numbers). */
+function jsonSafe<T>(value: T): unknown {
+  return JSON.parse(JSON.stringify(value, (_k, v) => (typeof v === "bigint" ? v.toString() : v)));
 }
 function assertHexBytes(value: string): Hex {
   if (!/^0x[0-9a-fA-F]*$/.test(value)) {
@@ -276,6 +332,14 @@ tool(
     const address = privateKeyToAccount(privateKey).address;
     await setWalletKey(walletName, privateKey);
 
+    // The relay's fee tokens, so the funding step can name the stablecoins
+    // the wallet may be funded with instead of the native token. Best effort:
+    // an unreachable relay leaves the generic native-token step.
+    const feeSymbols = await client
+      .feeCurrencies()
+      .then(acceptedFeeSymbols)
+      .catch(() => undefined);
+
     return {
       content: [
         {
@@ -287,7 +351,7 @@ tool(
               storedIn: "OS keychain (service: altana)",
               network: NETWORK.chain.name,
               nextSteps: [
-                `Send some funds to this address on ${NETWORK.chain.name}. Your smart agentic wallet will be activated automatically when you make your first transaction.`,
+                ...fundingSteps(NETWORK, address, feeSymbols ? { feeSymbols } : {}),
                 `BACK UP the private key. Open Keychain Access (macOS) or your platform's credential manager, find service "altana" / account "${walletName}", copy the password, store it in a password manager or encrypted file. If you lose your machine without a backup, the wallet is gone.`,
                 `Once funded, the wallet is ready — call wallet_balance, grant_session, wallet_execute, etc. by name "${walletName}".`,
               ],
@@ -325,73 +389,95 @@ tool(
 );
 
 // wallet_balance — native (and optionally ERC-20) balances for a named wallet.
+// `tokens` reads an explicit list; `discover` asks the Altana relay which
+// tokens the wallet holds and reads those. The two are alternatives.
 tool(
   "wallet_balance",
   {
     title: "Wallet balance",
     description:
       "Native token balance for a wallet, by name. Pass `tokens` (ERC-20 " +
-      "addresses) to include token balances; BEP-677 scaled-UI-amount tokens " +
-      "are detected via ERC-165 and their `display` value is scaled by " +
-      "uiMultiplier automatically (raw amounts stay unscaled).",
-    inputSchema: { name: z.string(), tokens: z.array(z.string()).optional() },
+      "addresses) to include specific token balances, or `discover: true` to " +
+      "list every ERC-20 the wallet holds (discovered through the Altana relay, " +
+      "zero balances omitted) — the result then carries `discovered: true`. " +
+      "BEP-677 scaled-UI-amount tokens are detected via ERC-165 and their " +
+      "`display` value is scaled by uiMultiplier automatically (raw amounts " +
+      "stay unscaled). Use `tokens` or `discover`, not both.",
+    inputSchema: {
+      name: z.string(),
+      tokens: z.array(z.string()).optional(),
+      discover: z.boolean().optional(),
+    },
   },
-  async ({ name, tokens }: { name: string; tokens?: string[] }) => {
+  async ({ name, tokens, discover }: { name: string; tokens?: string[]; discover?: boolean }) => {
+    if (discover && tokens !== undefined) {
+      throw new Error(
+        "wallet_balance: pass either `tokens` (explicit ERC-20 list) or `discover: true` (list what the wallet holds), not both.",
+      );
+    }
     const key = await getWalletKey(name);
-    const res = await client.balances({
-      wallet: key.address,
-      ...(tokens !== undefined ? { tokens: tokens.map(assertAddress) } : {}),
-    });
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(
-            {
+    const payload = discover
+      ? await client.holdings({ wallet: key.address }).then((res) =>
+          formatBalance({
+            name,
+            address: key.address,
+            native: res.native,
+            tokens: res.tokens,
+            discovered: true,
+          }),
+        )
+      : await client
+          .balances({
+            wallet: key.address,
+            ...(tokens !== undefined ? { tokens: tokens.map(assertAddress) } : {}),
+          })
+          .then((res) =>
+            formatBalance({
               name,
               address: key.address,
-              balanceWei: res.native.toString(),
-              balanceEth: formatEther(res.native),
-              ...(res.tokens !== undefined
-                ? {
-                    tokens: res.tokens.map((t) =>
-                      t.ok
-                        ? {
-                            address: t.address,
-                            symbol: t.symbol,
-                            decimals: t.decimals,
-                            raw: t.raw.toString(),
-                            display: t.display,
-                            ...(t.scaled
-                              ? {
-                                  scaled: {
-                                    uiMultiplier: t.scaled.uiMultiplier.toString(),
-                                    scaledRaw: t.scaled.scaledRaw.toString(),
-                                    ...(t.scaled.pending
-                                      ? {
-                                          pending: {
-                                            newUIMultiplier:
-                                              t.scaled.pending.newUIMultiplier.toString(),
-                                            effectiveAt:
-                                              t.scaled.pending.effectiveAt.toString(),
-                                          },
-                                        }
-                                      : {}),
-                                  },
-                                }
-                              : {}),
-                          }
-                        : { address: t.address, error: t.error },
-                    ),
-                  }
-                : {}),
-            },
-            null,
-            2,
-          ),
-        },
-      ],
+              native: res.native,
+              ...(res.tokens !== undefined ? { tokens: res.tokens } : {}),
+            }),
+          );
+    return {
+      content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
     };
+  },
+);
+
+// list_fee_currencies — which tokens the relay takes its fee in on this
+// chain, read live, optionally with a wallet's balance of each. The relay
+// charges whichever accepted token the wallet holds, so this is how an agent
+// learns that a wallet holding only USDC can transact.
+tool(
+  "list_fee_currencies",
+  {
+    title: "List relay fee currencies",
+    description:
+      "List the tokens the Altana relay accepts as payment for its fee on " +
+      "the selected chain, with the rate each is priced at right now. Pass " +
+      "a wallet `name` to include that wallet's balance of each token. The " +
+      "relay charges whichever accepted token the wallet holds, so a wallet " +
+      "funded with any listed token can execute without the native token.",
+    inputSchema: {
+      name: z.string().optional(),
+    },
+  },
+  async ({ name }: { name?: string }) => {
+    const listed = await client.feeCurrencies();
+    const nativeSymbol = NETWORK.chain.nativeCurrency.symbol;
+    if (name === undefined) {
+      const payload = feeCurrenciesPayload(listed, nativeSymbol);
+      return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
+    }
+    const key = await getWalletKey(name);
+    const tokens = listed.currencies.filter((c) => !c.isNative).map((c) => c.address);
+    const balances = await client.balances({ wallet: key.address, tokens });
+    const payload = {
+      wallet: { name, address: key.address },
+      ...feeCurrenciesPayload(listed, nativeSymbol, balances),
+    };
+    return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
   },
 );
 
@@ -411,8 +497,8 @@ tool(
   },
   async ({ address }: { address: string }) => {
     const addr = assertAddress(address);
-    const keys = (await publicClient.readContract({
-      address: NETWORK.keyStore,
+    const keys = (await registryClient.readContract({
+      address: REGISTRY.keyStore,
       abi: KEYSTORE_ABI,
       functionName: "getKeys",
       args: [addr],
@@ -420,13 +506,14 @@ tool(
 
     const details = await Promise.all(
       keys.map(async (keyId) => {
-        const publicKey = (await publicClient.readContract({
-          address: NETWORK.keyStore,
+        const publicKey = (await registryClient.readContract({
+          address: REGISTRY.keyStore,
           abi: KEYSTORE_ABI,
           functionName: "getPublicKey",
           args: [addr, keyId],
         })) as Hex;
-        return { keyId, publicKey };
+        const cache = await cacheBlock(addr, keyId);
+        return { keyId, publicKey, ...(cache ? { cache } : {}) };
       }),
     );
 
@@ -437,8 +524,9 @@ tool(
           text: JSON.stringify(
             {
               address,
-              keyStore: NETWORK.keyStore,
+              keyStore: REGISTRY.keyStore,
               network: NETWORK.chain.name,
+              ...(REGISTRY !== NETWORK ? { registryNetwork: REGISTRY.chain.name } : {}),
               activeKeyCount: keys.length,
               keys: details,
             },
@@ -466,7 +554,10 @@ tool(
       "to look up a session this server granted (server resolves the " +
       "wallet and keyId from local metadata). Note: this reads the public " +
       "KeyStore registry — a session granted with register: false works " +
-      "on-chain but reports false here until it is registered.",
+      "on-chain but reports false here until it is registered. On an L2 the " +
+      "registry lives on the L1; `authorized` is read there and a `cache` " +
+      "block reports what the L2 KeyStoreCache holds (`fresh` is the " +
+      "cache's own isValidKey).",
     inputSchema: {
       walletAddress: z.string().optional(),
       keyId: z.string().optional(),
@@ -499,12 +590,13 @@ tool(
       id = assertBytes32(keyId);
     }
 
-    const valid = (await publicClient.readContract({
-      address: NETWORK.keyStore,
+    const valid = (await registryClient.readContract({
+      address: REGISTRY.keyStore,
       abi: KEYSTORE_ABI,
       functionName: "isValidKey",
       args: [addr, id],
     })) as boolean;
+    const cache = await cacheBlock(addr, id);
 
     return {
       content: [
@@ -516,6 +608,8 @@ tool(
               keyId: id,
               ...(sessionName ? { sessionName } : {}),
               authorized: valid,
+              ...(REGISTRY !== NETWORK ? { registryNetwork: REGISTRY.chain.name } : {}),
+              ...(cache ? { cache } : {}),
             },
             null,
             2,
@@ -545,6 +639,15 @@ tool(
       to: z.string(),
       valueEth: z.string().optional(),
       data: z.string().optional(),
+      feeToken: z
+        .union([z.string(), z.array(z.string())])
+        .optional()
+        .describe(
+          "The token to pay the relay fee in: one address to force it, or a " +
+            "list to pay with the first the relay accepts and the wallet holds " +
+            "(list_fee_currencies shows what is accepted). Omitted, the relay " +
+            "charges whichever accepted token the wallet holds.",
+        ),
     },
   },
   async ({
@@ -552,11 +655,13 @@ tool(
     to,
     valueEth,
     data,
+    feeToken,
   }: {
     name: string;
     to: string;
     valueEth?: string;
     data?: string;
+    feeToken?: string | string[];
   }) => {
     const key = await getWalletKey(name);
     const recipient = assertAddress(to);
@@ -574,6 +679,7 @@ tool(
         value: parseEther(valueEth ?? "0"),
         data: dataHex,
       },
+      ...(feeToken !== undefined ? { feeToken: assertFeeToken(feeToken) } : {}),
     });
     return {
       content: [
@@ -586,6 +692,8 @@ tool(
               ...(result.statusCode !== undefined ? { statusCode: result.statusCode } : {}),
               callsId: result.callsId,
               transactionHash: result.transactionHash,
+              // The token the relay charged its fee in (zero address: native).
+              ...(result.feeToken ? { feeToken: result.feeToken } : {}),
             },
             null,
             2,
@@ -656,6 +764,24 @@ tool(
             "false, verify_authorization reports the key as not authorized " +
             "even though the session works.",
         ),
+      feeToken: z
+        .union([z.string(), z.array(z.string())])
+        .optional()
+        .describe(
+          "The token(s) the session may pay relay fees in, one address or a list " +
+            "(list_fee_currencies shows what the relay accepts). Each gets a daily " +
+            "spend cap of one whole token added to the session, so a wallet holding " +
+            "only a stablecoin can run the session. The grant itself pays its fee " +
+            "with the first of them the wallet holds.",
+        ),
+      feeSpendLimit: z
+        .string()
+        .regex(/^\d+$/)
+        .optional()
+        .describe(
+          "The daily cap added for each fee token, in the token's smallest unit " +
+            "(for example 5000000 for 5 USDC). Default one whole token.",
+        ),
     },
   },
   async ({
@@ -665,6 +791,8 @@ tool(
     dailyCapEth,
     lifetimeSeconds,
     register,
+    feeToken,
+    feeSpendLimit,
   }: {
     walletName: string;
     sessionName: string;
@@ -672,6 +800,8 @@ tool(
     dailyCapEth?: string;
     lifetimeSeconds?: number;
     register?: boolean;
+    feeToken?: string | string[];
+    feeSpendLimit?: string;
   }) => {
     // Refuse to overwrite an existing session entry. Sessions live in their
     // own keychain namespace (altana-session), so this only collides with
@@ -700,6 +830,8 @@ tool(
       address: admin.address,
     };
 
+    // One chain: this throws when the account did not authorize the key, so
+    // nothing below runs and no session is stored for a grant that failed.
     const session = await client.grantSession({
       wallet,
       signer: adminSigner,
@@ -710,19 +842,20 @@ tool(
       },
       expiry,
       ...(register !== undefined ? { register } : {}),
+      ...(feeToken !== undefined ? { feeToken: assertFeeToken(feeToken) } : {}),
+      ...(feeSpendLimit !== undefined ? { feeSpendLimit: BigInt(feeSpendLimit) } : {}),
     });
 
     // Persist:
     //   1. PK in keychain (encrypted at rest)
     //   2. Metadata in ~/.altana/sessions.json (needed to rebuild Session
     //      at session_execute time — permissions/expiry must match grant
-    //      byte-for-byte or Porto can't find the key hash).
+    //      byte-for-byte or Porto can't find the key hash). The grant may
+    //      have added fee spend caps, so the effective permissions come from
+    //      the returned session, not from the inputs.
     await setSessionKey(sessionName, sessionPk);
 
-    const permissionsForFile: SessionPermissions = {
-      calls: [{ to: recipientAddr }],
-      spend: [{ limit: capWei.toString(), period: "day" }],
-    };
+    const permissionsForFile: SessionPermissions = serializeSession(session).permissions;
 
     await saveSession({
       name: sessionName,
@@ -751,13 +884,24 @@ tool(
               // (or sessionName) to verify_authorization to confirm the
               // session is recognized in the public registry.
               keyId,
-              // The grant pays a KeyStore registration fee, twice on a
-              // wallet's very first admin action. Surface the receipt so the
-              // host can record what the user was actually charged for.
-              transactionHash: session.transactionHash,
+              // The account authorization: the key works from this
+              // transaction on.
+              ...(session.transactionHash ? { transactionHash: session.transactionHash } : {}),
+              // `granted` only when every leg confirmed. The legs carry each
+              // step's transaction hash (the grant pays a KeyStore
+              // registration fee) and, on cached networks, the registry
+              // write and the cache proof as legs of their own.
+              status: session.status,
+              legs: jsonSafe(session.legs),
               permissions: {
                 calls: [{ to: recipientAddr }],
-                spend: [{ limitEth: capEth, period: "day" }],
+                // The native cap in ETH terms, plus any fee token caps the
+                // grant added (limits in the token's smallest unit).
+                spend: session.permissions.spend?.map((cap) =>
+                  cap.token
+                    ? { token: cap.token, limit: cap.limit.toString(), period: cap.period }
+                    : { limitEth: capEth, period: cap.period },
+                ),
               },
               expiry,
               expiresAt: new Date(expiry * 1000).toISOString(),
@@ -772,7 +916,8 @@ tool(
 );
 
 // revoke_session — admin pulls authority on-chain. Local artifacts (keychain
-// entry + metadata file) are deleted after the on-chain tx confirms.
+// entry + metadata file) are deleted once the revoke went through; a revoke
+// that failed keeps them, so it can be run again by name.
 tool(
   "revoke_session",
   {
@@ -780,12 +925,20 @@ tool(
     description:
       "Admin revokes a previously-granted session on-chain. After this " +
       "confirms, the smart-account contract rejects any further calls " +
-      "from that key. Local artifacts are also deleted.",
+      "from that key, and the local session is deleted. A revoke that " +
+      "fails keeps the local session so it can be run again.",
     inputSchema: {
       sessionName: z.string(),
+      feeToken: z
+        .union([z.string(), z.array(z.string())])
+        .optional()
+        .describe(
+          "Token the relay fee is paid in: one address to force, or a list to pay " +
+            "with the first the relay accepts and the wallet holds. Omit to let the relay pick.",
+        ),
     },
   },
-  async ({ sessionName }: { sessionName: string }) => {
+  async ({ sessionName, feeToken }: { sessionName: string; feeToken?: string | string[] }) => {
     const stored = await getSession(sessionName);
     const admin = await getWalletKey(stored.walletName);
     const adminSigner = signerFromPrivateKey(admin.privateKey);
@@ -795,17 +948,39 @@ tool(
     };
 
     // SDK revokeSession accepts a public key (hex) to identify the session.
-    const result = await client.revokeSession({
-      wallet,
-      signer: adminSigner,
-      session: stored.publicKey,
-    });
+    // It revokes on every chain of this network's environment, wherever the
+    // account holds the key, and answers for this network: `chainId` makes
+    // the call throw when the revoke failed here.
+    let result;
+    try {
+      result = await revokeClient.revokeSession({
+        wallet,
+        signer: adminSigner,
+        session: stored.publicKey,
+        chainId: NETWORK.chainId,
+        ...(feeToken !== undefined ? { feeToken: assertFeeToken(feeToken) } : {}),
+      });
+    } catch (err) {
+      // Nothing local is touched: the session is still needed to try again.
+      if (!(err instanceof SessionRevokeError)) throw err;
+      throw new Error(
+        revokeFailureText({
+          sessionName,
+          networkName: NETWORK.chain.name,
+          reason: err.message,
+          legs: err.result.legs,
+        }),
+        { cause: err },
+      );
+    }
 
-    // Clean up local artifacts regardless of on-chain status — if the
-    // revoke confirmed, the session is dead; if it didn't, retrying will
-    // re-issue and we'd rather not have stale state.
-    await deleteSessionKey(sessionName);
-    await deleteSession(sessionName);
+    // Revoked on this network. The local key and metadata go unless another
+    // chain still holds the key, in which case they are what a retry needs.
+    const report = revokeReport(result.legs);
+    if (report.forgetLocal) {
+      await deleteSessionKey(sessionName);
+      await deleteSession(sessionName);
+    }
 
     return {
       content: [
@@ -814,9 +989,14 @@ tool(
           text: JSON.stringify(
             {
               sessionName,
-              status: result.status,
-              ...(result.statusCode !== undefined ? { statusCode: result.statusCode } : {}),
-              transactionHash: result.transactionHash,
+              status: report.status,
+              keyId: result.keyId,
+              ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
+              legs: jsonSafe(result.legs),
+              ...(report.notRevokedOn.length > 0 ? { notRevokedOn: report.notRevokedOn } : {}),
+              ...(report.notChecked.length > 0 ? { notChecked: report.notChecked } : {}),
+              localSession: report.forgetLocal ? "deleted" : "kept",
+              ...(report.note ? { note: report.note } : {}),
             },
             null,
             2,
@@ -844,6 +1024,15 @@ tool(
       to: z.string(),
       valueEth: z.string().optional(),
       data: z.string().optional(),
+      feeToken: z
+        .union([z.string(), z.array(z.string())])
+        .optional()
+        .describe(
+          "The token to pay the relay fee in: one address to force it, or a " +
+            "list to pay with the first the relay accepts and the wallet holds. " +
+            "Omitted, the SDK pays from the session's spend caps: the capped " +
+            "token the relay accepts that the wallet holds the most of.",
+        ),
     },
   },
   async ({
@@ -851,11 +1040,13 @@ tool(
     to,
     valueEth,
     data,
+    feeToken,
   }: {
     sessionName: string;
     to: string;
     valueEth?: string;
     data?: string;
+    feeToken?: string | string[];
   }) => {
     const stored = await getSession(sessionName);
     const key = await getSessionKey(sessionName);
@@ -874,6 +1065,7 @@ tool(
         value: parseEther(valueEth ?? "0"),
         data: dataHex,
       },
+      ...(feeToken !== undefined ? { feeToken: assertFeeToken(feeToken) } : {}),
     });
 
     return {
@@ -888,6 +1080,8 @@ tool(
               ...(result.statusCode !== undefined ? { statusCode: result.statusCode } : {}),
               transactionHash: result.transactionHash,
               callsId: result.callsId,
+              // The token the relay charged its fee in (zero address: native).
+              ...(result.feeToken ? { feeToken: result.feeToken } : {}),
             },
             null,
             2,
@@ -1004,7 +1198,15 @@ tool(
       provider: z.string().describe("The seller agent's wallet address"),
       task: z.string().describe("The job description the seller will fulfil (≤4096 bytes)"),
       budgetU: z.string().describe("Budget in $U, decimal (e.g. \"0.2\")"),
-      deadlineMinutes: z.number().optional(),
+      deadlineMinutes: z
+        .number()
+        .positive()
+        .optional()
+        .describe(
+          "The seller's submission window in minutes (default 30). The bound policy's dispute " +
+            "window is added on top. Providers running bnbagent < 0.4.6 assume a 24 h window on " +
+            "testnet: give them 1440 + the intended window or they skip the job.",
+        ),
     },
   },
   async ({
@@ -1027,7 +1229,7 @@ tool(
         provider: provider as Address,
         task,
         budget: parseUnits(budgetU, 18),
-        ...(deadlineMinutes ? { deadlineSeconds: deadlineMinutes * 60 } : {}),
+        ...(deadlineMinutes ? { deadlineSeconds: Math.round(deadlineMinutes * 60) } : {}),
       },
       { network: NETWORK },
     );
@@ -1558,7 +1760,7 @@ prompt(
             "**Start here**",
             "- `/altana-agentic-wallet:create-wallet` — Make a new wallet",
             "- `/altana-agentic-wallet:list-wallets` — See what wallets I have",
-            "- `/altana-agentic-wallet:wallet-balance` — Check a wallet's balance",
+            "- `/altana-agentic-wallet:wallet-balance` — Check a wallet's balance (native plus every token it holds)",
             "",
             "**Hire and fire AI agents**",
             "- `/altana-agentic-wallet:grant-session` — Give an agent scoped access to a wallet",
@@ -1629,7 +1831,7 @@ prompt(
   "wallet-balance",
   {
     title: "Wallet balance",
-    description: "Check the native token balance of a Altana wallet by name.",
+    description: "Check an Altana wallet's balances by name: native coin plus every token it holds.",
     argsSchema: { name: z.string().optional() },
   },
   ({ name }: { name?: string }) => ({
@@ -1638,7 +1840,11 @@ prompt(
         role: "user",
         content: {
           type: "text",
-          text: `Call wallet_balance for wallet "${name ?? "default"}". Show the address and balance in ETH.`,
+          text:
+            `Call wallet_balance for wallet "${name ?? "default"}" with discover: true. ` +
+            `Show the address, the native balance (balanceEth, in the chain's native coin), ` +
+            `and one line per token with its symbol and display amount. ` +
+            `If the tool errors because the chain has no relay, call it again without discover and show the native balance only.`,
         },
       },
     ],

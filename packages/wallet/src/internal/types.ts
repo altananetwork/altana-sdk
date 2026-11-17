@@ -21,4 +21,10 @@ export type ExecuteResult = {
    * absent with `noWait` or when the relay never answered during the wait.
    */
   statusCode?: number;
+  /**
+   * The token the relay charged its fee in, read from the intent the relay
+   * quoted (the zero address is the chain's native token). Absent only when
+   * the relay's answer carried no quote.
+   */
+  feeToken?: Address;
 };

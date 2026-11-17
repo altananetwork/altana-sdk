@@ -28,10 +28,10 @@ If the user is operating an existing wallet from Claude itself (one-off transact
 Everything goes through a client. Create one with `createClient`, configured with the chains it should support, then call its methods.
 
 ```ts
-import { createClient, BNB, ETHEREUM, BASE } from "@altananetwork/sdk";
+import { createClient, BNB, ETHEREUM, CELO, BASE } from "@altananetwork/sdk";
 
 const client = createClient({ chains: [BNB] });
-// Wallet execution: BNB (default) or ETHEREUM.
+// Wallet execution: BNB (default), ETHEREUM or CELO.
 // Cross-chain verification cache: BASE.
 // client.createWallet        : smart account from a local private key (CLI, script, agent)
 // client.createPasskeyWallet : smart account from a passkey (Face ID / Touch ID), browser
@@ -100,7 +100,12 @@ const session = await client.grantSession({
     }],
   },
   expiry: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60, // 7 days
+  // chainId: 56,            // one chain; omitted, the client's default chain
+  // chainIds: [56, 42220],  // or several chains in one call
 });
+// One chain: resolves once the account authorized the key, with
+// session.transactionHash, and throws when it did not. With chainIds it does
+// not throw for a chain that failed: check session.status and session.legs.
 
 // Hand `session` to whichever process runs the agent. To persist it, do NOT
 // JSON.stringify the Session (it throws on bigint limits and embeds the
@@ -197,7 +202,7 @@ await client.revokeSession({ wallet, signer: adminSigner, session });
 await client.revokeSession({ wallet, signer: adminSigner, session: sessionPublicKey });
 ```
 
-Revocation revokes the key in Keystore **and** pulls the session's on-chain authority in the same userOp. The session's next signed call reverts at validation. Revocation is monotonic in Keystore v1.0.0, so to restore access, grant a fresh session.
+Revocation acts on every chain the client was configured with: it finds the chains whose account holds the key, pulls the session's authority on each, revokes the key in Keystore, and proves the revocation into every L2 cache. The call answers for one chain, `chainId` or the client's default chain: `result.transactionHash` is the account revoke there, and a revoke that failed there throws a `SessionRevokeError` carrying the full `result`. A failure on another chain of the client is in `result.status` (`"revoked"` or `"failed"`) and `result.legs`, and calling it again only redoes what is pending. The session's next signed call reverts at validation. Revocation is monotonic in Keystore v1.0.0, so to restore access, grant a fresh session.
 
 ### Recover a passkey wallet
 
@@ -220,20 +225,25 @@ The MCP server is a thin wrapper around this SDK. Anything the MCP does, you can
 
 ## Notes
 
-- **Funding.** Fund `wallet.address` with native tokens before the first `execute`. On Ethereum, send ETH from your own wallet or an exchange. On BNB, send BNB from your own wallet or an exchange.
+- **Funding.** Fund `wallet.address` with a token the relay takes its fee in before the first `execute`. On Ethereum, send ETH from your own wallet or an exchange. On BNB, send BNB from your own wallet or an exchange. On Celo, send CELO; the relay's fee can also be paid in USDC or USDT. On Celo Sepolia, send CELO (https://faucet.celo.org/celo-sepolia). On Base Sepolia, send Base Sepolia ETH: the KeyStore write on Sepolia is paid from that balance, and no ETH on Sepolia is used.
+- **Fee token.** Omit `feeToken` on every call: the relay charges whichever accepted token the wallet holds, and `ExecuteResult.feeToken` says which. `client.feeCurrencies()` lists a chain's accepted tokens with their rates. Set `feeToken` only to force one.
+- **L2 networks (BASE_SEPOLIA).** The KeyStore is on the L1 and a KeyStoreCache on the L2 mirrors it. `grantSession` is up to three legs per chain (account authorization through the L2 relay, after which the session is usable; L1 KeyStore write, shared by L2s on the same L1; proof into the L2 cache), reported in `result.legs` with a binary `result.status` (`client.syncSessionToCache` runs a proof on its own). `revokeSession` reports the same way. On testnet the Sepolia KeyStore is reached through the testnet relay, so passkey wallets register normally.
 - **First execute registers the admin.** The Keystore `initialRegisterKey` is auto-prepended on the wallet's first admin-signed action. Don't pre-call it. The wallet is "live" but not on-chain until that first tx.
 - **Sessions must match the grant on execute.** The session's `permissions + expiry + publicKey` values must equal what was committed at grant time; a lossy round trip (bigints → number, re-cased hex) breaks the match. Persist with `serializeSession` and restore with `deserializeSession(stored, signer)` — never raw `JSON.stringify` on a `Session`.
 - **Empty calls means no calls.** `client.execute({ wallet, signer, calls: [] })` is rejected. Pass at least one call.
 - **`permissions.calls` omitted = unrestricted.** If you don't pass `calls`, the session can call any contract within its spend cap. Set both unless that's truly what you want.
-- **Pick chains at the client.** `createClient({ chains })` takes one or more chains; the same wallet address works on all of them. Select per operation with `chainId`.
+- **Pick chains at the client.** `createClient({ chains })` takes one or more chains; the same wallet address works on all of them. Select per operation with `chainId` (default: the client's default chain). `grantSession` follows the same rule and also takes `chainIds` to grant on several chains in one call; `revokeSession` always acts on every chain holding the key.
 
 ## Networks
 
 ```ts
-import { ETHEREUM, BNB, BASE } from "@altananetwork/sdk";
+import { ETHEREUM, BNB, BASE, BNB_TESTNET, CELO_SEPOLIA, SEPOLIA, CELO } from "@altananetwork/sdk";
 // ETHEREUM      : Ethereum (chain 1), L1 Keystore source of truth
 // BNB  : BNB Smart Chain (chain 56)
 // BASE : Base (chain 8453), L2 Keystore cache
+// BNB_TESTNET  : BNB testnet (chain 97), full stack
+// CELO         : Celo (chain 42220)
+// CELO_SEPOLIA : Celo Sepolia (chain 11142220), full stack
 //
 // ETHEREUM.keyStore           = 0xb70fDa90C1d576Ba8399946a0c10ECD9d9Ea923b
 // ETHEREUM.keyStoreController = 0x30a188Eecf14F4142B0d828ce838C9E1134e7FaA

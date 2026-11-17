@@ -1,0 +1,873 @@
+/**
+ * Cached-registry networks (Base Sepolia).
+ *
+ * On these networks the KeyStore lives on another chain (`registry.l1`) and
+ * is mirrored into a KeyStoreCache contract on the network through storage
+ * proofs. This module answers the three questions every registry write on
+ * such a network has to settle:
+ *
+ *   1. Is this network cached at all, and where is its cache? (isCachedRegistry,
+ *      keyStoreCacheOf)
+ *   2. How does a registry write reach the registry chain? Through that
+ *      chain's Altana relay when it has one (Ethereum, Sepolia), paid from the
+ *      wallet's balance on the L2 being operated on; otherwise as a direct
+ *      transaction from the admin's own key. (planRegistryWrite)
+ *   3. Submit it, prepending the admin's own registration on the wallet's
+ *      first registry write, and report what landed. (submitRegistryCalls)
+ *
+ * Nothing here touches the cache itself; proofs are built and submitted by
+ * syncSessionToCache.
+ */
+
+import {
+  createWalletClient,
+  formatEther,
+  http,
+  type Address,
+  type Hex,
+  type PublicClient,
+} from "viem";
+import { privateKeyToAccount, type PrivateKeyAccount } from "viem/accounts";
+import {
+  KEYSTORE_CACHE_UNSET,
+  type KeyStoreRegistry,
+  type NetworkConfig,
+  networkByChainId,
+} from "../config.js";
+import { hasRawPrivateKey, type Signer } from "./signer.js";
+import { isPasskeySigner } from "./passkey.js";
+import {
+  buildFirstActionPrepend,
+  KEY_REGISTERED_EVENT,
+  readIsValidKey,
+  registeredKeyIdOf,
+} from "./keystore.js";
+import type { RootRegistrationLeg } from "./sessions.js";
+import {
+  blockNumberOfWrite,
+  buildPublicClient,
+  buildRelayClient,
+  faucetHint,
+  submitCalls,
+  waitForCalls,
+  type Call,
+  type RequiredFund,
+  type RelayReceipt,
+} from "./relay.js";
+
+import { withFailureContext } from "../errors.js";
+import { NATIVE_TOKEN } from "../config.js";
+
+export type CachedRegistry = Extract<KeyStoreRegistry, { kind: "cached" }>;
+
+/** True when the network's KeyStore lives on another chain behind a local cache. */
+export function isCachedRegistry(
+  network: NetworkConfig,
+): network is NetworkConfig & { registry: CachedRegistry } {
+  return network.registry?.kind === "cached";
+}
+
+/**
+ * The KeyStoreCache address on a cached network. Throws on a network with a
+ * local registry (there is no cache) and on an unset address, so no proof is
+ * ever sent to the zero address.
+ */
+export function keyStoreCacheOf(network: NetworkConfig): Address {
+  if (!isCachedRegistry(network)) {
+    throw new Error(
+      `${network.chain.name} (chainId ${network.chainId}) keeps its KeyStore locally; ` +
+        `there is no KeyStoreCache to sync to. Cache operations apply only to cached ` +
+        `networks such as BASE_SEPOLIA.`,
+    );
+  }
+  const cache = network.registry.keyStoreCache;
+  if (cache.toLowerCase() === KEYSTORE_CACHE_UNSET) {
+    throw new Error(
+      `${network.chain.name} (chainId ${network.chainId}) has no KeyStoreCache address ` +
+        `configured: set registry.keyStoreCache on the network config.`,
+    );
+  }
+  return cache;
+}
+
+/**
+ * The networks a wallet must be provisioned on for the given execution
+ * networks: the networks themselves, for each cached network its registry
+ * chain, and the chains a network names in `provisionAlso`. A passkey wallet
+ * cannot be provisioned later (its throwaway EOA is discarded at creation),
+ * so every chain it may act on has to be set up in the same call. Chains
+ * without a relay are left out: nothing can be provisioned there.
+ */
+export function provisioningNetworks(networks: readonly NetworkConfig[]): NetworkConfig[] {
+  const out: NetworkConfig[] = [];
+  const seen = new Set<number>();
+  const push = (n: NetworkConfig) => {
+    if (seen.has(n.chainId)) return;
+    seen.add(n.chainId);
+    out.push(n);
+  };
+  for (const network of networks) {
+    push(network);
+    if (isCachedRegistry(network) && network.registry.l1.relayUrl) {
+      push(network.registry.l1);
+    }
+    for (const also of network.provisionAlso ?? []) {
+      if (also.relayUrl) push(also);
+    }
+  }
+  return out;
+}
+
+export type RegistryWritePlan =
+  | { via: "relay"; registry: NetworkConfig }
+  | { via: "eoa"; registry: NetworkConfig; account: PrivateKeyAccount };
+
+/**
+ * Decides how a registry write reaches the registry chain.
+ *
+ * - The registry chain has an Altana relay (Ethereum): the wallet's smart
+ *   account submits the write through it, exactly like a local-registry
+ *   network. Any signer type works.
+ * - No relay (Sepolia): the write is a plain transaction from the admin's
+ *   private key, which is the wallet address itself on a 7702 wallet. The
+ *   KeyStore records `msg.sender`, so the signer's address must equal the
+ *   wallet address. Passkey wallets cannot take this path: a P256 key
+ *   cannot sign an Ethereum transaction, and there is no relay to wrap it.
+ */
+export function planRegistryWrite(
+  registry: NetworkConfig,
+  signer: Signer,
+  walletAddress: Address,
+): RegistryWritePlan {
+  if (registry.relayUrl) {
+    return { via: "relay", registry };
+  }
+  if (isPasskeySigner(signer) || !hasRawPrivateKey(signer)) {
+    throw new Error(
+      `Registry writes on ${registry.chain.name} (chainId ${registry.chainId}) are direct ` +
+        `transactions from the admin's private key, because no Altana relay serves that ` +
+        `chain. A passkey (P256) admin cannot sign one. On this testnet, grant the passkey ` +
+        `wallet's sessions with register: false (account-only; the account still enforces ` +
+        `permissions and expiry), or use a private-key admin for wallets that need a ` +
+        `registry entry. On mainnet the registry chain (Ethereum) has a relay and passkey ` +
+        `wallets register normally.`,
+    );
+  }
+  const account = privateKeyToAccount(signer._privateKey);
+  if (account.address.toLowerCase() !== walletAddress.toLowerCase()) {
+    throw new Error(
+      `Registry writes on ${registry.chain.name} (chainId ${registry.chainId}) are sent ` +
+        `directly from the admin key, so the KeyStore records the sender as the wallet. ` +
+        `The signer's address (${account.address}) is not the wallet address ` +
+        `(${walletAddress}); the write would register keys for the wrong account.`,
+    );
+  }
+  return { via: "eoa", registry, account };
+}
+
+export type RegistryWriteResult = {
+  via: "relay" | "eoa";
+  chainId: number;
+  status: "CONFIRMED" | "FAILED" | "PENDING";
+  /** The L2 whose balance paid for the write: every relayed write on a cached network, as the relay's receipts report it. */
+  fundedFromChainId?: number;
+  /** The source-chain transaction that locked the funds, when funded from an L2. */
+  sourceTransactionHash?: Hex;
+  /** The transaction that carried the write (the last one on the EOA path). */
+  transactionHash?: Hex;
+  /** Block the write landed in. Proofs must be anchored at or past it. */
+  blockNumber?: bigint;
+  /** Set when the write confirmed but its block could not be learned: why. Never prove without it. */
+  blockNumberError?: string;
+  /** Relay bundle id on the relay path. */
+  callsId?: Hex;
+  /**
+   * The root (`initialRegisterKey`) intent of a first-time write, when one was
+   * needed. This result's own fields always describe the session write.
+   */
+  rootRegistration?: RootRegistrationLeg;
+  /** Why the write failed, in the relay's or the chain's own words. */
+  reason?: string;
+  /**
+   * Set when the relay did not report the write as done but the KeyStore holds
+   * it: what the relay said. See `registrationOnChain`.
+   */
+  relayReported?: { status: string; statusCode?: number };
+};
+
+export type SubmitRegistryCallsArgs = {
+  /** The cached network being operated on. */
+  network: NetworkConfig;
+  walletAddress: Address;
+  adminSigner: Signer;
+  /** Registry calls (registerKey, revokeKey). Targets must be the registry chain's contracts. */
+  calls: readonly Call[];
+  /** Public client for the registry chain. Built from the config when omitted. */
+  registryClient?: PublicClient;
+  /**
+   * Called before each intent of the write. A wallet's FIRST registry write is
+   * two intents, `root` then `session`; every later write is `session` only.
+   */
+  onStep?: (step: "root" | "session") => void;
+  /**
+   * Called when an intent's payment is locked on the funding chain and the
+   * registry chain has not run it within the usual wait. The write is still
+   * owed an answer, so the wait goes on (see `FUNDED_WRITE_PATIENCE_MS`).
+   */
+  onWaiting?: (step: "root" | "session") => void;
+  /**
+   * How long each intent is waited for. `waitMs` and `pollMs` are the usual
+   * wait (240s, every 2s); `patienceMs` and `patientPollMs` the longer one that
+   * follows while the payment is locked (`FUNDED_WRITE_PATIENCE_MS`, every
+   * 10s). For tests, and for a caller with a reason to wait differently.
+   */
+  timing?: RegistryWriteTiming;
+  /**
+   * What the caller's own quote said the payer pays, on the chain the payer
+   * pays from. Used only to word a failure, where the relay has stopped
+   * quoting and the figure cannot be read any other way.
+   */
+  expectedCost?: { chainId: number; token: Address; amount: bigint };
+  /**
+   * The chain whose balance pays for the write, when the caller knows it.
+   * A failure is worded in what the payer holds there. Left out, it is the
+   * chain the wallet's holdings point at among those that keep their registry
+   * on this chain.
+   */
+  fundFrom?: NetworkConfig;
+};
+
+/**
+ * Submits registry calls on the registry chain of a cached network. On both
+ * paths the wallet's first registry write is preceded by
+ * `initialRegisterKey(admin)` so the admin key lands in the KeyStore before
+ * any session key does (the same guarantee submitCalls gives on local
+ * networks).
+ */
+export async function submitRegistryCalls(
+  args: SubmitRegistryCallsArgs,
+): Promise<RegistryWriteResult> {
+  const { network } = args;
+  if (!isCachedRegistry(network)) {
+    throw new Error(
+      `submitRegistryCalls: ${network.chain.name} keeps its KeyStore locally; ` +
+        `use submitCalls on the network itself.`,
+    );
+  }
+  // The cached network being operated on is the one whose balance pays.
+  return submitRegistryWrite(network.registry.l1, { fundFrom: network, ...args });
+}
+
+/**
+ * How long a funded registry write is waited for once its payment is locked on
+ * the funding chain.
+ *
+ * The relay locks the payer's funds on the L2 first and runs the write on the
+ * registry chain after. When that second half is slow (the relay's signers on
+ * the registry chain paused for lack of gas, on 2026-11-14 on Ethereum), the
+ * bundle stays in flight for as long as the relay keeps it: it finishes the
+ * write, or returns the payment once its refund period is over, which is one
+ * hour on mainnet. Stopping at the usual four minutes abandoned a payment the
+ * relay then went on to use: the root key was registered ten minutes later
+ * and the session key's write, which only this call would have sent, never
+ * was. A little over the refund period means the wait ends with an answer.
+ */
+export const FUNDED_WRITE_PATIENCE_MS = 65 * 60_000;
+
+/** See `SubmitRegistryCallsArgs.timing`. */
+export type RegistryWriteTiming = {
+  waitMs?: number;
+  pollMs?: number;
+  patienceMs?: number;
+  patientPollMs?: number;
+};
+
+/** A chain's name for a sentence, or its id when the SDK has no config for it. */
+function chainLabel(chainId: number): string {
+  return networkByChainId(chainId)?.chain.name ?? `chain ${chainId}`;
+}
+
+/**
+ * Why a relayed write did not confirm, in enough detail to chase it.
+ *
+ * `relay reported status FAILED` was the whole of it, and it is the fourth
+ * contentless diagnostic this project has lost time to: the bundle id, the
+ * numeric status and the per-chain receipts were all in hand and none of them
+ * reached the leg. A reader could not tell an intent that never landed from one
+ * that landed and reverted, and those are different investigations.
+ */
+const STATUS_CODE_MEANING: Record<number, string> = {
+  // altana-relay-mainnet src/types/rpc/calls.rs:633. The relay distinguishes
+  // these three and the distinction is the whole answer: 300 means the revert
+  // was caught before broadcast, so no destination gas was spent and no
+  // destination transaction exists to look up.
+  300: " (Failed: caught offchain, never broadcast)",
+  400: " (Reverted: fully onchain)",
+  500: " (PartiallyReverted)",
+};
+
+/** Source-chain legs that were mined and succeeded: where a funded write's payment is locked. */
+function lockedLegs(
+  chainId: number,
+  result: { receipts?: readonly RelayReceipt[] },
+): readonly RelayReceipt[] {
+  return (result.receipts ?? []).filter(
+    (r) => r.chainId !== undefined && Number(r.chainId) !== chainId && (r.status === undefined || Number(r.status) === 1),
+  );
+}
+
+/** The wait ended with the bundle still in flight and the payment locked: not failed, held. */
+function isPaymentHeld(chainId: number, result: { status: string; receipts?: readonly RelayReceipt[] }): boolean {
+  return result.status === "PENDING" && lockedLegs(chainId, result).length > 0;
+}
+
+function describeRelayFailure(
+  callsId: Hex,
+  chainId: number,
+  result: { status: string; statusCode?: number; receipts?: readonly RelayReceipt[] },
+): string {
+  const locked = lockedLegs(chainId, result);
+  if (isPaymentHeld(chainId, result)) {
+    // Still in flight with the payment locked: not a failure yet, and the one
+    // thing the payer needs to hear is where their money is. The sentence
+    // comes first; what follows is for whoever chases the bundle.
+    const from = chainLabel(Number(locked[0]!.chainId));
+    const to = chainLabel(chainId);
+    return (
+      `The KeyStore update on ${to} has not completed yet. The payment for it is held on ${from} ` +
+      `and comes back if the update does not complete. ` +
+      `(the relay still reports the bundle in flight` +
+      `${result.statusCode !== undefined ? `, statusCode ${result.statusCode}` : ""}; bundle ${callsId}; ` +
+      `${locked.map((r) => `${chainLabel(Number(r.chainId))}: locked${r.transactionHash ? ` in ${r.transactionHash}` : ""}`).join("; ")}; ` +
+      `nothing has been mined on ${to} yet)`
+    );
+  }
+  const parts = [`the relay reported status ${result.status}`];
+  if (result.statusCode !== undefined) {
+    parts.push(`statusCode ${result.statusCode}${STATUS_CODE_MEANING[result.statusCode] ?? ""}`);
+  }
+  parts.push(`bundle ${callsId}`);
+  const receipts = result.receipts ?? [];
+  const onThisChain = receipts.some((r) => r.chainId !== undefined && Number(r.chainId) === chainId);
+  for (const r of receipts) {
+    const chain = r.chainId === undefined ? "unknown chain" : `chain ${Number(r.chainId)}`;
+    const status = r.status === undefined ? "no status" : Number(r.status) === 1 ? "succeeded" : "REVERTED";
+    parts.push(`${chain}: ${status}${r.transactionHash ? ` in ${r.transactionHash}` : ""}`);
+  }
+  if (receipts.length === 0) {
+    parts.push("the relay returned no receipt at all, so nothing was mined on any chain");
+  } else if (!onThisChain) {
+    // The case the first version of this function missed, and the one the
+    // 17:22 run actually was: a funded cross-chain write whose SOURCE leg
+    // landed and succeeded while the destination never reached a block. There
+    // is a successful receipt, so "no receipt" is wrong, and the registry
+    // chain has no transaction to inspect, so "it reverted on chain" is wrong
+    // too. It also leaves a funded escrow open on the source chain, which is
+    // how four of them accumulated (infra, 2026-10-07).
+    parts.push(
+      `nothing was mined on the registry chain (${chainId}) itself, so its leg never ran; ` +
+        `a source-chain leg that succeeded will have locked funds in escrow, refundable ` +
+        `permissionlessly after the escrow's timeout`,
+    );
+  }
+  return parts.join("; ");
+}
+
+/** What the KeyStore says about a registration the relay did not report as done. */
+type OnChainCheck =
+  /** Every key is valid in the KeyStore: the write happened. */
+  | { held: true; blockNumber: bigint; transactionHash?: Hex }
+  /** At least one key is not there. */
+  | { held: false }
+  /** The KeyStore could not be read, so it is not known. */
+  | { held: "unknown"; reason: string };
+
+/** The widest block range searched for the transaction that delivered a write. */
+const DELIVERY_SEARCH_MAX_BLOCKS = 10_000;
+
+/**
+ * Where a registration the relay did not report as done stands in the
+ * KeyStore itself.
+ *
+ * A signed request can be delivered by a sender other than the relay. On
+ * Ethereum a transaction waits in public before it is included, anyone who
+ * reads it there can send the same request first, and the Orchestrator runs
+ * the first copy it receives. The relay then sees its own transaction fail and
+ * reports the write as failed although the key was registered. That happened
+ * on Celo mainnet on 2026-11-16: the session key's `registerKey` was delivered
+ * by another sender earlier in the same block, the relay reported status 500,
+ * and the SDK sent no mirror proof for a key that was in the KeyStore. The
+ * KeyStore is the record, so it is what decides.
+ *
+ * Applies only to calls the SDK can read back (`initialRegisterKey`,
+ * `registerKey`); anything else returns undefined and keeps the relay's word.
+ * The block returned is the one to anchor a proof at or past: the delivering
+ * transaction's when its event is found, otherwise the block the KeyStore was
+ * read at, where the key was already present.
+ */
+async function registrationOnChain(args: {
+  registryClient: PublicClient;
+  registry: NetworkConfig;
+  walletAddress: Address;
+  calls: readonly Call[];
+  /** When the intent was sent (ms), to bound the search for the delivering transaction. */
+  sentAt: number;
+}): Promise<OnChainCheck | undefined> {
+  const keyIds = args.calls.map((c) => registeredKeyIdOf(c.data));
+  if (keyIds.length === 0 || keyIds.some((k) => k === undefined)) return undefined;
+  let readAt: bigint;
+  try {
+    readAt = await args.registryClient.getBlockNumber();
+    for (const keyId of keyIds as Hex[]) {
+      const valid = await readIsValidKey(args.registryClient, args.registry, args.walletAddress, keyId, readAt);
+      if (!valid) return { held: false };
+    }
+  } catch (err) {
+    return { held: "unknown", reason: err instanceof Error ? err.message.split("\n")[0]! : String(err) };
+  }
+  // The transaction that delivered it, for the report. Best effort: the key is
+  // in the KeyStore either way, and `readAt` is a valid anchor without it.
+  try {
+    const span = BigInt(Math.min(DELIVERY_SEARCH_MAX_BLOCKS, Math.ceil((Date.now() - args.sentAt) / 1000) + 64));
+    const logs = await args.registryClient.getLogs({
+      address: args.registry.keyStore,
+      event: KEY_REGISTERED_EVENT,
+      args: { user: args.walletAddress, keyId: keyIds[keyIds.length - 1]! },
+      fromBlock: readAt > span ? readAt - span : 0n,
+      toBlock: readAt,
+    });
+    const last = logs[logs.length - 1];
+    if (last?.transactionHash && last.blockNumber !== null && last.blockNumber !== undefined) {
+      return { held: true, blockNumber: last.blockNumber, transactionHash: last.transactionHash };
+    }
+  } catch {
+    // Some public RPCs refuse log ranges; fall through to the read block.
+  }
+  return { held: true, blockNumber: readAt };
+}
+
+/** The clause added to a failure when the KeyStore could not be read to check it. */
+function uncheckedClause(check: OnChainCheck | undefined): string {
+  return check?.held === "unknown"
+    ? `; the KeyStore could not be read to check whether the key was registered anyway (${check.reason})`
+    : "";
+}
+
+/**
+ * One relayed registry intent, reported as a root-registration outcome.
+ *
+ * Used for the `initialRegisterKey` half of a first-time write.
+ *
+ * It throws when the intent cannot be submitted, exactly as a single-intent
+ * write always has: the fee-selection code builds a careful diagnosis for that
+ * case (a bare revert must not be dressed up as a shortfall, see
+ * `relay.feeSelection.test.ts`), and `realSessionLegDeps.submitRegistry`
+ * already turns a throw into a FAILED leg carrying the message. Returning an
+ * outcome here instead would have made the same underlying failure throw or
+ * not depending on which of the two intents hit it.
+ *
+ * A submitted intent that the relay reports as not CONFIRMED is a different
+ * thing and comes back as a FAILED outcome, because then the caller has a
+ * bundle id and a reason to report.
+ */
+async function submitOneRelayedWrite(args: {
+  relayClient: ReturnType<typeof buildRelayClient>;
+  registryClient: PublicClient;
+  registry: NetworkConfig;
+  walletAddress: Address;
+  adminSigner: Signer;
+  calls: readonly Call[];
+  /** The caller's own quote, for wording a failure. See `SubmitRegistryCallsArgs`. */
+  expectedCost?: { chainId: number; token: Address; amount: bigint };
+  /** The chain that pays, when known. See `SubmitRegistryCallsArgs`. */
+  fundFrom?: NetworkConfig;
+  /** The payment is locked and the registry chain is slow; the wait goes on. */
+  onWaiting?: () => void;
+  timing?: RegistryWriteTiming;
+}): Promise<RootRegistrationLeg & { paymentHeld?: true }> {
+  const { registry, walletAddress, adminSigner, calls, registryClient } = args;
+  try {
+    const requiredFunds = await planRegistryFunding({
+      registryClient,
+      registry,
+      walletAddress,
+      adminPublicKey: adminSigner.publicKey,
+      calls,
+      // `calls` is the registration itself, so its fee is counted once.
+      skipFirstActionPrepend: true,
+    });
+    const sentAt = Date.now();
+    const callsId = await submitCalls(args.relayClient, walletAddress, adminSigner, calls, {
+      feeToken: NATIVE_TOKEN,
+      requiredFunds,
+      // What a person is doing, for the one sentence a failure shows. The
+      // chain they pay from is inferred from the registry relationship; a
+      // sentence never names the asset they deliberately do not hold here.
+      operation: `registering this key on ${registry.chain.name}`,
+      ...(args.expectedCost ? { expectedCost: args.expectedCost } : {}),
+      ...(args.fundFrom ? { fundFrom: args.fundFrom } : {}),
+      submittingKey: { type: "secp256k1", publicKey: adminSigner.publicKey, role: "admin" },
+      network: registry,
+      // These calls ARE the first-action registration, so submitCalls must not
+      // prepend it again: it would register the admin key twice in one intent
+      // and pay the fee twice.
+      skipFirstActionPrepend: true,
+    });
+    const result = await waitForCalls(args.relayClient, callsId, args.timing?.waitMs, args.timing?.pollMs, {
+      chainId: registry.chainId,
+      whileFundsLocked: {
+        timeoutMs: args.timing?.patienceMs ?? FUNDED_WRITE_PATIENCE_MS,
+        ...(args.timing?.patientPollMs !== undefined ? { pollIntervalMs: args.timing.patientPollMs } : {}),
+        ...(args.onWaiting ? { onWaiting: () => args.onWaiting!() } : {}),
+      },
+    });
+    if (result.status !== "CONFIRMED") {
+      // The relay judges by its own transaction; the KeyStore is the record.
+      const onChain = await registrationOnChain({ registryClient, registry, walletAddress, calls, sentAt });
+      if (onChain?.held === true) {
+        return {
+          status: "CONFIRMED",
+          callsId,
+          blockNumber: onChain.blockNumber,
+          ...(onChain.transactionHash ? { transactionHash: onChain.transactionHash } : {}),
+        };
+      }
+      return {
+        status: "FAILED",
+        callsId,
+        ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
+        reason: describeRelayFailure(callsId, registry.chainId, result) + uncheckedClause(onChain),
+        ...(isPaymentHeld(registry.chainId, result) ? { paymentHeld: true as const } : {}),
+      };
+    }
+    const block = await blockNumberOfWrite({
+      relayBlockNumber: result.blockNumber,
+      transactionHash: result.transactionHash,
+      publicClient: registryClient,
+    });
+    return {
+      status: "CONFIRMED",
+      callsId,
+      ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
+      ...(block.blockNumber !== undefined ? { blockNumber: block.blockNumber } : {}),
+    };
+  } catch (err) {
+    // The sentence a person reads is the failure's own. This context is for
+    // the log: which of the two intents of a first write did not go.
+    throw withFailureContext(
+      err,
+      "The root registration (initialRegisterKey) could not be submitted, so the session key's registerKey was not attempted.",
+    );
+  }
+}
+
+/**
+ * Submits registry calls on a registry chain directly: through its relay when
+ * it has one, otherwise as transactions from the admin key. Used for a
+ * registry chain that is not itself one of the networks being operated on
+ * (Sepolia behind Base Sepolia, or Ethereum behind an L2 that mirrors it, when
+ * the Ethereum account holds no copy of the key).
+ */
+export async function submitRegistryWrite(
+  registry: NetworkConfig,
+  args: Omit<SubmitRegistryCallsArgs, "network">,
+): Promise<RegistryWriteResult> {
+  const { walletAddress, adminSigner, calls } = args;
+  const registryClient = args.registryClient ?? buildPublicClient(registry);
+  const plan = planRegistryWrite(registry, adminSigner, walletAddress);
+
+  if (plan.via === "relay") {
+    // The wallet pays the write from its balance on the L2, in the registry
+    // chain's native token: the relay fronts the value and its own fee here.
+    const relayClient = buildRelayClient(registry);
+
+    // A wallet's FIRST registry write is two calls, initialRegisterKey then
+    // registerKey, and submitCalls would bundle them into one intent. Measured
+    // on Celo Sepolia at the 1,500,000 intent buffer, initialRegisterKey alone
+    // costs 1,077,101 gas cold (KeyStore.initialRegisterKey 1,008,273), which
+    // leaves registerKey 44,555 of the intent's budget: it runs out of gas and
+    // the Orchestrator returns CallError() (infra, 2026-10-07). So send them as
+    // two sequential intents, each quoted for its own gas.
+    //
+    // They do not need to be atomic, and the EOA path below has always worked
+    // this way: one transaction per call, each confirmed before the next. What
+    // orders them is the sequence, not the bundling — KeyStore requires a root
+    // key before registerKey, and confirming the root intent first satisfies
+    // that across two intents exactly as within one.
+    const prepend = await buildFirstActionPrepend({
+      publicClient: registryClient,
+      network: registry,
+      walletAddress,
+      adminPublicKey: adminSigner.publicKey,
+    });
+
+    let rootRegistration: RootRegistrationLeg | undefined;
+    if (prepend.length > 0) {
+      args.onStep?.("root");
+      const { paymentHeld, ...root } = await submitOneRelayedWrite({
+        relayClient,
+        registryClient,
+        registry,
+        walletAddress,
+        adminSigner,
+        calls: prepend,
+        ...(args.expectedCost ? { expectedCost: args.expectedCost } : {}),
+        ...(args.fundFrom ? { fundFrom: args.fundFrom } : {}),
+        ...(args.onWaiting ? { onWaiting: () => args.onWaiting!("root") } : {}),
+        ...(args.timing ? { timing: args.timing } : {}),
+      });
+      rootRegistration = root;
+      if (root.status !== "CONFIRMED") {
+        return {
+          via: "relay",
+          chainId: registry.chainId,
+          status: "FAILED",
+          rootRegistration,
+          // A held payment leads with the sentence a person needs; which of the
+          // two intents it was is bookkeeping and follows it.
+          reason: paymentHeld
+            ? `${root.reason ?? ""} This was the wallet's first registration (initialRegisterKey); ` +
+              `the session key's registerKey waits for it and was not sent.`
+            : `the root registration (initialRegisterKey) did not confirm, so the session ` +
+              `key's registerKey was not attempted: ${root.reason ?? "no reason reported"}`,
+        };
+      }
+      // The session intent must NOT prepend the registration again. Leaving
+      // submitCalls to work that out from its own KeyStore read would make
+      // this depend on read-after-write consistency on the registry chain: a
+      // lagging or load-balanced RPC still answering `getKeys() == []` would
+      // prepend initialRegisterKey a second time and pay its fee twice. We
+      // just confirmed the root ourselves, so we say so instead of asking.
+    }
+    const rootHandled = prepend.length > 0;
+
+    args.onStep?.("session");
+    const requiredFunds = await planRegistryFunding({
+      registryClient,
+      registry,
+      walletAddress,
+      adminPublicKey: adminSigner.publicKey,
+      calls,
+      // Counted in the root intent already, when there was one.
+      ...(rootHandled ? { skipFirstActionPrepend: true } : {}),
+    });
+    const sentAt = Date.now();
+    const callsId = await submitCalls(relayClient, walletAddress, adminSigner, calls, {
+      // Only when we registered the root ourselves. With no root intent the
+      // prepend stays submitCalls's job, as it has always been.
+      ...(rootHandled ? { skipFirstActionPrepend: true } : {}),
+      feeToken: NATIVE_TOKEN,
+      requiredFunds,
+      operation: `registering this key on ${registry.chain.name}`,
+      ...(args.expectedCost ? { expectedCost: args.expectedCost } : {}),
+      ...(args.fundFrom ? { fundFrom: args.fundFrom } : {}),
+      submittingKey: { type: "secp256k1", publicKey: adminSigner.publicKey, role: "admin" },
+      network: registry,
+    });
+    const result = await waitForCalls(relayClient, callsId, args.timing?.waitMs, args.timing?.pollMs, {
+      chainId: registry.chainId,
+      whileFundsLocked: {
+        timeoutMs: args.timing?.patienceMs ?? FUNDED_WRITE_PATIENCE_MS,
+        ...(args.timing?.patientPollMs !== undefined ? { pollIntervalMs: args.timing.patientPollMs } : {}),
+        ...(args.onWaiting ? { onWaiting: () => args.onWaiting!("session") } : {}),
+      },
+    });
+    const onChain =
+      result.status !== "CONFIRMED"
+        ? await registrationOnChain({ registryClient, registry, walletAddress, calls, sentAt })
+        : undefined;
+    if (onChain?.held === true) {
+      // Done, by another sender. No funding fields: the relay counts its own
+      // transaction as failed and returns the locked payment once its refund
+      // period is over, so the wallet did not end up paying from the L2.
+      return {
+        via: "relay",
+        chainId: registry.chainId,
+        status: "CONFIRMED",
+        callsId,
+        blockNumber: onChain.blockNumber,
+        ...(onChain.transactionHash ? { transactionHash: onChain.transactionHash } : {}),
+        ...(rootRegistration ? { rootRegistration } : {}),
+        relayReported: {
+          status: result.status,
+          ...(result.statusCode !== undefined ? { statusCode: result.statusCode } : {}),
+        },
+      };
+    }
+    const block =
+      result.status === "CONFIRMED"
+        ? await blockNumberOfWrite({
+            relayBlockNumber: result.blockNumber,
+            transactionHash: result.transactionHash,
+            publicClient: registryClient,
+          })
+        : undefined;
+    const source = result.sourceReceipts?.[0];
+    return {
+      via: "relay",
+      chainId: registry.chainId,
+      status: result.status as RegistryWriteResult["status"],
+      callsId,
+      ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
+      ...(block?.blockNumber !== undefined ? { blockNumber: block.blockNumber } : {}),
+      ...(block && "blockNumberError" in block ? { blockNumberError: block.blockNumberError } : {}),
+      ...(source?.chainId !== undefined ? { fundedFromChainId: Number(source.chainId) } : {}),
+      ...(source?.transactionHash ? { sourceTransactionHash: source.transactionHash } : {}),
+      ...(rootRegistration ? { rootRegistration } : {}),
+      ...(result.status !== "CONFIRMED"
+        ? {
+            reason:
+              (isPaymentHeld(registry.chainId, result)
+                ? describeRelayFailure(callsId, registry.chainId, result) +
+                  (rootHandled ? ` The root registration did confirm, so granting again sends registerKey only.` : "")
+                : rootHandled
+                  ? `the session key's registerKey did not confirm. The root registration DID ` +
+                    `confirm, so retrying grantSession sends registerKey only. ` +
+                    describeRelayFailure(callsId, registry.chainId, result)
+                  : describeRelayFailure(callsId, registry.chainId, result)) + uncheckedClause(onChain),
+          }
+        : {}),
+    };
+  }
+
+  const prepend = await buildFirstActionPrepend({
+    publicClient: registryClient,
+    network: registry,
+    walletAddress,
+    adminPublicKey: adminSigner.publicKey,
+  });
+  const allCalls: readonly Call[] = prepend.length > 0 ? [...prepend, ...calls] : calls;
+
+  const required = allCalls.reduce((sum, c) => sum + (c.value ?? 0n), 0n);
+  await assertRegistryFunding(registryClient, registry, plan.account.address, required);
+
+  const walletClient = createWalletClient({
+    account: plan.account,
+    chain: registry.chain,
+    transport: http(registry.publicRpcUrl),
+  });
+
+  // One transaction per call, each confirmed before the next: the same two-step
+  // shape the relay path above now uses. `last` is the SESSION write, so the
+  // returned blockNumber stays the one a cache proof must be anchored at.
+  let last: { hash: Hex; blockNumber: bigint } | undefined;
+  let eoaRoot: RootRegistrationLeg | undefined;
+  for (const [i, call] of allCalls.entries()) {
+    const isRoot = prepend.length > 0 && i === 0;
+    args.onStep?.(isRoot ? "root" : "session");
+    const hash = await walletClient.sendTransaction({
+      to: call.to,
+      value: call.value ?? 0n,
+      data: call.data ?? "0x",
+    });
+    const receipt = await registryClient.waitForTransactionReceipt({ hash });
+    if (receipt.status !== "success") {
+      const failed: RootRegistrationLeg = {
+        status: "FAILED",
+        transactionHash: hash,
+        blockNumber: receipt.blockNumber,
+        reason: "the transaction reverted",
+      };
+      return {
+        via: "eoa",
+        chainId: registry.chainId,
+        status: "FAILED",
+        transactionHash: hash,
+        blockNumber: receipt.blockNumber,
+        ...(isRoot ? { rootRegistration: failed } : eoaRoot ? { rootRegistration: eoaRoot } : {}),
+        reason: isRoot
+          ? "the root registration (initialRegisterKey) reverted, so registerKey was not attempted"
+          : eoaRoot
+            ? "the session key's registerKey reverted. The root registration DID confirm, " +
+              "so retrying grantSession sends registerKey only."
+            : "the registry transaction reverted",
+      };
+    }
+    if (isRoot) eoaRoot = { status: "CONFIRMED", transactionHash: hash, blockNumber: receipt.blockNumber };
+    else last = { hash, blockNumber: receipt.blockNumber };
+  }
+  // `last` is the session write. With no session call to make (an empty
+  // `calls`, which no caller does today) fall back to the root's receipt
+  // rather than returning CONFIRMED with no block for a proof to anchor at.
+  const reported = last ?? (eoaRoot?.transactionHash && eoaRoot.blockNumber !== undefined
+    ? { hash: eoaRoot.transactionHash, blockNumber: eoaRoot.blockNumber }
+    : undefined);
+  return {
+    via: "eoa",
+    ...(eoaRoot ? { rootRegistration: eoaRoot } : {}),
+    chainId: registry.chainId,
+    status: "CONFIRMED",
+    ...(reported ? { transactionHash: reported.hash, blockNumber: reported.blockNumber } : {}),
+  };
+}
+
+/** Gas headroom over the calls' value for a direct (EOA) registry transaction. */
+export const REGISTRY_FEE_ALLOWANCE_WEI = 1_000_000_000_000_000n; // 0.001 ETH
+
+/**
+ * The native value a relayed registry write asks the relay to front: the
+ * calls' value, or one wei above what the wallet holds on the registry chain
+ * when that is more. The relay funds a request only when it exceeds the
+ * balance it reads itself, and then sources the value and its own fee from
+ * the wallet's balance on the L2; so the wallet always pays from its own
+ * chain and ETH it holds on the registry chain is not used. Should a deposit
+ * land there between this read and the relay's, the relay pays the write
+ * from that ETH instead and the leg carries no source chain; it still lands.
+ */
+export function registryFundsRequest(args: { balance: bigint; valueNeeded: bigint }): readonly RequiredFund[] {
+  const value = args.valueNeeded > args.balance ? args.valueNeeded : args.balance + 1n;
+  return [{ address: NATIVE_TOKEN, value }];
+}
+
+/** Reads what the write costs in value and what the wallet holds on the registry chain, then builds the request. */
+export async function planRegistryFunding(args: {
+  registryClient: PublicClient;
+  registry: NetworkConfig;
+  walletAddress: Address;
+  adminPublicKey: Hex;
+  calls: readonly Call[];
+  /**
+   * Set when `calls` IS the first-action registration, so its fee is not
+   * counted twice. The root intent of a first-time write passes it, matching
+   * `submitCalls`'s option of the same name.
+   */
+  skipFirstActionPrepend?: boolean;
+}): Promise<readonly RequiredFund[]> {
+  // The admin's first registration is prepended inside the relay request; its fee counts here.
+  const prepend = args.skipFirstActionPrepend
+    ? []
+    : await buildFirstActionPrepend({
+        publicClient: args.registryClient,
+        network: args.registry,
+        walletAddress: args.walletAddress,
+        adminPublicKey: args.adminPublicKey,
+      });
+  const valueNeeded = [...prepend, ...args.calls].reduce((sum, c) => sum + (c.value ?? 0n), 0n);
+  const balance = await args.registryClient.getBalance({ address: args.walletAddress });
+  return registryFundsRequest({ balance, valueNeeded });
+}
+
+/**
+ * Throws when `address` cannot pay the direct registry write on the registry
+ * chain: the registration fees plus a gas allowance. The message names the
+ * chain and the asset to fund, with the faucet where one exists.
+ */
+export async function assertRegistryFunding(
+  registryClient: Pick<PublicClient, "getBalance">,
+  registry: NetworkConfig,
+  address: Address,
+  requiredValue: bigint,
+): Promise<void> {
+  const needed = requiredValue + REGISTRY_FEE_ALLOWANCE_WEI;
+  const balance = await registryClient.getBalance({ address });
+  if (balance >= needed) return;
+  const symbol = registry.chain.nativeCurrency.symbol;
+  const faucet = faucetHint(registry.chainId);
+  throw new Error(
+    `Registry writes on ${registry.chain.name} (chainId ${registry.chainId}) are sent ` +
+      `directly from the admin key ${address}, which holds ${formatEther(balance)} ${symbol} ` +
+      `but needs about ${formatEther(needed)} ${symbol} (registration fee plus gas). ` +
+      `Fund ${address} with ${symbol} on ${registry.chain.name}` +
+      (faucet ? ` (faucet: ${faucet}).` : "."),
+  );
+}

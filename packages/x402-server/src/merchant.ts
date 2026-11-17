@@ -8,16 +8,47 @@ import {
 } from "viem";
 import { buildChallenge } from "./challenge.js";
 import { decodeXPayment } from "./decode.js";
-import { settlePayment, type SettleResult } from "./settle.js";
+import {
+  settleViaFacilitator,
+  settlesViaFacilitator,
+  type FacilitatorConfig,
+} from "./facilitator.js";
+import { describeError, settlePayment, type SettleClients, type SettleResult } from "./settle.js";
 import { verifyPayment } from "./verify.js";
-import type { DecodedPayment, MerchantConfig } from "./types.js";
+import type { ChallengeAccept, DecodedPayment, MerchantConfig } from "./types.js";
+
+/** Everything the merchant touches on-chain; inject your own to bring a
+ * fallback transport, a nonce-managed signer, or fakes in tests. */
+export type MerchantClients = {
+  public: SettleClients["public"] & Pick<PublicClient, "verifyTypedData" | "getCode">;
+  wallet: SettleClients["wallet"];
+};
 
 export type MerchantOptions = MerchantConfig & {
   /** The settler EOA — broadcasts settlements, pays gas. NOT the payTo. */
   facilitator: Account;
-  rpcUrl: string;
+  /** RPC used to verify and settle. Required unless `clients` is given. */
+  rpcUrl?: string;
   /** viem chain object (used for tx signing); optional for custom clients. */
   chain?: WalletClient["chain"];
+  /** Bring your own viem clients instead of `rpcUrl` (must carry `facilitator`). */
+  clients?: MerchantClients;
+  /**
+   * How long settlement waits for the receipt before answering with a
+   * `pending` receipt (default 60s). Keep it under your buyers' HTTP timeout:
+   * a buyer that gives up and retries will be told "replayed authorization".
+   */
+  settleTimeoutMs?: number;
+  /**
+   * Settle through a hosted facilitator, which broadcasts the payment and pays
+   * the gas, instead of from `facilitator` (the merchant's own key). Per rail,
+   * not per merchant: the rails in `FacilitatorConfig.rails` go there and every
+   * other settles locally, so one route can serve both by different paths.
+   * Which rails those are is configuration, not a property of the rail — the
+   * receipt's `settledVia` is what actually settled it. Celo runs one, see
+   * `CELO_FACILITATOR_URL`. Omitted, everything settles locally as before.
+   */
+  facilitatorService?: FacilitatorConfig;
 };
 
 export type PaymentReceipt = SettleResult & {
@@ -38,21 +69,68 @@ export type HandleResult =
  * `fetchWithX402` buyers, and anything else speaking the B402 v2 wire.
  */
 export function createX402Merchant(opts: MerchantOptions) {
-  const publicClient: PublicClient = createPublicClient({
-    chain: opts.chain,
-    transport: http(opts.rpcUrl),
-  }) as PublicClient;
-  const walletClient: WalletClient = createWalletClient({
-    account: opts.facilitator,
-    chain: opts.chain,
-    transport: http(opts.rpcUrl),
-  });
+  if (!opts.clients && !opts.rpcUrl) throw new Error("createX402Merchant: rpcUrl or clients is required");
+  const publicClient: MerchantClients["public"] =
+    opts.clients?.public ??
+    (createPublicClient({ chain: opts.chain, transport: http(opts.rpcUrl) }) as PublicClient);
+  const walletClient: MerchantClients["wallet"] =
+    opts.clients?.wallet ??
+    createWalletClient({ account: opts.facilitator, chain: opts.chain, transport: http(opts.rpcUrl) });
+  const clients = { wallet: walletClient, public: publicClient };
 
   // In-process replay guard so one authorization can't settle twice in a race;
-  // the on-chain nonce is the durable source of truth.
-  const seen = new Set<string>();
+  // the on-chain nonce is the durable source of truth. Once a settlement has
+  // been broadcast its hash stays here until the authorization itself expires,
+  // so a buyer that never received its answer can ask again (#76). Single
+  // process only: behind a load balancer the on-chain nonce still refuses the
+  // replay, but as "settlement failed", not "replayed authorization".
+  type Seen =
+    | "inflight"
+    | {
+        txHash: SettleResult["txHash"];
+        settlement: SettleResult["settlement"];
+        /** Remembered so a replayed receipt names the route that really settled. */
+        settledVia: SettleResult["settledVia"];
+      };
+  const seen = new Map<string, { state: Seen; expiresAt: number }>();
+  const sweep = (now: number) => {
+    for (const [k, v] of seen) if (v.expiresAt < now) seen.delete(k);
+  };
 
-  const challengeBody = () => buildChallenge(opts) as unknown as Record<string, unknown>;
+  const challenge = () => buildChallenge(opts);
+  const challengeBody = () => challenge() as unknown as Record<string, unknown>;
+
+  /**
+   * The `accepts[]` entry a payment answered, to send to a facilitator as its
+   * `paymentRequirements`. The buyer echoes it back when it can; when it does
+   * not, the merchant's own challenge entry for that token and rail is the same
+   * requirement by construction. `token` is the one verification matched, not
+   * the buyer's claim, because an eip3009 envelope without an `accepted` entry
+   * names no asset at all.
+   */
+  function requirementsFor(decoded: DecodedPayment, token: `0x${string}`): Record<string, unknown> {
+    if (decoded.accepted) return decoded.accepted;
+    const wanted = decoded.rail === "eip3009" ? "eip3009" : "permit2-exact";
+    const match = challenge().accepts.find(
+      (a: ChallengeAccept) =>
+        a.asset.toLowerCase() === token.toLowerCase() && a.extra.assetTransferMethod === wanted,
+    );
+    if (!match) {
+      throw new Error(
+        `no accepts[] entry for ${decoded.rail} on ${token}: the payment does not answer this merchant's challenge`,
+      );
+    }
+    return match as unknown as Record<string, unknown>;
+  }
+
+  /** The facilitator when it takes this rail, the merchant's own key otherwise. */
+  function settle(decoded: DecodedPayment, token: `0x${string}`): Promise<SettleResult> {
+    const service = opts.facilitatorService;
+    if (service && settlesViaFacilitator(decoded.rail, service)) {
+      return settleViaFacilitator(decoded, requirementsFor(decoded, token), service);
+    }
+    return settlePayment(decoded, opts, clients, { receiptTimeoutMs: opts.settleTimeoutMs });
+  }
 
   async function requirePayment(xPaymentHeader: string | null): Promise<HandleResult> {
     if (!xPaymentHeader) return { status: 402, body: challengeBody() };
@@ -77,24 +155,61 @@ export function createX402Merchant(opts: MerchantOptions) {
       return { status: 402, body: { ...challengeBody(), error: `payment rejected: ${verdict.reason}` } };
     }
 
+    const now = Math.floor(Date.now() / 1000);
+    sweep(now);
     const nonceKey =
       decoded.rail === "eip3009"
         ? `3009:${decoded.payer}:${decoded.authorization!.nonce}`
         : `p2:${decoded.payer}:${decoded.permit!.nonce}`;
-    if (seen.has(nonceKey)) {
-      return { status: 402, body: { ...challengeBody(), error: "payment rejected: replayed authorization" } };
-    }
-    seen.add(nonceKey);
+    // verifyPayment already refused anything past this point in time.
+    const expiresAt = Number(decoded.authorization?.validBefore ?? decoded.permit?.deadline ?? now + 600);
+    const receiptOf = (settled: SettleResult): PaymentReceipt => ({
+      ...settled,
+      payer: decoded.payer,
+      amount: decoded.amount,
+      token: verdict.token,
+      rail: decoded.rail,
+    });
 
-    try {
-      const settled = await settlePayment(decoded, opts, { wallet: walletClient, public: publicClient });
+    const prior = seen.get(nonceKey);
+    if (prior) {
+      if (prior.state === "inflight" || prior.state.settlement === "confirmed") {
+        return { status: 402, body: { ...challengeBody(), error: "payment rejected: replayed authorization" } };
+      }
+      // The same buyer asking again about a payment we broadcast but could not
+      // confirm. Look once more; never hand out a fresh challenge for it.
+      const { txHash } = prior.state;
+      const receipt = await publicClient.getTransactionReceipt({ hash: txHash }).catch(() => null);
+      if (receipt?.status === "reverted") {
+        seen.delete(nonceKey); // it landed and failed: the authorization is unspent
+        return { status: 402, body: { ...challengeBody(), error: `settlement failed: transaction ${txHash} reverted` } };
+      }
+      const settledVia = prior.state.settledVia;
+      if (receipt?.status === "success") {
+        seen.set(nonceKey, { state: { txHash, settlement: "confirmed", settledVia }, expiresAt });
+        return { status: 200, receipt: receiptOf({ txHash, settlement: "confirmed", settledVia }) };
+      }
       return {
         status: 200,
-        receipt: { ...settled, payer: decoded.payer, amount: decoded.amount, token: verdict.token, rail: decoded.rail },
+        receipt: receiptOf({ txHash, settlement: "pending", pendingReason: "receipt not yet available", settledVia }),
       };
+    }
+    seen.set(nonceKey, { state: "inflight", expiresAt });
+
+    try {
+      const settled = await settle(decoded, verdict.token);
+      // Confirmed or pending, the authorization is spent (or about to be): keep it.
+      seen.set(nonceKey, {
+        state: { txHash: settled.txHash, settlement: settled.settlement, settledVia: settled.settledVia },
+        expiresAt,
+      });
+      return { status: 200, receipt: receiptOf(settled) };
     } catch (e) {
-      seen.delete(nonceKey); // let an honest retry through (e.g. RPC hiccup)
-      return { status: 402, body: { ...challengeBody(), error: `settlement failed: ${(e as Error).message}` } };
+      // Nothing was broadcast, or it reverted / was replaced and the nonce is
+      // unspent: an honest retry may proceed. (An unreadable outcome after a
+      // broadcast is not an error — see SettleResult.settlement.)
+      seen.delete(nonceKey);
+      return { status: 402, body: { ...challengeBody(), error: `settlement failed: ${describeError(e)}` } };
     }
   }
 

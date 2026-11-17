@@ -1,0 +1,1315 @@
+/**
+ * The fee token rule on the wire: what `wallet_prepareCalls` actually carries
+ * in `capabilities.meta.feeToken` after porto has built the request, over a
+ * mocked fetch that plays the relay (capabilities from a real testnet
+ * answer, `wallet_getAssets` balances, a captured prepareCalls answer, a
+ * send). porto fills a blank fee token from a session key's first spend cap,
+ * so these assert the request porto sends, not the SDK's own object. The
+ * balances the picker uses are the relay's; no public RPC is contacted.
+ */
+import { afterEach, describe, expect, test } from "bun:test";
+import { encodeAbiParameters, numberToHex, toFunctionSelector, type Address, type Hex } from "viem";
+import { BNB, CELO_SEPOLIA, NATIVE_TOKEN, SEPOLIA, type NetworkConfig } from "../config.js";
+import { createPrivateKeySigner } from "./signer.js";
+import { buildRelayClient, SEPOLIA_FAUCET_URL, submitCallsDetailed, type KeyDescriptor } from "./relay.js";
+import { submitRegistryWrite } from "./cachedRegistry.js";
+import { altanaErrorOf } from "../errors.js";
+import { quoteExecute } from "../execute.js";
+import { quotingDeps } from "../quoteSession.js";
+import { buildAdditionalRegisterCall, registrationValueFor } from "./keystore.js";
+import { realSessionLegDeps } from "./sessionLegs.js";
+import capabilities from "./fixtures/celo-sepolia-capabilities.json" with { type: "json" };
+import prepared from "./fixtures/celo-sepolia-prepare-calls.json" with { type: "json" };
+
+const WALLET: Address = "0x1111111111111111111111111111111111111111";
+const USDC: Address = "0x01C5C0122039549AD1493B8220cABEdD739BC44E";
+const USDM: Address = "0xdE9e4C3ce781b4bA68120d6261cbad65ce0aB00b";
+const USDT_BNB: Address = "0x55d398326f99059fF775485246999027B3197955";
+const CALLS = [{ to: WALLET, value: 0n, data: "0x" as Hex }];
+/** What a KeyStore on the network itself asks per key, in the mocked chain. */
+const LOCAL_REGISTRATION_FEE = 200_000_000_000_000n;
+
+const realFetch = globalThis.fetch;
+afterEach(() => {
+  globalThis.fetch = realFetch;
+});
+
+const feeToken = (uid: string, address: Address, decimals: number, symbol: string) => ({
+  uid, address, decimals, feeToken: true, interop: false, symbol, nativeRate: "0x94079cd1a42aaaa",
+});
+
+/** The captured chain capabilities under `chainId`, with `extraTokens` listed as fee tokens. */
+function chainCapabilities(chainId: number, extraTokens: ReturnType<typeof feeToken>[]) {
+  const chain = structuredClone(capabilities["0xaa044c"]);
+  chain.fees.tokens.push(...extraTokens);
+  return { [numberToHex(chainId)]: chain };
+}
+
+/** An ERC-7811 `wallet_getAssets` answer for one chain (lowercase ERC-20 addresses on purpose). */
+function assetsAnswer(chainId: number, native: bigint, tokens: Record<string, bigint>) {
+  return {
+    [numberToHex(chainId)]: [
+      { address: "native", balance: numberToHex(native), type: "native", metadata: null },
+      ...Object.entries(tokens).map(([address, raw]) => ({
+        address: address.toLowerCase(),
+        balance: numberToHex(raw),
+        type: "erc20",
+        metadata: { symbol: "X", decimals: 18 },
+      })),
+    ],
+  };
+}
+
+type Recorded = { url: string; method: string; params: any };
+
+/** Plays the relay for `network` and refuses everything else. Returns every request made. */
+function mockWire(o: {
+  network: NetworkConfig;
+  capabilities: unknown;
+  assets: unknown;
+  /** The wallet's keys in the network's own KeyStore. Default: one, so nothing is prepended. */
+  keys?: Hex[];
+  /** The relay refuses every prepare with this message. */
+  prepareError?: string;
+}) {
+  const requests: Recorded[] = [];
+  const same = (a: string, b: string | undefined) =>
+    b !== undefined && a.replace(/\/$/, "") === b.replace(/\/$/, "");
+  globalThis.fetch = (async (url: any, init?: RequestInit) => {
+    const u = String(url);
+    const body = JSON.parse(String(init?.body));
+    const reqs = Array.isArray(body) ? body : [body];
+    const answers = reqs.map((req: { id: number; method: string; params: any }) => {
+      requests.push({ url: u, method: req.method, params: req.params });
+      // An admin intent on a chain with its own KeyStore asks it whether the wallet has registered yet.
+      // This wallet has, so nothing is prepended. No balance is ever read here.
+      if (same(u, o.network.publicRpcUrl) && !same(u, o.network.relayUrl)) {
+        if (req.method === "eth_chainId") return { jsonrpc: "2.0", id: req.id, result: numberToHex(o.network.chainId) };
+        if (req.method === "eth_call" && String(req.params[0].to).toLowerCase() === o.network.keyStore.toLowerCase())
+          return { jsonrpc: "2.0", id: req.id, result: encodeAbiParameters([{ type: "bytes32[]" }], [o.keys ?? [("0x" + "01".repeat(32)) as Hex]]) };
+        // A wallet with no keys yet registers first: the SDK reads the fee to send with it.
+        if (req.method === "eth_call" && String(req.params[0].to).toLowerCase() === o.network.keyStoreController.toLowerCase())
+          return { jsonrpc: "2.0", id: req.id, result: encodeAbiParameters([{ type: "uint256" }], [LOCAL_REGISTRATION_FEE]) };
+        throw new Error(`public rpc got ${req.method}`);
+      }
+      if (!same(u, o.network.relayUrl)) throw new Error(`unexpected request to ${u}: ${req.method}`);
+      if (req.method === "wallet_getCapabilities") return { jsonrpc: "2.0", id: req.id, result: o.capabilities };
+      if (req.method === "wallet_getAssets") return { jsonrpc: "2.0", id: req.id, result: o.assets };
+      if (req.method === "wallet_prepareCalls")
+        return o.prepareError
+          ? { jsonrpc: "2.0", id: req.id, error: { code: 3, message: o.prepareError, data: "0x" } }
+          : { jsonrpc: "2.0", id: req.id, result: prepared };
+      if (req.method === "wallet_sendPreparedCalls") return { jsonrpc: "2.0", id: req.id, result: { id: "0xabc" } };
+      throw new Error(`relay got ${req.method}`);
+    });
+    return new Response(JSON.stringify(Array.isArray(body) ? answers : answers[0]), { status: 200 });
+  }) as typeof fetch;
+  return {
+    requests,
+    methods: () => requests.map((r) => r.method),
+    publicRpcRequests: () => requests.filter((r) => same(r.url, o.network.publicRpcUrl)),
+    /** Public RPC requests other than the KeyStore's own "has this wallet registered" read. */
+    balanceReads: () =>
+      requests.filter(
+        (r) =>
+          same(r.url, o.network.publicRpcUrl) &&
+          !(r.method === "eth_chainId" || (r.method === "eth_call" && String(r.params[0].to).toLowerCase() === o.network.keyStore.toLowerCase())),
+      ),
+    wireFeeToken: () => {
+      const prepare = requests.find((c) => c.method === "wallet_prepareCalls");
+      if (!prepare) throw new Error("no wallet_prepareCalls reached the relay");
+      return prepare.params[0].capabilities.meta.feeToken as string | undefined;
+    },
+    assetsRequest: () => requests.find((c) => c.method === "wallet_getAssets")?.params[0],
+  };
+}
+
+function sessionKey(signer: ReturnType<typeof createPrivateKeySigner>, spend: { token?: Address }[]): KeyDescriptor {
+  return {
+    type: "secp256k1",
+    publicKey: signer.publicKey,
+    role: "session",
+    expiry: 4102444800,
+    permissions: {
+      calls: [{ to: WALLET }],
+      spend: spend.map((s) => ({ limit: 10n ** 18n, period: "day" as const, ...(s.token ? { token: s.token } : {}) })),
+    },
+  };
+}
+
+const adminKey = (signer: ReturnType<typeof createPrivateKeySigner>): KeyDescriptor => ({
+  type: "secp256k1",
+  publicKey: signer.publicKey,
+  role: "admin",
+});
+
+describe("fee token on the wire", () => {
+  test("session on BNB with a USDT cap, wallet holds BNB: the request names native", async () => {
+    const signer = createPrivateKeySigner();
+    const wire = mockWire({
+      network: BNB,
+      capabilities: chainCapabilities(BNB.chainId, []),
+      assets: assetsAnswer(BNB.chainId, 10n ** 18n, { [USDT_BNB]: 50n * 10n ** 18n }),
+    });
+    const result = await submitCallsDetailed(buildRelayClient(BNB), WALLET, signer, CALLS, {
+      submittingKey: sessionKey(signer, [{ token: USDT_BNB }, {}]),
+      network: BNB,
+    });
+    expect(wire.wireFeeToken()?.toLowerCase()).toBe(NATIVE_TOKEN);
+    expect(result.callsId).toBe("0xabc");
+    expect(wire.publicRpcRequests()).toEqual([]);
+  });
+
+  test("session on Celo Sepolia with a USDC cap, wallet holds only USDC: the request names USDC, balances from the relay", async () => {
+    const signer = createPrivateKeySigner();
+    const wire = mockWire({
+      network: CELO_SEPOLIA,
+      capabilities: chainCapabilities(CELO_SEPOLIA.chainId, [feeToken("usdc", USDC, 6, "USDC")]),
+      assets: assetsAnswer(CELO_SEPOLIA.chainId, 0n, { [USDC]: 3_000_000n }),
+    });
+    await submitCallsDetailed(buildRelayClient(CELO_SEPOLIA), WALLET, signer, CALLS, {
+      submittingKey: sessionKey(signer, [{}, { token: USDC }]),
+      network: CELO_SEPOLIA,
+    });
+    expect(wire.wireFeeToken()?.toLowerCase()).toBe(USDC.toLowerCase());
+    expect(wire.assetsRequest()).toEqual({
+      account: WALLET,
+      assetTypeFilter: ["native", "erc20"],
+      chainFilter: [numberToHex(CELO_SEPOLIA.chainId)],
+    });
+    expect(wire.publicRpcRequests()).toEqual([]);
+    // Everything the send needed came from the relay, in this order.
+    expect(wire.methods()).toEqual([
+      "wallet_getCapabilities", // the picker's accepted list
+      "wallet_getAssets", // the picker's balances
+      "wallet_getCapabilities", // porto's own, inside prepareCalls
+      "wallet_prepareCalls",
+      "wallet_sendPreparedCalls",
+    ]);
+  });
+
+  test("session whose wallet holds none of its cap tokens: throws before the relay is asked to prepare", async () => {
+    const signer = createPrivateKeySigner();
+    const wire = mockWire({
+      network: CELO_SEPOLIA,
+      capabilities: chainCapabilities(CELO_SEPOLIA.chainId, [feeToken("usdc", USDC, 6, "USDC")]),
+      assets: assetsAnswer(CELO_SEPOLIA.chainId, 0n, { [USDC]: 0n }),
+    });
+    await expect(
+      submitCallsDetailed(buildRelayClient(CELO_SEPOLIA), WALLET, signer, CALLS, {
+        submittingKey: sessionKey(signer, [{}, { token: USDC }]),
+        network: CELO_SEPOLIA,
+      }),
+    ).rejects.toThrow(/holds none of the tokens it could pay the relay fee with .* accepts S-CELO, USDC/);
+    expect(wire.methods()).toEqual(["wallet_getCapabilities", "wallet_getAssets"]);
+    expect(wire.publicRpcRequests()).toEqual([]);
+  });
+
+  test("a token the relay does not list in wallet_getAssets counts as not held", async () => {
+    const signer = createPrivateKeySigner();
+    const wire = mockWire({
+      network: CELO_SEPOLIA,
+      capabilities: chainCapabilities(CELO_SEPOLIA.chainId, [feeToken("usdc", USDC, 6, "USDC"), feeToken("usdm", USDM, 18, "USDm")]),
+      assets: assetsAnswer(CELO_SEPOLIA.chainId, 0n, { [USDM]: 7n }),
+    });
+    await submitCallsDetailed(buildRelayClient(CELO_SEPOLIA), WALLET, signer, CALLS, {
+      submittingKey: sessionKey(signer, [{ token: USDC }, { token: USDM }]),
+      network: CELO_SEPOLIA,
+    });
+    expect(wire.wireFeeToken()?.toLowerCase()).toBe(USDM.toLowerCase());
+  });
+
+  test("feeToken list: the first accepted and held token of the list is named", async () => {
+    const signer = createPrivateKeySigner();
+    const wire = mockWire({
+      network: CELO_SEPOLIA,
+      capabilities: chainCapabilities(CELO_SEPOLIA.chainId, [feeToken("usdc", USDC, 6, "USDC"), feeToken("usdm", USDM, 18, "USDm")]),
+      assets: assetsAnswer(CELO_SEPOLIA.chainId, 0n, { [USDM]: 0n, [USDC]: 10n ** 12n }),
+    });
+    await submitCallsDetailed(buildRelayClient(CELO_SEPOLIA), WALLET, signer, CALLS, {
+      feeToken: [USDT_BNB, USDM, USDC],
+      submittingKey: adminKey(signer),
+      network: CELO_SEPOLIA,
+    });
+    expect(wire.wireFeeToken()?.toLowerCase()).toBe(USDC.toLowerCase());
+    // The balances come from the relay; the chain is only asked whether the wallet has registered.
+    expect(wire.balanceReads()).toEqual([]);
+  });
+
+  test("feeToken list with nothing that qualifies: throws before the relay is asked to prepare", async () => {
+    const signer = createPrivateKeySigner();
+    const wire = mockWire({
+      network: CELO_SEPOLIA,
+      capabilities: chainCapabilities(CELO_SEPOLIA.chainId, [feeToken("usdc", USDC, 6, "USDC")]),
+      assets: assetsAnswer(CELO_SEPOLIA.chainId, 5n, {}),
+    });
+    await expect(
+      submitCallsDetailed(buildRelayClient(CELO_SEPOLIA), WALLET, signer, CALLS, {
+        feeToken: [USDT_BNB],
+        submittingKey: adminKey(signer),
+        network: CELO_SEPOLIA,
+      }),
+    ).rejects.toThrow(/named in `feeToken` .* is a fee token the relay accepts/);
+    expect(wire.methods().filter((m) => m.startsWith("wallet_"))).toEqual(["wallet_getCapabilities"]);
+  });
+
+  test("feeToken: [] names nothing, so the session rule applies", async () => {
+    const signer = createPrivateKeySigner();
+    const wire = mockWire({
+      network: CELO_SEPOLIA,
+      capabilities: chainCapabilities(CELO_SEPOLIA.chainId, [feeToken("usdc", USDC, 6, "USDC")]),
+      assets: assetsAnswer(CELO_SEPOLIA.chainId, 0n, { [USDC]: 3_000_000n }),
+    });
+    await submitCallsDetailed(buildRelayClient(CELO_SEPOLIA), WALLET, signer, CALLS, {
+      feeToken: [],
+      submittingKey: sessionKey(signer, [{ token: USDC }]),
+      network: CELO_SEPOLIA,
+    });
+    expect(wire.wireFeeToken()?.toLowerCase()).toBe(USDC.toLowerCase());
+  });
+
+  test("wallet key with nothing named: no fee token on the wire, the relay picks", async () => {
+    const signer = createPrivateKeySigner();
+    const wire = mockWire({
+      network: CELO_SEPOLIA,
+      capabilities: chainCapabilities(CELO_SEPOLIA.chainId, [feeToken("usdc", USDC, 6, "USDC")]),
+      assets: assetsAnswer(CELO_SEPOLIA.chainId, 0n, {}),
+    });
+    await submitCallsDetailed(buildRelayClient(CELO_SEPOLIA), WALLET, signer, CALLS, {
+      submittingKey: adminKey(signer),
+      network: CELO_SEPOLIA,
+    });
+    expect(wire.wireFeeToken()).toBeUndefined();
+    // No balance lookup either: the relay decides. The one chain read is the KeyStore's.
+    expect(wire.methods().filter((m) => m.startsWith("wallet_"))).toEqual(["wallet_getCapabilities", "wallet_prepareCalls", "wallet_sendPreparedCalls"]);
+    expect(wire.balanceReads()).toEqual([]);
+  });
+
+  test("feeToken named: sent as is, for a session too", async () => {
+    const signer = createPrivateKeySigner();
+    const wire = mockWire({
+      network: CELO_SEPOLIA,
+      capabilities: chainCapabilities(CELO_SEPOLIA.chainId, [feeToken("usdc", USDC, 6, "USDC")]),
+      assets: assetsAnswer(CELO_SEPOLIA.chainId, 0n, {}),
+    });
+    await submitCallsDetailed(buildRelayClient(CELO_SEPOLIA), WALLET, signer, CALLS, {
+      feeToken: NATIVE_TOKEN,
+      submittingKey: sessionKey(signer, [{ token: USDC }]),
+      network: CELO_SEPOLIA,
+    });
+    expect(wire.wireFeeToken()?.toLowerCase()).toBe(NATIVE_TOKEN);
+    expect(wire.methods()).toEqual(["wallet_getCapabilities", "wallet_prepareCalls", "wallet_sendPreparedCalls"]);
+  });
+});
+
+// Celo keeps its own KeyStore, and the KeyStore takes its fee in CELO whatever
+// the relay accepts for its own fee. A wallet holding only USDC cannot make its
+// first registration, and the sentence must not send it to buy more USDC.
+describe("a first action on a chain with its own KeyStore", () => {
+  test("the registration is prepended, with the fee and its margin as value", async () => {
+    const signer = createPrivateKeySigner();
+    const wire = mockWire({
+      network: CELO_SEPOLIA,
+      capabilities: chainCapabilities(CELO_SEPOLIA.chainId, []),
+      assets: assetsAnswer(CELO_SEPOLIA.chainId, 10n ** 18n, {}),
+      keys: [],
+    });
+    await submitCallsDetailed(buildRelayClient(CELO_SEPOLIA), signer.address, signer, CALLS, {
+      submittingKey: adminKey(signer),
+      network: CELO_SEPOLIA,
+    });
+    const prepare = wire.requests.find((r) => r.method === "wallet_prepareCalls")!.params[0];
+    expect(prepare.calls).toHaveLength(2);
+    expect(String(prepare.calls[0].to).toLowerCase()).toBe(CELO_SEPOLIA.keyStoreController.toLowerCase());
+    expect(BigInt(prepare.calls[0].value)).toBe(registrationValueFor(LOCAL_REGISTRATION_FEE));
+    // No funding from another chain is asked for: the wallet pays on Celo.
+    expect(prepare.capabilities?.requiredFunds).toBeUndefined();
+  });
+
+  test("a wallet holding only USDC is asked for the chain's own currency, and nothing else", async () => {
+    const signer = createPrivateKeySigner();
+    mockWire({
+      network: CELO_SEPOLIA,
+      capabilities: chainCapabilities(CELO_SEPOLIA.chainId, [feeToken("usdc", USDC, 6, "USDC")]),
+      assets: assetsAnswer(CELO_SEPOLIA.chainId, 0n, { [USDC]: 5_000_000n }),
+      keys: [],
+      prepareError: "intent reverted: 0x",
+    });
+    const thrown = await submitCallsDetailed(buildRelayClient(CELO_SEPOLIA), signer.address, signer, CALLS, {
+      submittingKey: adminKey(signer),
+      network: CELO_SEPOLIA,
+    }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    const error = altanaErrorOf(thrown);
+    const native = CELO_SEPOLIA.chain.nativeCurrency.symbol;
+    expect(error?.code).toBe("insufficient_funds");
+    expect(error?.message).toBe(
+      `Not enough ${native} to pay for this: needs about 0.00022 ${native}, you have 0 ${native}. ` +
+        `Add ${native} on ${CELO_SEPOLIA.chain.name}.`,
+    );
+    expect(error?.message).not.toContain("USDC");
+  });
+});
+
+describe("quoteExecute", () => {
+  test("returns the relay's fee for the exact calls without sending; the session path names its cap token", async () => {
+    const signer = createPrivateKeySigner();
+    const wire = mockWire({
+      network: CELO_SEPOLIA,
+      capabilities: chainCapabilities(CELO_SEPOLIA.chainId, [feeToken("usdc", USDC, 6, "USDC")]),
+      assets: assetsAnswer(CELO_SEPOLIA.chainId, 10n ** 18n, { [USDC]: 5_000_000n }),
+    });
+    const q = await quoteExecute({ address: WALLET }, signer, CALLS, { network: CELO_SEPOLIA });
+    expect(q.fee).toBeGreaterThan(0n);
+    expect(q.value).toBe(0n);
+    expect(wire.methods()).not.toContain("wallet_sendPreparedCalls");
+    const sessionWire = mockWire({
+      network: CELO_SEPOLIA,
+      capabilities: chainCapabilities(CELO_SEPOLIA.chainId, [feeToken("usdc", USDC, 6, "USDC")]),
+      assets: assetsAnswer(CELO_SEPOLIA.chainId, 10n ** 18n, { [USDC]: 5_000_000n }),
+    });
+    const session = { walletAddress: WALLET, signer, publicKey: signer.publicKey, expiry: 4102444800, permissions: { spend: [{ limit: 10n ** 18n, period: "day" as const, token: USDC }] } };
+    await quoteExecute(session, CALLS, { network: CELO_SEPOLIA });
+    expect(sessionWire.wireFeeToken()?.toLowerCase()).toBe(USDC.toLowerCase());
+    expect(sessionWire.methods()).not.toContain("wallet_sendPreparedCalls");
+  });
+});
+
+describe("registry write funded from the L2, on the wire", () => {
+  const SEPOLIA_TX = ("0x" + "ee".repeat(32)) as Hex;
+  const CELO_TX = ("0x" + "cc".repeat(32)) as Hex;
+  const FEE = 200_000_000_000_000n;
+  /** The registry chain's head, as eth_blockNumber reports it. */
+  const READ_BLOCK = 11_703_500n;
+  const IS_VALID_KEY = toFunctionSelector("isValidKey(address,bytes32)");
+
+  /** Plays the Sepolia relay and the Sepolia public RPC (KeyStore reads, balance). */
+  function mockRegistryWire(o: {
+    balance: bigint;
+    activeKeys: Hex[];
+    prepareError?: string;
+    assets?: unknown;
+    /** Fails only the Nth (0-based) prepare, to break one intent of a pair. */
+    failPrepareAt?: number;
+    /** Reports the Nth (0-based) send as not confirmed. */
+    failStatusAt?: number;
+    /** The 17:22 shape: the source leg landed, the destination never ran. */
+    sourceReceiptOnly?: boolean;
+    /** A slow relay: for this long after the first status poll, every bundle is "in flight" with only its source leg mined. */
+    pendingForMs?: number;
+    /** A relay that never finishes: always in flight, only the source leg mined. */
+    pendingForever?: boolean;
+    /** How old each price feed's newest answer is, in seconds. A feed left out cannot be read. */
+    feedAges?: { eth?: number; celo?: number };
+    /** What the KeyStore answers to isValidKey: every key valid, or none (the default). */
+    keyStoreHoldsKeys?: boolean;
+    /** isValidKey cannot be read. */
+    keyStoreUnreadable?: boolean;
+    /** The transaction whose KeyRegistered event getLogs returns. */
+    deliveredIn?: { transactionHash: Hex; blockNumber: bigint };
+    /** getLogs is refused, as some public RPCs refuse log ranges. */
+    logsRefused?: boolean;
+  }) {
+    let prepares = 0;
+    let sends = 0;
+    let firstPollAt: number | undefined;
+    const requests: Recorded[] = [];
+    const same = (a: string, b: string | undefined) => b !== undefined && a.replace(/\/$/, "") === b.replace(/\/$/, "");
+    // Each feed's chain, at one fixed time: the feed's answer is `age` seconds
+    // behind the newest block, which is how the SDK measures it.
+    const NOW = 1_800_000_000n;
+    const feedAnswer = (
+      req: { method: string; params: any },
+      feed: { address: Address } | undefined,
+      age: number | undefined,
+    ): unknown | undefined => {
+      if (!feed || age === undefined) return undefined;
+      if (req.method === "eth_getBlockByNumber")
+        return { number: "0x1", hash: "0x" + "33".repeat(32), timestamp: numberToHex(NOW), transactions: [] };
+      if (req.method === "eth_call" && String(req.params[0].to).toLowerCase() === feed.address.toLowerCase())
+        return encodeAbiParameters(
+          [{ type: "uint80" }, { type: "int256" }, { type: "uint256" }, { type: "uint256" }, { type: "uint80" }],
+          [1n, 7_000_000n, NOW - BigInt(age), NOW - BigInt(age), 1n],
+        );
+      return undefined;
+    };
+    globalThis.fetch = (async (url: any, init?: RequestInit) => {
+      const u = String(url);
+      const body = JSON.parse(String(init?.body));
+      const reqs = Array.isArray(body) ? body : [body];
+      const answers = reqs.map((req: { id: number; method: string; params: any }) => {
+        requests.push({ url: u, method: req.method, params: req.params });
+        const ok = (result: unknown) => ({ jsonrpc: "2.0", id: req.id, result });
+        const celoFeed = CELO_SEPOLIA.nativePriceFeed;
+        if (same(u, celoFeed?.publicRpcUrl)) {
+          const answer = feedAnswer(req, celoFeed, o.feedAges?.celo);
+          if (answer !== undefined) return ok(answer);
+          throw new Error(`celo price feed rpc got ${req.method}`);
+        }
+        if (same(u, SEPOLIA.publicRpcUrl)) {
+          const answer = feedAnswer(req, SEPOLIA.nativePriceFeed, o.feedAges?.eth);
+          if (answer !== undefined) return ok(answer);
+          if (req.method === "eth_chainId") return ok(numberToHex(SEPOLIA.chainId));
+          if (req.method === "eth_getBalance") return ok(numberToHex(o.balance));
+          if (req.method === "eth_blockNumber") return ok(numberToHex(READ_BLOCK));
+          if (req.method === "eth_call") {
+            const to = String(req.params[0].to).toLowerCase();
+            const data = String(req.params[0].data ?? req.params[0].input);
+            if (to === SEPOLIA.keyStore.toLowerCase() && data.startsWith(IS_VALID_KEY)) {
+              // -32000 is not retried by viem, so an unreadable KeyStore fails fast.
+              if (o.keyStoreUnreadable) return { jsonrpc: "2.0", id: req.id, error: { code: -32000, message: "header not found" } };
+              return ok(encodeAbiParameters([{ type: "bool" }], [o.keyStoreHoldsKeys ?? false]));
+            }
+            if (to === SEPOLIA.keyStore.toLowerCase()) return ok(encodeAbiParameters([{ type: "bytes32[]" }], [o.activeKeys]));
+            if (to === SEPOLIA.keyStoreController.toLowerCase()) return ok(encodeAbiParameters([{ type: "uint256" }], [FEE]));
+          }
+          if (req.method === "eth_getLogs") {
+            if (o.logsRefused) return { jsonrpc: "2.0", id: req.id, error: { code: -32000, message: "query exceeds max block range" } };
+            const filter = req.params[0];
+            if (!o.deliveredIn) return ok([]);
+            // The event as KeyStore emits it, for the user and key the filter asked about.
+            return ok([
+              {
+                address: SEPOLIA.keyStore,
+                topics: [filter.topics[0], filter.topics[1], filter.topics[2], "0x" + "00".repeat(32)],
+                data: encodeAbiParameters([{ type: "uint40" }, { type: "bool" }], [0, false]),
+                blockNumber: numberToHex(o.deliveredIn.blockNumber),
+                blockHash: "0x" + "44".repeat(32),
+                transactionHash: o.deliveredIn.transactionHash,
+                transactionIndex: "0x0",
+                logIndex: "0x0",
+                removed: false,
+              },
+            ]);
+          }
+          throw new Error(`public rpc got ${req.method}`);
+        }
+        if (!same(u, SEPOLIA.relayUrl)) throw new Error(`unexpected request to ${u}: ${req.method}`);
+        if (req.method === "wallet_getCapabilities") return ok(chainCapabilities(SEPOLIA.chainId, []));
+        if (req.method === "wallet_prepareCalls") {
+          // Every registry write is paid from the L2: a request without the funds is a test failure.
+          if (!req.params[0].capabilities?.requiredFunds)
+            return { jsonrpc: "2.0", id: req.id, error: { code: -32603, message: "test relay: registry write sent without requiredFunds" } };
+          const nth = prepares++;
+          if (o.failPrepareAt === nth)
+            return { jsonrpc: "2.0", id: req.id, error: { code: 3, message: "intent reverted: 0x", data: "0x" } };
+          return o.prepareError ? { jsonrpc: "2.0", id: req.id, error: { code: 3, message: o.prepareError, data: "0x" } } : ok(prepared);
+        }
+        if (req.method === "wallet_getAssets") return ok(o.assets ?? {});
+        if (req.method === "wallet_sendPreparedCalls") return ok({ id: "0xabc" });
+        if (
+          req.method === "wallet_getCallsStatus" &&
+          (o.pendingForever || (o.pendingForMs !== undefined && Date.now() < (firstPollAt ??= Date.now()) + o.pendingForMs))
+        )
+          return ok({
+            id: "0xabc",
+            status: 100,
+            receipts: [
+              {
+                chainId: numberToHex(CELO_SEPOLIA.chainId),
+                blockNumber: "0x10",
+                blockHash: "0x" + "11".repeat(32),
+                gasUsed: "0x73c17",
+                status: "0x1",
+                transactionHash: CELO_TX,
+                logs: [],
+              },
+            ],
+          });
+        if (req.method === "wallet_getCallsStatus")
+          return ok({
+            id: "0xabc",
+            status: o.failStatusAt === sends++ ? 500 : 200,
+            receipts: (o.sourceReceiptOnly
+              ? [
+                  {
+                    chainId: numberToHex(CELO_SEPOLIA.chainId),
+                    blockNumber: "0x10",
+                    blockHash: "0x" + "11".repeat(32),
+                    gasUsed: "0x73c17",
+                    status: "0x1",
+                    transactionHash: CELO_TX,
+                    logs: [],
+                  },
+                ]
+              : undefined) ?? [
+              { chainId: numberToHex(CELO_SEPOLIA.chainId), blockNumber: "0x10", blockHash: "0x" + "11".repeat(32), gasUsed: "0x5208", status: "0x1", transactionHash: CELO_TX, logs: [] },
+              { chainId: numberToHex(SEPOLIA.chainId), blockNumber: "0xb2944d", blockHash: "0x" + "22".repeat(32), gasUsed: "0x5208", status: "0x1", transactionHash: SEPOLIA_TX, logs: [] },
+            ],
+          });
+        throw new Error(`relay got ${req.method}`);
+      });
+      return new Response(JSON.stringify(Array.isArray(body) ? answers : answers[0]), { status: 200 });
+    }) as typeof fetch;
+    return {
+      prepare: () => requests.find((c) => c.method === "wallet_prepareCalls")?.params[0],
+      prepares: () => requests.filter((c) => c.method === "wallet_prepareCalls").map((c) => c.params[0]),
+    };
+  }
+
+  // The shortfall story is only told when the numbers tell it. qa hit the
+  // opposite (evidence/2026-09-28-s3-registry-write-reverts-0x.md): a wallet
+  // holding 133x the registry fee was told its balance "does not cover" it,
+  // which sent an hour into the funding path for a revert that had nothing to
+  // do with funding.
+  test("a wallet that can clearly pay: the bare revert is not dressed up as a shortfall", async () => {
+    const signer = createPrivateKeySigner();
+    // 0.05 ETH held, against the 0.00022 ETH the ROOT intent sends. A first
+    // registry write is two sequential intents and the first one carries only
+    // the margined admin registration, so this is the intent that reverts and
+    // the message describes it, not the pair.
+    const held = 5n * 10n ** 16n;
+    mockRegistryWire({
+      balance: held,
+      activeKeys: [],
+      prepareError: "intent reverted: 0x",
+      assets: {
+        [numberToHex(SEPOLIA.chainId)]: [
+          { address: "native", balance: numberToHex(held), type: "native", metadata: { symbol: "ETH", decimals: 18 } },
+        ],
+      },
+    });
+    const thrown = await submitRegistryWrite(SEPOLIA, {
+      walletAddress: signer.address,
+      adminSigner: signer,
+      calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+    }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    const error = altanaErrorOf(thrown);
+    // The sentence: a relay that said nothing is reported as having said
+    // nothing, and no shortfall is invented for a wallet that can pay.
+    expect(error?.code).toBe("unknown");
+    expect(error?.message).not.toContain("Not enough");
+    expect(error?.message).not.toContain("0x");
+    // Everything that used to be the message is the detail, for the log.
+    const detail = String(error?.detail);
+    expect(detail).toContain("The root registration (initialRegisterKey) could not be submitted");
+    expect(detail).toContain("its simulation reverted with no reason on Sepolia (chainId 11155111)");
+    expect(detail).toContain("simulating 1 call");
+    expect(detail).toContain("the wallet's balance is not the cause: it holds 0.05 ETH on Sepolia");
+    expect(detail).toContain("more than the 0.00022 ETH the calls send");
+    expect(detail).not.toContain("cannot pay");
+    const thrownText = String((thrown as Error).message);
+    expect(thrownText).not.toContain("does not cover");
+    expect(thrownText).not.toContain(SEPOLIA_FAUCET_URL);
+  });
+
+  test("an empty wallet: one sentence in the token it pays with, and never the destination's", async () => {
+    const signer = createPrivateKeySigner();
+    mockRegistryWire({
+      balance: 0n,
+      activeKeys: [],
+      prepareError: "intent reverted: 0x",
+      assets: {
+        [numberToHex(SEPOLIA.chainId)]: [{ address: "native", balance: "0x0", type: "native", metadata: { symbol: "ETH", decimals: 18 } }],
+        [numberToHex(CELO_SEPOLIA.chainId)]: [{ address: "native", balance: "0x0", type: "native", metadata: { symbol: "CELO", decimals: 18 } }],
+      },
+    });
+    const thrown = await submitRegistryWrite(SEPOLIA, {
+      // Paid from Celo Sepolia: the chain a failure speaks about.
+      fundFrom: CELO_SEPOLIA,
+      walletAddress: signer.address,
+      adminSigner: signer,
+      calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+    }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    const error = altanaErrorOf(thrown);
+    expect(error?.code).toBe("insufficient_funds");
+    // Registering on Ethereum while holding no ETH there is what this product
+    // is for. A message that reports the empty ETH balance describes the
+    // feature as a fault and points at the wrong faucet, so the sentence talks
+    // only about what the person pays with, which is the Celo balance.
+    expect(error?.message).toBe(
+      `Not enough ${CELO_SEPOLIA.chain.nativeCurrency.symbol} to pay for registering this key on Sepolia: ` +
+        `you have 0 ${CELO_SEPOLIA.chain.nativeCurrency.symbol}. ` +
+        `Add ${CELO_SEPOLIA.chain.nativeCurrency.symbol} on ${CELO_SEPOLIA.chain.name}.`,
+    );
+    expect(error?.message).not.toContain("ETH on Sepolia");
+    expect(error?.message).not.toContain("ETH");
+    expect(error?.message).not.toContain(SEPOLIA_FAUCET_URL);
+    // The long form, with both balances and the faucet, is still written: it
+    // is what a debug log is for.
+    expect(String(error?.detail)).toContain("it holds 0 ETH on Sepolia");
+    expect(String(error?.detail)).toContain(SEPOLIA_FAUCET_URL);
+  });
+
+  test("a wallet holding a stablecoin and no native currency is spoken to in the stablecoin", async () => {
+    const signer = createPrivateKeySigner();
+    mockRegistryWire({
+      balance: 0n,
+      activeKeys: [],
+      prepareError: "intent reverted: 0x",
+      assets: {
+        [numberToHex(SEPOLIA.chainId)]: [{ address: "native", balance: "0x0", type: "native", metadata: { symbol: "ETH", decimals: 18 } }],
+        [numberToHex(CELO_SEPOLIA.chainId)]: [
+          { address: "native", balance: "0x0", type: "native", metadata: { symbol: "CELO", decimals: 18 } },
+          { address: USDC, balance: numberToHex(2_200_000n), type: "erc20", metadata: { symbol: "USDC", decimals: 6 } },
+        ],
+      },
+    });
+    const thrown = await submitRegistryWrite(SEPOLIA, {
+      // Paid from Celo Sepolia: the chain a failure speaks about.
+      fundFrom: CELO_SEPOLIA,
+      walletAddress: signer.address,
+      adminSigner: signer,
+      calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+    }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    const message = String(altanaErrorOf(thrown)?.message);
+    // Its real balance, in the token it holds; never "0" of a currency it does not use.
+    expect(message).toContain("you have 2.2 USDC");
+    expect(message).not.toContain("you have 0");
+  });
+
+  test("an underfunded wallet: need and have, both in the token it pays with", async () => {
+    // The sentence Doris asked for, end to end. `need` is the caller's own
+    // quote (`quoteGrantSession`'s funding line): the relay has refused the
+    // request by the time this is worded, so it will not quote it again, and
+    // the figure exists nowhere else.
+    const signer = createPrivateKeySigner();
+    const have = 4_100_000_000_000_000_000n;
+    mockRegistryWire({
+      balance: 0n,
+      activeKeys: [],
+      prepareError: "intent reverted: 0x",
+      assets: {
+        [numberToHex(SEPOLIA.chainId)]: [{ address: "native", balance: "0x0", type: "native", metadata: { symbol: "ETH", decimals: 18 } }],
+        [numberToHex(CELO_SEPOLIA.chainId)]: [
+          { address: "native", balance: numberToHex(have), type: "native", metadata: { symbol: "CELO", decimals: 18 } },
+        ],
+      },
+    });
+    const thrown = await submitRegistryWrite(SEPOLIA, {
+      // Paid from Celo Sepolia: the chain a failure speaks about.
+      fundFrom: CELO_SEPOLIA,
+      walletAddress: signer.address,
+      adminSigner: signer,
+      calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+      expectedCost: { chainId: CELO_SEPOLIA.chainId, token: NATIVE_TOKEN, amount: 16_200_000_000_000_000_000n },
+    }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    const error = altanaErrorOf(thrown);
+    const symbol = CELO_SEPOLIA.chain.nativeCurrency.symbol;
+    expect(error?.code).toBe("insufficient_funds");
+    expect(error?.message).toBe(
+      `Not enough ${symbol} to pay for registering this key on Sepolia: needs about 16.2 ${symbol}, ` +
+        `you have 4.1 ${symbol}. Add ${symbol} on ${CELO_SEPOLIA.chain.name}.`,
+    );
+    expect(error?.message).not.toContain("ETH");
+  });
+
+  /**
+   * qa, 2026-11-09, section 6e, on the public testnet relay.
+   *
+   * A first-time grant is two Ethereum writes. The relay fronted the first,
+   * locking 23.07 of the wallet's 24.7 CELO, and then could not source funds
+   * for the second: `Could not source the requested funds from any chain`,
+   * `balance=1270113627103362222 covers=25740014880364`, and on the wire
+   * `intent reverted: 0x`. The wallet also held 0.000122 ETH stranded on
+   * Sepolia, less than the registration fee the call carries.
+   *
+   * The demo showed "the relay gave no reason". The relay had every number.
+   */
+  test("a relay that could not source the funds says so, in the token the payer pays with", async () => {
+    const signer = createPrivateKeySigner();
+    const leftOnCelo = 1_270_113_627_103_362_222n;
+    const strandedOnSepolia = 122_407_502_849_367n;
+    mockRegistryWire({
+      balance: strandedOnSepolia,
+      activeKeys: [("0x" + "01".repeat(32)) as Hex],
+      prepareError: "intent reverted: 0x",
+      assets: {
+        [numberToHex(SEPOLIA.chainId)]: [
+          { address: "native", balance: numberToHex(strandedOnSepolia), type: "native", metadata: { symbol: "ETH", decimals: 18 } },
+        ],
+        [numberToHex(CELO_SEPOLIA.chainId)]: [
+          { address: "native", balance: numberToHex(leftOnCelo), type: "native", metadata: { symbol: "CELO", decimals: 18 } },
+        ],
+      },
+    });
+    const thrown = await submitRegistryWrite(SEPOLIA, {
+      // Paid from Celo Sepolia: the chain a failure speaks about.
+      fundFrom: CELO_SEPOLIA,
+      walletAddress: signer.address,
+      adminSigner: signer,
+      calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+    }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    const error = altanaErrorOf(thrown);
+    const symbol = CELO_SEPOLIA.chain.nativeCurrency.symbol;
+    expect(error?.code).toBe("insufficient_funds");
+    // No figure for what it needs: the relay refused to quote the request, so
+    // there is no honest one. What the wallet holds is read, and said.
+    expect(error?.message).toBe(
+      `Not enough ${symbol} to pay for registering this key on Sepolia: you have 1.270113 ${symbol}. ` +
+        `Add ${symbol} on ${CELO_SEPOLIA.chain.name}.`,
+    );
+    expect(error?.message).not.toContain("gave no reason");
+    expect(error?.message).not.toContain("needs about");
+    expect(error?.message).not.toContain("ETH");
+    expect(error?.message).not.toContain("0x");
+    // Both balances, the stranded ETH included, are in the log where they belong.
+    expect(String(error?.detail)).toContain("0.000122407502849367 ETH on Sepolia");
+    expect(String(error?.detail)).toContain("intent reverted: 0x");
+  });
+
+  /**
+   * The mainnet fork rehearsal, 2026-11-10, section 6.4. With the relay's
+   * limit forced to 60 s it logged `price for celo is 390s old at the
+   * chainlink feed, limit is 60s`, dropped the only route that could pay, and
+   * answered the same `intent reverted: 0x` as the test above. Nothing in the
+   * response says which of the two happened, so the SDK reads the feeds.
+   */
+  describe("a price the relay converts with is too old", () => {
+    const funded = {
+      [numberToHex(SEPOLIA.chainId)]: [{ address: "native", balance: "0x0", type: "native", metadata: { symbol: "ETH", decimals: 18 } }],
+      [numberToHex(CELO_SEPOLIA.chainId)]: [
+        { address: "native", balance: numberToHex(300n * 10n ** 18n), type: "native", metadata: { symbol: "CELO", decimals: 18 } },
+      ],
+    };
+    const refusedWrite = async (feedAges: { eth?: number; celo?: number }, assets: unknown = funded) => {
+      const signer = createPrivateKeySigner();
+      mockRegistryWire({ balance: 0n, activeKeys: [("0x" + "01".repeat(32)) as Hex], prepareError: "intent reverted: 0x", assets, feedAges });
+      const thrown = await submitRegistryWrite(SEPOLIA, {
+        // Paid from Celo Sepolia: the chain a failure speaks about.
+        fundFrom: CELO_SEPOLIA,
+        walletAddress: signer.address,
+        adminSigner: signer,
+        calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+      }).then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      return altanaErrorOf(thrown);
+    };
+    const limit = SEPOLIA.nativePriceFeed!.maxAgeSecs;
+
+    test("the destination's price is too old: the sentence is about prices, not the wallet", async () => {
+      const error = await refusedWrite({ eth: limit + 24, celo: 120 });
+      expect(error?.code).toBe("prices_stale");
+      expect(error?.message).toBe("Prices are temporarily unavailable, try again shortly.");
+      expect(error?.action).toBe("Try again in a few minutes.");
+      // A wallet holding 300 CELO is not told to add CELO, and the asset it
+      // cannot act on is not named.
+      expect(error?.message).not.toContain("Not enough");
+      expect(error?.message).not.toContain("ETH");
+      // The figures are for the log.
+      expect(String(error?.detail)).toContain(`The price for ETH is ${limit + 24}s old at its feed`);
+      expect(String(error?.detail)).toContain(`the relay's limit is ${limit}s`);
+      expect(String(error?.detail)).toContain("intent reverted: 0x");
+    });
+
+    test("the price of what the wallet pays with is too old", async () => {
+      const error = await refusedWrite({ eth: 120, celo: limit + 1 });
+      expect(error?.code).toBe("prices_stale");
+      expect(error?.message).toBe("Prices are temporarily unavailable, try again shortly.");
+      expect(String(error?.detail)).toContain(
+        `The price for ${CELO_SEPOLIA.chain.nativeCurrency.symbol} is ${limit + 1}s old at its feed`,
+      );
+    });
+
+    test("fresh prices: the same revert keeps the sentence it had", async () => {
+      const error = await refusedWrite({ eth: limit, celo: 120 });
+      const symbol = CELO_SEPOLIA.chain.nativeCurrency.symbol;
+      expect(error?.code).toBe("insufficient_funds");
+      expect(error?.message).toBe(
+        `Not enough ${symbol} to pay for registering this key on Sepolia: you have 300 ${symbol}. ` +
+          `Add ${symbol} on ${CELO_SEPOLIA.chain.name}.`,
+      );
+      expect(String(error?.detail)).not.toContain("old at its feed");
+    });
+
+    test("feeds that cannot be read say nothing", async () => {
+      const error = await refusedWrite({});
+      expect(error?.code).toBe("insufficient_funds");
+      expect(error?.message).not.toContain("Prices");
+    });
+
+    test("a wallet holding none of the asset whose price is old is short of funds, not of a price", async () => {
+      const empty = {
+        [numberToHex(SEPOLIA.chainId)]: [{ address: "native", balance: "0x0", type: "native", metadata: { symbol: "ETH", decimals: 18 } }],
+        [numberToHex(CELO_SEPOLIA.chainId)]: [{ address: "native", balance: "0x0", type: "native", metadata: { symbol: "CELO", decimals: 18 } }],
+      };
+      const error = await refusedWrite({ eth: 120, celo: limit + 600 }, empty);
+      expect(error?.code).toBe("insufficient_funds");
+    });
+  });
+
+  test("a wallet with no ETH on Sepolia asks the relay to front each registration fee, paid in native", async () => {
+    const signer = createPrivateKeySigner();
+    const wire = mockRegistryWire({ balance: 0n, activeKeys: [] });
+    const written = await submitRegistryWrite(SEPOLIA, {
+      walletAddress: signer.address,
+      adminSigner: signer,
+      calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+    });
+    // Two intents, each asking the relay to front its OWN value. Indexed
+    // rather than read through `wire.prepare()`, which returns the first and
+    // would silently be the root intent wherever the session one was meant.
+    const [root, session] = wire.prepares();
+    expect(wire.prepares()).toHaveLength(2);
+    // The root intent carries the margined admin registration only.
+    expect(root.capabilities.requiredFunds).toEqual([
+      { address: NATIVE_TOKEN, value: numberToHex(registrationValueFor(FEE)) },
+    ]);
+    // The session intent carries the hand-built call's bare FEE.
+    expect(session.capabilities.requiredFunds).toEqual([{ address: NATIVE_TOKEN, value: numberToHex(FEE) }]);
+    expect(String(root.capabilities.meta.feeToken).toLowerCase()).toBe(NATIVE_TOKEN);
+    expect(String(session.capabilities.meta.feeToken).toLowerCase()).toBe(NATIVE_TOKEN);
+    // The root's outcome is reported, and the result's own fields stay the
+    // session write's: a cache proof anchors on the session key's block.
+    expect(written.rootRegistration?.status).toBe("CONFIRMED");
+    expect(written.status).toBe("CONFIRMED");
+    expect(written.transactionHash).toBe(SEPOLIA_TX);
+    expect(written.blockNumber).toBe(11703373n);
+    expect(written.fundedFromChainId).toBe(CELO_SEPOLIA.chainId);
+    expect(written.sourceTransactionHash).toBe(CELO_TX);
+  });
+
+  test("a wallet holding ETH on Sepolia is funded from the L2 all the same, one wei above what it holds", async () => {
+    const signer = createPrivateKeySigner();
+    const wire = mockRegistryWire({ balance: 10n ** 18n, activeKeys: [("0x" + "01".repeat(32)) as Hex] });
+    const written = await submitRegistryWrite(SEPOLIA, {
+      walletAddress: signer.address,
+      adminSigner: signer,
+      calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+    });
+    expect(wire.prepares()).toHaveLength(1);
+    expect(wire.prepare().capabilities.requiredFunds).toEqual([{ address: NATIVE_TOKEN, value: numberToHex(10n ** 18n + 1n) }]);
+    expect(String(wire.prepare().capabilities.meta.feeToken).toLowerCase()).toBe(NATIVE_TOKEN);
+    expect(written.fundedFromChainId).toBe(CELO_SEPOLIA.chainId);
+    expect(written.sourceTransactionHash).toBe(CELO_TX);
+    expect(written.transactionHash).toBe(SEPOLIA_TX);
+  });
+
+  // The pair exceeds what one intent is quoted for: initialRegisterKey alone
+  // costs 1,077,101 gas cold at the 1,500,000 intent buffer, leaving
+  // registerKey 44,555 and an out-of-gas CallError() (infra, 2026-10-07). Two
+  // sequential intents, each quoted for its own gas.
+  test("a first-time write is two intents: the root alone, then the session key alone", async () => {
+    const signer = createPrivateKeySigner();
+    const wire = mockRegistryWire({ balance: 0n, activeKeys: [] });
+    await submitRegistryWrite(SEPOLIA, {
+      walletAddress: signer.address,
+      adminSigner: signer,
+      calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+    });
+    const [root, session] = wire.prepares();
+    // One call each. Two would mean the registration was prepended on top of
+    // itself, paying its fee twice — which is what happens if either the
+    // submit or the funding path re-derives the prepend for these intents.
+    expect(root.calls).toHaveLength(1);
+    expect(session.calls).toHaveLength(1);
+    // The root's call is the margined admin registration; the session's is the
+    // caller's own call, carrying the bare fee it was built with.
+    expect(BigInt(root.calls[0].value)).toBe(registrationValueFor(FEE));
+    expect(BigInt(session.calls[0].value)).toBe(FEE);
+  });
+
+  // A lagging or load-balanced registry RPC can still answer `getKeys() == []`
+  // right after the root intent confirms. If the session intent asked the chain
+  // whether to prepend, it would prepend again there and pay the fee twice. The
+  // static `activeKeys: []` in this mock IS that stale read, so this test fails
+  // if the session intent ever goes back to deriving its own prepend.
+  test("the session intent does not re-derive the prepend from a stale registry read", async () => {
+    const signer = createPrivateKeySigner();
+    const wire = mockRegistryWire({ balance: 0n, activeKeys: [] });
+    await submitRegistryWrite(SEPOLIA, {
+      walletAddress: signer.address,
+      adminSigner: signer,
+      calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+    });
+    const session = wire.prepares()[1];
+    expect(session.calls).toHaveLength(1);
+    expect(session.capabilities.requiredFunds).toEqual([{ address: NATIVE_TOKEN, value: numberToHex(FEE) }]);
+  });
+
+  test("a write that is not a wallet's first is still one intent", async () => {
+    const signer = createPrivateKeySigner();
+    const wire = mockRegistryWire({ balance: 10n ** 18n, activeKeys: [("0x" + "01".repeat(32)) as Hex] });
+    const written = await submitRegistryWrite(SEPOLIA, {
+      walletAddress: signer.address,
+      adminSigner: signer,
+      calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+    });
+    expect(wire.prepares()).toHaveLength(1);
+    expect(written.rootRegistration).toBeUndefined();
+  });
+
+  test("the root failing stops the session key's write, and the log says which intent", async () => {
+    const signer = createPrivateKeySigner();
+    const wire = mockRegistryWire({ balance: 0n, activeKeys: [], failPrepareAt: 0 });
+    const thrown = await submitRegistryWrite(SEPOLIA, {
+      walletAddress: signer.address,
+      adminSigner: signer,
+      calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+    }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    // Which of the two intents of a first write failed is the SDK's own
+    // bookkeeping, so it goes to the log and not in front of the sentence.
+    const detail = String(altanaErrorOf(thrown)?.detail);
+    expect(detail).toContain("The root registration (initialRegisterKey) could not be submitted");
+    expect(detail).toContain("the session key's registerKey was not attempted");
+    // And it really was not attempted: only the root was ever prepared.
+    expect(wire.prepares()).toHaveLength(1);
+  });
+
+  test("the root landing and the session failing is reported as recoverable", async () => {
+    const signer = createPrivateKeySigner();
+    // The second send is the session intent; the first is the root.
+    const wire = mockRegistryWire({ balance: 0n, activeKeys: [], failStatusAt: 1 });
+    const written = await submitRegistryWrite(SEPOLIA, {
+      walletAddress: signer.address,
+      adminSigner: signer,
+      calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+    });
+    // Binary: the write as a whole failed. The detail says what survived.
+    expect(written.status).toBe("FAILED");
+    expect(written.rootRegistration?.status).toBe("CONFIRMED");
+    expect(written.reason).toContain("The root registration DID confirm");
+    expect(written.reason).toContain("retrying grantSession sends registerKey only");
+    expect(wire.prepares()).toHaveLength(2);
+  });
+
+  // "relay reported status FAILED" named nothing: a reader could not tell an
+  // intent that never landed from one that landed and reverted, which are
+  // different investigations. The spine printed exactly that string for the
+  // root failure on 2026-10-07 and it cost a run to learn nothing.
+  test("a root failure names the bundle, the status code and the receipts", async () => {
+    const signer = createPrivateKeySigner();
+    mockRegistryWire({ balance: 0n, activeKeys: [], failStatusAt: 0 });
+    const written = await submitRegistryWrite(SEPOLIA, {
+      walletAddress: signer.address,
+      adminSigner: signer,
+      calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+    });
+    expect(written.status).toBe("FAILED");
+    const reason = written.rootRegistration?.reason ?? "";
+    expect(reason).toContain("bundle 0xabc");
+    expect(reason).toContain("statusCode 500");
+    // The receipts the relay did return, per chain, so a reverted intent is
+    // distinguishable from one that never landed.
+    expect(reason).toContain(`chain ${SEPOLIA.chainId}`);
+    expect(reason).toContain(SEPOLIA_TX);
+  });
+
+  // infra's trace of the real 17:22 bundle: status 300, ONE receipt, on Celo
+  // (the source), succeeded, and no Sepolia receipt. My first version of this
+  // message had two branches, "no receipt" and "receipt, reverted", and this
+  // is neither: there is a successful receipt and the registry chain has no
+  // transaction at all. It also leaves a funded escrow open, which is how four
+  // of them accumulated.
+  test("a source leg that landed with no destination receipt is its own case", async () => {
+    const signer = createPrivateKeySigner();
+    mockRegistryWire({ balance: 0n, activeKeys: [], failStatusAt: 0, sourceReceiptOnly: true });
+    const written = await submitRegistryWrite(SEPOLIA, {
+      walletAddress: signer.address,
+      adminSigner: signer,
+      calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+    });
+    const reason = written.rootRegistration?.reason ?? "";
+    expect(reason).toContain(`chain ${CELO_SEPOLIA.chainId}: succeeded`);
+    expect(reason).toContain(`nothing was mined on the registry chain (${SEPOLIA.chainId})`);
+    expect(reason).toContain("escrow");
+    // Not the no-receipt branch: there IS one, and saying otherwise sends the
+    // reader to the relay when a successful source transaction exists.
+    expect(reason).not.toContain("no receipt at all");
+  });
+
+  // Celo mainnet, 2026-11-14. The relay locked the payment on Celo and then
+  // sat on the Ethereum half for 14 minutes: its signers there were paused for
+  // lack of gas. The SDK stopped waiting at four minutes, called it failed and
+  // never sent the session key's write; the relay registered the root key ten
+  // minutes later with nobody left to follow it up.
+  test("a relay that is slow on the registry chain is waited for, and the session key is still registered", async () => {
+    const signer = createPrivateKeySigner();
+    const wire = mockRegistryWire({ balance: 0n, activeKeys: [], pendingForMs: 150 });
+    const waits: string[] = [];
+    const written = await submitRegistryWrite(SEPOLIA, {
+      walletAddress: signer.address,
+      adminSigner: signer,
+      calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+      // The usual wait is over long before the relay answers; only the wait
+      // that goes on while the payment is locked can see the confirmation.
+      timing: { waitMs: 30, pollMs: 5, patienceMs: 5_000, patientPollMs: 5 },
+      onWaiting: (step) => waits.push(step),
+    });
+    expect(written.status).toBe("CONFIRMED");
+    expect(written.rootRegistration?.status).toBe("CONFIRMED");
+    // The app was told once that the first write is being waited for.
+    expect(waits).toEqual(["root"]);
+    // And the session key's write was sent after it: both intents were prepared.
+    expect(wire.prepares()).toHaveLength(2);
+  });
+
+  test("a relay that never finishes says where the payment is, and nothing about a failure on chain", async () => {
+    const signer = createPrivateKeySigner();
+    const wire = mockRegistryWire({ balance: 0n, activeKeys: [], pendingForever: true });
+    const written = await submitRegistryWrite(SEPOLIA, {
+      walletAddress: signer.address,
+      adminSigner: signer,
+      calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+      timing: { waitMs: 20, pollMs: 5, patienceMs: 120, patientPollMs: 5 },
+    });
+    expect(written.status).toBe("FAILED");
+    const sentence =
+      `The KeyStore update on ${SEPOLIA.chain.name} has not completed yet. The payment for it is held on ` +
+      `${CELO_SEPOLIA.chain.name} and comes back if the update does not complete.`;
+    // The sentence leads, for the root's own reason and for the write's.
+    expect(written.rootRegistration?.reason?.startsWith(sentence)).toBe(true);
+    expect(written.reason?.startsWith(sentence)).toBe(true);
+    // What follows is for whoever chases it: the bundle and the locking transaction.
+    expect(written.reason).toContain("bundle 0xabc");
+    expect(written.reason).toContain(CELO_TX);
+    // The payment WAS mined, on the source chain. Saying nothing was is what
+    // the 2026-11-14 run printed while 29 CELO sat in the escrow.
+    expect(written.reason).not.toContain("no receipt at all");
+    expect(written.reason).not.toContain("nothing was mined on any chain");
+    // The session key's write waits for the root, so it was never prepared.
+    expect(wire.prepares()).toHaveLength(1);
+  });
+
+  // Celo mainnet, 2026-11-16. Another sender delivered the session key's signed
+  // registerKey earlier in the same Ethereum block; the relay's own transaction
+  // then failed and the relay reported status 500. The key WAS in the KeyStore,
+  // and the SDK, taking the relay's word, sent no mirror proof. The KeyStore is
+  // the record, so it decides.
+  describe("the relay says not done, the KeyStore says otherwise", () => {
+    const OTHER_TX = ("0x" + "0d".repeat(32)) as Hex;
+    const DELIVERED_BLOCK = 11_703_374n;
+    const sessionCall = () =>
+      buildAdditionalRegisterCall({ publicKey: createPrivateKeySigner().publicKey, fee: FEE, network: SEPOLIA });
+
+    test("the session write is confirmed with the transaction that delivered it", async () => {
+      const signer = createPrivateKeySigner();
+      // Send 0 is the root (confirmed); send 1, the session write, reports 500.
+      mockRegistryWire({
+        balance: 0n,
+        activeKeys: [],
+        failStatusAt: 1,
+        keyStoreHoldsKeys: true,
+        deliveredIn: { transactionHash: OTHER_TX, blockNumber: DELIVERED_BLOCK },
+      });
+      const written = await submitRegistryWrite(SEPOLIA, {
+        walletAddress: signer.address,
+        adminSigner: signer,
+        calls: [sessionCall()],
+      });
+      expect(written.status).toBe("CONFIRMED");
+      expect(written.rootRegistration?.status).toBe("CONFIRMED");
+      // The transaction that registered the key, not the relay's failed one.
+      expect(written.transactionHash).toBe(OTHER_TX);
+      // A cache proof anchors at or past this block, where the key landed.
+      expect(written.blockNumber).toBe(DELIVERED_BLOCK);
+      expect(written.reason).toBeUndefined();
+      // What the relay said is kept, for the log.
+      expect(written.relayReported).toEqual({ status: "FAILED", statusCode: 500 });
+      // The relay returns the locked payment for a write it counts as failed,
+      // so the wallet is not reported as having paid from the L2.
+      expect(written.fundedFromChainId).toBeUndefined();
+      expect(written.sourceTransactionHash).toBeUndefined();
+    });
+
+    test("without the event, it anchors at the block the KeyStore was read at", async () => {
+      const signer = createPrivateKeySigner();
+      mockRegistryWire({ balance: 0n, activeKeys: [], failStatusAt: 1, keyStoreHoldsKeys: true, logsRefused: true });
+      const written = await submitRegistryWrite(SEPOLIA, {
+        walletAddress: signer.address,
+        adminSigner: signer,
+        calls: [sessionCall()],
+      });
+      expect(written.status).toBe("CONFIRMED");
+      expect(written.blockNumber).toBe(READ_BLOCK);
+      expect(written.transactionHash).toBeUndefined();
+    });
+
+    test("a key the KeyStore does not hold is still a failure, as before", async () => {
+      const signer = createPrivateKeySigner();
+      mockRegistryWire({ balance: 0n, activeKeys: [], failStatusAt: 1, keyStoreHoldsKeys: false });
+      const written = await submitRegistryWrite(SEPOLIA, {
+        walletAddress: signer.address,
+        adminSigner: signer,
+        calls: [sessionCall()],
+      });
+      expect(written.status).toBe("FAILED");
+      expect(written.reason).toContain("The root registration DID confirm");
+      expect(written.reason).toContain("statusCode 500");
+      expect(written.reason).not.toContain("could not be read");
+      expect(written.relayReported).toBeUndefined();
+    });
+
+    test("a KeyStore that cannot be read leaves the failure standing, and says the check was not made", async () => {
+      const signer = createPrivateKeySigner();
+      mockRegistryWire({ balance: 0n, activeKeys: [], failStatusAt: 1, keyStoreUnreadable: true });
+      const written = await submitRegistryWrite(SEPOLIA, {
+        walletAddress: signer.address,
+        adminSigner: signer,
+        calls: [sessionCall()],
+      });
+      expect(written.status).toBe("FAILED");
+      expect(written.reason).toContain(
+        "the KeyStore could not be read to check whether the key was registered anyway",
+      );
+    });
+
+    test("a root registration the relay calls failed but the KeyStore holds is followed by the session write", async () => {
+      const signer = createPrivateKeySigner();
+      // Send 0, the root, reports 500; the KeyStore holds the admin key.
+      const wire = mockRegistryWire({
+        balance: 0n,
+        activeKeys: [],
+        failStatusAt: 0,
+        keyStoreHoldsKeys: true,
+        deliveredIn: { transactionHash: OTHER_TX, blockNumber: DELIVERED_BLOCK },
+      });
+      const written = await submitRegistryWrite(SEPOLIA, {
+        walletAddress: signer.address,
+        adminSigner: signer,
+        calls: [sessionCall()],
+      });
+      expect(written.rootRegistration).toEqual({
+        status: "CONFIRMED",
+        callsId: "0xabc",
+        blockNumber: DELIVERED_BLOCK,
+        transactionHash: OTHER_TX,
+      });
+      // The session key's write was sent and confirmed by the relay itself.
+      expect(wire.prepares()).toHaveLength(2);
+      expect(written.status).toBe("CONFIRMED");
+      expect(written.transactionHash).toBe(SEPOLIA_TX);
+    });
+
+    test("calls the SDK cannot read back keep the relay's word", async () => {
+      const signer = createPrivateKeySigner();
+      // A hand-built call with no calldata: nothing to look up in the KeyStore,
+      // so the KeyStore's answer (holds everything) must not be consulted.
+      mockRegistryWire({ balance: 10n ** 18n, activeKeys: [("0x" + "01".repeat(32)) as Hex], failStatusAt: 0, keyStoreHoldsKeys: true });
+      const written = await submitRegistryWrite(SEPOLIA, {
+        walletAddress: signer.address,
+        adminSigner: signer,
+        calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+      });
+      expect(written.status).toBe("FAILED");
+    });
+
+    test("the grant's registry leg records what the relay said beside the confirmed outcome", async () => {
+      const signer = createPrivateKeySigner();
+      mockRegistryWire({
+        balance: 0n,
+        activeKeys: [],
+        failStatusAt: 1,
+        keyStoreHoldsKeys: true,
+        deliveredIn: { transactionHash: OTHER_TX, blockNumber: DELIVERED_BLOCK },
+      });
+      const outcome = await realSessionLegDeps.submitRegistry(SEPOLIA, {
+        wallet: { address: signer.address },
+        adminSigner: signer,
+        calls: [sessionCall()],
+      });
+      expect(outcome.status).toBe("CONFIRMED");
+      expect(outcome.transactionHash).toBe(OTHER_TX);
+      expect(outcome.blockNumber).toBe(DELIVERED_BLOCK);
+      expect(outcome.relayStatus).toBe("FAILED");
+      expect(outcome.statusCode).toBe(500);
+      expect(outcome.callsId).toBe("0xabc");
+    });
+  });
+
+  test("each intent reports its own step, in order", async () => {
+    const signer = createPrivateKeySigner();
+    mockRegistryWire({ balance: 0n, activeKeys: [] });
+    const steps: string[] = [];
+    await submitRegistryWrite(SEPOLIA, {
+      walletAddress: signer.address,
+      adminSigner: signer,
+      calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+      onStep: (step) => steps.push(step),
+    });
+    expect(steps).toEqual(["root", "session"]);
+  });
+
+  test("some ETH, less than value plus fee: one request per intent, no retry", async () => {
+    const signer = createPrivateKeySigner();
+    const wire = mockRegistryWire({ balance: 20n * FEE, activeKeys: [] });
+    const written = await submitRegistryWrite(SEPOLIA, {
+      walletAddress: signer.address,
+      adminSigner: signer,
+      calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+    });
+    // The property this test is about is that no intent is prepared twice: the
+    // relay used to be left to discover the shortfall itself and the fix asked
+    // for the funding up front. A first-time write is two intents, so two
+    // prepares is one each — still no retry.
+    expect(wire.prepares()).toHaveLength(2);
+    for (const p of wire.prepares()) {
+      expect(p.capabilities.requiredFunds).toEqual([{ address: NATIVE_TOKEN, value: numberToHex(20n * FEE + 1n) }]);
+    }
+    expect(written.status).toBe("CONFIRMED");
+    expect(written.fundedFromChainId).toBe(CELO_SEPOLIA.chainId);
+  });
+
+  test("the quote's registry line carries the same request and prices the write", async () => {
+    const signer = createPrivateKeySigner();
+    const wire = mockRegistryWire({ balance: 10n ** 18n, activeKeys: [("0x" + "01".repeat(32)) as Hex] });
+    const { deps, lines } = quotingDeps();
+    await deps.submitRegistry(SEPOLIA, {
+      wallet: { address: signer.address },
+      adminSigner: signer,
+      calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+    });
+    expect(wire.prepares()).toHaveLength(1);
+    expect(wire.prepare().capabilities.requiredFunds).toEqual([{ address: NATIVE_TOKEN, value: numberToHex(10n ** 18n + 1n) }]);
+    const line = lines[0]!;
+    expect(line.kind).toBe("registry");
+    expect(line.via).toBe("relay");
+    expect(line.fee).toBeDefined();
+    expect(line.reason).toBeUndefined();
+  });
+
+  // Celo mainnet, 2026-11-16: the preview for a first registration asked the
+  // relay for both keys in ONE intent on top of the root's own quote. That
+  // counted the root twice, and on mainnet the pair does not fit one intent's
+  // gas, so the relay reverted with no reason and a wallet holding 2.20 USDC
+  // was told "Not enough CELO". A first write is sent as two intents, one key
+  // each, and is priced that way.
+  test("a first registration is priced as two intents of one key each, the root counted once", async () => {
+    const signer = createPrivateKeySigner();
+    const wire = mockRegistryWire({ balance: 0n, activeKeys: [] });
+    const { deps, lines } = quotingDeps();
+    await deps.submitRegistry(SEPOLIA, {
+      wallet: { address: signer.address },
+      adminSigner: signer,
+      calls: [{ to: SEPOLIA.keyStoreController, value: FEE, data: "0x" }],
+    });
+    // One request to the relay, for the root key's intent alone: never the pair in one intent.
+    expect(wire.prepares()).toHaveLength(1);
+    const [root] = wire.prepares();
+    expect(root.calls).toHaveLength(1);
+    expect(BigInt(root.calls[0].value)).toBe(registrationValueFor(FEE));
+    const line = lines[0]!;
+    expect(line.reason).toBeUndefined();
+    const share = line.rootRegistration!;
+    // Two intents at the root's price, and the value both calls carry.
+    expect(line.fee).toBe(share.fee! * 2n);
+    expect(line.value).toBe(registrationValueFor(FEE) + FEE);
+    expect(line.needed).toBe(share.needed * 2n);
+    for (const need of line.needs ?? []) {
+      const one = share.needs!.find((n) => n.chainId === need.chainId && n.token.toLowerCase() === need.token.toLowerCase())!;
+      expect(need.amount).toBe(one.amount * 2n);
+    }
+  });
+});

@@ -8,15 +8,22 @@ export type {
   ClientExecuteOptions,
   ClientGrantSessionOptions,
   ClientRevokeSessionOptions,
+  GrantChainSelector,
+  ClientQuoteGrantSessionOptions,
+  ClientQuoteRevokeSessionOptions,
   ClientRegisterSessionKeyOptions,
+  ClientSyncSessionToCacheOptions,
   ClientBalancesOptions,
+  ClientHoldingsOptions,
 } from "./client.js";
 
 export type { CreateWalletOptions, CreateWalletResult } from "./createWallet.js";
 export type { CreatePasskeyWalletOptions } from "./createPasskeyWallet.js";
 export type { RecoverFromPasskeyOptions } from "./recoverFromPasskey.js";
+export { quoteExecute } from "./execute.js";
 export type { ExecuteOptions, Call } from "./execute.js";
 export type { BalancesResult, TokenBalance } from "./balances.js";
+export type { HoldingsResult } from "./holdings.js";
 // BEP-677 scaled-UI-amount building blocks.
 export {
   applyUiMultiplier,
@@ -50,9 +57,55 @@ export type {
   SpendPermission,
   GrantSessionOptions,
   GrantSessionResult,
+  GrantSessionStatus,
+  RevokeSessionStatus,
+  SessionStatusDetail,
+  SessionLeg,
+  GrantLeg,
+  RevokeLeg,
+  RegistryWriteReport,
+  CacheSyncReport,
   SerializedSession,
   SerializedCallPermission,
 } from "./internal/sessions.js";
+// Grant and revoke on every chain, and what they cost beforehand.
+export { grantSession } from "./grantSession.js";
+export type { GrantSessionConfig } from "./grantSession.js";
+export { revokeSession } from "./revokeSession.js";
+export type { RevokeSessionResult, RevokeSessionOptions } from "./revokeSession.js";
+// What client.revokeSession returns, and what it throws when the revoke did
+// not go through on the chain the call named.
+export { SessionRevokeError } from "./internal/oneChain.js";
+export type { ClientRevokeSessionResult, LegacyRevokeStatus } from "./internal/oneChain.js";
+// Failures a person can act on: one plain sentence with the next step, and a
+// typed code to branch on. The long form stays on the error as `detail`, for
+// a debug log, and never reaches a screen.
+export {
+  AltanaError,
+  altanaErrorOf,
+  classifyRelayFailure,
+  explainRelayFailure,
+  isAltanaError,
+  readableAmount,
+  withFailureContext,
+} from "./errors.js";
+export type { AltanaErrorCode, FundingShortfall, RelayFailureFacts, StalePrice, TokenAmount } from "./errors.js";
+
+export { quoteGrantSession, quoteRevokeSession, formatQuoteLine } from "./quoteSession.js";
+export type { SessionQuote, QuoteLine, QuoteBalance } from "./quoteSession.js";
+export type { LegCharge, QuoteNeed } from "./internal/relay.js";
+export { quoteCalls } from "./internal/relay.js";
+export type { CallsQuote } from "./internal/relay.js";
+
+// Reads against the Altana account on a chain: where a key lives.
+export {
+  getKeys,
+  getKey,
+  accountHasKey,
+  keyHashForSessionOrKey,
+  keyIdForSessionOrKey,
+} from "./internal/account.js";
+export type { AccountKey } from "./internal/account.js";
 // The safe persistence path for sessions: serializeSession stores everything
 // but the secret; deserializeSession rebuilds a signing Session from the
 // stored half plus the key the caller kept.
@@ -68,21 +121,62 @@ export {
   BNB,
   BASE,
   BNB_TESTNET,
+  SEPOLIA,
+  CELO_SEPOLIA,
+  BASE_SEPOLIA,
+  CELO,
+  NETWORKS,
+  networkByChainId,
+  registryNetwork,
   RELAY_URL,
   TESTNET_RELAY_URL,
 } from "./config.js";
-export type { NetworkConfig, L2CacheConfig } from "./config.js";
+export type { NetworkConfig, L2CacheConfig, KeyStoreRegistry } from "./config.js";
 
-// Testnet faucet helper — funds an EOA with native tokens via the testnet
-// relay's faucet. Works only on networks whose relay exposes it (BSC testnet).
+// Cached-registry helpers (Base Sepolia): is the network cached, where
+// is its cache, and which chains a wallet is provisioned on.
+export {
+  isCachedRegistry,
+  keyStoreCacheOf,
+  provisioningNetworks,
+} from "./internal/cachedRegistry.js";
+
+// Funding helpers. `fundNative` is deprecated and always throws: the relay's
+// faucet mints ERC-20 fee tokens and cannot send native currency. Fund the
+// address from the chain's faucet (`faucetHint`) and poll `waitForBalance`.
 export { fundNative, waitForBalance } from "./internal/relay.js";
+
+// Relay fee tokens: what the relay accepts as fee payment on a chain, read
+// live, and the constant that forces the native token.
+export { feeCurrencies, formatFeeAmount } from "./feeCurrencies.js";
+export type { FeeCurrenciesOptions, FeeCurrenciesResult, FeeCurrency } from "./feeCurrencies.js";
+export { NATIVE_TOKEN } from "./config.js";
+// Test-network faucets by chainId, for funding hints.
+export {
+  FAUCET_URLS,
+  faucetHint,
+  CELO_SEPOLIA_FAUCET_URL,
+  BNB_TESTNET_FAUCET_URL,
+  SEPOLIA_FAUCET_URL,
+} from "./internal/relay.js";
 
 // ERC-1271 order signing (session keys signing off-chain authorizations).
 export { signOrder, signOrderTypedData } from "./signOrder.js";
 export {
   approveSignatureChecker,
   revokeSignatureChecker,
+  buildSetCheckerApprovalCall,
 } from "./approveSignatureChecker.js";
+export { buildApproveTokenForPermit2Call } from "./approveTokenForPermit2.js";
+
+// The two approvals a session needs to pay x402, read before paying.
+export {
+  checkX402Approvals,
+  approvedSignatureCheckers,
+  x402SignatureChecker,
+  x402ApprovalError,
+  type X402ApprovalStatus,
+} from "./x402Approvals.js";
 
 // x402 payments (Permit2 + EIP-3009).
 export {
@@ -114,19 +208,41 @@ export {
   ensureKeyCached,
   readCachedKey,
   isCachedKeyValid,
+  buildPopulateKeyCall,
+  waitForL1Anchor,
+  readL1Anchor,
+  computeKeyPackedSlot,
 } from "./syncKeyToL2.js";
+export {
+  registrationValueFor,
+  REGISTRATION_FEE_MARGIN_PERCENT,
+} from "./internal/keystore.js";
 export type {
   SyncKeyToL2Args,
   SyncKeyToL2Result,
   EnsureKeyCachedArgs,
   EnsureKeyCachedStatus,
   CachedKey,
+  L1Anchor,
+  WaitForL1AnchorArgs,
+  BuildPopulateKeyCallArgs,
+  PopulateKeyCall,
 } from "./syncKeyToL2.js";
+
+// Cached networks: prove a session's registry state into the network's
+// KeyStoreCache as a wallet call through the relay.
+export { syncSessionToCache } from "./syncSessionToCache.js";
+export type {
+  SyncSessionToCacheOptions,
+  SyncSessionToCacheResult,
+  SyncSessionToCacheStatus,
+} from "./syncSessionToCache.js";
 
 export {
   ERC8183_ADDRESSES,
   JOB_STATUS,
   erc8183Addresses,
+  erc8183ExpiredAt,
   buildHireCalls,
   buildClaimRefundCall,
   buildSubmitCall,
@@ -154,8 +270,11 @@ export type {
 } from "./erc8183.js";
 
 // ERC-8004 agent identity — mint and maintain an agent's on-chain identity.
-// The registry address is the one already in ERC8183_ADDRESSES.registry.
+// The registry stands on its own: `ERC8004_ADDRESSES` lists it per network,
+// including Celo, which has the registry and none of the ERC-8183 stack.
 export {
+  ERC8004_ADDRESSES,
+  erc8004Registry,
   buildErc8004RegisterCall,
   buildErc8004SetAgentUriCall,
   erc8004RegisterPermissions,
@@ -173,3 +292,5 @@ export type {
   RegisterAgentResult,
   SetAgentUriParams,
 } from "./erc8004.js";
+
+export { sdkBuild, type SdkBuild } from "./buildInfo.js";

@@ -14,7 +14,7 @@
  */
 
 import { bytesToHex, type Address, type Hex } from "viem";
-import { type NetworkConfig } from "./config.js";
+import { registryNetwork, type NetworkConfig } from "./config.js";
 import { buildPublicClient } from "./internal/relay.js";
 import { readActiveKeys, readPublicKey } from "./internal/keystore.js";
 import {
@@ -57,7 +57,10 @@ export async function recoverFromPasskey(
     );
   }
 
-  const network = opts.network;
+  // Reads come from the chain that holds the wallet's KeyStore registry: the
+  // network itself, or its registry chain for a cached network (Celo Sepolia
+  // reads from Sepolia). The wallet address is the same everywhere.
+  const network = registryNetwork(opts.network);
   const publicClient = buildPublicClient(network);
 
   // 1. Discoverable credential picker. `allowCredentials: []` tells the OS

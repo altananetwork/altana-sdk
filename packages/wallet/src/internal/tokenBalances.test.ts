@@ -3,15 +3,34 @@
  * DISPLAY value only (raw stays the on-chain amount), gate all scaling on the
  * ERC-165 detection results, and never let one bad token poison the batch.
  */
-import { test, expect, mock } from "bun:test";
-import { formatUnits, stringToHex, type Address, type PublicClient } from "viem";
+import { test, expect, mock, afterEach } from "bun:test";
+import {
+  createPublicClient,
+  decodeFunctionData,
+  encodeFunctionResult,
+  formatUnits,
+  http,
+  multicall3Abi,
+  stringToHex,
+  type Address,
+  type Hex,
+  type PublicClient,
+} from "viem";
 import { bsc } from "viem/chains";
 import {
   readTokenBalances,
   applyUiMultiplier,
   UI_MULTIPLIER_ONE,
   SCALED_UI_AMOUNT_INTERFACE_ID,
+  MULTICALL_BATCH_SIZE,
+  TOKENS_PER_CHUNK,
+  CHUNK_CONCURRENCY,
 } from "./tokenBalances.js";
+
+const realFetch = globalThis.fetch;
+afterEach(() => {
+  globalThis.fetch = realFetch;
+});
 
 const OWNER: Address = "0x1111111111111111111111111111111111111111";
 const TOKEN_A: Address = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -231,4 +250,104 @@ test("header timestamp failure falls back to wall clock", async () => {
 test("interface id constants match BEP-677", () => {
   expect(SCALED_UI_AMOUNT_INTERFACE_ID).toBe("0xa60bf13d");
   expect(formatUnits(applyUiMultiplier(100n * 10n ** 18n, 105n * 10n ** 16n), 18)).toBe("105");
+});
+
+// ---------------------------------------------------------------------------
+// Batching: a long token list is split into bounded chunks, each one
+// multicall, at most CHUNK_CONCURRENCY in flight, results in input order.
+// ---------------------------------------------------------------------------
+
+const manyTokens = (n: number): Address[] =>
+  Array.from({ length: n }, (_, i) => `0x${(i + 1).toString(16).padStart(40, "0")}` as Address);
+
+/** A multicall mock that answers each call from its own contracts list. */
+function chunkAwareMulticall(o: { onStart?: () => void; onEnd?: () => void; delayMs?: number } = {}) {
+  const sizes: number[] = [];
+  const batchSizes: (number | undefined)[] = [];
+  const multicall = mock(async (args: { contracts: { functionName: string; address: Address }[]; batchSize?: number }) => {
+    sizes.push((args.contracts.length - 1) / 9);
+    batchSizes.push(args.batchSize);
+    o.onStart?.();
+    if (o.delayMs) await new Promise((r) => setTimeout(r, o.delayMs));
+    o.onEnd?.();
+    return args.contracts.map((c, i) => {
+      if (i === 0) return ok(BLOCK_TS);
+      if (c.functionName === "balanceOf") return ok(BigInt(c.address));
+      if (c.functionName === "decimals") return ok(0);
+      if (c.functionName === "symbol") return ok("T");
+      return fail();
+    });
+  });
+  const client = { chain: bsc, multicall } as unknown as PublicClient;
+  return { client, multicall, sizes, batchSizes };
+}
+
+test("100 tokens are read in 40/40/20 chunks with an explicit batchSize, order preserved", async () => {
+  const tokens = manyTokens(100);
+  const { client, sizes, batchSizes } = chunkAwareMulticall();
+  const out = await readTokenBalances(client, OWNER, tokens);
+  expect(sizes).toEqual([TOKENS_PER_CHUNK, TOKENS_PER_CHUNK, 100 - 2 * TOKENS_PER_CHUNK]);
+  expect(batchSizes).toEqual([MULTICALL_BATCH_SIZE, MULTICALL_BATCH_SIZE, MULTICALL_BATCH_SIZE]);
+  expect(out).toHaveLength(100);
+  out.forEach((t, i) => {
+    expect(t.address).toBe(tokens[i]!);
+    if (!t.ok) throw new Error(t.error);
+    expect(t.raw).toBe(BigInt(tokens[i]!));
+  });
+});
+
+test("at most CHUNK_CONCURRENCY chunks are in flight; the next group waits for the previous", async () => {
+  const tokens = manyTokens(TOKENS_PER_CHUNK * 5); // 5 chunks → groups of 3 + 2
+  let inFlight = 0;
+  let peak = 0;
+  const starts: number[] = [];
+  const { client, multicall } = chunkAwareMulticall({
+    delayMs: 15,
+    onStart: () => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      starts.push(Date.now());
+    },
+    onEnd: () => {
+      inFlight--;
+    },
+  });
+  const out = await readTokenBalances(client, OWNER, tokens);
+  expect(multicall).toHaveBeenCalledTimes(5);
+  expect(peak).toBe(CHUNK_CONCURRENCY);
+  // The 4th chunk starts only after the first group finished its delay.
+  expect(starts[3]! - starts[0]!).toBeGreaterThanOrEqual(10);
+  expect(out).toHaveLength(tokens.length);
+});
+
+test("chunk size keeps a chunk within one aggregate3 on the wire (one eth_call per chunk)", async () => {
+  const tokens = manyTokens(TOKENS_PER_CHUNK * 2 + 5); // 3 chunks
+  const posts: number[] = []; // inner calls per eth_call
+  globalThis.fetch = (async (_url: any, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body));
+    const reqs = Array.isArray(body) ? body : [body];
+    const answers = reqs.map((req: { id: number; method: string; params: [{ data: Hex }] }) => {
+      if (req.method !== "eth_call") throw new Error(`unexpected ${req.method}`);
+      const { args } = decodeFunctionData({ abi: multicall3Abi, data: req.params[0].data });
+      const calls = args[0] as readonly unknown[];
+      posts.push(calls.length);
+      const result = encodeFunctionResult({
+        abi: multicall3Abi,
+        functionName: "aggregate3",
+        result: calls.map(() => ({ success: false, returnData: "0x" as Hex })),
+      });
+      return { jsonrpc: "2.0", id: req.id, result };
+    });
+    return new Response(JSON.stringify(Array.isArray(body) ? answers : answers[0]), { status: 200 });
+  }) as typeof fetch;
+
+  const client = createPublicClient({ chain: bsc, transport: http("https://rpc.invalid") });
+  const out = await readTokenBalances(client, OWNER, tokens);
+  expect(posts).toEqual([
+    1 + 9 * TOKENS_PER_CHUNK,
+    1 + 9 * TOKENS_PER_CHUNK,
+    1 + 9 * 5,
+  ]);
+  expect(out).toHaveLength(tokens.length);
+  expect(out.every((t) => !t.ok)).toBe(true);
 });

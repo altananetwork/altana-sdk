@@ -95,6 +95,9 @@ async function main() {
     },
     expiry: Math.floor(Date.now() / 1000) + 3600,
   });
+  if (session.status !== "granted") {
+    throw new Error(`grantSession failed: ${JSON.stringify(session.legs, (_k, v) => (typeof v === "bigint" ? v.toString() : v))}`);
+  }
   console.log("    session.publicKey:    ", session.signer.publicKey.slice(0, 20) + "...");
   console.log("    session.signer.addr:  ", session.signer.address);
   console.log(`    granted [${ms(t0)}]`);
@@ -120,7 +123,7 @@ async function main() {
   console.log("\n[6] revokeSession");
   const revokeRes = await client.revokeSession({ wallet, signer: adminSigner, session });
   console.log("    status:", revokeRes.status, `[${ms(t0)}]`);
-  console.log("    tx:    ", revokeRes.transactionHash);
+  for (const leg of revokeRes.legs) console.log("    leg:   ", leg.chainId, leg.kind, leg.status, leg.transactionHash ?? leg.reason ?? "");
 
   // 7. Try the session again — should fail at validator
   console.log("\n[7] execute(session, ...) after revoke — expecting failure");

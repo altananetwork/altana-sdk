@@ -1,0 +1,47 @@
+{
+  "relay": "https://relay-staging-production-2657.up.railway.app",
+  "startedAt": "2026-10-15T17:21:10.154Z",
+  "wallet": "0x4ac68a9DB08aB29327E16dA0094BcD62bd89D991",
+  "walletWasFresh": false,
+  "keyStoreKeysBefore": 1,
+  "statusEvents": [
+    "t+10.3s account-authorization chain 11142220",
+    "t+15.8s registry-write chain 11155111",
+    "t+16.1s registry-write chain 11155111 (session)",
+    "t+27.8s done",
+    "t+27.8s cache-sync chain 11142220"
+  ],
+  "grantReturnedAt": "t+27.8s",
+  "celoAuthorization": {
+    "tx": "0xedfe92f62fa1b37201f37f40a39f6cdfddc8e2a1c8a4d86d7268d716c64988d5",
+    "block": "38800895",
+    "unix": 1792084883,
+    "iso": "2026-10-15T17:21:23.000Z"
+  },
+  "registrationStillRunningAtReturn": false,
+  "sessionExecuteAttempts": [
+    "t+33.0s attempt 1 (ours=true relay=true): CONFIRMED code 200 bundle 0xb72447e992de82b8192bd783f2c7077762c2089b889518101a41f47ec37263df tx 0xdd59f7e7a02c8dabb5bfe8e6c4c0b5128df6a6afd93b71dbb51f12b009ba9e0c"
+  ],
+  "sessionExecute": {
+    "tx": "0xdd59f7e7a02c8dabb5bfe8e6c4c0b5128df6a6afd93b71dbb51f12b009ba9e0c",
+    "block": "38800914",
+    "unix": 1792084902,
+    "iso": "2026-10-15T17:21:42.000Z"
+  },
+  "registeredAtExecuteTime": true,
+  "sepoliaRegistryLeg": {
+    "status": "CONFIRMED",
+    "via": "relay",
+    "tx": "0x4f18166389b00f0d9151eaf5169aa60a3212f6d3f39d0670f2cceeee24403877",
+    "block": "11921883",
+    "fundedFromChainId": 11142220,
+    "sourceTransactionHash": "0x7ba9a7bd0890b91e614b8596c2afe0b57d8d269ecc4269867a59a28187160553"
+  },
+  "sepoliaRegistration": {
+    "tx": "0x4f18166389b00f0d9151eaf5169aa60a3212f6d3f39d0670f2cceeee24403877",
+    "block": "11921883",
+    "unix": 1792084896,
+    "iso": "2026-10-15T17:21:36.000Z"
+  },
+  "failure": "Error: ASSERT FAILED: the registration landed AFTER the session's transaction (2026-10-15T17:21:36.000Z > 2026-10-15T17:21:42.000Z, +-6s)"
+}

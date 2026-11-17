@@ -33,20 +33,57 @@ const res = await client.fetchWithX402({
 console.log(res.status, await res.text()); // 200 + paid content
 ```
 
-## One-time provisioning
+## Who verifies the payment, and the approvals that follow from it
 
-Before the first payment, the wallet's admin sets up the rail:
+A payment from a smart account is an ERC-1271 signature, so some contract calls
+`isValidSignature` on the wallet to check it. The account answers:
+
+```solidity
+isValid = _isSuperAdmin(keyHash) || _getKeyExtraStorage(keyHash).checkers.contains(msg.sender);
+```
+
+It gates on `msg.sender`. A **super-admin** key passes from any caller, which is
+why an admin-signed payment needs no setup. A **session** key passes only from a
+contract the account has approved as a signature checker **for that key**. The
+checker is whoever calls back: `Permit2` on the permit2 rails, and the token
+itself on the eip3009 rail, since a FiatTokenV2-style token verifies
+`transferWithAuthorization` in its own code.
+
+The permit2 rails need a second, unrelated approval. Permit2 moves the token
+with `permitTransferFrom`, an ordinary `transferFrom`, so the wallet must have
+approved Permit2 as an ERC-20 spender.
+
+So a session paying over permit2 needs two approvals, and over eip3009 one.
+`grantSession` makes them in the same intent that authorizes the session:
+
+```ts
+const session = await client.grantSession({
+  wallet,
+  signer: admin,
+  permissions: { calls: [{ to: USDC }], spend: [{ limit: 200_000n, period: "day" }] },
+  expiry: Math.floor(Date.now() / 1000) + 3600,
+  x402Tokens: [USDC],   // approves USDC to Permit2, and both checkers for this key
+});
+```
+
+Or as their own transactions, for a session that already exists:
 
 ```ts
 import { PERMIT2_ADDRESS } from "@altananetwork/sdk";
 
-// permit2-exact rail:
-await client.approveTokenForPermit2({ wallet, signer: admin, token: USDC });      // ERC20 approve(Permit2)
+await client.approveTokenForPermit2({ wallet, signer: admin, token: USDC });
 await client.approveSignatureChecker({ wallet, signer: admin, session, checker: PERMIT2_ADDRESS });
-
-// EIP-3009 rail (checker = the token itself):
+// eip3009 rail: the checker is the token
 await client.approveSignatureChecker({ wallet, signer: admin, session, checker: USDC });
 ```
+
+`fetchWithX402` reads both before it pays and refuses when one is missing,
+naming it. `checkX402Approvals(session, requirement)` returns the same reading
+as data — which rail, which checker, the allowance against the amount, and the
+key hash — so a UI can show it. Both are reads that cost no gas.
+
+An approval is per chain and per key, like the authorization itself: the
+account's storage is its own on each chain, and a new session starts with none.
 
 See [approveTokenForPermit2](/sdk/approve-permit2) and [approveSignatureChecker](/sdk/approve-signature-checker).
 
@@ -81,7 +118,7 @@ import {
   buildPermit2WitnessTypedData, // permit2-exact PermitWitnessTransferFrom (B402)
   buildEip3009TypedData,        // TransferWithAuthorization
   encodeXPaymentHeader,
-  networkToChainId,             // CAIP-2 "eip155:56" → 56
+  networkToChainId,             // CAIP-2 "eip155:56" → 56; aliases bnb, base, ethereum, bnb-testnet, celo, celo-sepolia
   normalizeResource,            // 402 `resource` (object or URL string) → { url, ... }
   PERMIT2_ADDRESS,
 } from "@altananetwork/sdk";
@@ -107,9 +144,16 @@ readable by b402 merchants and by anything already integrated against Altana:
   `PAYMENT-SIGNATURE`, since some b402 merchants read only the latter.
 
 When passing a requirement to `signX402Payment` yourself, set `resource` on it
-so the envelope carries one.
+so the envelope carries one. The envelope is signed as x402 **v2** unless the
+requirement carries an `x402Version` of its own, or you pass
+`{ x402Version: 1 }` for a merchant that speaks v1 and does not say so. A v2
+`accepts[]` entry never carries a version (it belongs to the 402 body), so
+there is nothing to copy down when you hand one straight over;
+`fetchWithX402` stamps the body's version for you.
 
 ## Notes
 
+- **Pay once per call.** `fetchWithX402` signs one authorization and retries once. If the merchant answers that retry with another 402, the settlement failed on its side and the response is returned to you unchanged. Do not loop back into `fetchWithX402` blindly: a merchant that reports "failed" for a transfer it did broadcast would collect twice. Altana's own merchant package never does this (a broadcast payment is answered 200 with a pending receipt), but before re-paying a third-party merchant, check the first authorization's on-chain state.
 - **Browser limitation.** Third-party x402 endpoints often omit `X-PAYMENT` from CORS `Access-Control-Allow-Headers`, so a browser can't POST the payment. Run `fetchWithX402` server-side.
 - The signature is a 98-byte ERC-1271 envelope, not an EOA signature — see [Off-chain signatures](/concepts/off-chain-signatures). A facilitator must verify via `isValidSignature`.
+- **Which rail carries a smart-account signature.** The settling contract verifies it, so the rail decides which contract calls `isValidSignature` on the wallet — and that contract must be an approved signature checker for the key. `Permit2.permitWitnessTransferFrom` verifies through ERC-1271, so `permit2-exact` carries an Altana wallet's signature with Permit2 as the checker. An EIP-3009 token verifies `transferWithAuthorization` in its own code, so the `eip3009` rail carries it with the token as the checker. Circle's USDC and `$U` both verify through `SignatureChecker`, so both rails carry an Altana wallet's signature once the matching approval is set; granting with `x402Tokens` sets both.

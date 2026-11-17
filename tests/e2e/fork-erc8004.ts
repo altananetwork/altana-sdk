@@ -57,6 +57,7 @@ import {
   type Erc8004RegistrationFile,
 } from "@altananetwork/sdk";
 import { keyHashForSigner } from "../../packages/wallet/src/internal/erc1271.js";
+import { startAnvil, waitForAnvil } from "./anvil.js";
 
 const REGISTRY = erc8183Addresses(97).registry;
 // `||`, not `??`: an unset GitHub Actions secret arrives as an empty string,
@@ -163,12 +164,6 @@ const network = { chain: bscTestnet, chainId: 97, publicRpcUrl: ANVIL_URL } as n
 
 function assert(cond: boolean, msg: string) {
   if (!cond) throw new Error(`ASSERT FAILED: ${msg}`);
-}
-async function waitForAnvil() {
-  for (let i = 0; i < 60; i++) {
-    try { await publicClient.getBlockNumber(); return; } catch { await new Promise((r) => setTimeout(r, 500)); }
-  }
-  throw new Error("anvil not ready");
 }
 
 const file = (name: string): Erc8004RegistrationFile => ({
@@ -353,12 +348,9 @@ function encodeErc8004Selector(signature: string): Hex {
 
 async function main() {
   console.log(`\n▶ Booting anvil BSC-testnet fork (${ANVIL_URL}) ...`);
-  const anvil = Bun.spawn(["anvil", "--fork-url", RPC, "--port", String(ANVIL_PORT), "--silent"], {
-    stdout: "ignore",
-    stderr: "ignore",
-  });
+  const anvil = startAnvil(RPC, ANVIL_PORT);
   try {
-    await waitForAnvil();
+    await waitForAnvil(anvil);
 
     const owner = privateKeyToAccount(generatePrivateKey());
     const stranger = privateKeyToAccount(generatePrivateKey());
