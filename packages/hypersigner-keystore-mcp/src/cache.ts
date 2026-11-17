@@ -3,7 +3,7 @@
  * and reading what that cache currently says.
  *
  * The KeyStore on Ethereum (or Sepolia) is the only source of truth for which
- * keys an account has authorized. An L2 rooted in it, such as Celo, reads that
+ * keys an account has authorized. An L2 rooted in it, such as Base Sepolia, reads that
  * authority through a `KeyStoreCacheOPStack`, which accepts a proof walking
  * from the L1 block hash the L2's `L1Block` predeploy exposes down to the
  * KeyStore's storage slot for that key. After the proof lands, anything on the
@@ -54,7 +54,7 @@ export function requireL2(chain: ChainConfig): L2CacheConfig {
     return failWith(
       `${chain.chain.name} (chainId ${chain.chainId}) holds the KeyStore itself, so there is no ` +
         `cache to prove into from here. Set ALTANA_CHAIN to the L2 whose cache you mean ` +
-        `(celo, celo-sepolia): it resolves to this same registry and names the mirror.`,
+        `(base-sepolia): it resolves to the registry it mirrors and names the mirror.`,
     );
   }
   if (chain.l2.cache === ZERO_ADDRESS) {
@@ -242,9 +242,8 @@ export async function encodeCacheProof(args: {
             `At L1 block ${built.l1BlockNumber} this key's KeyStore slot is zero, so the proof says ` +
             `the key does not exist there, and the cache refuses such a proof. Either the key was ` +
             `never registered on the L1, or its registration is newer than the block the L2 anchors. ` +
-            `An L2 anchors the L1 with a lag, and on Celo Sepolia that lag is long: the predeploy ` +
-            `advances roughly every 20 minutes and trails Sepolia by 15 to 20, so a registration made ` +
-            `minutes ago can take close to half an hour to become provable. Wait for the anchor to ` +
+            `An L2 anchors the L1 with a lag, which can be tens of minutes, so a registration made ` +
+            `minutes ago may not be provable yet. Wait for the anchor to ` +
             `pass the block holding the registration, then encode again.`,
         }
       : {}),

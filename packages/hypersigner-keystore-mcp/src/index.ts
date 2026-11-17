@@ -5,10 +5,10 @@
  * "is this key authorized right now"; encode tools return ready-to-sign
  * calldata ({to, value, data, chainId}) that the HOST signs with its own key.
  *
- * Chain via ALTANA_CHAIN (default bnb; also "ethereum", "bnb-testnet",
- * "sepolia", and the aliases "celo" -> ethereum, "celo-sepolia" -> sepolia:
- * Celo keeps no KeyStore of its own, its authority is rooted in the Ethereum
- * / Sepolia registry). RPC overridable via RPC_URL (used by the fork tests).
+ * Chain via ALTANA_CHAIN (default bnb; also "ethereum", "celo", "bnb-testnet",
+ * "celo-sepolia", "sepolia", and the alias "base-sepolia" -> sepolia: Base
+ * Sepolia keeps no KeyStore of its own, its authority is rooted in the Sepolia
+ * registry). RPC overridable via RPC_URL (used by the fork tests).
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -97,10 +97,10 @@ export function buildServer(): McpServer {
         `${CHAIN.chain.name} (chainId ${CHAIN.chainId}). Reads answer "is this ` +
         'key authorized right now"; encode tools return unsigned calldata for ' +
         "YOUR wallet/SDK to sign. This server never holds a key or signs. " +
-        "L2 wallets are rooted here too: an L2 (Celo 42220, Celo Sepolia " +
-        "11142220) keeps its KeyStore on the L1 and reads it through a cache, " +
-        "so ALTANA_CHAIN=celo resolves to ethereum and ALTANA_CHAIN=celo-sepolia " +
-        "to sepolia. Sign encoded calls on the chainId they carry: the registry " +
+        "BNB Chain, Ethereum and Celo each keep their own KeyStore. An L2 " +
+        "without one (Base Sepolia 84532) keeps its KeyStore on the L1 and " +
+        "reads it through a cache, so ALTANA_CHAIN=base-sepolia resolves to " +
+        "sepolia. Sign encoded calls on the chainId they carry: the registry " +
         "calls on the L1, and the one cache call on the L2. An authorization, a " +
         "timebox or a revoke recorded on the L1 is not visible on the L2 until " +
         "someone relays a proof of it: keystore_cache_status says whether the " +
@@ -351,7 +351,7 @@ export function buildServer(): McpServer {
         "an L1 block the L2 has moved past (which reads as not valid until a " +
         "fresh proof lands, even when nothing changed on the L1). Also returns " +
         "the L1 block the L2 anchors now. Needs ALTANA_CHAIN set to an L2 " +
-        "alias (celo, celo-sepolia); naming the registry chain itself leaves " +
+        "alias (base-sepolia); naming the registry chain itself leaves " +
         "the mirror ambiguous.",
       inputSchema: {
         user: z.string(),

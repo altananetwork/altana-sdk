@@ -19,11 +19,11 @@ import { L2_CACHES, ZERO_ADDRESS, resolveChain } from "./keystore.js";
 const USER: Address = "0x1111111111111111111111111111111111111111";
 const KEY_ID: Hex = `0x${"ab".repeat(32)}`;
 const PUBKEY: Hex = `0x04${"11".repeat(32)}${"22".repeat(32)}`;
-const CACHE = L2_CACHES["celo-sepolia"]!.cache;
+const CACHE = L2_CACHES["base-sepolia"]!.cache;
 
 describe("requireL2", () => {
   test("an L2 alias has a cache to prove into", () => {
-    expect(requireL2(resolveChain("celo-sepolia")).chainId).toBe(11142220);
+    expect(requireL2(resolveChain("base-sepolia")).chainId).toBe(84532);
   });
 
   // Naming the registry chain is not a mistake, it just does not say which
@@ -31,23 +31,20 @@ describe("requireL2", () => {
   test("the registry chain's own name says to name the L2 instead", () => {
     for (const name of ["sepolia", "ethereum"]) {
       expect(() => requireL2(resolveChain(name))).toThrow(/holds the KeyStore itself/);
-      expect(() => requireL2(resolveChain(name))).toThrow(/celo-sepolia/);
+      expect(() => requireL2(resolveChain(name))).toThrow(/base-sepolia/);
     }
   });
 
-  test("a chain with no KeyStore cache at all says so", () => {
-    expect(() => requireL2(resolveChain("bnb"))).toThrow(/holds the KeyStore itself/);
-  });
-
-  test("celo names the Celo mainnet cache", () => {
-    expect(requireL2(resolveChain("celo")).chainId).toBe(42220);
-    expect(requireL2(resolveChain("42220")).cache).toBe(L2_CACHES["celo"]!.cache);
+  test("a chain with its own KeyStore has no cache to prove into, Celo included", () => {
+    for (const name of ["bnb", "celo", "celo-sepolia", "42220", "11142220"]) {
+      expect(() => requireL2(resolveChain(name))).toThrow(/holds the KeyStore itself/);
+    }
   });
 
   // An unset cache says so, which is much better than encoding a proof to the
   // zero address and having it revert on chain.
   test("an L2 whose cache is not deployed says that, and that wallets still work", () => {
-    const chain = resolveChain("celo");
+    const chain = resolveChain("base-sepolia");
     const unset = { ...chain, l2: { ...chain.l2!, cache: ZERO_ADDRESS } };
     expect(() => requireL2(unset)).toThrow(/no KeyStoreCache deployed/);
     expect(() => requireL2(unset)).toThrow(/account enforces/);
@@ -98,9 +95,9 @@ const liveEntry = (sourceBlockNumber: bigint, over: Partial<typeof absentEntry> 
   ...over,
 });
 
-/** readCacheStatus against Celo Sepolia's config with the chain reads injected. */
+/** readCacheStatus against Base Sepolia's config with the chain reads injected. */
 function status(client: PublicClient): Promise<CacheStatus> {
-  return readCacheStatus({ chain: resolveChain("celo-sepolia"), user: USER, keyId: KEY_ID, client });
+  return readCacheStatus({ chain: resolveChain("base-sepolia"), user: USER, keyId: KEY_ID, client });
 }
 
 describe("readCacheStatus", () => {
