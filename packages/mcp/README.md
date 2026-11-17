@@ -44,11 +44,6 @@ ALTANA_CHAIN=celo-sepolia bunx @altananetwork/mcp
 An unrecognised value logs a warning and falls back to `bnb`. Sepolia and Base
 Sepolia are not selectable here.
 
-Every chain above keeps its own KeyStore: `wallet_verification` and
-`verify_authorization` read it on that chain, and `grant_session` /
-`revoke_session` write it in the same transaction as the account's. The
-registration fee is paid in the chain's native token.
-
 One server process serves one chain, so restart with a different `ALTANA_CHAIN` to switch.
 
 ## Tools

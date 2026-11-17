@@ -45,7 +45,7 @@ Use stdio transport:
 
 Optional env vars:
 
-- `ALTANA_CHAIN`: `bnb`, `bsc`, `56`, `ethereum`, `eth`, `1`, `celo`, `42220`, `bnb-testnet`, `97`, `celo-sepolia`, `11142220`, `sepolia`, `11155111`. Defaults to `bnb`. Each of these chains keeps its own KeyStore. An L2 alias resolves to the L1 that holds its KeyStore *and* names the L2's cache: `base-sepolia` / `84532` to `sepolia`. Every encoded call carries the `chainId` to sign it on: registry calls the registry chain's, the cache proof the L2's. See [Reaching an L2: Base Sepolia](#reaching-an-l2-base-sepolia).
+- `ALTANA_CHAIN`: `bnb`, `bsc`, `56`, `ethereum`, `eth`, `1`, `celo`, `42220`, `bnb-testnet`, `97`, `celo-sepolia`, `11142220`, `sepolia`, `11155111`. Defaults to `bnb`. An L2 alias resolves to the L1 that holds its KeyStore *and* names the L2's cache: `base-sepolia` / `84532` to `sepolia`. Every encoded call carries the `chainId` to sign it on: registry calls the registry chain's, the cache proof the L2's. See [Reaching an L2: Base Sepolia](#reaching-an-l2-base-sepolia).
 - `RPC_URL`: override the default registry RPC URL.
 - `L2_RPC_URL`: override the L2 read RPC URL, when `ALTANA_CHAIN` names an L2.
 
@@ -83,8 +83,7 @@ Optional env vars:
 
 ## Reaching an L2: Base Sepolia
 
-BNB Chain, Ethereum and Celo each keep their own KeyStore. An L2 without one
-keeps its KeyStore on the L1: Base Sepolia's wallets are authorized in the
+An L2 keeps its KeyStore on the L1: Base Sepolia's wallets are authorized in the
 Sepolia registry and read on the L2 through a `KeyStoreCacheOPStack`, which
 answers `isValidKey` with one `eth_call`.
 
