@@ -6,15 +6,16 @@
  *   1. createWallet (admin signer); the key is saved to the shared testnet env
  *      file before the wallet is sent anything
  *   2. fund the wallet with CELO on Celo Sepolia: three registration fees with
- *      the SDK's margin, plus gas
+ *      the SDK's margin, plus the relay's fees (SMOKE_CELO_FEE_HEADROOM, default
+ *      1.3 CELO)
  *   3. quoteGrantSession: one line, on Celo Sepolia, carrying both registrations
  *   4. grantSession, the wallet's first action: one request registers the main
  *      key and the session key in Celo Sepolia's KeyStore and authorizes the
  *      session
  *   5. execute(session, ...) as the agent
- *   6. a second grantSession: one more key, no main key this time
- *   7. revokeSession of the first session: the account and the KeyStore in one
+ *   6. revokeSession of the first session: the account and the KeyStore in one
  *      request; the revoked session is refused afterwards
+ *   7. a second grantSession: one more key, no main key this time
  *   8. nothing was written on Sepolia
  *   9. leftover CELO goes back to the funder
  *
@@ -66,6 +67,20 @@ function check(cond: unknown, what: string): void {
   if (!cond) throw new Error(`FAILED: ${what}`);
   console.log(`    ok: ${what}`);
 }
+/**
+ * A check on chain state made right after a write. The public RPC is
+ * load-balanced, and a node that has not seen the write's block yet answers
+ * with the state before it (seen live: a key read as still valid seconds after
+ * its revoke confirmed). So the read is repeated until it shows the expected
+ * state, for up to 30 seconds.
+ */
+async function settles(read: () => Promise<boolean>, what: string): Promise<void> {
+  for (let i = 0; i < 20; i++) {
+    if (await read().catch(() => false)) return check(true, what);
+    await new Promise((r) => setTimeout(r, 1_500));
+  }
+  check(false, what);
+}
 
 async function main() {
   console.log("@altananetwork/sdk session smoke test: Celo Sepolia (its own KeyStore)");
@@ -83,12 +98,14 @@ async function main() {
   const treasury = await celoPublic.readContract({ address: celoSepolia.keyStoreController, abi: CONTROLLER_ABI, functionName: "treasury" });
   console.log(`registration fee: ${formatEther(fee)} ${SYMBOL} per key; treasury ${treasury}`);
 
-  // Three registrations with the SDK's margin (two in the first grant, one in the second), plus gas.
-  const budget = registrationValueFor(fee) * 3n + parseEther("0.4");
+  // Three registrations with the SDK's margin (two in the first grant, one in the second), plus the
+  // relay's fees. The testnet relay quotes with large gas margins (about 0.65 CELO for the first
+  // grant at 50 gwei), and a quote has to be covered in full even though less is charged.
+  const budget = registrationValueFor(fee) * 3n + parseEther(process.env.SMOKE_CELO_FEE_HEADROOM ?? "1.3");
   const funderBalance = await celoPublic.getBalance({ address: funder.address });
   console.log(`funder ${funder.address}: ${formatEther(funderBalance)} ${SYMBOL}; this run sends ${formatEther(budget)}`);
-  if (funderBalance < budget + parseEther("0.05")) {
-    throw new Error(`Fund ${funder.address} with at least ${formatEther(budget + parseEther("0.05"))} ${SYMBOL} on Celo Sepolia: https://faucet.celo.org/celo-sepolia`);
+  if (funderBalance < budget + parseEther("0.02")) {
+    throw new Error(`Fund ${funder.address} with at least ${formatEther(budget + parseEther("0.02"))} ${SYMBOL} on Celo Sepolia: https://faucet.celo.org/celo-sepolia`);
   }
 
   // 1. Create the wallet. Its key is on file before it holds anything.
@@ -110,7 +127,9 @@ async function main() {
     const sepoliaNonceBefore = await sepoliaPublic.getTransactionCount({ address: wallet.address });
     const treasuryBefore = await celoPublic.getBalance({ address: treasury });
 
-    const permissions = { calls: [{ to: funder.address }], spend: [{ limit: parseEther("0.01"), period: "day" as const }] };
+    // The session's cap pays the relay's fee for its own transactions as well as what it sends, and
+    // the testnet relay quotes a few tenths of a CELO per transaction: a cap below that is refused.
+    const permissions = { calls: [{ to: funder.address }], spend: [{ limit: parseEther("1"), period: "day" as const }] };
     const expiry = Math.floor(Date.now() / 1000) + 3600;
 
     // 3. Quote the first grant.
@@ -130,8 +149,8 @@ async function main() {
     check(first.legs.every((l) => l.chainId === CHAIN_ID), "every leg is on Celo Sepolia");
     check(legOf(first.legs, "registry", CHAIN_ID).via === "bundled", "the registration rides in the account's own request");
     check(!first.legs.some((l) => l.kind === "cache"), "there is no mirror step");
-    check((await readActiveKeys(celoPublic, celoSepolia, wallet.address)).length === 2, "Celo Sepolia's KeyStore holds two keys for the wallet");
-    check(await readIsValidKey(celoPublic, celoSepolia, wallet.address, first.keyId), "the session key is valid in Celo Sepolia's KeyStore");
+    await settles(async () => (await readActiveKeys(celoPublic, celoSepolia, wallet.address)).length === 2, "Celo Sepolia's KeyStore holds two keys for the wallet");
+    await settles(() => readIsValidKey(celoPublic, celoSepolia, wallet.address, first.keyId), "the session key is valid in Celo Sepolia's KeyStore");
     console.log(`    tx ${celoSepolia.explorer}/tx/${first.transactionHash} [${ms(t0)}]`);
 
     // 5. The agent uses the session.
@@ -139,24 +158,13 @@ async function main() {
     const used = await client.execute({ session: first, calls: { to: funder.address, value: 1n, data: "0x" } });
     check(used.status === "CONFIRMED", `the session's transaction confirmed (${used.transactionHash})`);
 
-    // 6. A second grant: one more key.
-    console.log("\n[6] grantSession (second: one more key)");
-    const second = await client.grantSession({ wallet, signer: admin, sessionSigner: signerFromPrivateKey(generatePrivateKey()), permissions, expiry, chainId: CHAIN_ID });
-    printLegs(second.legs);
-    assertStatus(second, "granted", "second grant");
-    check((await readActiveKeys(celoPublic, celoSepolia, wallet.address)).length === 3, "the KeyStore now holds three keys");
-    const received = (await celoPublic.getBalance({ address: treasury })) - treasuryBefore;
-    // When the funder is also the treasury, its own gas and the wallet's 1 wei blur the figure; three fees is the floor either way.
-    if (treasury.toLowerCase() !== funder.address.toLowerCase()) check(received === fee * 3n, `the treasury received exactly three fees (${formatEther(received)} ${SYMBOL})`);
-
-    // 7. Revoke the first session.
-    console.log("\n[7] revokeSession (first session)");
+    // 6. Revoke the first session.
+    console.log("\n[6] revokeSession (first session)");
     const revoked = await client.revokeSession({ wallet, signer: admin, session: first });
     printLegs(revoked.legs);
     assertStatus(revoked, "revoked", "revoke");
     check(revoked.legs.every((l) => l.chainId === CHAIN_ID), "the revoke acted on Celo Sepolia only");
-    check(!(await readIsValidKey(celoPublic, celoSepolia, wallet.address, first.keyId)), "the revoked key is no longer valid in the KeyStore");
-    check(await readIsValidKey(celoPublic, celoSepolia, wallet.address, second.keyId), "the second session key is still valid");
+    await settles(async () => !(await readIsValidKey(celoPublic, celoSepolia, wallet.address, first.keyId)), "the revoked key is no longer valid in the KeyStore");
     let afterRevoke = "refused";
     try {
       const again = await client.execute({ session: first, calls: { to: funder.address, value: 1n, data: "0x" } });
@@ -165,6 +173,17 @@ async function main() {
       /* refused, as it should be */
     }
     check(afterRevoke !== "CONFIRMED", "the revoked session can no longer transact");
+
+    // 7. A second grant: one more key, with the main key already registered.
+    console.log("\n[7] grantSession (second: one more key)");
+    const second = await client.grantSession({ wallet, signer: admin, sessionSigner: signerFromPrivateKey(generatePrivateKey()), permissions, expiry, chainId: CHAIN_ID });
+    printLegs(second.legs);
+    assertStatus(second, "granted", "second grant");
+    await settles(() => readIsValidKey(celoPublic, celoSepolia, wallet.address, second.keyId), "the second session key is valid in the KeyStore");
+    await settles(async () => !(await readIsValidKey(celoPublic, celoSepolia, wallet.address, first.keyId)), "the revoked key stays revoked");
+    const received = (await celoPublic.getBalance({ address: treasury })) - treasuryBefore;
+    // When the funder is also the treasury, its own balance moves with the run; three fees are checked only for a separate treasury.
+    if (treasury.toLowerCase() !== funder.address.toLowerCase()) check(received === fee * 3n, `the treasury received exactly three fees (${formatEther(received)} ${SYMBOL})`);
 
     // 8. Sepolia was never touched.
     console.log("\n[8] nothing on Sepolia");
