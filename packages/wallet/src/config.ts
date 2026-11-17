@@ -230,7 +230,7 @@ export const SEPOLIA: NetworkConfig = {
  * https://faucet.celo.org/celo-sepolia.
  *
  * Addresses sourced from the Altana KeyStore deployment manifest:
- *   <altana-keystore>/deployments/celo-sepolia-keystore.json
+ *   <altana-keystore>/deployments/celo-sepolia.json
  */
 export const CELO_SEPOLIA: NetworkConfig = {
   chain: celoSepolia,
