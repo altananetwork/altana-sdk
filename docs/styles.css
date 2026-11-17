@@ -345,7 +345,10 @@ h1.home-title {
 }
 
 .network-option {
-  padding: 8px 22px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px 8px 14px;
   border: 1px solid var(--vocs-color_border);
   border-radius: 6px;
   background: transparent;
@@ -354,18 +357,52 @@ h1.home-title {
   font-size: 15px;
   font-weight: 400;
   cursor: pointer;
-  transition: background 0.15s;
+}
+
+.network-logo {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.dark .network-logo-one-color {
+  filter: invert(1);
+}
+
+/* A network's logo and name inside a sentence or a title. */
+.network-badge {
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--vocs-color_heading);
+}
+
+.network-badge .network-logo {
+  display: inline-block;
+  width: 1.15em;
+  height: 1.15em;
+  margin-right: 0.3em;
+  vertical-align: -0.2em;
 }
 
 /* On a phone the three networks stay on one row. */
 @media (max-width: 480px) {
   .network-option {
-    padding: 8px 14px;
+    gap: 6px;
+    padding: 8px 10px 8px 8px;
+    font-size: 14px;
+  }
+
+  .network-option .network-logo {
+    width: 18px;
+    height: 18px;
   }
 }
 
 .network-option[aria-pressed="true"] {
   background: var(--vocs-color_backgroundDark);
+  border-color: var(--altana-blue);
+  box-shadow: 0 0 0 1px var(--altana-blue);
   font-weight: 600;
 }
 

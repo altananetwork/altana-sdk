@@ -20,6 +20,10 @@ export type NetworkOption = {
   symbol: string
   /** Block explorer base URL. */
   explorerUrl: string
+  /** The network's logo, a file under `public/`. */
+  logo: string
+  /** A one-color logo drawn in black, shown in white on the dark theme. */
+  logoIsOneColor: boolean
   config: NetworkConfig
 }
 
@@ -27,6 +31,7 @@ function option(
   id: NetworkId,
   exportName: NetworkOption['exportName'],
   config: NetworkConfig,
+  logoIsOneColor = false,
 ): NetworkOption {
   return {
     id,
@@ -34,6 +39,8 @@ function option(
     exportName,
     symbol: config.chain.nativeCurrency.symbol,
     explorerUrl: config.explorer,
+    logo: `/chains/${id}.svg`,
+    logoIsOneColor,
     config,
   }
 }
@@ -41,7 +48,7 @@ function option(
 /** In the order the pages list them. BNB Smart Chain is the SDK default. */
 export const NETWORK_OPTIONS: readonly NetworkOption[] = [
   option('bnb', 'BNB', BNB),
-  option('ethereum', 'ETHEREUM', ETHEREUM),
+  option('ethereum', 'ETHEREUM', ETHEREUM, true),
   option('celo', 'CELO', CELO),
 ]
 

@@ -133,7 +133,7 @@ export function TxConfirmed({ hash, label, explorerUrl = 'https://bscscan.com' }
 
 export function StepCard({ number, title, description, children, completed }: {
   number: number
-  title: string
+  title: React.ReactNode
   description: React.ReactNode
   children: React.ReactNode
   completed?: boolean

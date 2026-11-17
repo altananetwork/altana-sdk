@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import { BNB, CELO, ETHEREUM } from '@altananetwork/sdk'
 import {
   DEFAULT_NETWORK,
@@ -36,6 +38,19 @@ describe('the networks a reader can choose', () => {
     expect(networkOption('celo').config.chainId).toBe(42220)
     expect(networkOption('ethereum').symbol).toBe('ETH')
     expect(networkOption('bnb').symbol).toBe('BNB')
+  })
+})
+
+describe('the logo shown for each network', () => {
+  test('is the file named after that network, and the file is in the site', () => {
+    for (const o of NETWORK_OPTIONS) {
+      expect(o.logo).toBe(`/chains/${o.id}.svg`)
+      expect(existsSync(join(import.meta.dir, '..', 'public', o.logo))).toBe(true)
+    }
+  })
+
+  test('only the one-color Ethereum logo is flipped to white on the dark theme', () => {
+    expect(NETWORK_OPTIONS.filter((o) => o.logoIsOneColor).map((o) => o.id)).toEqual(['ethereum'])
   })
 })
 

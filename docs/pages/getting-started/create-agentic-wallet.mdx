@@ -7,7 +7,7 @@ import { Eyebrow } from '../../components/Eyebrow'
 
 import { useState, useEffect } from 'react'
 import { PasskeyDemo } from '../../components/PasskeyDemo'
-import { NetworkPicker, OnNetwork, NetworkName, NetworkSymbol } from '../../components/Network'
+import { NetworkPicker, OnNetwork, NetworkBadge, NetworkSymbol } from '../../components/Network'
 
 export function WalletTabSwitcher() {
   const [tab, setTab] = useState('passkey')
@@ -68,10 +68,6 @@ A smart agentic wallet gives any authorized agent permissioned access to your on
 
 You own the wallet. Agents get scoped, expiring, revocable keys. Every permission is verifiable by anyone, from any chain, with a free read.
 
-<p className="admin-key-lead">Which network?</p>
-
-<NetworkPicker />
-
 <p className="admin-key-lead">Which admin key type?</p>
 
 <div className="admin-key-grid">
@@ -89,11 +85,15 @@ You own the wallet. Agents get scoped, expiring, revocable keys. Every permissio
 
 <WalletTabSwitcher />
 
+<p className="admin-key-lead">Which network?</p>
+
+<NetworkPicker />
+
 <div id="wallet-tab-passkey">
 
 ## Try it live
 
-Each call hits the Altana SDK against <NetworkName />. Your passkey stays on your device.
+Each call hits the Altana SDK against <NetworkBadge />. Your passkey stays on your device.
 
 <PasskeyDemo />
 
@@ -185,7 +185,7 @@ You generate the key yourself here rather than asking the SDK for one, so the ke
 
 ### Step 3: Fund your wallet
 
-Send <NetworkSymbol /> to your `wallet.address` on <NetworkName /> before executing.
+Send <NetworkSymbol /> to your `wallet.address` on <NetworkBadge /> before executing.
 
 <div style={{marginTop: '1em'}}>Fund the address with <NetworkSymbol /> from any exchange or wallet.</div>
 

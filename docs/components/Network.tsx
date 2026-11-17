@@ -54,7 +54,18 @@ export function useNetwork(): NetworkOption {
   return networkOption(useSyncExternalStore(subscribe, snapshot, () => DEFAULT_NETWORK))
 }
 
-/** The row of network buttons. */
+/** A network's logo. The name is always written next to it, so it carries no text of its own. */
+export function NetworkLogo({ network }: { network: NetworkOption }) {
+  return (
+    <img
+      src={network.logo}
+      alt=""
+      className={network.logoIsOneColor ? 'network-logo network-logo-one-color' : 'network-logo'}
+    />
+  )
+}
+
+/** The row of network buttons, each with its logo. */
 export function NetworkPicker() {
   const network = useNetwork()
   return (
@@ -67,10 +78,23 @@ export function NetworkPicker() {
           aria-pressed={o.id === network.id}
           onClick={() => setNetwork(o.id)}
         >
+          <NetworkLogo network={o} />
           {o.label}
         </button>
       ))}
     </div>
+  )
+}
+
+/** A network's logo and name, inline in a sentence or a title. The chosen network unless one is given. */
+export function NetworkBadge({ network }: { network?: NetworkOption }) {
+  const chosen = useNetwork()
+  const shown = network ?? chosen
+  return (
+    <span className="network-badge">
+      <NetworkLogo network={shown} />
+      {shown.label}
+    </span>
   )
 }
 

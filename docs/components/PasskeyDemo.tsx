@@ -3,7 +3,7 @@ import { createClient } from '@altananetwork/sdk'
 import type { Wallet, Signer } from '@altananetwork/sdk'
 import { AltanaButton, CopyButton, StatusBox, StepCard, TxConfirmed } from './demo/primitives'
 import type { StepStatus } from './demo/primitives'
-import { useNetwork } from './Network'
+import { NetworkBadge, useNetwork } from './Network'
 import { networkOption } from './networkOptions'
 import type { NetworkId, NetworkOption } from './networkOptions'
 
@@ -114,7 +114,7 @@ function PasskeyDemoOn({ network }: { network: NetworkOption }) {
     <div style={{ margin: '2rem 0' }}>
       <StepCard
         number={1}
-        title="Create a passkey wallet"
+        title={<>Create a passkey wallet on <NetworkBadge network={network} /></>}
         description="Your browser will prompt for biometric confirmation (Face ID, Touch ID, or your platform authenticator). The private key is generated inside your device's secure hardware and never leaves it."
       >
         <AltanaButton onClick={handleCreate} loading={createStatus === 'loading'} disabled={createStatus === 'done'}>
@@ -131,7 +131,7 @@ function PasskeyDemoOn({ network }: { network: NetworkOption }) {
             borderRadius: '6px', fontSize: '0.875rem', color: '#065f46',
             fontFamily: 'var(--vocs-fontFamily_mono)', display: 'flex', alignItems: 'center', gap: '0.25rem',
           }}>
-            <span style={{ flex: 1, wordBreak: 'break-all' }}>✓ Wallet created: {walletState?.address}</span>
+            <span style={{ flex: 1, wordBreak: 'break-all' }}>✓ Wallet created on {network.label}: {walletState?.address}</span>
             {walletState?.address && <CopyButton text={walletState.address} />}
           </div>
         )}
@@ -144,7 +144,7 @@ function PasskeyDemoOn({ network }: { network: NetworkOption }) {
 
       <StepCard
         number={2}
-        title="Activate the wallet onchain"
+        title={<>Activate the wallet on <NetworkBadge network={network} /></>}
         description={<>The first transaction registers your passkey's public key in Altana's onchain Keystore and activates the wallet.<br/><br/>You will see one more biometric prompt. That is your passkey signing the transaction.</>}
       >
         <AltanaButton
@@ -172,7 +172,7 @@ function PasskeyDemoOn({ network }: { network: NetworkOption }) {
 
       <StepCard
         number={3}
-        title="Recover from passkey"
+        title={<>Recover from passkey on <NetworkBadge network={network} /></>}
         description="Recovery matches your passkey's private key (held on your device, synced via iCloud or Google) against the public key registered onchain in the Keystore. Both halves are needed. No seed phrase, no server."
       >
         <AltanaButton
