@@ -199,9 +199,9 @@ async function main() {
   }
 
   // The session may only call the wallet itself, for an hour. Its cap pays the
-  // relay's fee for its own transactions, which the testnet relay quotes at a
-  // few tenths of a CELO.
-  const permissions = { calls: [{ to: wallet.address }], spend: [{ limit: parseEther("1"), period: "day" as const }] };
+  // relay's fee for its own transactions, and a quote above the cap is refused:
+  // the relays quote up to about a CELO for one transaction, so the cap is 3.
+  const permissions = { calls: [{ to: wallet.address }], spend: [{ limit: parseEther("3"), period: "day" as const }] };
   const expiry = Math.floor(Date.now() / 1000) + 3600;
   const firstSigner = signerFromPrivateKey(generatePrivateKey());
 
