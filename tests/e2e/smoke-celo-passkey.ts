@@ -4,26 +4,30 @@
  *   1. createHeadlessPasskey() -> PasskeySigner
  *   2. createWallet({ signer: passkey }): throwaway secp256k1 signs the
  *      EIP-7702 setCode, the passkey becomes the admin authority
- *   3. fund the wallet with CELO
+ *   3. fund the wallet with CELO, and with nothing on any other chain
  *   4. execute(wallet, passkey, sendOneWei): the P256 signature is verified
- *      by the account through the P256 canary on Celo Sepolia
- *   5. grantSession(wallet, passkey): a registered grant, its Sepolia
- *      registry write relayed (the testnet relay serves Sepolia, so a P256
- *      admin can register); then grantSession({ register: false }): an
- *      account-only session. The account enforces permissions/expiry on both.
+ *      by the account through the P256 canary on Celo Sepolia. It is the
+ *      wallet's first action, so it also registers the passkey in Celo
+ *      Sepolia's KeyStore, the fee paid in CELO.
+ *   5. grantSession(wallet, passkey): a registered grant, the session key
+ *      registered in the same request; then grantSession({ register: false }):
+ *      an account-only session. The account enforces permissions/expiry on both.
  *   6. execute(session, ...): the session-key path under a passkey admin
- *   7. revokeSession(wallet, passkey, session): account revoke; registry and
- *      cache steps are reported as skipped
- *   8. sweep: what is left goes back to the funder on both chains, pass or
- *      fail, signed by the passkey. The credential is appended to the shared
- *      testnet env file before any funds move, because it is the only key that
- *      can ever sign for this wallet.
+ *   7. revokeSession(wallet, passkey, session) for both sessions; the
+ *      registered one is revoked in the KeyStore in the same request
+ *   8. nothing was sent on Sepolia, and the Sepolia KeyStore holds no key
+ *   9. sweep: what is left goes back to the funder, pass or fail, signed by
+ *      the passkey. The credential is appended to the shared testnet env file
+ *      before any funds move, because it is the only key that can ever sign
+ *      for this wallet.
  *
  * Needs, and fails loudly without:
- *   TEST_FUNDER_KEY   funded with CELO on Celo Sepolia (>= 1 CELO,
- *                     https://faucet.celo.org/celo-sepolia) and ETH on Sepolia
- *                     (>= 0.05 ETH, for the relayed registry write)
+ *   TEST_FUNDER_KEY   funded with CELO on Celo Sepolia (>= 4 CELO,
+ *                     https://faucet.celo.org/celo-sepolia)
  *   CELO_SEPOLIA_RPC_URL  optional override of the Celo Sepolia read RPC
+ *   SEPOLIA_RPC_URL       optional override of the Sepolia read RPC
+ *   SMOKE_CELO_FEE_HEADROOM  CELO sent on top of the two registrations, for
+ *                     the relay's fees (default 2.6); the rest is returned
  *
  * Run: bun run smoke:celo-passkey   (from tests/e2e)
  */
@@ -50,6 +54,7 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { appendFileSync } from "node:fs";
+import { readActiveKeys, readIsValidKey, readRegistrationFee, registrationValueFor } from "../../packages/wallet/src/internal/keystore.js";
 import { testnetEnvFile } from "./testnet-env.js";
 import { assertStatus, legOf, printLegs } from "./session-legs.js";
 
@@ -65,16 +70,28 @@ const celoSepolia: NetworkConfig = {
   ...(process.env.CELO_SEPOLIA_RPC_URL ? { publicRpcUrl: process.env.CELO_SEPOLIA_RPC_URL } : {}),
 };
 
-/** CELO for the Celo Sepolia legs: execute, two grants, two revokes. */
-const CELO_FUNDING = parseEther("0.5");
-/** ETH for the one relayed Sepolia leg, the KeyStore registry write. */
-const SEPOLIA_FUNDING = parseEther("0.03");
+const CHAIN_ID = celoSepolia.chainId;
+const SYMBOL = celoSepolia.chain.nativeCurrency.symbol;
 
 function ms(start: number) {
   return `${((performance.now() - start) / 1000).toFixed(2)}s`;
 }
-function show(v: unknown) {
-  return JSON.stringify(v, (_k, x) => (typeof x === "bigint" ? x.toString() : x), 2);
+function check(cond: unknown, what: string): void {
+  if (!cond) throw new Error(`FAILED: ${what}`);
+  console.log(`    ok: ${what}`);
+}
+/**
+ * A check on chain state made right after a write. The public RPC is
+ * load-balanced, and a node that has not seen the write's block yet answers
+ * with the state before it. So the read is repeated until it shows the
+ * expected state, for up to 30 seconds.
+ */
+async function settles(read: () => Promise<boolean>, what: string): Promise<void> {
+  for (let i = 0; i < 20; i++) {
+    if (await read().catch(() => false)) return check(true, what);
+    await new Promise((r) => setTimeout(r, 1_500));
+  }
+  check(false, what);
 }
 
 async function main() {
@@ -85,16 +102,19 @@ async function main() {
   const funder = privateKeyToAccount(TEST_FUNDER_KEY);
   const celoPublic = createPublicClient({ chain: celoSepolia.chain, transport: http(celoSepolia.publicRpcUrl) });
   const celoFunder = createWalletClient({ account: funder, chain: celoSepolia.chain, transport: http(celoSepolia.publicRpcUrl) });
+  const sepoliaPublic = createPublicClient({ chain: SEPOLIA.chain, transport: http(process.env.SEPOLIA_RPC_URL || SEPOLIA.publicRpcUrl) });
+
+  // Two Keystore registrations are paid in CELO (the passkey, then the session
+  // key), each sent with the SDK's margin, which comes back. The rest is for
+  // the relay's fees: the testnet relay quotes each request with a large gas
+  // allowance and the wallet must hold the quoted maximum every time.
+  const fee = await readRegistrationFee(celoPublic, celoSepolia);
+  const CELO_FUNDING = registrationValueFor(fee) * 2n + parseEther(process.env.SMOKE_CELO_FEE_HEADROOM ?? "2.6");
   const bal = await celoPublic.getBalance({ address: funder.address });
-  console.log(`funder ${funder.address}: ${formatEther(bal)} CELO on Celo Sepolia`);
-  if (bal < parseEther("1")) {
-    throw new Error(`Fund ${funder.address} with at least 1 CELO on Celo Sepolia: https://faucet.celo.org/celo-sepolia`);
-  }
-  const sepoliaPublic = createPublicClient({ chain: SEPOLIA.chain, transport: http(SEPOLIA.publicRpcUrl) });
-  const sepoliaFunder = createWalletClient({ account: funder, chain: SEPOLIA.chain, transport: http(SEPOLIA.publicRpcUrl) });
-  const sepoliaBal = await sepoliaPublic.getBalance({ address: funder.address });
-  if (sepoliaBal < parseEther("0.05")) {
-    throw new Error(`Fund ${funder.address} with at least 0.05 ETH on Sepolia: https://cloud.google.com/application/web3/faucet/ethereum/sepolia`);
+  console.log(`registration fee: ${formatEther(fee)} ${SYMBOL} per key`);
+  console.log(`funder ${funder.address}: ${formatEther(bal)} ${SYMBOL} on Celo Sepolia; this run sends ${formatEther(CELO_FUNDING)}`);
+  if (bal < CELO_FUNDING + parseEther("0.02")) {
+    throw new Error(`Fund ${funder.address} with at least ${formatEther(CELO_FUNDING + parseEther("0.02"))} ${SYMBOL} on Celo Sepolia: https://faucet.celo.org/celo-sepolia`);
   }
 
   // 1. Passkey signer (headless for Node)
@@ -116,26 +136,17 @@ async function main() {
   // wallet, and `signerFromPasskey(credential)` rebuilds it.
   savePasskeyCredential(wallet.address, passkey.credential);
 
+  const sepoliaNonceBefore = await sepoliaPublic.getTransactionCount({ address: wallet.address });
+
   const run = async () => {
   // 3. Fund
-  // Sepolia gas has been well above the registry write's 0.000376 ETH value:
-  // a plain relayed transfer quoted 0.0026 ETH in September 2026. Fund enough
-  // that the registry write is never the thing that is short, and let the
-  // sweep return the rest.
-  console.log(`\n[3] Fund the wallet with ${formatEther(CELO_FUNDING)} CELO on Celo Sepolia and ${formatEther(SEPOLIA_FUNDING)} ETH on Sepolia`);
+  console.log(`\n[3] Fund the wallet with ${formatEther(CELO_FUNDING)} ${SYMBOL} on Celo Sepolia`);
   const fundTx = await celoFunder.sendTransaction({ to: wallet.address, value: CELO_FUNDING });
-  const sepoliaFundTx = await sepoliaFunder.sendTransaction({ to: wallet.address, value: SEPOLIA_FUNDING });
-  await Promise.all([
-    celoPublic.waitForTransactionReceipt({ hash: fundTx }),
-    sepoliaPublic.waitForTransactionReceipt({ hash: sepoliaFundTx }),
-  ]);
+  await celoPublic.waitForTransactionReceipt({ hash: fundTx });
   // A receipt is not a visible balance: forno has answered 0 for a wallet whose
   // funding transaction had already confirmed, and the relay then quotes the
   // first intent as unpayable. Wait for the balance itself.
-  await Promise.all([
-    waitForBalance(celoPublic, wallet.address, CELO_FUNDING, 120_000),
-    waitForBalance(sepoliaPublic, wallet.address, SEPOLIA_FUNDING, 120_000),
-  ]);
+  await waitForBalance(celoPublic, wallet.address, CELO_FUNDING, 120_000);
   console.log(`    funded [${ms(t0)}]`);
 
   // 4. First execute: P256 signature verified on Celo Sepolia (P256 canary)
@@ -144,9 +155,10 @@ async function main() {
   console.log("    status:", firstExec.status, `[${ms(t0)}]`);
   console.log("    tx:    ", firstExec.transactionHash);
   if (firstExec.status !== "CONFIRMED") throw new Error("First execute failed");
+  await settles(async () => (await readActiveKeys(celoPublic, celoSepolia, wallet.address)).length === 1, "the passkey is registered in Celo Sepolia's KeyStore");
 
-  // 5a. A registered grant: the Sepolia registry write goes through the relay, so a passkey admin can sign it.
-  console.log("\n[5a] grantSession with register: true (passkey admin, registry write relayed on Sepolia)");
+  // 5a. A registered grant: the session key is registered in the same request, signed by the passkey.
+  console.log("\n[5a] grantSession (passkey admin, session key registered on Celo Sepolia)");
   const registered = await client.grantSession({
     wallet,
     signer: passkey,
@@ -155,9 +167,10 @@ async function main() {
   });
   printLegs(registered.legs);
   assertStatus(registered, "granted", "registered grantSession");
-  if (legOf(registered.legs, "registry", SEPOLIA.chainId).via !== "relay") {
-    throw new Error("expected the Sepolia registry write to go through the relay");
-  }
+  check(registered.legs.every((l) => l.chainId === CHAIN_ID), "every leg is on Celo Sepolia");
+  check(legOf(registered.legs, "registry", CHAIN_ID).via === "bundled", "the registration rides in the account's own request");
+  check(!registered.legs.some((l) => l.kind === "cache"), "there is no mirror step");
+  await settles(() => readIsValidKey(celoPublic, celoSepolia, wallet.address, registered.keyId), "the session key is valid in Celo Sepolia's KeyStore");
 
   // 5b. Account-only session
   console.log("\n[5b] grantSession({ register: false }) (1h, scoped to funder, 1 CELO/day)");
@@ -171,9 +184,8 @@ async function main() {
   });
   printLegs(session.legs);
   assertStatus(session, "granted", "grantSession");
-  if (session.legs.some((l) => l.kind === "registry") || legOf(session.legs, "cache", CELO_SEPOLIA.chainId).status !== "SKIPPED") {
-    throw new Error("expected no registry write and a skipped cache step for register: false");
-  }
+  check(!session.legs.some((l) => l.kind === "registry" || l.kind === "cache"), "register: false writes nothing to the KeyStore");
+  check((await readActiveKeys(celoPublic, celoSepolia, wallet.address)).length === 2, "the KeyStore still holds two keys (the passkey and the registered session)");
   console.log(`    granted [${ms(t0)}]`);
 
   // 6. Execute as the session
@@ -192,19 +204,21 @@ async function main() {
   const revokeRegistered = await client.revokeSession({ wallet, signer: passkey, session: registered });
   printLegs(revokeRegistered.legs);
   assertStatus(revokeRegistered, "revoked", "revokeSession (registered session)");
+  check(revokeRegistered.legs.every((l) => l.chainId === CHAIN_ID), "the revoke acted on Celo Sepolia only");
+  await settles(async () => !(await readIsValidKey(celoPublic, celoSepolia, wallet.address, registered.keyId)), "the revoked key is no longer valid in the KeyStore");
+
+  // 8. Sepolia was never touched.
+  console.log("\n[8] nothing on Sepolia");
+  check((await sepoliaPublic.getTransactionCount({ address: wallet.address })) === sepoliaNonceBefore, "the wallet sent nothing on Sepolia");
+  check((await readActiveKeys(sepoliaPublic, SEPOLIA, wallet.address)).length === 0, "the Sepolia KeyStore holds no key for the wallet");
   };
 
   // The sweep runs pass or fail: leftover testnet funds go back to the funder.
   try {
     await run();
   } finally {
-    console.log("\n[sweep] return leftover funds to the funder");
-    for (const [network, publicClient] of [
-      [celoSepolia, celoPublic],
-      [SEPOLIA, sepoliaPublic],
-    ] as [NetworkConfig, PublicClient][]) {
-      await sweepBack(network, publicClient, passkey, wallet, funder.address);
-    }
+    console.log("\n[9] return leftover funds to the funder");
+    await sweepBack(celoSepolia, celoPublic, passkey, wallet, funder.address);
   }
 
   console.log("\n==================================================");
