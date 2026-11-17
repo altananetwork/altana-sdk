@@ -30,8 +30,8 @@ BSC_FORK_RPC_URL=https://.../<KEY>          # fork-x402, fork-x402-witness, fork
 BASE_FORK_RPC_URL=https://.../<KEY>         # fork-eip3009 (run by hand; not in CI)
 BSC_TESTNET_FORK_RPC_URL=https://.../<KEY>  # fork-erc8004, fork-erc8183
 CELO_SEPOLIA_FORK_RPC_URL=https://.../<KEY> # fork-celo-cache, fork-eip3009-celo, fork-celo-x402-server (public fallback: rpc.ankr.com/celo_sepolia)
-SEPOLIA_RPC_URL=https://.../<KEY>           # fork-celo-cache, smoke:celo-sepolia: optional override of SEPOLIA.publicRpcUrl
-                                            # (must serve eth_getProof for the block Celo Sepolia anchors, about 100 behind head)
+SEPOLIA_RPC_URL=https://.../<KEY>           # fork-celo-cache: optional override of SEPOLIA.publicRpcUrl
+                                            # (must serve eth_getProof for the block the fork anchors, about 100 behind head)
 ```
 
 `fork-eip3009` forks Base and is deliberately not in `fork:all`: Base is
@@ -98,21 +98,27 @@ Self-contained anvil mainnet forks; no env vars or funded keys needed (requires 
 - `fork-eip3009-celo.ts` (in `fork:all`): the EIP-3009 rail with a CONTRACT signer — Celo Sepolia's real USDC calling the real IthacaAccount's `isValidSignature` for a session key, which no unit test can prove. It carries its own control: without the token approved as the key's signature checker the transfer is refused with `FiatTokenV2: invalid signature`, the exact string behind a live 500, and with it the same signature settles. This is the coverage CI lost when Base left `fork:all`
 - `fork-native-receive.ts` (in `fork:all`): pins the EIP-7702 native-receive limitation — a 2300-gas-stipend payout (`.transfer()`/`.send()`) to a delegated wallet reverts, full-gas `call{value:}` succeeds, and Venus vBNB `redeem` reproduces the real-world failure (issue #55)
 - `fork-bep677.ts`: BEP-677 scaled-UI-amount display in `client.balances` (mock BEP-677 tokens + real USDT on a BSC fork)
-- `fork-celo-cache.ts` (in `fork:all`): Celo Sepolia fork with KeyStoreCacheOPStack 1.1.1 deployed from `fixtures/KeyStoreCacheOPStack-1.1.1.json` (compiled from altana-keystore `main`, commit `64ac831`); pins the `L1Block` predeploy to a fresh Sepolia block, builds a real Sepolia proof for a wallet registered on the Sepolia KeyStore with the SDK's `buildPopulateKeyCall`, and asserts `isValidKey` true, the freshness rule (stale after the anchor moves), `computeKeyPackedSlot` against the contract, and the SDK's refusal of registry calls on Celo Sepolia
+- `fork-celo-cache.ts` (in `fork:all`): Celo Sepolia fork with KeyStoreCacheOPStack 1.1.1 deployed from `fixtures/KeyStoreCacheOPStack-1.1.1.json` (compiled from altana-keystore `main`, commit `64ac831`); pins the `L1Block` predeploy to a fresh Sepolia block, builds a real Sepolia proof for a wallet registered on the Sepolia KeyStore with the SDK's `buildPopulateKeyCall`, and asserts `isValidKey` true, the freshness rule (stale after the anchor moves), `computeKeyPackedSlot` against the contract, and the SDK's refusal of registry calls on a mirrored network. The mirrored network is a config local to the test: Celo Sepolia itself keeps its own KeyStore
+- `fork-celo-keystore.ts` (in `fork:all`): a fork of Celo Sepolia (or Celo mainnet with `celo`) with the KeyStore and controller at the addresses in the SDK's config: code and versions there, a main key and a session key registered with the SDK's own call builders, the treasury receiving exactly the fees, and a revoke
 - `fork-celo-x402-server.ts` (in `fork:all`): the x402 merchant on chain 11142220, an EOA paying eip3009 USDC and an Altana smart account paying permit2-exact USDT (ERC-1271 against the real Celo Sepolia account implementation), settlement as standard EIP-1559
 
 ## Celo Sepolia live smokes
 
-`smoke-celo-sepolia.ts` (private-key admin: create, fund on both chains, execute, grant with registry write on Sepolia and proof into the cache, session execute, reads, revoke with post-revocation proof, post-revoke rejection) and `smoke-celo-passkey.ts` (headless passkey admin: create, execute through the P256 canary, account-only grant with `register: false`, session execute, revoke; also asserts a registered grant is refused with the documented message).
+Celo Sepolia keeps its own KeyStore, so everything in these runs happens on Celo Sepolia and the registration fee is paid in CELO.
 
-They need `TEST_FUNDER_KEY` funded with CELO on Celo Sepolia (https://faucet.celo.org/celo-sepolia) and nothing on Sepolia (the Keystore writes there are paid from the wallet's CELO by the relay); the session smoke also needs the cache address (`CELO_SEPOLIA_CACHE`, or the SDK config once filled) and a Sepolia RPC with historical `eth_getProof` (`SEPOLIA_RPC_URL`, default Tenderly). Both fail loudly, naming what to fund, instead of skipping.
+- `smoke-celo-sepolia.ts` (private-key admin): create, fund with CELO, quote, first grant (main key and session key registered and the session authorized in one request), session execute, revoke with the post-revoke refusal, a second grant, and a check that nothing was sent on Sepolia.
+- `smoke-celo-passkey.ts` (headless passkey admin): create, first execute through the P256 canary (which registers the passkey), a registered grant, an account-only grant with `register: false`, session execute, both revokes.
+- `live-celo-proof.ts`: the same flow as a proof run with a cost table (CELO and dollars per step, registration fees and relay fees apart, against the $2 target for a first setup). A dry run unless `--send`. `--network celo` runs it on Celo mainnet with `MAINNET_TEST_CELO_KEY`; a send there also needs `--i-am-doris` and a phrase typed at an interactive terminal.
+
+They need `TEST_FUNDER_KEY` funded with CELO on Celo Sepolia (https://faucet.celo.org/celo-sepolia) and nothing anywhere else. Each saves its throwaway wallet's key to the shared testnet env file before funding it, returns what is left to the funder, and fails loudly, naming what to fund, instead of skipping.
 
 ```bash
 bun run --filter '@altananetwork/e2e' smoke:celo-sepolia
 bun run --filter '@altananetwork/e2e' smoke:celo-passkey
+bun run --filter '@altananetwork/e2e' live:celo-proof -- --send
 ```
 
-`smoke-celo-fee-currency.ts` proves relay fees paid in a stablecoin: it lists the relay's fee tokens (`client.feeCurrencies()`), then for each token under test (default `usdc,eurm`, override with `SMOKE_FEE_TOKENS`) creates a wallet, funds it with that token and no CELO, executes with no `feeToken`, and checks the result names the token, the fee came out of the token balance, and the CELO balance is still zero. It then grants a session with `feeToken: [token]` (`register: false`) and executes as the session with nothing named, checking the session paid in the token from the cap the grant added. Leftover tokens are swept back to the funder through the relay, paying that fee in the token too. It needs `TEST_FUNDER_KEY` holding the tokens on Celo Sepolia (USDC: https://faucet.circle.com; USDm, EURm, KESm: https://faucet.celo.org/celo-sepolia) and fails loudly naming the missing one.
+`smoke-celo-fee-currency.ts` proves relay fees paid in a stablecoin: it lists the relay's fee tokens (`client.feeCurrencies()`), then for each token under test (default `usdc`, override with `SMOKE_FEE_TOKENS`) creates a wallet and funds it with that token plus the CELO for two Keystore registrations. The first execute names no `feeToken`: the result names the token, the fee came out of the token balance, the main key is registered, and CELO dropped by exactly one registration fee. A grant with `feeToken: [token]` and a session execute with nothing named do the same, the session paying from the cap the grant added. Leftovers go back to the funder. It needs `TEST_FUNDER_KEY` holding CELO and the tokens on Celo Sepolia (USDC: https://faucet.circle.com; CELO, USDm, EURm, KESm: https://faucet.celo.org/celo-sepolia) and fails loudly naming the missing one.
 
 ```bash
 bun run --filter '@altananetwork/e2e' smoke:celo-fee-currency
