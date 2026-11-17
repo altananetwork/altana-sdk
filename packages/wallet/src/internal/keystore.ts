@@ -10,6 +10,7 @@
  */
 
 import {
+  decodeFunctionData,
   encodeFunctionData,
   keccak256,
   type Address,
@@ -96,6 +97,38 @@ const KEYSTORE_ABI = [
   },
 ] as const;
 
+/** KeyStore's event for a key landing, emitted by the KeyStore itself (not the controller). */
+export const KEY_REGISTERED_EVENT = {
+  type: "event",
+  name: "KeyRegistered",
+  inputs: [
+    { name: "user", type: "address", indexed: true },
+    { name: "keyId", type: "bytes32", indexed: true },
+    { name: "validator", type: "address", indexed: true },
+    { name: "expiry", type: "uint40", indexed: false },
+    { name: "isRoot", type: "bool", indexed: false },
+  ],
+} as const;
+
+/**
+ * The key a controller call registers: the `keyId` of an `initialRegisterKey`
+ * or `registerKey` call as the SDK builds them. Undefined for anything else,
+ * including calldata that does not decode, so a caller can tell "this call
+ * registers key X" from "this call is not one I can read back".
+ */
+export function registeredKeyIdOf(data: Hex | undefined): Hex | undefined {
+  if (!data || data === "0x") return undefined;
+  try {
+    const decoded = decodeFunctionData({ abi: CONTROLLER_ABI, data });
+    if (decoded.functionName === "initialRegisterKey" || decoded.functionName === "registerKey") {
+      return decoded.args[0];
+    }
+  } catch {
+    // Not a registration call.
+  }
+  return undefined;
+}
+
 const UINT40_MAX = 2 ** 40 - 1;
 
 function toUint40Expiry(expiry: number | undefined): number {
@@ -166,12 +199,15 @@ export function readIsValidKey(
   network: NetworkConfig,
   user: Address,
   keyId: Hex,
+  /** Read at this block instead of the latest. */
+  blockNumber?: bigint,
 ): Promise<boolean> {
   return publicClient.readContract({
     address: network.keyStore,
     abi: KEYSTORE_ABI,
     functionName: "isValidKey",
     args: [user, keyId],
+    ...(blockNumber !== undefined ? { blockNumber } : {}),
   }) as Promise<boolean>;
 }
 

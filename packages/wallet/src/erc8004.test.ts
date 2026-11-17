@@ -420,7 +420,7 @@ describe("waitForCalls", () => {
     expect(result.statusCode).toBe(100);
   });
 
-  test("an out-of-band code polls rather than guessing terminal — FAILED must stay safe to resubmit", async () => {
+  test("an out-of-band code polls rather than guessing terminal", async () => {
     const result = await waitForCalls(
       clientReturning({ id: "0xcallsid", status: 999, receipts: [] }),
       "0xcallsid",

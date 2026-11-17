@@ -1541,7 +1541,13 @@ async function payerBalance(
     payNetwork.chainId === relay.network.chainId
       ? getAddress(intent.feeToken)
       : undefined;
-  const token = namedHere ?? NATIVE_TOKEN;
+  // A funded intent is paid on the paying chain in whichever accepted token
+  // the payer holds there; the relay chooses. A payer holding none of that
+  // chain's own currency but holding a token there is spoken to in that token:
+  // "you have 0 CELO" to a wallet holding 2.20 USDC names a currency it never
+  // meant to pay with (the USDC test wallet on Celo mainnet, 2026-11-16).
+  const heldInstead = intent.funded && !namedHere ? tokenHeldInstead(holdings, payNetwork.chainId) : undefined;
+  const token = namedHere ?? heldInstead ?? NATIVE_TOKEN;
   const held = holdings.find(
     (h) => h.chainId === payNetwork.chainId && h.token.toLowerCase() === token.toLowerCase(),
   );
@@ -1580,6 +1586,21 @@ async function payerBalance(
       fund: { chain: payNetwork.chain.name, ...(tokens.length > 0 ? { tokens } : { tokens: [symbol] }) },
     },
   };
+}
+
+/**
+ * The token a payer holds on `chainId` when it holds none of the chain's own
+ * currency: the largest of its token balances there, compared at 18 decimals.
+ * Undefined when it holds the native currency, or nothing else.
+ */
+function tokenHeldInstead(holdings: readonly Holding[], chainId: number): Address | undefined {
+  const here = holdings.filter((h) => h.chainId === chainId);
+  const isNative = (h: Holding) => h.token.toLowerCase() === NATIVE_TOKEN.toLowerCase();
+  if (here.some((h) => isNative(h) && h.balance > 0n)) return undefined;
+  const scaled = (h: Holding) => h.balance * 10n ** BigInt(Math.max(0, 18 - h.decimals));
+  const tokens = here.filter((h) => !isNative(h) && h.balance > 0n);
+  if (tokens.length === 0) return undefined;
+  return tokens.reduce((a, b) => (scaled(b) > scaled(a) ? b : a)).token;
 }
 
 /** The relay's simulation reverted with no reason bytes ("intent reverted: 0x" or a bare "0x"). */
@@ -2101,10 +2122,18 @@ export async function blockNumberOfWrite(args: {
  * 2xx success, 300–699 terminal failure — 300 is the relay rejecting the
  * bundle before inclusion (fee unpayable under the session's spend cap,
  * relay policy), 5xx an on-chain revert, 6xx partial failure. A code
- * outside every band keeps polling rather than guessing: FAILED is the
- * caller's "terminal, safe to resubmit" signal, and misreading an unknown
- * code as terminal risks a duplicate submission. The raw code is returned
- * as `statusCode` whenever one was observed — including on a timed-out
+ * outside every band keeps polling rather than guessing: FAILED is terminal,
+ * and misreading an unknown code as terminal could lead a caller to submit
+ * the same operation again.
+ *
+ * FAILED describes the relay's OWN transaction, not whether the intent ran.
+ * A signed intent can be delivered by any sender, and where a transaction
+ * waits in public before inclusion (Ethereum) another sender can deliver it
+ * first; the relay's transaction then fails although the intent ran. So FAILED
+ * is not by itself a signal that resubmitting is safe. Registry writes check
+ * the KeyStore before believing it (`registrationOnChain` in cachedRegistry).
+ *
+ * The raw code is returned as `statusCode` whenever one was observed — including on a timed-out
  * PENDING, where its absence means the relay never answered at all.
  *
  * A timed-out PENDING also carries the receipts the relay had reported by

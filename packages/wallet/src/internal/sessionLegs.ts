@@ -216,6 +216,14 @@ export const realSessionLegDeps: SessionLegDeps = {
         ...(written.fundedFromChainId !== undefined ? { fundedFromChainId: written.fundedFromChainId } : {}),
         ...(written.sourceTransactionHash ? { sourceTransactionHash: written.sourceTransactionHash } : {}),
         ...(written.rootRegistration ? { rootRegistration: written.rootRegistration } : {}),
+        ...(written.callsId ? { callsId: written.callsId } : {}),
+        // Confirmed by the KeyStore over the relay's word: keep what the relay said, for the log.
+        ...(written.relayReported
+          ? {
+              relayStatus: written.relayReported.status,
+              ...(written.relayReported.statusCode !== undefined ? { statusCode: written.relayReported.statusCode } : {}),
+            }
+          : {}),
         // Prefer the write's own words. `registry write status FAILED` names
         // nothing: it is what the spine report printed for a failure whose
         // cause was known one layer down.
