@@ -6,7 +6,7 @@
  * endpoint answers.
  */
 import { afterAll, describe, expect, test } from "bun:test";
-import { CELO, ETHEREUM, SEPOLIA, type NetworkConfig } from "../config.js";
+import { ETHEREUM, SEPOLIA, type NetworkConfig } from "../config.js";
 import { buildProofClient } from "./relay.js";
 
 type Rpc = { method: string; id: number };
@@ -98,10 +98,8 @@ describe("buildProofClient", () => {
   });
 });
 
-describe("the registry chains behind the cached networks", () => {
-  test("Ethereum, the registry behind Celo, carries proof endpoints", () => {
-    if (CELO.registry?.kind !== "cached") throw new Error("CELO must be a cached network");
-    expect(CELO.registry.l1).toBe(ETHEREUM);
+describe("the chains proofs are built from", () => {
+  test("Ethereum carries proof endpoints, for chains that read its KeyStore", () => {
     expect(ETHEREUM.proofRpcUrls?.length).toBeGreaterThanOrEqual(2);
     for (const u of ETHEREUM.proofRpcUrls ?? []) expect(u).toMatch(/^https:\/\//);
   });

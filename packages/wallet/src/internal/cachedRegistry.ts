@@ -1,5 +1,5 @@
 /**
- * Cached-registry networks (Celo Sepolia, Celo).
+ * Cached-registry networks (Base Sepolia).
  *
  * On these networks the KeyStore lives on another chain (`registry.l1`) and
  * is mirrored into a KeyStoreCache contract on the network through storage
@@ -77,7 +77,7 @@ export function keyStoreCacheOf(network: NetworkConfig): Address {
     throw new Error(
       `${network.chain.name} (chainId ${network.chainId}) keeps its KeyStore locally; ` +
         `there is no KeyStoreCache to sync to. Cache operations apply only to cached ` +
-        `networks such as CELO_SEPOLIA.`,
+        `networks such as BASE_SEPOLIA.`,
     );
   }
   const cache = network.registry.keyStoreCache;
@@ -92,12 +92,11 @@ export function keyStoreCacheOf(network: NetworkConfig): Address {
 
 /**
  * The networks a wallet must be provisioned on for the given execution
- * networks: the networks themselves plus, for each cached network whose
- * registry chain has a relay, that registry chain. A passkey wallet cannot be
- * provisioned later (its throwaway EOA is discarded at creation), so the
- * registry chain's smart account has to be set up in the same call. Relay-less
- * registry chains (Sepolia) are left out: writes there come from the admin
- * EOA directly and need no smart account.
+ * networks: the networks themselves, for each cached network its registry
+ * chain, and the chains a network names in `provisionAlso`. A passkey wallet
+ * cannot be provisioned later (its throwaway EOA is discarded at creation),
+ * so every chain it may act on has to be set up in the same call. Chains
+ * without a relay are left out: nothing can be provisioned there.
  */
 export function provisioningNetworks(networks: readonly NetworkConfig[]): NetworkConfig[] {
   const out: NetworkConfig[] = [];
@@ -111,6 +110,9 @@ export function provisioningNetworks(networks: readonly NetworkConfig[]): Networ
     push(network);
     if (isCachedRegistry(network) && network.registry.l1.relayUrl) {
       push(network.registry.l1);
+    }
+    for (const also of network.provisionAlso ?? []) {
+      if (also.relayUrl) push(also);
     }
   }
   return out;
@@ -226,6 +228,13 @@ export type SubmitRegistryCallsArgs = {
    * quoting and the figure cannot be read any other way.
    */
   expectedCost?: { chainId: number; token: Address; amount: bigint };
+  /**
+   * The chain whose balance pays for the write, when the caller knows it.
+   * A failure is worded in what the payer holds there. Left out, it is the
+   * chain the wallet's holdings point at among those that keep their registry
+   * on this chain.
+   */
+  fundFrom?: NetworkConfig;
 };
 
 /**
@@ -245,7 +254,8 @@ export async function submitRegistryCalls(
         `use submitCalls on the network itself.`,
     );
   }
-  return submitRegistryWrite(network.registry.l1, args);
+  // The cached network being operated on is the one whose balance pays.
+  return submitRegistryWrite(network.registry.l1, { fundFrom: network, ...args });
 }
 
 /**
@@ -469,6 +479,8 @@ async function submitOneRelayedWrite(args: {
   calls: readonly Call[];
   /** The caller's own quote, for wording a failure. See `SubmitRegistryCallsArgs`. */
   expectedCost?: { chainId: number; token: Address; amount: bigint };
+  /** The chain that pays, when known. See `SubmitRegistryCallsArgs`. */
+  fundFrom?: NetworkConfig;
   /** The payment is locked and the registry chain is slow; the wait goes on. */
   onWaiting?: () => void;
   timing?: RegistryWriteTiming;
@@ -493,6 +505,7 @@ async function submitOneRelayedWrite(args: {
       // sentence never names the asset they deliberately do not hold here.
       operation: `registering this key on ${registry.chain.name}`,
       ...(args.expectedCost ? { expectedCost: args.expectedCost } : {}),
+      ...(args.fundFrom ? { fundFrom: args.fundFrom } : {}),
       submittingKey: { type: "secp256k1", publicKey: adminSigner.publicKey, role: "admin" },
       network: registry,
       // These calls ARE the first-action registration, so submitCalls must not
@@ -552,7 +565,7 @@ async function submitOneRelayedWrite(args: {
  * Submits registry calls on a registry chain directly: through its relay when
  * it has one, otherwise as transactions from the admin key. Used for a
  * registry chain that is not itself one of the networks being operated on
- * (Sepolia behind Celo Sepolia and Base Sepolia, or Ethereum behind Celo when
+ * (Sepolia behind Base Sepolia, or Ethereum behind an L2 that mirrors it, when
  * the Ethereum account holds no copy of the key).
  */
 export async function submitRegistryWrite(
@@ -599,6 +612,7 @@ export async function submitRegistryWrite(
         adminSigner,
         calls: prepend,
         ...(args.expectedCost ? { expectedCost: args.expectedCost } : {}),
+        ...(args.fundFrom ? { fundFrom: args.fundFrom } : {}),
         ...(args.onWaiting ? { onWaiting: () => args.onWaiting!("root") } : {}),
         ...(args.timing ? { timing: args.timing } : {}),
       });
@@ -646,6 +660,7 @@ export async function submitRegistryWrite(
       requiredFunds,
       operation: `registering this key on ${registry.chain.name}`,
       ...(args.expectedCost ? { expectedCost: args.expectedCost } : {}),
+      ...(args.fundFrom ? { fundFrom: args.fundFrom } : {}),
       submittingKey: { type: "secp256k1", publicKey: adminSigner.publicKey, role: "admin" },
       network: registry,
     });

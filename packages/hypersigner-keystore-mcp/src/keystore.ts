@@ -20,7 +20,7 @@ import {
   encodeFunctionData,
   keccak256,
 } from "viem";
-import { bsc, bscTestnet, celo, celoSepolia, mainnet, sepolia } from "viem/chains";
+import { baseSepolia, bsc, bscTestnet, celo, celoSepolia, mainnet, sepolia } from "viem/chains";
 
 export const ZERO_ADDRESS =
   "0x0000000000000000000000000000000000000000" as Address;
@@ -195,9 +195,31 @@ export const CHAINS: Record<string, ChainConfig> = {
     explorerUrl: "https://testnet.bscscan.com",
     currencySymbol: "tBNB",
   },
-  // Sepolia KeyStore: the registry behind Celo Sepolia. Celo Sepolia itself
-  // has no KeyStore, only a cache mirrored from this one, so "celo-sepolia"
-  // resolves here: authority for a Celo Sepolia wallet is rooted in Sepolia.
+  // Celo keeps its own KeyStore, like BNB Chain: keys used on Celo are
+  // registered on Celo, and the registration fee is paid in CELO.
+  celo: {
+    key: "celo",
+    chainId: 42220,
+    chain: celo,
+    keyStore: "0x83b30935f36d6ccf9B1ec3b5E47F2866b97cd27c",
+    controller: "0x47bA5fc2A5b0CcB24BA3fAC9D4B59400eE9fd1D6",
+    rpcUrl: "https://celo-rpc.publicnode.com",
+    explorerUrl: "https://celoscan.io",
+    currencySymbol: "CELO",
+  },
+  "celo-sepolia": {
+    key: "celo-sepolia",
+    chainId: 11142220,
+    chain: celoSepolia,
+    keyStore: "0xCC3df52B6aD826781AAD86EcEB1459ed0b1Ae3F6",
+    controller: "0x54eAb49d805336DB8591BAAF9ac630D0A58Ad2cD",
+    rpcUrl: "https://forno.celo-sepolia.celo-testnet.org",
+    explorerUrl: "https://sepolia.celoscan.io",
+    currencySymbol: "CELO",
+  },
+  // Sepolia KeyStore: the registry behind Base Sepolia. Base Sepolia itself
+  // has no KeyStore, only a cache mirrored from this one, so "base-sepolia"
+  // resolves here: authority for a Base Sepolia wallet is rooted in Sepolia.
   sepolia: {
     key: "sepolia",
     chainId: 11155111,
@@ -211,11 +233,11 @@ export const CHAINS: Record<string, ChainConfig> = {
 };
 
 /**
- * Aliases resolve to the chain that HOLDS the registry. Celo (42220) has no
- * KeyStore of its own: its authority is rooted in the Ethereum KeyStore and
- * mirrored into a cache on Celo, so "celo" resolves to ethereum. Likewise
- * "celo-sepolia" (11142220) resolves to sepolia. Encoded calls carry the
- * resolved chainId, so a host signs them on the registry chain.
+ * Aliases resolve to the chain that HOLDS the registry. Base Sepolia (84532)
+ * has no KeyStore of its own: its authority is rooted in the Sepolia KeyStore
+ * and mirrored into a cache on Base Sepolia, so "base-sepolia" resolves to
+ * sepolia. Encoded calls carry the resolved chainId, so a host signs them on
+ * the registry chain.
  */
 const ALIASES: Record<string, string> = {
   bsc: "bnb",
@@ -223,54 +245,41 @@ const ALIASES: Record<string, string> = {
   eth: "ethereum",
   mainnet: "ethereum",
   "1": "ethereum",
-  celo: "ethereum",
-  "42220": "ethereum",
+  "42220": "celo",
   "bsc-testnet": "bnb-testnet",
   tbnb: "bnb-testnet",
   "97": "bnb-testnet",
   "11155111": "sepolia",
-  "celo-sepolia": "sepolia",
-  "11142220": "sepolia",
+  "11142220": "celo-sepolia",
+  "base-sepolia": "sepolia",
+  "84532": "sepolia",
 };
 
 /**
  * The L2 caches, keyed by the alias that names them. Only an L2 alias carries
- * one: `celo` and `42220` mean Celo, `celo-sepolia` and `11142220` mean Celo
- * Sepolia. Naming the registry chain directly (`ethereum`, `sepolia`) leaves
- * `l2` unset, because more than one L2 is rooted in each and the server would
- * be guessing.
+ * one: `base-sepolia` and `84532` mean Base Sepolia. Naming the registry chain
+ * directly (`sepolia`) leaves `l2` unset, because more than one L2 can be
+ * rooted in it and the server would be guessing.
  *
  * Addresses from the Altana KeyStore deployment manifests.
  */
 export const L2_CACHES: Record<string, L2CacheConfig> = {
-  celo: {
-    key: "celo",
-    chainId: 42220,
-    chain: celo,
-    // KeyStoreCacheOPStack 1.1.1, anchored to the Ethereum KeyStore.
-    cache: "0xF939d7D3a2b8262aD8662c71Dec38119058d5a06",
-    rpcUrl: "https://celo-rpc.publicnode.com",
-    explorerUrl: "https://celoscan.io",
-    currencySymbol: "CELO",
-  },
-  "celo-sepolia": {
-    key: "celo-sepolia",
-    chainId: 11142220,
-    chain: celoSepolia,
-    // KeyStoreCacheOPStack 1.1.1, deploy block 35678512.
-    cache: "0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD",
-    rpcUrl: "https://forno.celo-sepolia.celo-testnet.org",
-    explorerUrl: "https://sepolia.celoscan.io",
-    currencySymbol: "CELO",
+  "base-sepolia": {
+    key: "base-sepolia",
+    chainId: 84532,
+    chain: baseSepolia,
+    // KeyStoreCacheOPStack, anchored to the Sepolia KeyStore.
+    cache: "0x37ebf8F17c3705568a03fB3A1629AcE7B3D95FFf",
+    rpcUrl: "https://sepolia.base.org",
+    explorerUrl: "https://sepolia.basescan.org",
+    currencySymbol: "ETH",
   },
 };
 
 /** Which L2 cache an alias names, if any. */
 const L2_ALIASES: Record<string, string> = {
-  celo: "celo",
-  "42220": "celo",
-  "celo-sepolia": "celo-sepolia",
-  "11142220": "celo-sepolia",
+  "base-sepolia": "base-sepolia",
+  "84532": "base-sepolia",
 };
 
 export function resolveChain(name?: string): ChainConfig {

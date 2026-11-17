@@ -23,6 +23,26 @@ import { createPrivateKeySigner, type Signer } from "./internal/signer.js";
 import { runGrantSession } from "./grantSession.js";
 import { runRevokeSession, type RevokeSessionResult } from "./revokeSession.js";
 
+/**
+ * Two networks that keep their registry on another chain, as these cases need:
+ * two L2s behind one registry chain on testnet, and one behind Ethereum.
+ * Base Sepolia is the SDK's own network of this shape; these two carry Celo's
+ * chain ids with the registry Celo had before it got its own KeyStore, so the
+ * orchestration for mirrored networks stays covered for the chains that use it.
+ */
+const MIRRORED_L2: NetworkConfig = {
+  ...CELO_SEPOLIA,
+  keyStore: SEPOLIA.keyStore,
+  keyStoreController: SEPOLIA.keyStoreController,
+  registry: { kind: "cached", l1: SEPOLIA, keyStoreCache: "0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD" },
+};
+const MIRRORED_MAINNET_L2: NetworkConfig = {
+  ...CELO,
+  keyStore: ETHEREUM.keyStore,
+  keyStoreController: ETHEREUM.keyStoreController,
+  registry: { kind: "cached", l1: ETHEREUM, keyStoreCache: "0xF939d7D3a2b8262aD8662c71Dec38119058d5a06" },
+};
+
 const WALLET = { address: "0x1111111111111111111111111111111111111111" as Address };
 
 type Submitted = { chainId: number; calls: readonly { to: Address; data?: Hex; value?: bigint }[]; args: any };
@@ -164,7 +184,7 @@ const REVOKE_KEY_ABI = [
 describe("revokeSession discovery", () => {
   test("only networks whose account holds the key get an account leg", async () => {
     const { deps, log } = fakeChains({ holds: [11142220] });
-    const result = await revoke([CELO_SEPOLIA, BASE_SEPOLIA], deps);
+    const result = await revoke([MIRRORED_L2, BASE_SEPOLIA], deps);
 
     expect(log.account.map((s) => s.chainId)).toEqual([11142220]);
     expect(result.status).toBe("revoked");
@@ -172,7 +192,7 @@ describe("revokeSession discovery", () => {
 
   test("nothing held and nothing registered is already revoked, with no writes", async () => {
     const { deps, log } = fakeChains();
-    const result = await revoke([CELO_SEPOLIA, BASE_SEPOLIA, BNB], deps);
+    const result = await revoke([MIRRORED_L2, BASE_SEPOLIA, BNB], deps);
 
     expect(log.account).toEqual([]);
     expect(log.registry).toEqual([]);
@@ -182,7 +202,7 @@ describe("revokeSession discovery", () => {
 
   test("an L2 with no cache configured adds no leg when nothing on it needs proving", async () => {
     const { deps } = fakeChains({ holds: [56], registryValid: [56] });
-    const result = await revoke([BNB, ETHEREUM, CELO], deps);
+    const result = await revoke([BNB, ETHEREUM, MIRRORED_MAINNET_L2], deps);
 
     expect(result.legs.some((l) => l.chainId === 42220)).toBe(false);
     expect(result.status).toBe("revoked");
@@ -190,7 +210,7 @@ describe("revokeSession discovery", () => {
 
   test("an unreadable account is a failed leg, never a clean chain", async () => {
     const { deps } = fakeChains({ readErrorAccount: [84532] });
-    const result = await revoke([CELO_SEPOLIA, BASE_SEPOLIA], deps);
+    const result = await revoke([MIRRORED_L2, BASE_SEPOLIA], deps);
 
     expect(result.status).toBe("failed");
     const leg = result.legs.find((l) => l.chainId === 84532)!;
@@ -203,7 +223,7 @@ describe("revokeSession registry legs", () => {
   test("two L2s sharing Sepolia produce one registry leg, fired because the key is valid there", async () => {
     const { deps, log } = fakeChains({ holds: [11142220, 84532], registryValid: [11155111] });
     const key = createPrivateKeySigner().publicKey;
-    const result = await revoke([CELO_SEPOLIA, BASE_SEPOLIA], deps, key);
+    const result = await revoke([MIRRORED_L2, BASE_SEPOLIA], deps, key);
 
     expect(log.registry.map((s) => s.chainId)).toEqual([11155111]);
     const { functionName, args } = decodeFunctionData({ abi: REVOKE_KEY_ABI, data: log.registry[0]!.calls[0]!.data! });
@@ -226,7 +246,7 @@ describe("revokeSession registry legs", () => {
 
   test("no registry leg when readIsValidKey is false", async () => {
     const { deps, log } = fakeChains({ holds: [11142220] });
-    const result = await revoke([CELO_SEPOLIA], deps);
+    const result = await revoke([MIRRORED_L2], deps);
 
     expect(log.registry).toEqual([]);
     expect(result.legs.find((l) => l.kind === "registry")!.status).toBe("SKIPPED");
@@ -251,7 +271,7 @@ describe("revokeSession registry legs", () => {
   test("a local L1 bundles the registry revoke for the L2 behind it, whose cache proof waits for that block", async () => {
     const { deps, log } = fakeChains({ holds: [1, 42220], registryValid: [1] });
     const celoWithCache: NetworkConfig = {
-      ...CELO,
+      ...MIRRORED_MAINNET_L2,
       registry: { kind: "cached", l1: ETHEREUM, keyStoreCache: "0x0000000000000000000000000000000000000c0c" },
     };
     const result = await revoke([ETHEREUM, celoWithCache], deps);
@@ -267,7 +287,7 @@ describe("revokeSession registry legs", () => {
 describe("revokeSession status is binary", () => {
   test("a failed account leg makes the revoke failed and does not stop the others", async () => {
     const { deps, log } = fakeChains({ holds: [11142220, 84532], registryValid: [11155111], failAccount: [11142220] });
-    const result = await revoke([CELO_SEPOLIA, BASE_SEPOLIA], deps);
+    const result = await revoke([MIRRORED_L2, BASE_SEPOLIA], deps);
 
     expect(result.status).toBe("failed");
     expect(log.account.map((s) => s.chainId).sort((a, b) => a - b)).toEqual([84532, 11142220]);
@@ -277,7 +297,7 @@ describe("revokeSession status is binary", () => {
 
   test("a failed registry leg makes the revoke failed and skips the cache proofs behind it", async () => {
     const { deps, log } = fakeChains({ holds: [11142220], registryValid: [11155111], failRegistry: [11155111] });
-    const result = await revoke([CELO_SEPOLIA], deps);
+    const result = await revoke([MIRRORED_L2], deps);
 
     expect(result.status).toBe("failed");
     expect(log.cache).toEqual([]);
@@ -317,7 +337,7 @@ describe("revokeSession retry", () => {
   test("after a failed cache proof, a retry proves only the stale cache and writes nothing else", async () => {
     // State after the first run: accounts and registry clean, Base Sepolia's cache still live.
     const { deps, log } = fakeChains({ cacheLive: [84532] });
-    const result = await revoke([CELO_SEPOLIA, BASE_SEPOLIA], deps);
+    const result = await revoke([MIRRORED_L2, BASE_SEPOLIA], deps);
 
     expect(log.account).toEqual([]);
     expect(log.registry).toEqual([]);
@@ -327,7 +347,7 @@ describe("revokeSession retry", () => {
 
   test("after a failed account leg, a retry acts only on that chain", async () => {
     const { deps, log } = fakeChains({ holds: [11142220] });
-    const result = await revoke([CELO_SEPOLIA, BASE_SEPOLIA], deps);
+    const result = await revoke([MIRRORED_L2, BASE_SEPOLIA], deps);
 
     expect(log.account.map((s) => s.chainId)).toEqual([11142220]);
     expect(log.registry).toEqual([]);
@@ -366,7 +386,7 @@ describe("session key identity", () => {
       expiry: 1_800_000_000,
     };
     const { deps, log } = fakeChains({ holds: [11142220] });
-    await revoke([CELO_SEPOLIA], deps, session);
+    await revoke([MIRRORED_L2], deps, session);
     expect(log.account[0]!.args.revokeKeys[0].type).toBe("webauthn-p256");
   });
 });
@@ -374,7 +394,7 @@ describe("session key identity", () => {
 describe("grantSession returns before the cache proofs", () => {
   test("cache legs read PENDING at return and finish through cacheSync; the session is granted meanwhile", async () => {
     const { deps, log } = fakeChains({});
-    const result = await grant([CELO_SEPOLIA, BASE_SEPOLIA], deps);
+    const result = await grant([MIRRORED_L2, BASE_SEPOLIA], deps);
 
     expect(result.status).toBe("granted");
     expect(result.legs.filter((l) => l.kind === "cache").map((l) => l.status)).toEqual(["PENDING", "PENDING"]);
@@ -405,7 +425,7 @@ describe("grantSession returns before the cache proofs", () => {
 
   test("populateCache: \"await\" returns with the proofs in, and a failed proof fails the grant", async () => {
     const { deps } = fakeChains({ failCache: [84532] });
-    const result = await grant([CELO_SEPOLIA, BASE_SEPOLIA], deps, { populateCache: "await" });
+    const result = await grant([MIRRORED_L2, BASE_SEPOLIA], deps, { populateCache: "await" });
 
     expect(result.status).toBe("failed");
     expect(result.legs.filter((l) => l.kind === "cache").map((l) => l.status)).toEqual(["CONFIRMED", "FAILED"]);
@@ -416,7 +436,7 @@ describe("grantSession returns before the cache proofs", () => {
     // `registration` reports every registry leg, including the ones already
     // final at return, so taking it wholesale into `legs` double-counted them.
     const { deps } = fakeChains();
-    const result = await grant([CELO_SEPOLIA, BNB], deps, { populateCache: "await" });
+    const result = await grant([MIRRORED_L2, BNB], deps, { populateCache: "await" });
 
     const registry = result.legs.filter((l) => l.kind === "registry");
     expect(registry.map((l) => `${l.chainId}:${l.status}`).sort()).toEqual([
@@ -437,7 +457,7 @@ describe("grantSession returns before the cache proofs", () => {
 describe("grantSession everywhere", () => {
   test("an account leg on each L2 first, then one registry write on Sepolia, then the cache proofs", async () => {
     const { deps, log } = fakeChains();
-    const result = await grant([CELO_SEPOLIA, BASE_SEPOLIA], deps);
+    const result = await grant([MIRRORED_L2, BASE_SEPOLIA], deps);
 
     expect(log.account.map((s) => s.chainId).sort((a, b) => a - b)).toEqual([84532, 11142220]);
     expect(log.account.every((s) => s.calls.length === 0 && s.args.authorizeKeys.length === 1)).toBe(true);
@@ -462,7 +482,7 @@ describe("grantSession everywhere", () => {
 
   test("a key already valid in the registry is not written again", async () => {
     const { deps, log } = fakeChains({ registryValid: [11155111] });
-    const result = await grant([CELO_SEPOLIA, BASE_SEPOLIA], deps);
+    const result = await grant([MIRRORED_L2, BASE_SEPOLIA], deps);
 
     expect(log.registry).toEqual([]);
     expect(log.cache.every((c) => c.afterL1Block === undefined)).toBe(true);
@@ -483,7 +503,7 @@ describe("grantSession everywhere", () => {
   test("a failed registry write no longer skips a cached network's authorization", async () => {
     const { deps, log } = fakeChains({ failRegistry: [11155111] });
     const events: { status: string; detail?: { chainId: number; reason?: string } }[] = [];
-    const result = await grant([CELO_SEPOLIA, BASE_SEPOLIA, BNB], deps, {
+    const result = await grant([MIRRORED_L2, BASE_SEPOLIA, BNB], deps, {
       onStatus: (status: string, detail?: { chainId: number; reason?: string }) => events.push({ status, detail }),
     });
 
@@ -517,7 +537,7 @@ describe("grantSession everywhere", () => {
 
   test("a failed account leg fails the grant; the other chain still completes", async () => {
     const { deps, log } = fakeChains({ failAccount: [84532] });
-    const result = await grant([CELO_SEPOLIA, BASE_SEPOLIA], deps);
+    const result = await grant([MIRRORED_L2, BASE_SEPOLIA], deps);
 
     expect(result.status).toBe("failed");
     await result.cacheSync;
@@ -526,7 +546,7 @@ describe("grantSession everywhere", () => {
 
   test("register: false writes no registry and proves no cache", async () => {
     const { deps, log } = fakeChains();
-    const result = await grant([CELO_SEPOLIA], deps, { register: false });
+    const result = await grant([MIRRORED_L2], deps, { register: false });
 
     expect(log.registry).toEqual([]);
     expect(log.cache).toEqual([]);
@@ -549,7 +569,7 @@ describe("grantSession everywhere", () => {
 describe("descriptor carried to every account leg", () => {
   test("grant authorizes the same session descriptor on each chain", async () => {
     const { deps, log } = fakeChains();
-    const result = await grant([CELO_SEPOLIA, BASE_SEPOLIA], deps);
+    const result = await grant([MIRRORED_L2, BASE_SEPOLIA], deps);
     const keys = log.account.map((s) => s.args.authorizeKeys[0].publicKey);
     expect(new Set(keys)).toEqual(new Set([result.publicKey]));
   });
@@ -558,7 +578,7 @@ describe("descriptor carried to every account leg", () => {
 describe("cache proofs wait for the registry write's block", () => {
   test("grant: the Sepolia registration's block reaches both cache proofs", async () => {
     const { deps, log } = fakeChains();
-    const result = await grant([CELO_SEPOLIA, BASE_SEPOLIA], deps);
+    const result = await grant([MIRRORED_L2, BASE_SEPOLIA], deps);
 
     const registryBlock = (await result.registration).find((l) => l.chainId === 11155111)!.blockNumber;
     expect(registryBlock).toBeDefined();
@@ -568,7 +588,7 @@ describe("cache proofs wait for the registry write's block", () => {
 
   test("grant: a confirmed registration with an unknown block fails the cache legs and never proves", async () => {
     const { deps, log } = fakeChains({ unknownBlock: [11155111] });
-    const result = await grant([CELO_SEPOLIA, BASE_SEPOLIA], deps);
+    const result = await grant([MIRRORED_L2, BASE_SEPOLIA], deps);
 
     // The write is background work now, so its block is not known at return:
     // the cache legs can only read PENDING here and fail through cacheSync.
@@ -589,7 +609,7 @@ describe("cache proofs wait for the registry write's block", () => {
 
   test("grant: a key already valid in the registry is proven without a block (no write happened)", async () => {
     const { deps, log } = fakeChains({ registryValid: [11155111], unknownBlock: [11155111] });
-    const result = await grant([CELO_SEPOLIA], deps);
+    const result = await grant([MIRRORED_L2], deps);
 
     expect(log.cache).toEqual([{ chainId: 11142220, afterL1Block: undefined }]);
     expect(result.status).toBe("granted");
@@ -598,7 +618,7 @@ describe("cache proofs wait for the registry write's block", () => {
   test("grant: the same guard holds when the registration rides in a local L1's account intent", async () => {
     const { deps, log } = fakeChains({ unknownBlock: [1] });
     const celoWithCache: NetworkConfig = {
-      ...CELO,
+      ...MIRRORED_MAINNET_L2,
       registry: { kind: "cached", l1: ETHEREUM, keyStoreCache: "0x0000000000000000000000000000000000000c0c" },
     };
     const result = await grant([ETHEREUM, celoWithCache], deps);
@@ -609,7 +629,7 @@ describe("cache proofs wait for the registry write's block", () => {
 
   test("revoke: the Sepolia revocation's block reaches the cache proofs", async () => {
     const { deps, log } = fakeChains({ holds: [11142220, 84532], registryValid: [11155111] });
-    const result = await revoke([CELO_SEPOLIA, BASE_SEPOLIA], deps);
+    const result = await revoke([MIRRORED_L2, BASE_SEPOLIA], deps);
 
     const registryBlock = legOfKind(result, "registry").blockNumber;
     expect(registryBlock).toBeDefined();
@@ -618,7 +638,7 @@ describe("cache proofs wait for the registry write's block", () => {
 
   test("revoke: a confirmed revocation with an unknown block fails the cache legs and never proves", async () => {
     const { deps, log } = fakeChains({ holds: [11142220, 84532], registryValid: [11155111], unknownBlock: [11155111] });
-    const result = await revoke([CELO_SEPOLIA, BASE_SEPOLIA], deps);
+    const result = await revoke([MIRRORED_L2, BASE_SEPOLIA], deps);
 
     expect(log.cache).toEqual([]);
     const caches = result.legs.filter((l) => l.kind === "cache");
@@ -629,7 +649,7 @@ describe("cache proofs wait for the registry write's block", () => {
 
   test("revoke: Ethereum already clean and no write still proves the current state", async () => {
     const { deps, log } = fakeChains({ cacheLive: [84532], unknownBlock: [11155111] });
-    const result = await revoke([CELO_SEPOLIA, BASE_SEPOLIA], deps);
+    const result = await revoke([MIRRORED_L2, BASE_SEPOLIA], deps);
 
     expect(log.cache).toEqual([{ chainId: 84532, afterL1Block: undefined }]);
     expect(result.status).toBe("revoked");
@@ -652,7 +672,7 @@ function legOfKind(result: { legs: { kind: string; blockNumber?: bigint; status:
 describe("grantSession authorizes a cached network first", () => {
   test("the grant returns while the registry write is still running, and resolves it later", async () => {
     const { deps, log, release } = fakeChains({ holdRegistry: [11155111] });
-    const result = await grant([CELO_SEPOLIA], deps);
+    const result = await grant([MIRRORED_L2], deps);
 
     // Returned: the authorization is in, the write is not.
     expect(result.status).toBe("granted");
@@ -674,7 +694,7 @@ describe("grantSession authorizes a cached network first", () => {
     // the relay reserves no nonce for an unmined intent, so the two must not
     // overlap (2026-09-28-back-to-back-race-attribution.md).
     const { deps, log } = fakeChains();
-    const result = await grant([CELO_SEPOLIA, BASE_SEPOLIA], deps);
+    const result = await grant([MIRRORED_L2, BASE_SEPOLIA], deps);
     await result.registration;
 
     expect(log.inFlightAtRegistry).toEqual([{ registry: 11155111, accounts: [] }]);
@@ -682,7 +702,7 @@ describe("grantSession authorizes a cached network first", () => {
 
   test("no authorization confirmed means the write is not attempted at all", async () => {
     const { deps, log } = fakeChains({ failAccount: [11142220] });
-    const result = await grant([CELO_SEPOLIA], deps);
+    const result = await grant([MIRRORED_L2], deps);
 
     expect(result.status).toBe("failed");
     const registry = (await result.registration).find((l) => l.chainId === 11155111)!;
@@ -698,7 +718,7 @@ describe("grantSession authorizes a cached network first", () => {
     // KeyDoesNotExist() whether or not the session is live, which is what made
     // a landed grant look like a missing one on 2026-10-15.
     const { deps } = fakeChains();
-    const result = await grant([CELO_SEPOLIA], deps);
+    const result = await grant([MIRRORED_L2], deps);
 
     expect(result.keyId).toBe(keccak256(result.publicKey));
     expect(result.keyHash).toBe(computeAccountSecp256k1KeyHash(result.signer.address));
@@ -710,7 +730,7 @@ describe("grantSession authorizes a cached network first", () => {
     // together), so Celo-first has nothing to change there. What would show a
     // leak is a PENDING registry leg or a `registration` promise.
     const { deps, log } = fakeChains({ holds: [11142220], registryValid: [11155111] });
-    const result = await revoke([CELO_SEPOLIA], deps);
+    const result = await revoke([MIRRORED_L2], deps);
 
     expect(result.status).toBe("revoked");
     expect(log.registry.map((s) => s.chainId)).toEqual([11155111]);
@@ -724,11 +744,11 @@ describe("grantSession authorizes a cached network first", () => {
 
 describe("registry write funded from the L2", () => {
   test("the registry leg names the source chain and the cache proof still anchors on its block", async () => {
-    const { deps, log } = fakeChains({ fundFrom: { [SEPOLIA.chainId]: CELO_SEPOLIA.chainId } });
-    const result = await grant([CELO_SEPOLIA], deps);
+    const { deps, log } = fakeChains({ fundFrom: { [SEPOLIA.chainId]: MIRRORED_L2.chainId } });
+    const result = await grant([MIRRORED_L2], deps);
     expect(result.status).toBe("granted");
     const registry = (await result.registration).find((l) => l.kind === "registry")!;
-    expect(registry.fundedFromChainId).toBe(CELO_SEPOLIA.chainId);
+    expect(registry.fundedFromChainId).toBe(MIRRORED_L2.chainId);
     expect(registry.sourceTransactionHash).toBe(`0x${"cc".repeat(32)}`);
     expect(registry.blockNumber).toBeDefined();
     await result.cacheSync;
@@ -748,6 +768,59 @@ describe("registry write funded from the L2", () => {
  * there yet. Measured live on Celo Sepolia (tx 0x178d30ee…99382), and the
  * calls' presence and order is what these tests pin.
  */
+// Celo keeps its own KeyStore, like BNB: the key is registered on Celo in the
+// same intent that authorizes it, nothing is written on another chain and
+// there is no cache to prove into.
+describe("Celo keeps its own KeyStore", () => {
+  for (const network of [CELO, CELO_SEPOLIA]) {
+    test(`grant on ${network.chain.name}: one intent on Celo carries the registration, and nothing else is touched`, async () => {
+      const { deps, log } = fakeChains();
+      const result = await grant([network], deps);
+
+      expect(result.status).toBe("granted");
+      expect(log.registry).toEqual([]);
+      expect(log.cache).toEqual([]);
+      expect(log.account.map((s) => s.chainId)).toEqual([network.chainId]);
+      expect(log.account[0]!.calls).toHaveLength(1);
+      expect(log.account[0]!.calls[0]!.to).toBe(network.keyStoreController);
+      expect(legKinds(result)).toEqual([`account:${network.chainId}:CONFIRMED`, `registry:${network.chainId}:CONFIRMED:bundled`]);
+      const [account, registry] = result.legs;
+      expect(registry!.via).toBe("bundled");
+      expect(registry!.transactionHash).toBe(account!.transactionHash);
+      expect(await result.cacheSync).toEqual([]);
+    });
+
+    test(`revoke on ${network.chain.name}: the account and Celo's KeyStore are revoked in one intent`, async () => {
+      const { deps, log } = fakeChains({ holds: [network.chainId], registryValid: [network.chainId] });
+      const result = await revoke([network], deps, createPrivateKeySigner().publicKey);
+
+      expect(result.status).toBe("revoked");
+      expect(log.registry).toEqual([]);
+      expect(log.cache).toEqual([]);
+      expect(log.account).toHaveLength(1);
+      expect(log.account[0]!.calls[0]!.to).toBe(network.keyStore);
+      expect(result.legs.every((l) => l.chainId === network.chainId)).toBe(true);
+    });
+  }
+
+  test("a failed registration on Celo fails the grant: the key is not authorized without its record", async () => {
+    const { deps } = fakeChains({ failAccount: [CELO.chainId] });
+    const result = await grant([CELO], deps);
+    expect(result.status).toBe("failed");
+    expect(legKinds(result)).toEqual([`account:${CELO.chainId}:FAILED`, `registry:${CELO.chainId}:FAILED:bundled`]);
+  });
+
+  test("Celo and BNB together: each registers on its own chain", async () => {
+    const { deps, log } = fakeChains();
+    const result = await grant([BNB, CELO], deps);
+    expect(result.status).toBe("granted");
+    expect(log.registry).toEqual([]);
+    expect(log.account.map((s) => s.chainId).sort((a, b) => a - b)).toEqual([56, 42220]);
+    expect(log.account.find((s) => s.chainId === 56)!.calls[0]!.to).toBe(BNB.keyStoreController);
+    expect(log.account.find((s) => s.chainId === 42220)!.calls[0]!.to).toBe(CELO.keyStoreController);
+  });
+});
+
 describe("grantSession with x402Tokens", () => {
   const USDC: Address = "0x01C5C0122039549AD1493B8220cABEdD739BC44E";
   const USDT: Address = "0xd077A400968890Eacc75cdc901F0356c943e4fDb";
@@ -759,13 +832,13 @@ describe("grantSession with x402Tokens", () => {
 
   test("no x402Tokens: the intent carries no approvals, exactly as before", async () => {
     const { deps, log } = fakeChains();
-    await grant([CELO_SEPOLIA], deps);
+    await grant([MIRRORED_L2], deps);
     expect(callTargets(log, 11142220)).toEqual([]);
   });
 
   test("one token: the token approved to Permit2, the token and Permit2 as checkers", async () => {
     const { deps, log } = fakeChains();
-    const result = await grant([CELO_SEPOLIA], deps, { x402Tokens: [USDC] });
+    const result = await grant([MIRRORED_L2], deps, { x402Tokens: [USDC] });
     expect(result.status).toBe("granted");
     // approve(token -> Permit2), setChecker(token), setChecker(Permit2).
     // The two self-calls target the wallet, since setSignatureCheckerApproval
@@ -775,7 +848,7 @@ describe("grantSession with x402Tokens", () => {
 
   test("Permit2 is approved as a checker once, not once per token", async () => {
     const { deps, log } = fakeChains();
-    await grant([CELO_SEPOLIA], deps, { x402Tokens: [USDC, USDT] });
+    await grant([MIRRORED_L2], deps, { x402Tokens: [USDC, USDT] });
     const targets = callTargets(log, 11142220);
     // Two tokens: two ERC-20 approvals, two token checkers, one Permit2 checker.
     expect(targets.filter((t) => t === USDC)).toHaveLength(1);
@@ -788,7 +861,7 @@ describe("grantSession with x402Tokens", () => {
   // granted on two chains needs them on both.
   test("the approvals are made on every chain the session is granted on", async () => {
     const { deps, log } = fakeChains();
-    await grant([CELO_SEPOLIA, BASE_SEPOLIA], deps, { x402Tokens: [USDC] });
+    await grant([MIRRORED_L2, BASE_SEPOLIA], deps, { x402Tokens: [USDC] });
     for (const chainId of [11142220, 84532]) {
       expect(callTargets(log, chainId)).toEqual([USDC, WALLET.address, WALLET.address]);
     }
@@ -798,7 +871,7 @@ describe("grantSession with x402Tokens", () => {
   // it carries the registration fee as value.
   test("they follow a bundled registry call rather than displacing it", async () => {
     const { deps, log } = fakeChains();
-    await grant([SEPOLIA, CELO_SEPOLIA], deps, { x402Tokens: [USDC] });
+    await grant([SEPOLIA, MIRRORED_L2], deps, { x402Tokens: [USDC] });
     const sepolia = log.account.find((s) => s.chainId === 11155111)!;
     expect(sepolia.calls[0]!.value).toBe(7n);
     expect(sepolia.calls.map((c: { to: Address }) => c.to).slice(1)).toEqual([
@@ -815,7 +888,7 @@ describe("grantSession with x402Tokens", () => {
       WALLET,
       createPrivateKeySigner(),
       { permissions: {}, expiry: 1_800_000_000, sessionSigner, x402Tokens: [USDC] },
-      { networks: [CELO_SEPOLIA] },
+      { networks: [MIRRORED_L2] },
       deps,
     );
     const keyHash = keyHashForSigner(sessionSigner);

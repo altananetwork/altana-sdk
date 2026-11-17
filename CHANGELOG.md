@@ -33,8 +33,9 @@ behaves differently:
   `"CONFIRMED"`.
 - **Grant result.** `GrantSessionResult` gains `status`, `legs`,
   `registration` and `cacheSync`. On BNB Chain and Ethereum nothing else
-  changes. On an L2 the call returns once the account authorized the key;
-  the Keystore write and the cache proof finish in the background.
+  changes. On a network that mirrors another chain's Keystore (Base Sepolia)
+  the call returns once the account authorized the key; the Keystore write
+  and the cache proof finish in the background.
 - **Errors.** A relay failure is thrown as an `AltanaError` with a `code` and
   one plain sentence; the relay's own words are on `relayMessage` and
   `cause`. Branch on `code`, not on message text.
@@ -42,7 +43,8 @@ behaves differently:
   of returning `FAILED`.
 - **Fee token.** With no `feeToken` the relay charges whichever accepted
   token the wallet holds. On BNB Chain and Ethereum that is still the native
-  token; on Celo it can be CELO, USDC or USDT.
+  token; on Celo it can be CELO, USDC or USDT. The Keystore registration fee
+  is always paid in the chain's native token.
 - **x402.** `signX402Payment` signs a v2 envelope when the requirement names
   no version. `fetchWithX402` reads the session's approvals first and
   refuses when one is missing (`checkApprovals: false` skips the reads).
@@ -85,13 +87,19 @@ behaves differently:
 
 ### Added
 
-- **Celo mainnet.** `CELO` carries the deployed KeyStoreCache
-  (`0xF939d7D3a2b8262aD8662c71Dec38119058d5a06`, KeyStoreCacheOPStack 1.1.1,
-  anchored to the Ethereum KeyStore), so a grant or revoke on Celo proves the
-  session into the cache. The relay on Celo takes its fee in CELO, USDC or
-  USDT, and the Ethereum KeyStore write is paid from the wallet's Celo
-  balance. `@altananetwork/hypersigner-keystore-mcp` carries the same cache
-  for `ALTANA_CHAIN=celo`.
+- **Celo and Celo Sepolia, each with its own KeyStore.** `CELO` (chain 42220)
+  and `CELO_SEPOLIA` (chain 11142220) are execution networks whose KeyStore is
+  on the chain itself, as on BNB Chain: a grant registers the key and
+  authorizes it in one relay transaction, a revoke undoes both in one, and the
+  registration fee is paid in CELO. The relay on Celo takes its own fee in
+  CELO, USDC or USDT. A wallet created for Celo is also set up on Ethereum
+  (Sepolia on testnet), through the new `NetworkConfig.provisionAlso`, so a
+  passkey wallet can act there later. A wallet that lacks the CELO for a
+  registration is told what it needs and has, and asked for CELO only.
+  `@altananetwork/mcp` (`ALTANA_CHAIN=celo`, `celo-sepolia`) and
+  `@altananetwork/hypersigner-keystore-mcp` read and encode against Celo's
+  KeyStore. Covered by unit tests, the `fork:celo-keystore` fork test against
+  the deployed contracts and the `smoke:celo-sepolia` live test.
 - **`proofRpcUrls` on `NetworkConfig`.** A cache proof is built at the block
   the L2 anchors, about 100 blocks behind the registry chain's head, and
   Ethereum's default public RPC does not serve `eth_getProof` there.
@@ -132,9 +140,9 @@ behaves differently:
   from the rail. Verification stays local either way, since the merchant's own
   is ERC-1271-aware and a facilitator's need not be. `POST /settle` needs an
   `X-API-Key`, and a 401 says so rather than looking like a rejected payment.
-- **`@altananetwork/hypersigner-keystore-mcp`: an L1 key, readable on Celo.**
+- **`@altananetwork/hypersigner-keystore-mcp`: an L1 key, readable on an L2.**
   The server encoded L1 KeyStore calls only, so an authorize, a timebox or a
-  revoke it produced was invisible to anything on Celo: an L2 rooted in the
+  revoke it produced was invisible to anything on the L2: an L2 rooted in the
   KeyStore reads authority through a `KeyStoreCache`, and the cache knows only
   what someone has proven into it. `keystore_cache_status` reads that cache and
   separates the three states a caller otherwise conflates: never proven, proven
@@ -144,9 +152,9 @@ behaves differently:
   `keystore_encode_cache_proof` returns the unsigned `populateKey` call that
   carries the key's current L1 state across. Relaying is permissionless, so any
   funded L2 account can send it for any user, and the server still signs nothing.
-  An L2 alias now also names its mirror: `ALTANA_CHAIN=celo-sepolia` resolves to
-  the Sepolia registry and Celo Sepolia's cache, while `ALTANA_CHAIN=sepolia`
-  resolves to the same registry with no L2, because several L2s are rooted in it.
+  An L2 alias now also names its mirror: `ALTANA_CHAIN=base-sepolia` resolves to
+  the Sepolia registry and Base Sepolia's cache, while `ALTANA_CHAIN=sepolia`
+  resolves to the same registry with no L2, because more than one L2 can be rooted in it.
   `L2_RPC_URL` overrides the L2 read RPC.
 - **A session key can pay x402 straight after it is granted.** A payment from a
   smart account is an ERC-1271 signature, and `IthacaAccount.isValidSignature`
@@ -164,11 +172,12 @@ behaves differently:
   which is missing and the call that sets it; `approvedSignatureCheckers` and
   `x402SignatureChecker` are exported alongside it, as are the
   `buildSetCheckerApprovalCall` and `buildApproveTokenForPermit2Call` builders.
-- **Keystore writes paid from the wallet's own chain.** `grantSession`,
+- **Keystore writes paid from the wallet's own chain.** On a network that
+  mirrors another chain's Keystore (Base Sepolia), `grantSession`,
   `revokeSession` and `registerSessionKey` need no ETH on the Keystore chain:
   the SDK asks the relay to pay the Sepolia write, registration fee and relay
-  fee, from the wallet's balance on the L2 it acts on (Celo Sepolia, Base
-  Sepolia) under the same single signature, always. ETH the wallet holds on
+  fee, from the wallet's balance on the L2 it acts on under the same single
+  signature, always. ETH the wallet holds on
   Sepolia is not used. Registry legs and quote lines carry `fundedFromChainId`
   and `sourceTransactionHash`; quotes charge the line to the L2 balance.
 
@@ -229,7 +238,7 @@ behaves differently:
   and `networkByChainId`. The MCP `revoke_session` tool revokes across the
   whole mainnet or testnet group of its chain.
 
-- **L2 execution networks, with Celo and Celo Sepolia.** A network can now
+- **L2 execution networks with a mirrored KeyStore (Base Sepolia).** A network can
   keep its KeyStore on its L1 and mirror it into a KeyStoreCache on the L2:
   `NetworkConfig` gains an optional `registry` field naming the L1 and the
   cache (absent means the KeyStore is on the chain itself, so existing
@@ -246,22 +255,19 @@ behaves differently:
   `GrantSessionOptions` gains `populateCache` and `onStatus`. The
   proof building blocks are exported: `buildPopulateKeyCall`,
   `waitForL1Anchor`, `readL1Anchor`, `computeKeyPackedSlot`. New configs
-  `CELO` (chain 42220, L1 Ethereum), `CELO_SEPOLIA` (chain 11142220, L1
-  Sepolia, cache `0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD`,
-  KeyStoreCacheOPStack 1.1.1) and `SEPOLIA` (chain 11155111). Per-chain
+  `BASE_SEPOLIA` (chain 84532, L1 Sepolia) and `SEPOLIA` (chain 11155111). Per-chain
   faucet map (`FAUCET_URLS`, `faucetHint`, `CELO_SEPOLIA_FAUCET_URL`), x402
-  aliases `celo` / `celo-sepolia`, and docs (L1/L2 shape in Keystore, grant,
-  revoke, sync and errors; Celo and Celo Sepolia setup pages). Covered by unit tests, two anvil fork tests
+  aliases `celo` / `celo-sepolia`, and docs (own and mirrored Keystore in Keystore, grant,
+  revoke, sync and errors). Covered by unit tests, two anvil fork tests
   (`fork-celo-cache`: KeyStoreCacheOPStack 1.1.1 accepts a real Sepolia proof
   built by the SDK; `fork-celo-x402-server`) and two live smoke scripts.
 
 - **`@altananetwork/mcp`: `ALTANA_CHAIN=celo-sepolia` / `celo`.** Chain
-  selection moved to `network.ts`; on an L2 the server reads the KeyStore on
-  the L1, `wallet_verification` and `verify_authorization` add a `cache`
-  block (`cached`, `revoked`, `expiry`, `fresh`) from the L2 cache,
-  `grant_session` and `revoke_session` report the L1 write and the cache
-  proof, `create_wallet` names what to fund, and the startup log names the
-  L1.
+  selection moved to `network.ts`. Every selectable chain keeps its own
+  KeyStore, which `wallet_verification` and `verify_authorization` read and
+  `grant_session` and `revoke_session` write in the account's own
+  transaction; `create_wallet` names what to fund, including the native token
+  the registration fee is paid in.
 
 - **`@altananetwork/x402-server`: Celo tokens.** `USDC_CELO`,
   `USDC_CELO_SEPOLIA` (Circle USDC, EIP-712 domain `USDC` / `2`, 6 decimals,
@@ -269,10 +275,11 @@ behaves differently:
   only). Settlement through viem's Celo chains is a standard EIP-1559
   transaction, pinned by a unit test and the Celo Sepolia fork test.
 
-- **`@altananetwork/hypersigner-keystore-mcp`: `sepolia` chain and
-  Celo aliases.** `ALTANA_CHAIN=sepolia` (the registry behind Celo Sepolia),
-  with `celo-sepolia` / `11142220` resolving to it and `celo` / `42220` to
-  `ethereum`, the L1s that hold the KeyStore.
+- **`@altananetwork/hypersigner-keystore-mcp`: `sepolia`, `celo` and
+  `celo-sepolia` chains, and the `base-sepolia` alias.** `ALTANA_CHAIN=sepolia`
+  is the registry behind Base Sepolia, with `base-sepolia` / `84532` resolving
+  to it; `celo` / `42220` and `celo-sepolia` / `11142220` are chains with
+  their own KeyStore.
 
 - **`client.holdings()` discovers which tokens a wallet holds.** `balances`
   needs an explicit token list; `holdings` asks the Altana relay for the

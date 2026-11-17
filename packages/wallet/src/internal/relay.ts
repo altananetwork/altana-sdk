@@ -1575,8 +1575,15 @@ async function payerBalance(
     return { kind: "unknown" };
   }
 
+  // What is missing is native value the calls themselves send (a KeyStore
+  // registration fee, a transfer), measured against the calls and not against
+  // a quote. Only the chain's own currency can be sent as value, so naming the
+  // relay's other fee tokens would point the payer at something that cannot
+  // pay it: a wallet on Celo holding USDC was told to add "CELO, USDC or USD₮"
+  // for a registration fee the KeyStore takes in CELO alone.
+  const valueShort = quoted === undefined && sends > 0n;
   const payClient = payNetwork.chainId === relay.network.chainId ? relay.client : buildRelayClient(payNetwork);
-  const tokens = await acceptedFeeSymbols(payClient, payNetwork);
+  const tokens = valueShort ? [symbol] : await acceptedFeeSymbols(payClient, payNetwork);
   return {
     kind: "short",
     shortfall: {

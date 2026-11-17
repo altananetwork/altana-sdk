@@ -8,6 +8,7 @@ import { parseEther, type Address } from "viem";
 import type { Hex, PublicClient } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import {
+  BASE_SEPOLIA,
   BNB,
   BNB_TESTNET,
   CELO,
@@ -25,16 +26,18 @@ import { registrationValueFor } from "./keystore.js";
 
 const DEPLOYED_CACHE: Address = "0x37ebf8F17c3705568a03fB3A1629AcE7B3D95FFf";
 
-/** CELO_SEPOLIA with a different cache address, to check the helper reads the config. */
-const CELO_SEPOLIA_LIVE: NetworkConfig = {
-  ...CELO_SEPOLIA,
-  registry: { kind: "cached", l1: SEPOLIA, keyStoreCache: DEPLOYED_CACHE },
+/** A cached network with a different cache address, to check the helper reads the config. */
+const CACHED_ELSEWHERE: NetworkConfig = {
+  ...BASE_SEPOLIA,
+  registry: { kind: "cached", l1: SEPOLIA, keyStoreCache: "0x00000000000000000000000000000000000CaC4E" },
 };
 
 describe("isCachedRegistry", () => {
-  test("true for Celo networks, false for local registries", () => {
-    expect(isCachedRegistry(CELO_SEPOLIA)).toBe(true);
-    expect(isCachedRegistry(CELO)).toBe(true);
+  test("true for Base Sepolia, false for networks with their own KeyStore", () => {
+    expect(isCachedRegistry(BASE_SEPOLIA)).toBe(true);
+    // Celo keeps its own KeyStore, like BNB.
+    expect(isCachedRegistry(CELO_SEPOLIA)).toBe(false);
+    expect(isCachedRegistry(CELO)).toBe(false);
     expect(isCachedRegistry(BNB)).toBe(false);
     expect(isCachedRegistry(ETHEREUM)).toBe(false);
     expect(isCachedRegistry(BNB_TESTNET)).toBe(false);
@@ -44,23 +47,24 @@ describe("isCachedRegistry", () => {
 
 describe("keyStoreCacheOf", () => {
   test("returns the cache address of a cached network", () => {
-    expect(keyStoreCacheOf(CELO_SEPOLIA_LIVE)).toBe(DEPLOYED_CACHE);
+    expect(keyStoreCacheOf(BASE_SEPOLIA)).toBe(DEPLOYED_CACHE);
+    expect(keyStoreCacheOf(CACHED_ELSEWHERE)).toBe("0x00000000000000000000000000000000000CaC4E");
   });
 
   test("refuses an unset cache address with a message naming the chain and the field", () => {
-    if (CELO.registry?.kind !== "cached") throw new Error("CELO must be a cached network");
+    if (BASE_SEPOLIA.registry?.kind !== "cached") throw new Error("BASE_SEPOLIA must be a cached network");
     const unset: NetworkConfig = {
-      ...CELO,
-      registry: { ...CELO.registry, keyStoreCache: KEYSTORE_CACHE_UNSET },
+      ...BASE_SEPOLIA,
+      registry: { ...BASE_SEPOLIA.registry, keyStoreCache: KEYSTORE_CACHE_UNSET },
     };
     expect(() => keyStoreCacheOf(unset)).toThrow(/no KeyStoreCache address configured/);
     expect(() => keyStoreCacheOf(unset)).toThrow(/registry\.keyStoreCache/);
-    expect(keyStoreCacheOf(CELO_SEPOLIA)).toBe("0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD");
-    expect(keyStoreCacheOf(CELO)).toBe("0xF939d7D3a2b8262aD8662c71Dec38119058d5a06");
   });
 
   test("refuses a local-registry network (there is no cache)", () => {
     expect(() => keyStoreCacheOf(BNB)).toThrow(/keeps its KeyStore locally/);
+    expect(() => keyStoreCacheOf(CELO)).toThrow(/keeps its KeyStore locally/);
+    expect(() => keyStoreCacheOf(CELO_SEPOLIA)).toThrow(/keeps its KeyStore locally/);
   });
 });
 
@@ -74,20 +78,28 @@ describe("provisioningNetworks", () => {
 
   test("a cached network with a relay-less registry chain adds nothing (EOA writes)", () => {
     const relayless: NetworkConfig = {
-      ...CELO_SEPOLIA,
-      registry: { kind: "cached", l1: RELAYLESS_SEPOLIA, keyStoreCache: "0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD" },
+      ...BASE_SEPOLIA,
+      registry: { kind: "cached", l1: RELAYLESS_SEPOLIA, keyStoreCache: DEPLOYED_CACHE },
     };
     expect(provisioningNetworks([relayless])).toEqual([relayless]);
   });
 
-  test("the testnet L2s are provisioned on Sepolia too, now that the relay serves it", () => {
-    expect(provisioningNetworks([CELO_SEPOLIA])).toEqual([CELO_SEPOLIA, SEPOLIA]);
+  test("a cached network whose registry chain has a relay is provisioned there too", () => {
+    expect(provisioningNetworks([BASE_SEPOLIA])).toEqual([BASE_SEPOLIA, SEPOLIA]);
   });
 
-  test("a cached network whose registry chain has a relay is provisioned there too, once", () => {
+  // Celo keeps its own KeyStore, and a wallet created on Celo is still set up
+  // on Ethereum: a passkey wallet cannot be set up there later.
+  test("a wallet created on Celo is also set up on Ethereum, once", () => {
     expect(provisioningNetworks([CELO])).toEqual([CELO, ETHEREUM]);
     expect(provisioningNetworks([ETHEREUM, CELO])).toEqual([ETHEREUM, CELO]);
     expect(provisioningNetworks([CELO, BNB, ETHEREUM])).toEqual([CELO, ETHEREUM, BNB]);
+    expect(provisioningNetworks([CELO_SEPOLIA])).toEqual([CELO_SEPOLIA, SEPOLIA]);
+  });
+
+  test("a chain named in provisionAlso that has no relay is left out", () => {
+    const celoNextToRelayless: NetworkConfig = { ...CELO_SEPOLIA, provisionAlso: [RELAYLESS_SEPOLIA] };
+    expect(provisioningNetworks([celoNextToRelayless])).toEqual([celoNextToRelayless]);
   });
 });
 

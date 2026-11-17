@@ -53,10 +53,11 @@ export type CreateWalletResult = Wallet & {
  * loop, so a passkey wallet gets one throwaway EOA for all of its chains
  * rather than one per chain. See `planAccountProvisioning`.
  *
- * A cached network whose registry chain has a relay (Celo, rooted in
- * Ethereum) is provisioned on that registry chain too: the wallet has the
+ * A cached network whose registry chain has a relay (Base Sepolia, rooted in
+ * Sepolia) is provisioned on that registry chain too: the wallet has the
  * same address and the same admin there, and its registry writes go through
- * its own smart account. A relay-less registry chain needs no provisioning;
+ * its own smart account. A network can also name chains to set the wallet up
+ * on for later (`provisionAlso`: Celo names Ethereum). A relay-less registry chain needs no provisioning;
  * writes there come from the admin EOA.
  *
  * Custody follows the signer. Altana never persists keys.

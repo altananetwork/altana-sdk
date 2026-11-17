@@ -4,12 +4,12 @@
  */
 import { describe, expect, test } from "bun:test";
 import type { Address, Hex } from "viem";
-import { CELO_SEPOLIA } from "./config.js";
+import { BASE_SEPOLIA } from "./config.js";
 import { createPrivateKeySigner } from "./internal/signer.js";
 import { runSyncSessionToCache, type SyncSessionToCacheDeps } from "./syncSessionToCache.js";
 
 const WALLET = { address: "0x1111111111111111111111111111111111111111" as Address };
-const CACHE_TO = "0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD" as Address;
+const CACHE_TO = "0x37ebf8F17c3705568a03fB3A1629AcE7B3D95FFf" as Address;
 const REGISTRATION_BLOCK = 11703373n;
 
 function fakeDeps(slots: bigint[]) {
@@ -43,7 +43,7 @@ function fakeDeps(slots: bigint[]) {
 
 const run = (deps: SyncSessionToCacheDeps, extra: Record<string, unknown> = {}) =>
   runSyncSessionToCache(WALLET, createPrivateKeySigner(), ("0x04" + "11".repeat(64)) as Hex, {
-    network: CELO_SEPOLIA,
+    network: BASE_SEPOLIA,
     afterL1Block: REGISTRATION_BLOCK,
     anchorSettleMs: 0,
     requireKeyInProof: true,

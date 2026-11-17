@@ -1,7 +1,8 @@
 /**
- * Chain resolution: Celo has no KeyStore of its own, so "celo" resolves to the
- * Ethereum registry and "celo-sepolia" to the Sepolia one, and encoded calls
- * carry the registry chain's id (the chain the host must sign on).
+ * Chain resolution: Celo and Celo Sepolia keep their own KeyStore and resolve
+ * to it. Base Sepolia has none, so "base-sepolia" resolves to the Sepolia
+ * registry and names its cache, and encoded calls carry the registry chain's
+ * id (the chain the host must sign on).
  */
 import { describe, expect, test } from "bun:test";
 import { getAddress } from "viem";
@@ -21,8 +22,30 @@ describe("resolveChain", () => {
     expect(resolveChain("11155111")).toBe(c);
   });
 
-  test("celo-sepolia and 11142220 resolve to the Sepolia registry", () => {
+  test("celo-sepolia and 11142220 resolve to Celo Sepolia's own KeyStore", () => {
     for (const name of ["celo-sepolia", "11142220", "Celo-Sepolia"]) {
+      const c = resolveChain(name);
+      expect(c.key).toBe("celo-sepolia");
+      expect(c.chainId).toBe(11142220);
+      expect(c.keyStore).toBe("0xCC3df52B6aD826781AAD86EcEB1459ed0b1Ae3F6");
+      expect(c.controller).toBe("0x54eAb49d805336DB8591BAAF9ac630D0A58Ad2cD");
+      expect(c.currencySymbol).toBe("CELO");
+      expect(c.l2).toBeUndefined();
+    }
+  });
+
+  test("celo and 42220 resolve to Celo's own KeyStore", () => {
+    for (const name of ["celo", "42220"]) {
+      const c = resolveChain(name);
+      expect(c.key).toBe("celo");
+      expect(c.chainId).toBe(42220);
+      expect(c.keyStore).not.toBe(CHAINS["ethereum"]!.keyStore);
+      expect(c.l2).toBeUndefined();
+    }
+  });
+
+  test("base-sepolia and 84532 resolve to the Sepolia registry", () => {
+    for (const name of ["base-sepolia", "84532", "Base-Sepolia"]) {
       const c = resolveChain(name);
       expect(c.key).toBe("sepolia");
       expect(c.keyStore).toBe(CHAINS["sepolia"]!.keyStore);
@@ -30,31 +53,20 @@ describe("resolveChain", () => {
     }
   });
 
-  test("celo and 42220 resolve to the Ethereum registry", () => {
-    for (const name of ["celo", "42220"]) {
-      const c = resolveChain(name);
-      expect(c.key).toBe("ethereum");
-      expect(c.keyStore).toBe(CHAINS["ethereum"]!.keyStore);
+  // An L2 alias also names the mirror, because that is the whole difference
+  // between it and naming the registry chain: more than one L2 can be rooted
+  // in a registry, so "sepolia" cannot say which cache a proof is meant for.
+  test("an L2 alias carries its cache; a chain with its own KeyStore does not", () => {
+    expect(resolveChain("base-sepolia").l2).toEqual(L2_CACHES["base-sepolia"]!);
+    expect(resolveChain("84532").l2?.chainId).toBe(84532);
+
+    for (const name of ["sepolia", "ethereum", "bnb", "celo", "celo-sepolia"]) {
+      expect(resolveChain(name).l2).toBeUndefined();
     }
   });
 
-  // An L2 alias also names the mirror, because that is the whole difference
-  // between it and naming the registry chain: several L2s are rooted in each
-  // registry, so "sepolia" cannot say which cache a proof is meant for.
-  test("an L2 alias carries its cache; the registry chain's own name does not", () => {
-    expect(resolveChain("celo-sepolia").l2).toEqual(L2_CACHES["celo-sepolia"]!);
-    expect(resolveChain("11142220").l2?.chainId).toBe(11142220);
-    expect(resolveChain("celo").l2).toEqual(L2_CACHES["celo"]!);
-    expect(resolveChain("42220").l2?.chainId).toBe(42220);
-
-    expect(resolveChain("sepolia").l2).toBeUndefined();
-    expect(resolveChain("ethereum").l2).toBeUndefined();
-    expect(resolveChain("bnb").l2).toBeUndefined();
-  });
-
-  test("Celo Sepolia's and Celo's caches are the deployed KeyStoreCacheOPStack contracts", () => {
-    expect(L2_CACHES["celo-sepolia"]!.cache).toBe("0xB1002cE9d25F25b431AD22BF74667B7E8c04deeD");
-    expect(L2_CACHES["celo"]!.cache).toBe("0xF939d7D3a2b8262aD8662c71Dec38119058d5a06");
+  test("Base Sepolia's cache is the deployed KeyStoreCacheOPStack contract", () => {
+    expect(L2_CACHES["base-sepolia"]!.cache).toBe("0x37ebf8F17c3705568a03fB3A1629AcE7B3D95FFf");
   });
 
   test("existing names still resolve, unknown falls back to bnb", () => {
@@ -73,15 +85,22 @@ describe("resolveChain", () => {
   });
 });
 
-describe("encoded calls on a Celo alias carry the registry chain id", () => {
-  test("register on celo-sepolia targets the Sepolia controller with chainId 11155111", () => {
-    const chain = resolveChain("celo-sepolia");
+describe("encoded calls carry the chain that holds the registry", () => {
+  test("register on base-sepolia targets the Sepolia controller with chainId 11155111", () => {
+    const chain = resolveChain("base-sepolia");
     const call = buildRegisterCall({ chain, publicKey: PUBKEY, fee: 1n, role: "root" });
     expect(call.to).toBe(chain.controller);
     expect(call.chainId).toBe(11155111);
   });
 
-  test("revoke on celo targets the Ethereum KeyStore with chainId 1", () => {
+  test("register on celo-sepolia targets Celo Sepolia's own controller with chainId 11142220", () => {
+    const chain = resolveChain("celo-sepolia");
+    const call = buildRegisterCall({ chain, publicKey: PUBKEY, fee: 1n, role: "root" });
+    expect(call.to).toBe("0x54eAb49d805336DB8591BAAF9ac630D0A58Ad2cD");
+    expect(call.chainId).toBe(11142220);
+  });
+
+  test("revoke on celo targets Celo's own KeyStore with chainId 42220", () => {
     const chain = resolveChain("celo");
     const call = buildRevokeCall({
       chain,
@@ -89,6 +108,6 @@ describe("encoded calls on a Celo alias carry the registry chain id", () => {
       keyId: ("0x" + "ab".repeat(32)) as `0x${string}`,
     });
     expect(call.to).toBe(chain.keyStore);
-    expect(call.chainId).toBe(1);
+    expect(call.chainId).toBe(42220);
   });
 });

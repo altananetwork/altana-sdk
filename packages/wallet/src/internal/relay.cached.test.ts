@@ -1,7 +1,7 @@
 /**
- * submitCalls on a cached network (Celo Sepolia, Celo):
+ * submitCalls on a cached network (Base Sepolia):
  *  - the admin's first-action KeyStore prepend is skipped (the registry is on
- *    another chain, and getKeys at a codeless address on Celo would throw);
+ *    another chain, and getKeys at a codeless address there would throw);
  *  - any call aimed at the registry chain's KeyStore / Controller address is
  *    refused before anything reaches the relay, because on the cached network
  *    it would confirm as a plain transfer to a codeless address and burn the
@@ -11,7 +11,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { encodeFunctionData, parseEther, type Address } from "viem";
-import { BNB, BNB_TESTNET, CELO, CELO_SEPOLIA, ETHEREUM, SEPOLIA } from "../config.js";
+import { BASE_SEPOLIA, BNB, BNB_TESTNET, CELO, CELO_SEPOLIA, ETHEREUM, SEPOLIA } from "../config.js";
 import { buildAdditionalRegisterCall, buildRevokeKeyCall, registrationValueFor } from "./keystore.js";
 import {
   BNB_TESTNET_FAUCET_URL,
@@ -38,14 +38,19 @@ describe("needsFirstActionPrepend", () => {
     expect(needsFirstActionPrepend(BNB_TESTNET, "admin")).toBe(true);
   });
 
+  test("Celo keeps its own KeyStore, so its admins prepend like BNB's", () => {
+    expect(needsFirstActionPrepend(CELO, "admin")).toBe(true);
+    expect(needsFirstActionPrepend(CELO_SEPOLIA, "admin")).toBe(true);
+  });
+
   test("sessions never prepend", () => {
     expect(needsFirstActionPrepend(BNB, "session")).toBe(false);
     expect(needsFirstActionPrepend(CELO_SEPOLIA, "session")).toBe(false);
+    expect(needsFirstActionPrepend(BASE_SEPOLIA, "session")).toBe(false);
   });
 
   test("admins on cached networks do not prepend (the registry is on another chain)", () => {
-    expect(needsFirstActionPrepend(CELO_SEPOLIA, "admin")).toBe(false);
-    expect(needsFirstActionPrepend(CELO, "admin")).toBe(false);
+    expect(needsFirstActionPrepend(BASE_SEPOLIA, "admin")).toBe(false);
   });
 });
 
@@ -61,11 +66,11 @@ describe("assertNoRegistryTargets", () => {
     network: SEPOLIA,
   });
 
-  test("refuses a registerKey aimed at the Controller on Celo Sepolia, explaining the fee burn", () => {
-    expect(() => assertNoRegistryTargets(CELO_SEPOLIA, [registerOnSepolia])).toThrow(
+  test("refuses a registerKey aimed at the Controller on Base Sepolia, explaining the fee burn", () => {
+    expect(() => assertNoRegistryTargets(BASE_SEPOLIA, [registerOnSepolia])).toThrow(
       /KeyStoreController address of Sepolia \(chainId 11155111\)/,
     );
-    expect(() => assertNoRegistryTargets(CELO_SEPOLIA, [registerOnSepolia])).toThrow(
+    expect(() => assertNoRegistryTargets(BASE_SEPOLIA, [registerOnSepolia])).toThrow(
       // The margined value, because that is what would actually be burned.
       new RegExp(
         `plain transfer to a codeless address and burn its value \\(${registrationValueFor(
@@ -73,25 +78,25 @@ describe("assertNoRegistryTargets", () => {
         )} wei here\\)`,
       ),
     );
-    expect(() => assertNoRegistryTargets(CELO_SEPOLIA, [registerOnSepolia])).toThrow(
+    expect(() => assertNoRegistryTargets(BASE_SEPOLIA, [registerOnSepolia])).toThrow(
       /grantSession, revokeSession or registerSessionKey/,
     );
   });
 
-  test("refuses a revokeKey aimed at the KeyStore on Celo Sepolia", () => {
-    expect(() => assertNoRegistryTargets(CELO_SEPOLIA, [revokeOnSepolia])).toThrow(
+  test("refuses a revokeKey aimed at the KeyStore on Base Sepolia", () => {
+    expect(() => assertNoRegistryTargets(BASE_SEPOLIA, [revokeOnSepolia])).toThrow(
       /KeyStore address of Sepolia/,
     );
   });
 
   test("is case-insensitive on the target", () => {
     const lower = { ...registerOnSepolia, to: registerOnSepolia.to.toLowerCase() as Address };
-    expect(() => assertNoRegistryTargets(CELO_SEPOLIA, [lower])).toThrow(/KeyStoreController/);
+    expect(() => assertNoRegistryTargets(BASE_SEPOLIA, [lower])).toThrow(/KeyStoreController/);
   });
 
   test("lets ordinary calls through on a cached network", () => {
     expect(() =>
-      assertNoRegistryTargets(CELO_SEPOLIA, [{ to: WALLET, value: 1n, data: "0x" }]),
+      assertNoRegistryTargets(BASE_SEPOLIA, [{ to: WALLET, value: 1n, data: "0x" }]),
     ).not.toThrow();
   });
 
@@ -101,11 +106,12 @@ describe("assertNoRegistryTargets", () => {
     expect(() => assertNoRegistryTargets(SEPOLIA, [registerOnSepolia])).not.toThrow();
   });
 
-  test("CELO refuses Ethereum's registry addresses", () => {
-    const registerOnEthereum = buildAdditionalRegisterCall({ publicKey: PUBKEY, fee: 1n, network: ETHEREUM });
-    expect(() => assertNoRegistryTargets(CELO, [registerOnEthereum])).toThrow(
-      /KeyStoreController address of Ethereum \(chainId 1\)/,
-    );
+  test("Celo's own registry calls are legitimate on Celo", () => {
+    const registerOnCelo = buildAdditionalRegisterCall({ publicKey: PUBKEY, fee: 1n, network: CELO });
+    expect(registerOnCelo.to).toBe(CELO.keyStoreController);
+    expect(() => assertNoRegistryTargets(CELO, [registerOnCelo])).not.toThrow();
+    const registerOnCeloSepolia = buildAdditionalRegisterCall({ publicKey: PUBKEY, fee: 1n, network: CELO_SEPOLIA });
+    expect(() => assertNoRegistryTargets(CELO_SEPOLIA, [registerOnCeloSepolia])).not.toThrow();
   });
 });
 
@@ -114,7 +120,7 @@ describe("submitCalls on a cached network", () => {
     // Unreachable endpoints: if the guard did not fire first, the failure
     // would be a connection error, not the refusal.
     const unreachable = {
-      ...CELO_SEPOLIA,
+      ...BASE_SEPOLIA,
       relayUrl: "http://127.0.0.1:9",
       publicRpcUrl: "http://127.0.0.1:9",
     };
@@ -140,7 +146,7 @@ describe("submitCalls on a cached network", () => {
       args: [WALLET],
     });
     expect(() =>
-      assertNoRegistryTargets(CELO_SEPOLIA, [{ to: CELO_SEPOLIA.keyStore, data }]),
+      assertNoRegistryTargets(BASE_SEPOLIA, [{ to: BASE_SEPOLIA.keyStore, data }]),
     ).toThrow(/KeyStore address of Sepolia/);
   });
 });

@@ -1,6 +1,7 @@
 /**
- * Network configs: the Celo Sepolia / Celo cached-registry shape, the Sepolia
- * registry-only config, and the invariants the rest of the SDK relies on
+ * Network configs: Celo and Celo Sepolia with their own KeyStore, the Base
+ * Sepolia cached-registry shape, the Sepolia registry config, and the
+ * invariants the rest of the SDK relies on
  * (registryNetwork, the not-deployed sentinel, checksummed literals).
  */
 import { describe, expect, test } from "bun:test";
@@ -34,57 +35,55 @@ describe("SEPOLIA (testnet registry chain)", () => {
   });
 });
 
-describe("CELO_SEPOLIA (cached registry on Sepolia)", () => {
-  test("executes through the testnet relay with its registry on Sepolia", () => {
+describe("CELO_SEPOLIA (its own KeyStore)", () => {
+  test("executes through the testnet relay and keeps its registry on Celo Sepolia", () => {
     expect(CELO_SEPOLIA.chainId).toBe(11142220);
     expect(CELO_SEPOLIA.chain.id).toBe(11142220);
     expect(CELO_SEPOLIA.relayUrl).toBe(TESTNET_RELAY_URL);
-    expect(CELO_SEPOLIA.registry?.kind).toBe("cached");
-    if (CELO_SEPOLIA.registry?.kind !== "cached") throw new Error("unreachable");
-    expect(CELO_SEPOLIA.registry.l1).toBe(SEPOLIA);
+    expect(CELO_SEPOLIA.registry).toBeUndefined();
+    expect(registryNetwork(CELO_SEPOLIA)).toBe(CELO_SEPOLIA);
     expect(CELO_SEPOLIA.explorer).toBe("https://sepolia.celoscan.io");
   });
 
-  test("keyStore / keyStoreController mirror the registry chain's contracts", () => {
-    expect(CELO_SEPOLIA.keyStore).toBe(SEPOLIA.keyStore);
-    expect(CELO_SEPOLIA.keyStoreController).toBe(SEPOLIA.keyStoreController);
+  test("its KeyStore and Controller are its own, not Sepolia's", () => {
+    expect(CELO_SEPOLIA.keyStore).not.toBe(SEPOLIA.keyStore);
+    expect(CELO_SEPOLIA.keyStoreController).not.toBe(SEPOLIA.keyStoreController);
   });
 
-  test("the cache address is a checksummed address (sentinel until deployed)", () => {
-    if (CELO_SEPOLIA.registry?.kind !== "cached") throw new Error("unreachable");
-    const cache = CELO_SEPOLIA.registry.keyStoreCache;
-    expect(cache).toMatch(/^0x[0-9a-fA-F]{40}$/);
-    expect(getAddress(cache)).toBe(cache);
+  test("a wallet created there is also set up on Sepolia", () => {
+    expect(CELO_SEPOLIA.provisionAlso).toEqual([SEPOLIA]);
   });
 });
 
-describe("CELO (mainnet)", () => {
-  test("registry on Ethereum, mainnet relay, cache sentinel", () => {
+describe("CELO (mainnet, its own KeyStore)", () => {
+  test("mainnet relay, registry on Celo itself", () => {
     expect(CELO.chainId).toBe(42220);
     expect(CELO.relayUrl).toBe(RELAY_URL);
-    expect(CELO.keyStore).toBe(ETHEREUM.keyStore);
-    expect(CELO.keyStoreController).toBe(ETHEREUM.keyStoreController);
-    if (CELO.registry?.kind !== "cached") throw new Error("CELO must be a cached network");
-    expect(CELO.registry.l1).toBe(ETHEREUM);
-    expect(CELO.registry.keyStoreCache).toBe("0xF939d7D3a2b8262aD8662c71Dec38119058d5a06");
+    expect(CELO.registry).toBeUndefined();
+    expect(registryNetwork(CELO)).toBe(CELO);
+    expect(CELO.keyStore).not.toBe(ETHEREUM.keyStore);
+    expect(CELO.keyStoreController).not.toBe(ETHEREUM.keyStoreController);
     expect(CELO.explorer).toBe("https://celoscan.io");
+  });
+
+  test("a wallet created there is also set up on Ethereum", () => {
+    expect(CELO.provisionAlso).toEqual([ETHEREUM]);
   });
 });
 
 describe("registryNetwork", () => {
   test("returns the network itself for local registries", () => {
-    for (const n of [BNB, ETHEREUM, BNB_TESTNET, SEPOLIA]) {
+    for (const n of [BNB, ETHEREUM, CELO, BNB_TESTNET, SEPOLIA, CELO_SEPOLIA]) {
       expect(registryNetwork(n)).toBe(n);
     }
   });
 
   test("returns the L1 for cached registries", () => {
-    expect(registryNetwork(CELO_SEPOLIA)).toBe(SEPOLIA);
-    expect(registryNetwork(CELO)).toBe(ETHEREUM);
+    expect(registryNetwork(BASE_SEPOLIA)).toBe(SEPOLIA);
   });
 
   test("a spread override keeps the registry", () => {
-    const custom: NetworkConfig = { ...CELO_SEPOLIA, publicRpcUrl: "http://localhost:8545" };
+    const custom: NetworkConfig = { ...BASE_SEPOLIA, publicRpcUrl: "http://localhost:8545" };
     expect(registryNetwork(custom)).toBe(SEPOLIA);
   });
 });
@@ -124,8 +123,14 @@ describe("NETWORKS", () => {
     }
   });
 
-  test("the two testnet L2s share Sepolia as their registry", () => {
-    expect(registryNetwork(CELO_SEPOLIA)).toBe(registryNetwork(BASE_SEPOLIA));
+  test("on testnet, Base Sepolia keeps its registry on Sepolia and Celo Sepolia on itself", () => {
+    expect(registryNetwork(BASE_SEPOLIA)).toBe(SEPOLIA);
+    expect(registryNetwork(CELO_SEPOLIA)).toBe(CELO_SEPOLIA);
+  });
+
+  test("every mainnet network keeps its own KeyStore", () => {
+    for (const n of NETWORKS.mainnet) expect(registryNetwork(n)).toBe(n);
+    expect(new Set(NETWORKS.mainnet.map((n) => n.keyStore)).size).toBe(NETWORKS.mainnet.length);
   });
 });
 

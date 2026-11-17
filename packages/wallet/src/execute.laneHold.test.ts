@@ -14,7 +14,7 @@
  * what makes "prepared too early" observable at all.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { numberToHex, type Address, type Hex } from "viem";
+import { encodeAbiParameters, numberToHex, type Address, type Hex } from "viem";
 import { CELO_SEPOLIA } from "./config.js";
 import { createPrivateKeySigner } from "./internal/signer.js";
 import { execute } from "./execute.js";
@@ -58,6 +58,11 @@ function mockWire(opts: { mine: "immediately" | "on-release"; failWithNoReceipts
       const ok = (result: unknown) => ({ jsonrpc: "2.0", id: req.id, result });
       if (req.method === "eth_call") {
         const data = String(req.params?.[0]?.data ?? "");
+        // Celo Sepolia keeps its own KeyStore, so an admin transaction asks it whether the
+        // wallet has registered. It has: nothing is prepended to these transactions.
+        if (String(req.params?.[0]?.to ?? "").toLowerCase() === CELO_SEPOLIA.keyStore.toLowerCase()) {
+          return ok(encodeAbiParameters([{ type: "bytes32[]" }], [[("0x" + "01".repeat(32)) as Hex]]));
+        }
         if (data.startsWith(GET_NONCE_SELECTOR)) {
           const lane = BigInt(`0x${data.slice(10)}`);
           // The account has reached exactly as many nonces as bundles mined.
