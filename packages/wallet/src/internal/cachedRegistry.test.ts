@@ -29,7 +29,7 @@ const DEPLOYED_CACHE: Address = "0x37ebf8F17c3705568a03fB3A1629AcE7B3D95FFf";
 /** A cached network with a different cache address, to check the helper reads the config. */
 const CACHED_ELSEWHERE: NetworkConfig = {
   ...BASE_SEPOLIA,
-  registry: { kind: "cached", l1: SEPOLIA, keyStoreCache: "0x00000000000000000000000000000000000Cac4E" },
+  registry: { kind: "cached", l1: SEPOLIA, keyStoreCache: "0x00000000000000000000000000000000000CaC4E" },
 };
 
 describe("isCachedRegistry", () => {
@@ -48,7 +48,7 @@ describe("isCachedRegistry", () => {
 describe("keyStoreCacheOf", () => {
   test("returns the cache address of a cached network", () => {
     expect(keyStoreCacheOf(BASE_SEPOLIA)).toBe(DEPLOYED_CACHE);
-    expect(keyStoreCacheOf(CACHED_ELSEWHERE)).toBe("0x00000000000000000000000000000000000Cac4E");
+    expect(keyStoreCacheOf(CACHED_ELSEWHERE)).toBe("0x00000000000000000000000000000000000CaC4E");
   });
 
   test("refuses an unset cache address with a message naming the chain and the field", () => {
