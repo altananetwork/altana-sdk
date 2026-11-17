@@ -337,6 +337,43 @@ h1.home-title {
   margin: 24px 0 12px;
 }
 
+.network-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 8px;
+}
+
+.network-option {
+  padding: 8px 22px;
+  border: 1px solid var(--vocs-color_border);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 400;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+/* On a phone the three networks stay on one row. */
+@media (max-width: 480px) {
+  .network-option {
+    padding: 8px 14px;
+  }
+}
+
+.network-option[aria-pressed="true"] {
+  background: var(--vocs-color_backgroundDark);
+  font-weight: 600;
+}
+
+.network-option:focus-visible {
+  outline: 2px solid var(--altana-blue);
+  outline-offset: 2px;
+}
+
 .admin-key-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

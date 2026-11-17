@@ -7,6 +7,7 @@ import { Eyebrow } from '../../components/Eyebrow'
 
 import { useState, useEffect } from 'react'
 import { PasskeyDemo } from '../../components/PasskeyDemo'
+import { NetworkPicker, OnNetwork, NetworkName, NetworkSymbol } from '../../components/Network'
 
 export function WalletTabSwitcher() {
   const [tab, setTab] = useState('passkey')
@@ -36,7 +37,7 @@ export function WalletTabSwitcher() {
     if (passkey) passkey.style.display = id === 'passkey' ? '' : 'none'
     if (pk) pk.style.display = id === 'private-key' ? '' : 'none'
     setTab(id)
-    history.replaceState(null, '', id === 'passkey' ? location.pathname : `#${id}`)
+    history.replaceState(null, '', id === 'passkey' ? `${location.pathname}${location.search}` : `#${id}`)
   }
 
   const btn = (id) => ({
@@ -67,6 +68,10 @@ A smart agentic wallet gives any authorized agent permissioned access to your on
 
 You own the wallet. Agents get scoped, expiring, revocable keys. Every permission is verifiable by anyone, from any chain, with a free read.
 
+<p className="admin-key-lead">Which network?</p>
+
+<NetworkPicker />
+
 <p className="admin-key-lead">Which admin key type?</p>
 
 <div className="admin-key-grid">
@@ -88,7 +93,7 @@ You own the wallet. Agents get scoped, expiring, revocable keys. Every permissio
 
 ## Try it live
 
-Each call hits the Altana SDK against BNB Smart Chain. Your passkey stays on your device.
+Each call hits the Altana SDK against <NetworkName />. Your passkey stays on your device.
 
 <PasskeyDemo />
 
@@ -116,6 +121,8 @@ npm install @altananetwork/sdk viem
 
 Generate a private key, then build a wallet around it. Run this once.
 
+<OnNetwork id="bnb">
+
 ```ts
 import { generatePrivateKey } from "viem/accounts";
 import { createClient, BNB, signerFromPrivateKey } from "@altananetwork/sdk";
@@ -130,6 +137,44 @@ const wallet = await client.createWallet({ signer });
 console.log("Wallet address:", wallet.address);
 ```
 
+</OnNetwork>
+
+<OnNetwork id="ethereum">
+
+```ts
+import { generatePrivateKey } from "viem/accounts";
+import { createClient, ETHEREUM, signerFromPrivateKey } from "@altananetwork/sdk";
+
+const privateKey = generatePrivateKey();
+console.log("Save this key:", privateKey); // copy and store this somewhere safe
+
+const signer = signerFromPrivateKey(privateKey);
+const client = createClient({ chains: [ETHEREUM] });
+const wallet = await client.createWallet({ signer });
+
+console.log("Wallet address:", wallet.address);
+```
+
+</OnNetwork>
+
+<OnNetwork id="celo">
+
+```ts
+import { generatePrivateKey } from "viem/accounts";
+import { createClient, CELO, signerFromPrivateKey } from "@altananetwork/sdk";
+
+const privateKey = generatePrivateKey();
+console.log("Save this key:", privateKey); // copy and store this somewhere safe
+
+const signer = signerFromPrivateKey(privateKey);
+const client = createClient({ chains: [CELO] });
+const wallet = await client.createWallet({ signer });
+
+console.log("Wallet address:", wallet.address);
+```
+
+</OnNetwork>
+
 :::info[Save your key before continuing]
 Copy the value printed for `privateKey`. The SDK never stores key material and has no way to give it back to you later.
 
@@ -140,9 +185,9 @@ You generate the key yourself here rather than asking the SDK for one, so the ke
 
 ### Step 3: Fund your wallet
 
-Send BNB to your `wallet.address` before executing.
+Send <NetworkSymbol /> to your `wallet.address` on <NetworkName /> before executing.
 
-<div style={{marginTop: '1em'}}>Fund the address with BNB from any exchange or wallet.</div>
+<div style={{marginTop: '1em'}}>Fund the address with <NetworkSymbol /> from any exchange or wallet.</div>
 
 ### Step 4: Run a transaction
 
@@ -181,6 +226,8 @@ npm install dotenv
 
 Then use it in your script:
 
+<OnNetwork id="bnb">
+
 ```ts
 import 'dotenv/config'
 import { createClient, BNB, signerFromPrivateKey } from "@altananetwork/sdk";
@@ -191,6 +238,38 @@ const wallet = await client.createWallet({ signer });
 
 console.log(wallet.address);
 ```
+
+</OnNetwork>
+
+<OnNetwork id="ethereum">
+
+```ts
+import 'dotenv/config'
+import { createClient, ETHEREUM, signerFromPrivateKey } from "@altananetwork/sdk";
+
+const client = createClient({ chains: [ETHEREUM] });
+const signer = signerFromPrivateKey(process.env.PRIVATE_KEY as `0x${string}`);
+const wallet = await client.createWallet({ signer });
+
+console.log(wallet.address);
+```
+
+</OnNetwork>
+
+<OnNetwork id="celo">
+
+```ts
+import 'dotenv/config'
+import { createClient, CELO, signerFromPrivateKey } from "@altananetwork/sdk";
+
+const client = createClient({ chains: [CELO] });
+const signer = signerFromPrivateKey(process.env.PRIVATE_KEY as `0x${string}`);
+const wallet = await client.createWallet({ signer });
+
+console.log(wallet.address);
+```
+
+</OnNetwork>
 
 </div>
 

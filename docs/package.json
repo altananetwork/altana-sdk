@@ -9,7 +9,8 @@
     "prebuild": "cp ../packages/wallet/SKILL.md public/skill.md && node scripts/gen-changelog.mjs",
     "build": "bun run --filter '@altananetwork/sdk' build && vocs build",
     "preview": "vocs preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "bun test components"
   },
   "dependencies": {
     "@altananetwork/sdk": "workspace:*",

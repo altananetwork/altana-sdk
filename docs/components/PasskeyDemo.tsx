@@ -1,10 +1,22 @@
-import { useState, useCallback } from 'react'
-import { createClient, BNB } from '@altananetwork/sdk'
+import { useState, useCallback, useEffect } from 'react'
+import { createClient } from '@altananetwork/sdk'
 import type { Wallet, Signer } from '@altananetwork/sdk'
 import { AltanaButton, CopyButton, StatusBox, StepCard, TxConfirmed } from './demo/primitives'
 import type { StepStatus } from './demo/primitives'
+import { useNetwork } from './Network'
+import { networkOption } from './networkOptions'
+import type { NetworkId, NetworkOption } from './networkOptions'
 
-const client = createClient({ chains: [BNB] })
+// One client per network, made the first time that network is chosen.
+const clients = new Map<string, ReturnType<typeof createClient>>()
+function clientFor(network: NetworkOption) {
+  let client = clients.get(network.id)
+  if (!client) {
+    client = createClient({ chains: [network.config] })
+    clients.set(network.id, client)
+  }
+  return client
+}
 
 type WalletState = {
   wallet: Wallet & { signer: Signer }
@@ -13,7 +25,33 @@ type WalletState = {
 
 // ── main demo ────────────────────────────────────────────────────────────────
 
+/**
+ * The live demo on the chosen network. Each network keeps its own demo while
+ * the page is open, so a wallet created on one network is still there after
+ * looking at another.
+ */
 export function PasskeyDemo() {
+  const network = useNetwork()
+  const [opened, setOpened] = useState<NetworkId[]>([network.id])
+  useEffect(() => {
+    setOpened((ids) => (ids.includes(network.id) ? ids : [...ids, network.id]))
+  }, [network.id])
+  const shown = opened.includes(network.id) ? opened : [...opened, network.id]
+
+  return (
+    <>
+      {shown.map((id) => (
+        <div key={id} hidden={id !== network.id}>
+          <PasskeyDemoOn network={networkOption(id)} />
+        </div>
+      ))}
+    </>
+  )
+}
+
+function PasskeyDemoOn({ network }: { network: NetworkOption }) {
+  const client = clientFor(network)
+
   const [createStatus, setCreateStatus] = useState<StepStatus>('idle')
   const [walletState, setWalletState] = useState<WalletState>(null)
   const [createError, setCreateError] = useState('')
@@ -38,7 +76,7 @@ export function PasskeyDemo() {
       setCreateError(e?.message ?? String(e))
       setCreateStatus('error')
     }
-  }, [])
+  }, [client])
 
   const handleExecute = useCallback(async () => {
     if (!walletState) return
@@ -56,7 +94,7 @@ export function PasskeyDemo() {
       setTxError(e?.message ?? String(e))
       setTxStatus('error')
     }
-  }, [walletState])
+  }, [walletState, client])
 
   const handleRecover = useCallback(async () => {
     setRecoverStatus('loading')
@@ -70,7 +108,7 @@ export function PasskeyDemo() {
       setRecoverError(e?.message ?? String(e))
       setRecoverStatus('error')
     }
-  }, [])
+  }, [client])
 
   return (
     <div style={{ margin: '2rem 0' }}>
@@ -99,7 +137,7 @@ export function PasskeyDemo() {
         )}
         {createStatus === 'done' && (
           <p style={{ marginTop: '0.75rem', fontSize: '0.85rem', color: 'var(--vocs-color_text2)' }}>
-            Fund this address to continue. We recommend around <strong>$5</strong> of BNB.
+            Fund this address on {network.label} to continue. We recommend around <strong>$5</strong> of {network.symbol}.
           </p>
         )}
       </StepCard>
@@ -122,7 +160,7 @@ export function PasskeyDemo() {
             {txStatus === 'error' && txError}
           </StatusBox>
         ) : (
-          <TxConfirmed hash={txHash} label="Transaction confirmed" />
+          <TxConfirmed hash={txHash} label="Transaction confirmed" explorerUrl={network.explorerUrl} />
         )}
       </StepCard>
 
