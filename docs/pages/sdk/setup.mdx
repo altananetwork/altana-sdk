@@ -31,18 +31,18 @@ console.log(wallet.address);
 | --- | --- | --- | --- |
 | `BNB` | BNB Smart Chain (default) | 56 | BNB |
 | `ETHEREUM` | Ethereum | 1 | ETH |
-| `CELO` | Celo | 42220 | CELO. It pays the Keystore registration fee and the relay's fee; the relay's fee can also be paid in USDC or USDT when the wallet holds one |
+| `CELO` | Celo | 42220 | CELO |
 | `BNB_TESTNET` | BNB Smart Chain Testnet | 97 | test BNB: [faucet](https://testnet.bnbchain.org/faucet-smart) |
-| `CELO_SEPOLIA` | Celo Sepolia | 11142220 | test CELO: [faucet](https://faucet.celo.org/celo-sepolia). It pays the Keystore registration fee and the relay's fee; the relay's fee can also be paid in test USDC, USDm, EURm or KESm |
+| `CELO_SEPOLIA` | Celo Sepolia | 11142220 | test CELO: [faucet](https://faucet.celo.org/celo-sepolia) |
 | `BASE_SEPOLIA` | Base Sepolia | 84532 | Base Sepolia ETH. Keystore writes on Sepolia are paid from this balance; ETH on Sepolia is not used |
 
-BNB Smart Chain, Ethereum and Celo each keep their own [Keystore](/concepts/keystore):
-a grant registers the key and authorizes it in one transaction, and the registration fee is
-paid in the chain's native token. Base Sepolia mirrors another chain's Keystore: the Keystore
-is on Sepolia and a KeyStoreCache on Base Sepolia mirrors it. The SDK handles the write on
-Sepolia and the proof into the cache inside [`grantSession`](/sdk/grant-session) and
-[`revokeSession`](/sdk/revoke-session), and that write is paid from the wallet's balance on
-Base Sepolia. `BASE` is also exported, for the L2
+BNB Smart Chain, Ethereum and Celo are standalone: the [Keystore](/concepts/keystore) is
+on the chain itself. Base Sepolia is an L2: the Keystore is on Sepolia and a KeyStoreCache
+on the L2 mirrors it. The SDK handles the L1 write and the
+proof into the cache inside [`grantSession`](/sdk/grant-session) and
+[`revokeSession`](/sdk/revoke-session). The L1 write is paid from the wallet's balance on
+the L2: the relay takes the registration fee and its own fee there and funds the write on
+the L1. `BASE` is also exported, for the L2
 Keystore cache used by [`ensureKeyCached`](/sdk/sync-to-l2).
 
 ## Multiple chains

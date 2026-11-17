@@ -8,8 +8,8 @@ description: Supported mainnet chains, RPC endpoints, and deployed contract addr
 Altana is multi-chain. The SDK ships a config per network, importable from
 `@altananetwork/sdk`. **BNB Smart Chain is the default**; Ethereum is
 supported for wallet execution and L1 cross-chain proofs; Celo is supported for
-wallet execution with its own Keystore; Base is supported as the L2
-Keystore cache for cross-chain verification.
+wallet execution; Base is supported as the L2 Keystore cache for cross-chain
+verification.
 
 Building against testnet? See [Testnet](/concepts/networks/testnet) for BNB
 Smart Chain Testnet and Celo Sepolia.
@@ -55,13 +55,9 @@ KeyStore contracts:
 
 ## Celo: `CELO`
 
-Celo keeps its own Keystore, like BNB Smart Chain: a session is recorded on
-Celo in the same transaction that authorizes it, and the registration fee is
-paid in CELO. A wallet created for `CELO` is also provisioned on Ethereum in
-the same call, so it can act there later.
-
-The relay on Celo takes its own fee in CELO or in a stablecoin the wallet
-holds: USDC or USDT, priced live. `client.feeCurrencies()` returns the current
+Altana on Celo is optimized for stablecoins. The relay on Celo takes its own
+fee in CELO or in a stablecoin the wallet holds: USDC or USD₮, priced live
+from Celo's FeeCurrencyDirectory. `client.feeCurrencies()` returns the current
 list and rates.
 
 - **Chain id:** 42220
@@ -75,6 +71,14 @@ KeyStore contracts:
 | --- | --- |
 | KeyStore | `0x83b30935f36d6ccf9B1ec3b5E47F2866b97cd27c` |
 | KeyStoreController | `0x47bA5fc2A5b0CcB24BA3fAC9D4B59400eE9fd1D6` |
+
+Fee tokens the relay accepts:
+
+| Token | Address |
+| --- | --- |
+| CELO | Native token |
+| USDC | `0xcebA9300f2b948710d2653dD7B07f33A8B32118C` |
+| USD₮ | `0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e` |
 
 [ERC-8004 agent identity](/sdk/erc8004):
 

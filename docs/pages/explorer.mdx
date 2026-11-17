@@ -42,11 +42,11 @@ on, its expiry, and when it was registered.
 **Live activity.** A running feed of Keystore events across all indexed chains, filterable to
 registrations, revocations, or L2 cache syncs, with the transaction fee and chain for each.
 
-**Networks.** The Keystore contract on each chain, with its indexed head block and the time of
-its last event. Mainnet indexes BNB Smart Chain, Ethereum and Celo, each with its own Keystore.
-Testnet indexes BNB Smart Chain Testnet, Ethereum Sepolia and Celo Sepolia the same way, plus
-Base Sepolia, which reads the Sepolia Keystore through an L2 cache. Contract addresses are
-listed in [Networks and addresses](/concepts/networks).
+**Networks.** The source Keystore contracts and the L2 cache, each with its indexed head block
+and the time of its last event. Mainnet indexes BNB Smart Chain, Ethereum and Celo as sources.
+Testnet indexes BNB Smart Chain Testnet, Ethereum Sepolia and Celo Sepolia as sources, with
+Base Sepolia as the L2 cache. Contract addresses are listed in
+[Networks and addresses](/concepts/networks).
 
 ## How to use it well
 

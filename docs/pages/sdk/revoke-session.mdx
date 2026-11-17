@@ -9,7 +9,7 @@ import { Eyebrow } from '../../components/Eyebrow'
 
 # revokeSession
 
-Revoke a session key everywhere it lives. One call finds the chains whose account holds the key, revokes it on each, revokes it in the [Keystore](/concepts/keystore), proves the revocation into the cache of every chain that mirrors that Keystore, and reports each step per chain. After it confirms, the session's next execute attempt reverts at validation on every one of those chains.
+Revoke a session key everywhere it lives. One call finds the chains whose account holds the key, revokes it on each, revokes it in the [Keystore](/concepts/keystore), proves the revocation into every L2 cache, and reports each step per chain. After it confirms, the session's next execute attempt reverts at validation on every one of those chains.
 
 ```ts
 // `client`, `wallet`, `admin`, and `session` from earlier
@@ -31,8 +31,8 @@ A bare public key is read as secp256k1. Pass the `Session` for a passkey session
 `client.revokeSession` acts on every chain the client was configured with: pass the whole group, for example `createClient({ chains: [...NETWORKS.testnet] })`, and the SDK does the rest.
 
 1. **Discovery.** In parallel, it reads which chains' accounts hold the key, and whether each Keystore behind those chains lists it as valid.
-2. **Revoke.** In parallel, one account leg per chain holding the key, and one registry leg per Keystore that lists it. Two chains mirroring the same Keystore share one registry leg. When the Keystore chain is itself a chain holding the key (BNB, Ethereum, Celo), the registry revoke rides in that chain's account leg, in the same intent.
-3. **Cache.** For each chain with a mirrored Keystore, once its registry revoke confirmed, a proof of the revocation into its KeyStoreCache, so readers on the L2 see the key as revoked.
+2. **Revoke.** In parallel, one account leg per chain holding the key, and one registry leg per Keystore that lists it. Two L2s behind the same L1 share one registry leg. When the Keystore chain is itself a chain holding the key (BNB, Ethereum, Celo), the registry revoke rides in that chain's account leg, in the same intent.
+3. **Cache.** For each L2, once its registry revoke confirmed, a proof of the revocation into its KeyStoreCache, so readers on the L2 see the key as revoked.
 
 ## Result
 

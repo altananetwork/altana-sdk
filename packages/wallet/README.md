@@ -160,21 +160,20 @@ import { BNB, ETHEREUM, BASE, BNB_TESTNET, CELO_SEPOLIA, BASE_SEPOLIA, SEPOLIA, 
 | Export | Chain | Role |
 | --- | --- | --- |
 | `BNB` | BNB Smart Chain (56) | Default. Wallet execution, local KeyStore |
-| `ETHEREUM` | Ethereum (1) | Wallet execution, local KeyStore, also the one mirrored chains read |
+| `ETHEREUM` | Ethereum (1) | Wallet execution, L1 KeyStore for cross-chain proofs |
 | `BASE` | Base (8453) | L2 KeyStore cache, read-only (`ensureKeyCached`) |
 | `BNB_TESTNET` | BNB testnet (97) | Full-stack testnet |
-| `CELO_SEPOLIA` | Celo Sepolia (11142220) | Full-stack testnet: wallet execution, local KeyStore |
+| `CELO_SEPOLIA` | Celo Sepolia (11142220) | Full-stack testnet |
 | `BASE_SEPOLIA` | Base Sepolia (84532) | Testnet L2. KeyStore on Sepolia, cache on Base Sepolia |
-| `SEPOLIA` | Sepolia (11155111) | The KeyStore behind Base Sepolia, served by the testnet relay |
+| `SEPOLIA` | Sepolia (11155111) | Testnet L1 KeyStore, served by the testnet relay |
 | `CELO` | Celo (42220) | Wallet execution, local KeyStore |
 
-On a chain with its own KeyStore (`BNB`, `ETHEREUM`, `CELO`, `BNB_TESTNET`,
-`CELO_SEPOLIA`) a grant is one relay transaction that registers the key and
-authorizes it, and the registration fee is paid in the chain's native token.
-On a chain that mirrors another chain's KeyStore (`BASE_SEPOLIA`) the KeyStore
-is on Sepolia and a KeyStoreCache mirrors it: `grantSession` authorizes the
-account through the chain's relay, which is when the session is usable, then
-writes the Sepolia KeyStore and proves the entry into the cache. `grantSession` grants on one chain (`chainId`, or the
+On `BNB`, `ETHEREUM`, `CELO`, `BNB_TESTNET` and `CELO_SEPOLIA` the KeyStore
+is on the chain itself and a grant is one relay transaction. On an L2
+(`BASE_SEPOLIA`) the KeyStore is on the L1 and a KeyStoreCache on the L2
+mirrors it: `grantSession` authorizes the account through the L2 relay, which
+is when the session is usable, then
+writes the L1 KeyStore and proves the entry into the L2 cache. `grantSession` grants on one chain (`chainId`, or the
 client's default chain) and returns `transactionHash`; pass `chainIds` to
 grant on several at once (`NETWORKS.mainnet` / `NETWORKS.testnet` list the
 groups). `revokeSession` finds the chains of the client whose account holds

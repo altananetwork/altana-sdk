@@ -11,8 +11,7 @@ Altana runs on three testnets, plus Sepolia as the KeyStore chain behind Base Se
 - **BNB Smart Chain Testnet (chain 97)**: the full stack (keystore, account
   contracts, relay) is deployed there. SDK config `BNB_TESTNET`.
 - **Celo Sepolia (chain 11142220)**: the full stack (keystore, account
-  contracts, relay) is deployed there. SDK config `CELO_SEPOLIA`. See
-  [Celo Sepolia](#celo-sepolia) below.
+  contracts, relay) is deployed there. SDK config `CELO_SEPOLIA`.
 - **Base Sepolia (chain 84532)**: the account contracts and relay are
   deployed there, the KeyStore is on Sepolia and a KeyStoreCache on Base
   Sepolia mirrors it. SDK configs `BASE_SEPOLIA` and `SEPOLIA`. See
@@ -77,23 +76,16 @@ minutes — see [Get testnet $U](/sdk/erc8183#get-testnet-u) for claim code):
 
 ## Celo Sepolia: `CELO_SEPOLIA`
 
-Wallets execute through the Altana testnet relay on Celo Sepolia. Celo Sepolia
-keeps its own [Keystore](/concepts/keystore): a session is recorded there in
-the same transaction that authorizes it, and the registration fee is paid in
-CELO. The relay takes its own fee in CELO or in one of the stablecoins below.
+Fund new wallets with test CELO from the
+[Celo Sepolia faucet](https://faucet.celo.org/celo-sepolia) before executing.
+The relay on Celo Sepolia takes its own fee in CELO or in one of the
+stablecoins below.
 
 - **Chain id:** 11142220
-- **Public RPC:** `https://forno.celo-sepolia.celo-testnet.org` (Forno, the same endpoint the testnet relay uses)
+- **Public RPC:** `https://forno.celo-sepolia.celo-testnet.org`
 - **Explorer:** https://sepolia.celoscan.io
 - **Faucet:** https://faucet.celo.org/celo-sepolia
 - **Relay:** `https://testnet-relay.altana.network`
-
-What to fund, and where:
-
-| Chain | Asset | Used for |
-| --- | --- | --- |
-| Celo Sepolia | CELO | The Keystore registration fee for each key, and relay fees for wallet actions |
-| Celo Sepolia | Any fee token below | Relay fees for wallet actions, when the wallet holds one (the relay charges whichever accepted token the wallet holds) |
 
 Fee tokens the relay accepts besides CELO, priced live from Celo's
 FeeCurrencyDirectory (`client.feeCurrencies()` returns the current list and
