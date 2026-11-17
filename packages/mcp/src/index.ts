@@ -91,10 +91,10 @@ import {
 // different ALTANA_CHAIN to switch. Sepolia and Base Sepolia are not in the
 // ALTANA_CHAIN map, so they are not selectable here.
 //
-// Celo and Celo Sepolia keep their KeyStore registry on another chain
-// (Ethereum / Sepolia) behind a local cache, so KeyStore reads go to the
-// registry chain through `registryClient`, and the verification tools add a
-// `cache` block describing what the Celo-side cache currently holds.
+// Every selectable chain keeps its own KeyStore, so `registryClient` reads
+// the chain itself. A network that keeps its registry on another chain would
+// be read there, and the verification tools would add a `cache` block
+// describing what its local cache currently holds.
 const resolved = resolveNetwork(process.env.ALTANA_CHAIN);
 const NETWORK = resolved.network;
 const REGISTRY = resolved.registry;

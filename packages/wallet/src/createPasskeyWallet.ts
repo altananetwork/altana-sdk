@@ -75,9 +75,10 @@ export async function createPasskeyWallet(
   //    chain's authorization tuple; the passkey is registered as the smart
   //    account's admin authority. Counterfactual: the setCode lands as a
   //    preCall on each chain's first execute. A cached network's registry
-  //    chain is included when it has a relay (Celo on Ethereum): registry
-  //    writes go through the smart account there, and there is no second
-  //    chance to provision it once the throwaway is gone.
+  //    chain is included when it has a relay, because registry writes go
+  //    through the smart account there; so is a chain the network names in
+  //    `provisionAlso` (Celo names Ethereum). There is no second chance to
+  //    provision either once the throwaway is gone.
   const plan: ProvisioningPlan = {
     walletAddress,
     authorizeKeys: [passkeyAdminKey],

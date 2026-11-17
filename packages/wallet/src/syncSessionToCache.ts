@@ -1,7 +1,7 @@
 /**
  * Prove a session key's registry state into a cached network's KeyStoreCache.
  *
- * On Celo Sepolia the KeyStore lives on Sepolia and the Celo Sepolia cache
+ * On Base Sepolia the KeyStore lives on Sepolia and the Base Sepolia cache
  * accepts a storage proof against the Sepolia block the L2 currently anchors
  * (through the OP-stack `L1Block` predeploy). This operation waits for the
  * anchor to pass the registry write, builds the proof at that block and
@@ -46,7 +46,7 @@ export type SyncSessionToCacheStatus =
   | "done";
 
 export type SyncSessionToCacheOptions = {
-  /** The cached network (for example CELO_SEPOLIA). Resolved by the client from a chainId. */
+  /** The cached network (for example BASE_SEPOLIA). Resolved by the client from a chainId. */
   network: NetworkConfig;
   /**
    * The registry-chain block that holds the write being proven. The proof
@@ -83,7 +83,7 @@ export type SyncSessionToCacheOptions = {
   feeToken?: Address | readonly Address[];
   /** Poll cadence while waiting for the anchor. Default 3s. */
   anchorPollIntervalMs?: number;
-  /** Max wait for the anchor to pass `afterL1Block`. Default 30 minutes (Celo anchors its registry chain 15 to 30 minutes behind). */
+  /** Max wait for the anchor to pass `afterL1Block`. Default 30 minutes (an OP-stack L2 can anchor its registry chain 15 to 30 minutes behind). */
   anchorTimeoutMs?: number;
   /**
    * Public client for the registry chain, used for `eth_getProof` and the
@@ -175,7 +175,7 @@ export async function runSyncSessionToCache(
     throw new Error(
       `syncSessionToCache: ${network.chain.name} (chainId ${network.chainId}) keeps its ` +
         `KeyStore locally, so there is no cache to sync. Only cached networks such as ` +
-        `CELO_SEPOLIA use it.`,
+        `BASE_SEPOLIA use it.`,
     );
   }
   const keyStoreCache = keyStoreCacheOf(network);

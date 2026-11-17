@@ -29,7 +29,7 @@ import { unknownRegistryBlockReason } from "./internal/sessionLegs.js";
  * Result of registerSessionKey. `alreadyRegistered: true` = nothing to do, no
  * fee paid.
  *
- * On an L2 (Celo Sepolia, Celo) the write lands on the registry
+ * On a network with a mirrored KeyStore (Base Sepolia) the write lands on the registry
  * chain and `registry` says how; when that chain has no relay (Sepolia) there
  * is no relay bundle, so `callsId` carries the transaction hash. The proof
  * into the network's cache follows and is reported in `cache`, never thrown.

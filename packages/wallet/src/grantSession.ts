@@ -95,7 +95,7 @@ export type GrantSessionConfig = {
  * calls execute(session, calls) — never the admin.
  *
  * 1. Account: one authorization per network, in parallel. On a network with a
- *    cached registry (Celo) this goes FIRST and waits for nothing, so the key
+ *    cached registry (Base Sepolia) this goes FIRST and waits for nothing, so the key
  *    is usable as soon as this call returns.
  * 2. Registry: one KeyStore write per registry chain, skipped where the key is
  *    already valid. When the registry chain is itself one of `networks` (BNB,

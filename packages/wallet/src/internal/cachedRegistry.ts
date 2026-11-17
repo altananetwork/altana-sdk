@@ -1,5 +1,5 @@
 /**
- * Cached-registry networks (Celo Sepolia, Celo).
+ * Cached-registry networks (Base Sepolia).
  *
  * On these networks the KeyStore lives on another chain (`registry.l1`) and
  * is mirrored into a KeyStoreCache contract on the network through storage
@@ -77,7 +77,7 @@ export function keyStoreCacheOf(network: NetworkConfig): Address {
     throw new Error(
       `${network.chain.name} (chainId ${network.chainId}) keeps its KeyStore locally; ` +
         `there is no KeyStoreCache to sync to. Cache operations apply only to cached ` +
-        `networks such as CELO_SEPOLIA.`,
+        `networks such as BASE_SEPOLIA.`,
     );
   }
   const cache = network.registry.keyStoreCache;
@@ -565,7 +565,7 @@ async function submitOneRelayedWrite(args: {
  * Submits registry calls on a registry chain directly: through its relay when
  * it has one, otherwise as transactions from the admin key. Used for a
  * registry chain that is not itself one of the networks being operated on
- * (Sepolia behind Celo Sepolia and Base Sepolia, or Ethereum behind Celo when
+ * (Sepolia behind Base Sepolia, or Ethereum behind an L2 that mirrors it, when
  * the Ethereum account holds no copy of the key).
  */
 export async function submitRegistryWrite(

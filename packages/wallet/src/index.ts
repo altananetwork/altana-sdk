@@ -133,7 +133,7 @@ export {
 } from "./config.js";
 export type { NetworkConfig, L2CacheConfig, KeyStoreRegistry } from "./config.js";
 
-// Cached-registry helpers (Celo Sepolia, Celo): is the network cached, where
+// Cached-registry helpers (Base Sepolia): is the network cached, where
 // is its cache, and which chains a wallet is provisioned on.
 export {
   isCachedRegistry,
