@@ -16,7 +16,7 @@ version may contain breaking changes.
 > reconstructed from commit history after the fact, so they summarize what
 > shipped rather than itemizing every change.
 
-## [1.0.0] - Unreleased
+## [1.0.0] - 2026-11-17
 
 `@altananetwork/mcp` 1.0.0, `@altananetwork/x402-server` 0.3.0,
 `@altananetwork/hypersigner-keystore-mcp` 0.3.0
