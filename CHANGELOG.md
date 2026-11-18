@@ -46,6 +46,20 @@ version may contain breaking changes.
 
 ### Fixed
 
+- **A wallet short of the chain's currency for a registration is told so, on
+  every chain and whatever token it pays the relay in.** A KeyStore
+  registration is paid in the chain's own currency, as value the request
+  sends. A wallet that named a stablecoin as its fee token and held too little
+  CELO for the registration was told "This could not be carried out, and the
+  relay gave no reason", because it held plenty of the token it named. The
+  error is now `insufficient_funds`: "Not enough CELO for the registration:
+  needs about 9.2 CELO, you have 3 CELO. Add CELO on Celo." The same request
+  paid in the chain's own currency said "Not enough BNB to pay for this"; it
+  now says "Not enough BNB for the registration" too, on BNB Smart Chain,
+  Ethereum and Celo. `FundingShortfall` gains an optional
+  `purpose: "registration"` for an app that lays the sentence out itself. A
+  shortfall that is not a registration keeps its wording.
+
 - **`@altananetwork/mcp`: `grant_session` stores the session key before it
   sends the grant.** The key was stored after the grant confirmed, so a
   keychain write that failed left a paid, authorized key that nobody held.
