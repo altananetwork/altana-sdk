@@ -389,11 +389,71 @@ export function selectX402Requirement(
   return (preferred[0] ?? pool[0]);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** A present v2 header is authoritative; never downgrade to body instructions. */
+function parsePaymentRequiredHeader(header: string): {
+  x402Version: 2;
+  resource: X402Resource;
+  accepts: X402Requirement[];
+} {
+  const invalid = (reason: string) => new Error(`x402: invalid PAYMENT-REQUIRED header: ${reason}.`);
+  let challenge: unknown;
+  try {
+    const json = Base64.toString(header);
+    // The decoder is permissive. Round-trip to reject junk/truncation while
+    // allowing standard base64 with or without its optional padding.
+    const encoded = Base64.fromString(json);
+    if (header !== encoded && header !== encoded.replace(/=+$/, "")) throw new Error();
+    challenge = JSON.parse(json);
+  } catch {
+    throw invalid("base64-encoded JSON is required");
+  }
+  if (!isRecord(challenge)) throw invalid("object is required");
+  if (challenge.x402Version !== 2) throw invalid("x402Version must be 2 (use a body challenge for legacy v1)");
+  const resource = challenge.resource;
+  if (!isRecord(resource) || typeof resource.url !== "string" || !resource.url.trim() ||
+      (resource.description !== undefined && typeof resource.description !== "string") ||
+      (resource.mimeType !== undefined && typeof resource.mimeType !== "string")) {
+    throw invalid("resource must be an object with a non-empty url and optional string description/mimeType");
+  }
+  if (!Array.isArray(challenge.accepts) || challenge.accepts.length === 0) {
+    throw invalid("accepts must be a non-empty array");
+  }
+  const accepts = challenge.accepts.map((option: unknown, index: number) => {
+    if (!isRecord(option) ||
+        !["scheme", "network", "asset", "payTo"].every((key) => typeof option[key] === "string" && option[key].trim()) ||
+        typeof option.amount !== "string" || !/^\d+$/.test(option.amount) ||
+        !Number.isSafeInteger(option.maxTimeoutSeconds) || (option.maxTimeoutSeconds as number) <= 0 ||
+        (option.extra !== undefined && !isRecord(option.extra))) {
+      throw invalid(`accepts[${index}] must contain scheme, network, asset, payTo, a decimal amount and a positive integer maxTimeoutSeconds`);
+    }
+    // These aliases are transport metadata in the legacy body dialect. They
+    // must not override v2's canonical amount, version or resource.
+    const { maxAmountRequired, x402Version, resource, mimeType, ...requirement } = option;
+    return requirement as X402Requirement;
+  });
+  // Only offer canonical formats this signer implements. Standard v2 "permit2"
+  // needs a different witness than the legacy plain PermitTransferFrom signer;
+  // B402's "permit2-exact" witness is supported. Legacy body parsing stays unchanged.
+  const supported = accepts.filter((option) =>
+    option.scheme === "exact" &&
+    (option.extra?.assetTransferMethod === undefined ||
+      ["eip3009", "permit2-exact"].includes(option.extra.assetTransferMethod)),
+  );
+  return { x402Version: 2, resource: resource as X402Resource, accepts: supported };
+}
+
 /**
  * fetch() that transparently pays x402 challenges. On a 402, parses the
  * requirements, picks a payable option (see selectX402Requirement), signs it
  * with the session key, and retries with the `X-PAYMENT` header. Non-402
- * responses pass through unchanged.
+ * responses pass through unchanged. A present PAYMENT-REQUIRED header must
+ * contain a valid v2 challenge and takes precedence as a whole; only an absent
+ * header permits legacy/B402 JSON-body discovery. Invalid headers never cause
+ * a fallback payment. Signs once and retries once, including on a second 402.
  */
 export async function fetchWithX402(
   session: Session,
@@ -404,15 +464,18 @@ export async function fetchWithX402(
   const res = await fetch(url, init);
   if (res.status !== 402) return res;
 
-  // Parse the payment requirements. Standard x402 / B402 put options under
-  // `accepts`; tolerate a bare single requirement too.
-  const body: any = await res.json();
+  // v2 puts the challenge in PAYMENT-REQUIRED; its body is implementation-defined.
+  // Keep the existing JSON-body dialects only when no canonical header exists.
+  const paymentRequired = res.headers.get("PAYMENT-REQUIRED");
+  const body: any = paymentRequired !== null
+    ? parsePaymentRequiredHeader(paymentRequired)
+    : await res.json();
   const rawOptions: X402Requirement[] = Array.isArray(body?.accepts)
     ? body.accepts
     : body?.scheme
       ? [body]
       : [];
-  // The version and `resource` live at the top of the 402 body; carry them onto
+  // The version and `resource` live at the top of the challenge; carry them onto
   // each option so the X-PAYMENT echoes them (real B402 = 2, and b402 merchants
   // reject an envelope with no resource). Fall back to the URL we requested.
   const resource = normalizeResource(body?.resource, url);
