@@ -1601,6 +1601,14 @@ async function payerBalance(
   const valueShort = quoted === undefined && sends > 0n;
   const payClient = payNetwork.chainId === relay.network.chainId ? relay.client : buildRelayClient(payNetwork);
   const tokens = valueShort ? [symbol] : await acceptedFeeSymbols(payClient, payNetwork);
+  // A request whose only value is the KeyStore's registration fee, paid here in
+  // the chain's own currency, is a registration the wallet cannot afford, and
+  // the sentence says so on every chain: BNB, Ethereum and Celo alike.
+  const registration =
+    !intent.funded &&
+    token === NATIVE_TOKEN &&
+    payNetwork.chainId === relay.network.chainId &&
+    sendsOnlyRegistrationValue(intent.calls, relay.network);
   return {
     kind: "short",
     shortfall: {
@@ -1608,6 +1616,7 @@ async function payerBalance(
       ...(need !== undefined ? { need } : {}),
       have,
       fund: { chain: payNetwork.chain.name, ...(tokens.length > 0 ? { tokens } : { tokens: [symbol] }) },
+      ...(registration ? { purpose: "registration" as const } : {}),
     },
   };
 }
@@ -1744,6 +1753,13 @@ function totalValue(calls: readonly Call[]): bigint {
   return calls.reduce((sum, c) => sum + (c.value ?? 0n), 0n);
 }
 
+/** True when the calls send native value and every call that does goes to the KeyStore controller. */
+function sendsOnlyRegistrationValue(calls: readonly Call[], network: NetworkConfig): boolean {
+  const withValue = calls.filter((c) => (c.value ?? 0n) > 0n);
+  const controller = network.keyStoreController.toLowerCase();
+  return withValue.length > 0 && withValue.every((c) => c.to.toLowerCase() === controller);
+}
+
 /**
  * The native value an intent's calls send that the wallet's own native balance
  * does not cover, as a shortfall in the chain's own currency.
@@ -1767,10 +1783,7 @@ export function nativeValueShortfall(args: {
   const value = totalValue(args.calls);
   if (value === 0n || args.nativeBalance >= value) return undefined;
   const { symbol, decimals } = args.network.chain.nativeCurrency;
-  const controller = args.network.keyStoreController.toLowerCase();
-  const isRegistration = args.calls
-    .filter((c) => (c.value ?? 0n) > 0n)
-    .every((c) => c.to.toLowerCase() === controller);
+  const isRegistration = sendsOnlyRegistrationValue(args.calls, args.network);
   return {
     token: { symbol, decimals },
     need: value,

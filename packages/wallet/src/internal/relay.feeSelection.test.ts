@@ -346,7 +346,7 @@ describe("a first action on a chain with its own KeyStore", () => {
     const native = CELO_SEPOLIA.chain.nativeCurrency.symbol;
     expect(error?.code).toBe("insufficient_funds");
     expect(error?.message).toBe(
-      `Not enough ${native} to pay for this: needs about 0.00022 ${native}, you have 0 ${native}. ` +
+      `Not enough ${native} for the registration: needs about 0.00022 ${native}, you have 0 ${native}. ` +
         `Add ${native} on ${CELO_SEPOLIA.chain.name}.`,
     );
     expect(error?.message).not.toContain("USDC");
