@@ -74,6 +74,8 @@ import {
 import { searchSkills, getSkill } from "./skills.js";
 import { SUPPORTED_CHAINS, describeNetwork, fundingSteps, networkGroup, resolveNetwork } from "./network.js";
 import { acceptedFeeSymbols, feeCurrenciesPayload } from "./feeCurrencies.js";
+import { storeKeyThenGrant } from "./grantFlow.js";
+import { x402TokensFrom } from "./x402Tokens.js";
 import {
   assertErc8004Permissions,
   buildRegistrationFile,
@@ -743,8 +745,9 @@ tool(
     description:
       "Admin (a named wallet) authorizes a fresh session key on-chain. " +
       "Session is scoped by recipient, daily ETH spend cap, and lifetime. " +
-      "The wallet needs to be funded first — check with wallet_balance " +
-      "before calling.",
+      "Pass x402Tokens to let the session pay x402 requests (x402_request) in " +
+      "those tokens. The wallet needs to be funded first — check with " +
+      "wallet_balance before calling.",
     inputSchema: {
       walletName: z.string(),
       sessionName: z.string(),
@@ -782,6 +785,19 @@ tool(
           "The daily cap added for each fee token, in the token's smallest unit " +
             "(for example 5000000 for 5 USDC). Default one whole token.",
         ),
+      x402Tokens: z
+        .union([z.string(), z.array(z.string())])
+        .optional()
+        .describe(
+          "The token(s) the session may pay x402 requests in, one contract " +
+            "address or a list. In the same transaction as the grant, each token " +
+            "is approved to Permit2, and the token and Permit2 are approved as " +
+            "signature checkers for this session key, which is what x402_request " +
+            "needs. x402 payments are signed, not sent by the session, so the " +
+            "daily spend caps do not bound them: the session can sign payments of " +
+            "any amount of these tokens until it expires or is revoked. Keep the " +
+            "lifetime short.",
+        ),
     },
   },
   async ({
@@ -793,6 +809,7 @@ tool(
     register,
     feeToken,
     feeSpendLimit,
+    x402Tokens,
   }: {
     walletName: string;
     sessionName: string;
@@ -802,6 +819,7 @@ tool(
     register?: boolean;
     feeToken?: string | string[];
     feeSpendLimit?: string;
+    x402Tokens?: string | string[];
   }) => {
     // Refuse to overwrite an existing session entry. Sessions live in their
     // own keychain namespace (altana-session), so this only collides with
@@ -817,6 +835,7 @@ tool(
     const adminSigner = signerFromPrivateKey(admin.privateKey);
     await ensureRegistered(adminSigner);
     const recipientAddr = assertAddress(recipient);
+    const x402 = x402TokensFrom(x402Tokens);
     const capEth = dailyCapEth ?? "0.01";
     const lifetime = lifetimeSeconds ?? 3600;
     const expiry = Math.floor(Date.now() / 1000) + lifetime;
@@ -830,30 +849,36 @@ tool(
       address: admin.address,
     };
 
-    // One chain: this throws when the account did not authorize the key, so
-    // nothing below runs and no session is stored for a grant that failed.
-    const session = await client.grantSession({
-      wallet,
-      signer: adminSigner,
-      sessionSigner,
-      permissions: {
-        calls: [{ to: recipientAddr }],
-        spend: [{ limit: capWei, period: "day" }],
-      },
-      expiry,
-      ...(register !== undefined ? { register } : {}),
-      ...(feeToken !== undefined ? { feeToken: assertFeeToken(feeToken) } : {}),
-      ...(feeSpendLimit !== undefined ? { feeSpendLimit: BigInt(feeSpendLimit) } : {}),
+    // The key goes into the keychain (encrypted at rest) BEFORE the grant is
+    // sent, and comes out again if the grant fails: a grant is paid for and
+    // on chain, so a key that could not be stored afterwards would be lost.
+    // One chain: the grant throws when the account did not authorize the key,
+    // so no session is stored for a grant that failed.
+    const session = await storeKeyThenGrant({
+      storeKey: () => setSessionKey(sessionName, sessionPk),
+      removeKey: () => deleteSessionKey(sessionName),
+      grant: () =>
+        client.grantSession({
+          wallet,
+          signer: adminSigner,
+          sessionSigner,
+          permissions: {
+            calls: [{ to: recipientAddr }],
+            spend: [{ limit: capWei, period: "day" }],
+          },
+          expiry,
+          ...(register !== undefined ? { register } : {}),
+          ...(feeToken !== undefined ? { feeToken: assertFeeToken(feeToken) } : {}),
+          ...(feeSpendLimit !== undefined ? { feeSpendLimit: BigInt(feeSpendLimit) } : {}),
+          ...(x402 ? { x402Tokens: x402 } : {}),
+        }),
     });
 
-    // Persist:
-    //   1. PK in keychain (encrypted at rest)
-    //   2. Metadata in ~/.altana/sessions.json (needed to rebuild Session
-    //      at session_execute time — permissions/expiry must match grant
-    //      byte-for-byte or Porto can't find the key hash). The grant may
-    //      have added fee spend caps, so the effective permissions come from
-    //      the returned session, not from the inputs.
-    await setSessionKey(sessionName, sessionPk);
+    // Metadata in ~/.altana/sessions.json (needed to rebuild Session at
+    // session_execute time — permissions/expiry must match grant
+    // byte-for-byte or Porto can't find the key hash). The grant may have
+    // added fee spend caps, so the effective permissions come from the
+    // returned session, not from the inputs.
 
     const permissionsForFile: SessionPermissions = serializeSession(session).permissions;
 
@@ -880,6 +905,8 @@ tool(
               walletAddress: admin.address,
               sessionAddress: sessionSigner.address,
               sessionPublicKey: session.publicKey,
+              // Set when the session was set up to pay x402 requests in these tokens.
+              ...(x402 ? { x402Tokens: x402 } : {}),
               // keyId is the canonical identifier in KeyStore. Pass this
               // (or sessionName) to verify_authorization to confirm the
               // session is recognized in the public registry.
@@ -1104,9 +1131,9 @@ tool(
     description:
       "Fetch an HTTP URL, transparently paying an x402/B402 payment challenge " +
       "with a session key. On a 402 response the agent signs the payment " +
-      "(Permit2 or EIP-3009) and retries. Requires the wallet to have approved " +
-      "the payment token to Permit2 and approved the verifying contract as a " +
-      "signature checker for this session.",
+      "(Permit2 or EIP-3009) and retries. The session must have been granted " +
+      "with x402Tokens naming the payment token (grant_session), which makes " +
+      "the approvals a payment needs.",
     inputSchema: {
       sessionName: z.string(),
       url: z.string(),

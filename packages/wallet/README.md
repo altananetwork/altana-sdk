@@ -184,7 +184,7 @@ binary `status`.
 wallet's balance on the L2, so the wallet needs no ETH on the L1.
 
 The relay takes its fee in a token the wallet holds: the chain's native token
-everywhere, and on Celo also USDC or USDT, priced live. Omit `feeToken` and the relay charges whichever accepted
+everywhere, and on Celo also the stablecoins its relay lists, priced live. Omit `feeToken` and the relay charges whichever accepted
 token the wallet holds; the result's `feeToken` says which.
 `client.feeCurrencies()` lists what a chain's relay accepts. See
 https://docs.altana.network/sdk/setup.
