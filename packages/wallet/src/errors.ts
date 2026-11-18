@@ -69,6 +69,12 @@ export type FundingShortfall = {
   have: bigint;
   /** Where to add funds, and what the relay takes there. */
   fund?: { chain: string; tokens: readonly string[] };
+  /**
+   * Set when what is missing is the KeyStore's registration fee itself: native
+   * value the calls send to the KeyStore controller, which only the chain's own
+   * currency can pay, whatever token the relay's fee is charged in.
+   */
+  purpose?: "registration";
 };
 
 /** A price the relay converts with, read at its feed and found too old. For the log. */
@@ -354,10 +360,14 @@ function fundingStatement(facts: RelayFailureFacts): string {
   const what = facts.operation ?? "this";
   if (short) {
     const have = `you have ${money(short.have, short.token)}`;
+    // The registration fee is named as what it is: a wallet paying the relay in
+    // a stablecoin is not short "for this", it is short of the chain's own
+    // currency for the one thing only that currency can pay.
+    const forWhat = short.purpose === "registration" ? "for the registration" : `to pay for ${what}`;
     if (short.need !== undefined) {
-      return `Not enough ${short.token.symbol} to pay for ${what}: needs about ${money(short.need, short.token)}, ${have}.`;
+      return `Not enough ${short.token.symbol} ${forWhat}: needs about ${money(short.need, short.token)}, ${have}.`;
     }
-    return `Not enough ${short.token.symbol} to pay for ${what}: ${have}.`;
+    return `Not enough ${short.token.symbol} ${forWhat}: ${have}.`;
   }
   // No figures of our own. The relay quantified it in its own message often
   // enough that its sentence is the better one; ours would drop the numbers.

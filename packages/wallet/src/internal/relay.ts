@@ -1541,6 +1541,23 @@ async function payerBalance(
     payNetwork.chainId === relay.network.chainId
       ? getAddress(intent.feeToken)
       : undefined;
+  // The fee was named in a token, and the calls send native value the wallet's
+  // own balance does not cover. That value is a shortfall in the chain's own
+  // currency whatever the fee is paid in, and it is stated before the fee token
+  // is looked at: a wallet paying the relay in USD₮ and holding 3 CELO for a
+  // 9.2 CELO registration held plenty of the token it named, so no shortfall
+  // was established and it was told "the relay gave no reason" (fork of Celo
+  // mainnet, 2026-11-18).
+  if (namedHere) {
+    const valueShort = nativeValueShortfall({
+      calls: intent.calls,
+      funded: intent.funded,
+      nativeBalance: onIntentChain?.balance ?? 0n,
+      network: relay.network,
+    });
+    if (valueShort) return { kind: "short", shortfall: valueShort };
+  }
+
   // A funded intent is paid on the paying chain in whichever accepted token
   // the payer holds there; the relay chooses. A payer holding none of that
   // chain's own currency but holding a token there is spoken to in that token:
@@ -1725,6 +1742,42 @@ const SHORTFALL_READ_TIMEOUT_MS = 3_000;
 /** Native wei a set of calls sends. */
 function totalValue(calls: readonly Call[]): bigint {
   return calls.reduce((sum, c) => sum + (c.value ?? 0n), 0n);
+}
+
+/**
+ * The native value an intent's calls send that the wallet's own native balance
+ * does not cover, as a shortfall in the chain's own currency.
+ *
+ * Only the chain's own currency can be sent as value, so this holds whatever
+ * token the relay's fee is charged in. When every call that sends value goes
+ * to the KeyStore controller the shortfall is the registration fee, and says
+ * so. Nothing is returned for an intent funded from another chain (its value is
+ * paid there), for calls that send nothing, or for a balance that covers them.
+ *
+ * `need` is the value alone. It is exact for a wallet whose relay fee is paid
+ * in another token, which is the case this is used for.
+ */
+export function nativeValueShortfall(args: {
+  calls: readonly Call[];
+  funded: boolean;
+  nativeBalance: bigint;
+  network: NetworkConfig;
+}): FundingShortfall | undefined {
+  if (args.funded) return undefined;
+  const value = totalValue(args.calls);
+  if (value === 0n || args.nativeBalance >= value) return undefined;
+  const { symbol, decimals } = args.network.chain.nativeCurrency;
+  const controller = args.network.keyStoreController.toLowerCase();
+  const isRegistration = args.calls
+    .filter((c) => (c.value ?? 0n) > 0n)
+    .every((c) => c.to.toLowerCase() === controller);
+  return {
+    token: { symbol, decimals },
+    need: value,
+    have: args.nativeBalance,
+    fund: { chain: args.network.chain.name, tokens: [symbol] },
+    ...(isRegistration ? { purpose: "registration" as const } : {}),
+  };
 }
 
 /** The chain's own currency, for chains the relay reports nothing about. */
