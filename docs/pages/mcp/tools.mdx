@@ -63,7 +63,7 @@ The registry these write to is `erc8004Registry(chainId)`, listed per network in
 
 | Tool | Purpose |
 |---|---|
-| `erc8004_register` | Mints the agent's identity and publishes its registration record, running both phases (mint, then write the assigned `agentId` back into the record). If the mint lands but the write-back fails, the `agentId` is still returned with repair instructions — registering again would mint a second identity. |
+| `erc8004_register` | Mints the agent's identity and publishes its registration record, running both phases (mint, then write the assigned `agentId` back into the record). A wallet that already has its agent identity has that agent's record updated, and no second agent is created. If the mint lands but the write-back fails, the `agentId` is still returned with repair instructions — registering again would mint a second identity. |
 | `erc8004_set_agent_uri` | Rewrites the record of an agent the wallet owns — changing its endpoint, or repairing a partial registration. Takes a ready-made `agentUri` or the structured fields. |
 | `erc8004_show` | Reads an agent's owner and registration record by id, decoding the record when it is a base64 data URI. |
 

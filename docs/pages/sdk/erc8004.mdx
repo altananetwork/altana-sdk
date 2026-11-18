@@ -29,6 +29,69 @@ per network and `erc8004Registry(chainId)` reads one:
 Identity is its own registry: where the [ERC-8183 job escrow](/sdk/erc8183) is
 also deployed, `ERC8183_ADDRESSES[chainId].registry` names this same contract.
 
+## A new wallet gets one by itself
+
+A wallet's first admin action sets it up in the [KeyStore](/concepts/keystore).
+Once that action has confirmed, the SDK registers the wallet in the chain's
+agent registry, in a transaction of its own. Nothing is needed from the builder:
+
+```ts
+const result = await client.execute({ wallet, signer, calls });
+
+result.status;         // "CONFIRMED": the wallet's own action
+result.agentIdentity;  // { status: "registered", agentId: "10072", transactionHash, ... }
+```
+
+A first `grantSession` reports the same in `agentIdentities`, one entry per chain.
+
+The record is stored onchain. It names the agent "Altana Agent", carries the
+Altana icon, and links to the wallet's page on the [Keystore Explorer](/explorer),
+where its keys and permissions are public. Pass your own name, description,
+image or link:
+
+```ts
+const client = createClient({
+  chains: [CELO],
+  agentIdentity: {
+    name: "Sentinel",
+    description: "Watches a treasury.",
+    image: "https://sentinel.example/logo.png",
+    endpoint: "https://sentinel.example",
+  },
+});
+```
+
+`agentIdentity: false` turns it off, on the client or on a single `execute` or
+`grantSession`.
+
+How it behaves:
+
+- **It never shares a transaction with a KeyStore registration.** The wallet's
+  action is complete before the registration is sent, and the result of that
+  action does not change. A registration that does not go through is reported
+  as `{ status: "failed", reason }`; nothing is thrown.
+- **It runs once, for a wallet that is new on the chain**, after `execute` or
+  `grantSession`, whichever is the wallet's first action. A wallet that already
+  owns an agent is left as it is (`skipped`, `already-registered`).
+- **It runs on BNB Chain, Celo and their testnets.**
+- **A passkey approves each transaction**, so for a passkey wallet the SDK does
+  not send a second one by itself (`skipped`, `passkey`). Register it when your
+  app chooses to ask:
+
+  ```ts
+  const outcome = await client.registerAgentIdentity({ wallet, signer });
+  ```
+
+- **Each registration carries the onchain tag `createdWith = altana`**
+  (`ALTANA_AGENT_TAG`), which the registry answers through `getMetadata`.
+- **The wallet pays for it** like any other transaction. The registry charges
+  no fee, only gas.
+
+`agentPageUrl(chainId, agentId)` is the agent's page on 8004scan. To change the
+record later, write a new one with `setErc8004AgentUri`, below.
+
+## Register with a record of your own
+
 Registration is two-phase, because the record embeds the very id the mint
 assigns. Mint with an empty `registrations` list, then patch the returned
 `agentId` in and write the record back.
@@ -165,3 +228,8 @@ private key out of storage.
 The same flow is three tools — `erc8004_register` (which drives both phases and
 returns the `agentId` even if the second one fails), `erc8004_set_agent_uri`,
 and `erc8004_show`. See [MCP Tools](/mcp/tools).
+
+A wallet the server sets up gets its agent identity by itself, and the tool's
+answer carries the agent's number and its page. `erc8004_register` on a wallet
+that has one updates that agent with the name, description and image you give
+it. `ALTANA_AGENT_IDENTITY=off` turns the automatic registration off.

@@ -44,6 +44,14 @@ ALTANA_CHAIN=celo-sepolia bunx @altananetwork/mcp
 An unrecognised value logs a warning and falls back to `bnb`. Sepolia and Base
 Sepolia are not selectable here.
 
+## Agent identity
+
+A wallet that is new on BNB Chain or Celo is registered as an agent (ERC-8004)
+after its first action, in a transaction of its own. The tool's answer carries
+the agent's number and its page. `erc8004_register` on a wallet that has its
+agent updates that agent. Set `ALTANA_AGENT_IDENTITY=off` to turn the automatic
+registration off.
+
 One server process serves one chain, so restart with a different `ALTANA_CHAIN` to switch.
 
 ## Tools

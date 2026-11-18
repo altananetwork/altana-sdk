@@ -49,11 +49,12 @@ import {
   decodeErc8004AgentUri,
   encodeErc8004AgentUri,
   withErc8004Registration,
+  erc8004AgentCount,
   isCachedRegistry,
   isCachedKeyValid,
   readCachedKey,
 } from "@altananetwork/sdk";
-import type { Signer, Wallet } from "@altananetwork/sdk";
+import type { AgentIdentityOutcome, Signer, Wallet } from "@altananetwork/sdk";
 import {
   getWalletKey,
   setWalletKey,
@@ -81,8 +82,10 @@ import {
   buildRegistrationFile,
   runErc8004Registration,
   toMetadataEntries,
+  updateErc8004Registration,
   type MetadataInput,
 } from "./erc8004.js";
+import { agentIdentityOption, agentIdentityReport, knownAgent, rememberAgent } from "./agentIdentity.js";
 
 // ---------- network ---------------------------------------------------------
 
@@ -108,7 +111,11 @@ if (!resolved.recognized) {
 }
 console.error(`[altana-mcp] network: ${describeNetwork(NETWORK)}`);
 
-const client = createClient({ chains: [NETWORK] });
+// A new wallet's agent identity (ERC-8004) is registered by the SDK after the
+// wallet's first action. ALTANA_AGENT_IDENTITY=off turns that off.
+const AGENT_IDENTITY = agentIdentityOption(process.env.ALTANA_AGENT_IDENTITY);
+if (AGENT_IDENTITY === false) console.error("[altana-mcp] agent identity: off (ALTANA_AGENT_IDENTITY)");
+const client = createClient({ chains: [NETWORK], ...(AGENT_IDENTITY === false ? { agentIdentity: false } : {}) });
 // Revocation reaches every chain of this environment, not only NETWORK: a key
 // granted on another chain of the group is revoked there too.
 const revokeClient = createClient({ chains: [...networkGroup(NETWORK)] });
@@ -231,6 +238,16 @@ function assertHexBytes(value: string): Hex {
  * are harmless on Porto's side. We swallow errors and rely on the next
  * call to fail clearly if something's actually wrong.
  */
+/**
+ * Write down the agent number a wallet was just given, so `erc8004_register`
+ * can find it later. Storing it is a convenience: a failure to write must not
+ * turn a completed action into an error.
+ */
+async function noteAgentIdentity(wallet: Address, outcome: AgentIdentityOutcome | undefined): Promise<void> {
+  if (outcome?.status !== "registered") return;
+  await rememberAgent(outcome.chainId, wallet, outcome.agentId).catch(() => {});
+}
+
 async function ensureRegistered(signer: Signer): Promise<void> {
   try {
     await client.createWallet({ signer });
@@ -683,6 +700,7 @@ tool(
       },
       ...(feeToken !== undefined ? { feeToken: assertFeeToken(feeToken) } : {}),
     });
+    await noteAgentIdentity(key.address, result.agentIdentity);
     return {
       content: [
         {
@@ -696,6 +714,8 @@ tool(
               transactionHash: result.transactionHash,
               // The token the relay charged its fee in (zero address: native).
               ...(result.feeToken ? { feeToken: result.feeToken } : {}),
+              // Set when this was the wallet's first action.
+              ...(result.agentIdentity ? { agentIdentity: agentIdentityReport(result.agentIdentity) } : {}),
             },
             null,
             2,
@@ -893,6 +913,8 @@ tool(
     });
 
     const keyId = keccak256(session.publicKey);
+    const agentIdentity = session.agentIdentities?.find((outcome) => outcome.chainId === NETWORK.chainId);
+    await noteAgentIdentity(admin.address, agentIdentity);
 
     return {
       content: [
@@ -932,6 +954,8 @@ tool(
               },
               expiry,
               expiresAt: new Date(expiry * 1000).toISOString(),
+              // Set when this grant was the wallet's first action.
+              ...(agentIdentity ? { agentIdentity: agentIdentityReport(agentIdentity) } : {}),
             },
             null,
             2,
@@ -1491,7 +1515,10 @@ tool(
       "record with the assigned agentId embedded. The session key must have been " +
       "granted the ERC-8004 registry permissions; the tool checks that before " +
       "spending gas. If the mint lands but the write-back fails, the agentId is " +
-      "still returned — repair with erc8004_set_agent_uri, never by registering again.",
+      "still returned — repair with erc8004_set_agent_uri, never by registering again. " +
+      "A wallet that already has its agent identity (a new wallet gets one when it is set up) " +
+      "is not given a second one: its existing agent's record is updated with these fields, " +
+      "and `metadata` is not used.",
     inputSchema: {
       sessionName: z.string(),
       name: z.string().describe("The agent's display name"),
@@ -1520,6 +1547,38 @@ tool(
     const { stored, session } = await sessionFromName(sessionName);
     assertErc8004Permissions(sessionName, stored.permissions, NETWORK.chainId);
 
+    // A wallet gets its agent identity when it is set up. Registering again
+    // would give it a second agent, so a wallet that owns one has that one
+    // updated. The registry cannot say which agent a wallet owns, only that it
+    // owns one: the number is the one this server wrote down when it was issued.
+    const walletAddress = stored.walletAddress as Address;
+    const owned = await erc8004AgentCount(NETWORK, walletAddress).catch(() => 0n);
+    if (owned > 0n) {
+      const known = await knownAgent(NETWORK.chainId, walletAddress);
+      if (!known) {
+        throw new Error(
+          `Wallet ${walletAddress} already owns an agent identity on ${NETWORK.chain.name}, and this server does not ` +
+            `know its number. Registering again would create a second agent. Find the agent's number (8004scan lists ` +
+            `agents by owner address) and change its record with erc8004_set_agent_uri.`,
+        );
+      }
+      const updated = await updateErc8004Registration({
+        session,
+        chainId: NETWORK.chainId,
+        opts: { network: NETWORK },
+        agentId: BigInt(known),
+        file: buildRegistrationFile(fields),
+      });
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ sessionName, walletAddress, ...updated }, null, 2),
+          },
+        ],
+      };
+    }
+
     const outcome = await runErc8004Registration({
       session,
       chainId: NETWORK.chainId,
@@ -1527,6 +1586,7 @@ tool(
       file: buildRegistrationFile(fields),
       metadata: toMetadataEntries(metadata),
     });
+    await rememberAgent(NETWORK.chainId, walletAddress, outcome.agentId).catch(() => {});
 
     return {
       content: [

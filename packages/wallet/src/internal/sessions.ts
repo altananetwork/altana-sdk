@@ -11,6 +11,7 @@
 
 import type { Address, Hex } from "viem";
 import type { Signer } from "./signer.js";
+import type { AgentIdentityOutcome } from "../agentIdentity.js";
 import type { CachedKey } from "../syncKeyToL2.js";
 
 /** A single allowed call rule. AND semantics between the optional fields. */
@@ -177,6 +178,14 @@ export type GrantSessionResult = Session & {
    * The session is usable as soon as this call returns, registration or not.
    */
   registration: Promise<GrantLeg[]>;
+  /**
+   * Set when this grant was the wallet's first admin action on a chain: how
+   * the registration of its agent identity went there, in the transaction of
+   * its own that followed. One entry per such chain. The grant is complete
+   * whatever these say. Absent on every other grant, and when
+   * `agentIdentity: false` was passed.
+   */
+  agentIdentities?: AgentIdentityOutcome[];
 };
 
 /**

@@ -227,3 +227,43 @@ export async function runErc8004Registration(
     };
   }
 }
+
+/**
+ * Rewrite the record of an agent the wallet already owns, with this record and
+ * the agent's number inside it. One write: nothing is minted.
+ *
+ * A wallet gets its agent identity when it is set up, so "register my agent"
+ * said to a wallet that has one means "make my agent look like this". Minting
+ * again would leave the wallet with two agents and no way to tell which one a
+ * reader will find.
+ */
+export async function updateErc8004Registration(
+  args: {
+    session: unknown;
+    chainId: number;
+    opts: unknown;
+    agentId: bigint;
+    file: Erc8004RegistrationFile;
+  },
+  writers: Pick<Erc8004Writers, "setAgentUri"> = DEFAULT_WRITERS,
+): Promise<Erc8004RegistrationOutcome> {
+  const completed = withErc8004Registration(args.file, args.agentId, args.chainId);
+  const completedUri = encodeErc8004AgentUri(completed);
+  const patched = await writers.setAgentUri(args.session, { agentId: args.agentId, agentUri: completedUri }, args.opts);
+  if (patched.status !== "CONFIRMED") {
+    throw new Error(
+      `Updating agent ${args.agentId} did not confirm: the relay reported ${patched.status} (callsId ${patched.callsId}). ` +
+        `Its record is unchanged.`,
+    );
+  }
+  return {
+    agentId: args.agentId.toString(),
+    agentUri: completedUri,
+    registrationFile: completed,
+    ...(patched.transactionHash ? { setAgentUriTransactionHash: patched.transactionHash } : {}),
+    complete: true,
+    message:
+      `This wallet already had agent ${args.agentId}, registered when the wallet was set up. ` +
+      `Its record was updated; no second agent was created.`,
+  };
+}

@@ -12,6 +12,7 @@ export type {
   ClientQuoteGrantSessionOptions,
   ClientQuoteRevokeSessionOptions,
   ClientRegisterSessionKeyOptions,
+  ClientRegisterAgentIdentityOptions,
   ClientSyncSessionToCacheOptions,
   ClientBalancesOptions,
   ClientHoldingsOptions,
@@ -284,7 +285,24 @@ export {
   encodeErc8004AgentUri,
   decodeErc8004AgentUri,
   withErc8004Registration,
+  erc8004AgentCount,
 } from "./erc8004.js";
+export {
+  registerAgentIdentity,
+  agentIdentityFile,
+  agentPageUrl,
+  altanaExplorerWalletUrl,
+  ALTANA_AGENT_TAG,
+  DEFAULT_AGENT_NAME,
+  DEFAULT_AGENT_DESCRIPTION,
+  DEFAULT_AGENT_IMAGE,
+} from "./agentIdentity.js";
+export type {
+  AgentIdentityOption,
+  AgentIdentityOutcome,
+  AgentIdentityRecord,
+  RegisterAgentIdentityOptions,
+} from "./agentIdentity.js";
 export type {
   Erc8004MetadataEntry,
   Erc8004RegistrationFile,

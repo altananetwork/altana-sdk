@@ -101,6 +101,16 @@ Full reference: [ERC-8183 agent jobs](https://docs.altana.network/sdk/erc8183).
 
 ### Give an agent an identity (ERC-8004)
 
+A wallet that is new on BNB Chain or Celo gets its identity by itself: after
+its first action has confirmed, the SDK registers it in the chain's agent
+registry, in a transaction of its own, as "Altana Agent" with a link to the
+wallet's page on the Altana explorer. `createClient({ chains, agentIdentity: {
+name, description, image, endpoint } })` sets what it is listed with, and
+`agentIdentity: false` turns it off. A KeyStore registration never depends on
+it: the outcome is reported on the result (`agentIdentity`), never thrown.
+
+To register with a record of your own from a session key:
+
 Buyers find sellers through the ERC-8004 identity registry. An agent can mint
 and maintain its own entry with a session key scoped to just those two calls —
 `erc8004RegisterPermissions` grants `register` and `setAgentURI` on the
