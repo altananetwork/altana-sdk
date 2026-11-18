@@ -37,6 +37,7 @@
     "live:celo-fees": "bun run live-celo-mainnet-fees.ts",
     "live:celo-x402": "bun run live-celo-mainnet-x402.ts",
     "live:celo-erc8004": "bun run live-celo-mainnet-erc8004.ts",
+    "live:agent-identity": "bun run live-agent-identity.ts",
     "smoke:celo-passkey": "bun run smoke-celo-passkey.ts",
     "smoke:celo-fee-currency": "bun run smoke-celo-fee-currency.ts",
     "smoke:everywhere": "bun run smoke-everywhere.ts",

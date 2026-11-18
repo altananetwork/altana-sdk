@@ -1,4 +1,5 @@
 import type { Address, Hex } from "viem";
+import type { AgentIdentityOutcome } from "../agentIdentity.js";
 
 /**
  * A wallet handle. The smart-account address is the same on every chain the
@@ -27,4 +28,11 @@ export type ExecuteResult = {
    * the relay's answer carried no quote.
    */
   feeToken?: Address;
+  /**
+   * Set when this was the wallet's first admin action: how the registration of
+   * its agent identity went, in the transaction of its own that followed. The
+   * action above is complete whatever this says. Absent on every other call,
+   * and when `agentIdentity: false` was passed.
+   */
+  agentIdentity?: AgentIdentityOutcome;
 };

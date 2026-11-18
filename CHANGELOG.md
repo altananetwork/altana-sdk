@@ -22,6 +22,33 @@ version may contain breaking changes.
 
 ### Added
 
+- **A new wallet gets its agent identity (ERC-8004) by itself.** After a
+  wallet's first admin action has confirmed, the SDK registers the wallet in
+  the chain's agent registry, in a transaction of its own. On by default, on
+  BNB Chain, Celo and their testnets, after `execute` or `grantSession`,
+  whichever is the wallet's first action.
+  - The record is stored onchain: "Altana Agent", the Altana icon, and a link
+    to the wallet's page on the Altana explorer. `agentIdentity: { name,
+    description, image, endpoint }` on `createClient`, or on a single call,
+    replaces any of them. `agentIdentity: false` turns it off.
+  - A KeyStore registration never depends on it. The agent registration never
+    shares a transaction with one: it is sent only after the wallet's action
+    has confirmed, and a failure is reported on the result and never thrown.
+    `ExecuteResult.agentIdentity` and `GrantSessionResult.agentIdentities`
+    carry `registered` (with the agent's number and transaction), `skipped` or
+    `failed`.
+  - Only a wallet that is new on the chain is registered, once. A wallet that
+    owns an agent already is left as it is. A passkey wallet approves each
+    transaction, so it is not sent a second one: `client.registerAgentIdentity`
+    registers it when the app chooses to ask.
+  - Every registration carries the onchain tag `createdWith = altana`
+    (`ALTANA_AGENT_TAG`). `agentPageUrl(chainId, agentId)` is the agent's page
+    on 8004scan, and `erc8004AgentCount` reads how many agents a wallet owns.
+  - `@altananetwork/mcp`: tool answers carry the agent's number and page,
+    `erc8004_register` on a wallet that has its agent updates that agent
+    instead of creating a second one, and `ALTANA_AGENT_IDENTITY=off` turns
+    the automatic registration off.
+
 - **`@altananetwork/x402-server`: `USAT_CELO`, USA₮ on Celo mainnet.** Tether
   America USD at `0xD2ab3C9A02DBBAB236BfEC45D1d755DF4267F771`, 6 decimals,
   EIP-712 domain `Tether America USD` / `1`, on the eip3009 and permit2-exact

@@ -46,6 +46,7 @@ import {
   type PasskeySigner,
 } from "./passkey.js";
 import { buildFirstActionPrepend } from "./keystore.js";
+import { noteFirstAction } from "./firstActions.js";
 
 /** Faucet for Celo Sepolia (chainId 11142220). */
 export const CELO_SEPOLIA_FAUCET_URL = "https://faucet.celo.org/celo-sepolia";
@@ -567,6 +568,14 @@ export async function submitCallsDetailed(
     { client, network: opts.network },
     intentContext(walletAddress, effectiveCalls, feeToken, opts),
   );
+
+  // The intent just sent carried this wallet's first-action KeyStore
+  // registration. Noted for the agent identity step, which runs only after
+  // this action has confirmed and in a transaction of its own. Nothing above
+  // waits on that step or depends on it (see ./firstActions.ts).
+  if (isAdmin && effectiveCalls.length > calls.length) {
+    noteFirstAction(opts.network.chainId, walletAddress);
+  }
 
   return { callsId: (sent?.id ?? sent) as Hex, ...(feeToken ? { feeToken } : {}) };
 }

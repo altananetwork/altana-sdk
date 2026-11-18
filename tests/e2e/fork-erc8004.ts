@@ -26,6 +26,10 @@
  *      calls are allowed, that every dangerous registry selector is NOT, and
  *      that a session scoped elsewhere is refused — the bounded-capability
  *      claim itself.
+ *   6. The identity a new wallet gets by itself: the default "Altana Agent"
+ *      record and the `createdWith = altana` tag, registered from a fresh
+ *      EIP-7702 Altana account. The registry counts one agent for the wallet,
+ *      stores the record as written, and answers the tag back.
  *
  * Run: bun run fork:erc8004   (needs `anvil`)
  */
@@ -45,6 +49,9 @@ import {
 import { bscTestnet } from "viem/chains";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 import {
+  ALTANA_AGENT_TAG,
+  BNB_TESTNET,
+  agentIdentityFile,
   buildErc8004RegisterCall,
   buildErc8004SetAgentUriCall,
   createPrivateKeySigner,
@@ -342,6 +349,52 @@ async function checkPermissionGate(proxy: Address) {
 }
 
 /** Selector-only calldata — `canExecute` dispatches on the first 4 bytes. */
+const IDENTITY_READS_ABI = [
+  { name: "balanceOf", type: "function", stateMutability: "view", inputs: [{ name: "owner", type: "address" }], outputs: [{ type: "uint256" }] },
+  { name: "getMetadata", type: "function", stateMutability: "view", inputs: [{ name: "agentId", type: "uint256" }, { name: "metadataKey", type: "string" }], outputs: [{ type: "bytes" }] },
+] as const;
+
+/**
+ * What `registerAgentIdentity` sends, against the real registry: the default
+ * record and the tag, from an account that is exactly what an Altana wallet is.
+ */
+async function checkAutomaticIdentity(proxy: Address) {
+  const wallet = privateKeyToAccount(generatePrivateKey()).address;
+  await test.setBalance({ address: wallet, value: 10n ** 19n });
+  await test.setCode({ address: wallet, bytecode: concatHex(["0xef0100", proxy]) });
+  const count = () =>
+    publicClient.readContract({ address: REGISTRY, abi: IDENTITY_READS_ABI, functionName: "balanceOf", args: [wallet] });
+  assert((await count()) === 0n, "a new wallet owns no agent");
+
+  const record = agentIdentityFile(BNB_TESTNET, wallet);
+  await test.impersonateAccount({ address: wallet });
+  const receipt = await sendAs(wallet, buildErc8004RegisterCall(97, encodeErc8004AgentUri(record), [ALTANA_AGENT_TAG]));
+  await test.stopImpersonatingAccount({ address: wallet });
+  assert(receipt.status === "success", "the default record registers from an Altana account");
+
+  const agentId = agentIdFrom(receipt, wallet);
+  assert((await count()) === 1n, "the registry now counts one agent for the wallet, which is what stops a second registration");
+
+  const onChain = await getErc8004Agent({ ...BNB_TESTNET, publicRpcUrl: ANVIL_URL }, agentId);
+  assert(onChain.owner.toLowerCase() === wallet.toLowerCase(), "the wallet owns its agent");
+  const stored = decodeErc8004AgentUri(onChain.agentUri);
+  assert(stored.name === "Altana Agent", `the record says "Altana Agent" (got "${stored.name}")`);
+  assert(stored.image === "https://docs.altana.network/altana-icon.png", "the record carries the Altana icon");
+  assert(
+    stored.services[0]?.endpoint === `https://testnet.altana.network/account/${wallet}`,
+    `the record links to the wallet on the Altana explorer (got ${stored.services[0]?.endpoint})`,
+  );
+
+  const tag = await publicClient.readContract({
+    address: REGISTRY,
+    abi: IDENTITY_READS_ABI,
+    functionName: "getMetadata",
+    args: [agentId, ALTANA_AGENT_TAG.metadataKey],
+  });
+  assert(tag === ALTANA_AGENT_TAG.metadataValue, `the registry answers createdWith = altana (got ${tag})`);
+  console.log(`  ✓ agent ${agentId}: "Altana Agent", the explorer link, and the createdWith = altana tag are on chain`);
+}
+
 function encodeErc8004Selector(signature: string): Hex {
   return toFunctionSelector(signature);
 }
@@ -436,6 +489,10 @@ async function main() {
     // ── 5. The bounded capability, against the real account bytecode. ──
     console.log("▶ permission gate: what a session scoped by erc8004RegisterPermissions may do ...");
     await checkPermissionGate(proxy.address);
+
+    // ── 6. The identity a new wallet gets by itself. ──
+    console.log("▶ automatic identity: the default record and the Altana tag, from a 7702 Altana account ...");
+    await checkAutomaticIdentity(proxy.address);
 
     console.log("\nResult: PASS ✓ — ERC-8004 identity against real registry bytecode.\n");
   } finally {

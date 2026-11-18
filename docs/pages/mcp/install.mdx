@@ -55,6 +55,13 @@ claude mcp add altana -e ALTANA_CHAIN=celo-sepolia -- bunx @altananetwork/mcp
 
 One server process serves one chain. Restart with a different `ALTANA_CHAIN` to switch.
 
+## Agent identity
+
+A wallet that is new on BNB Chain or Celo is registered as an agent
+([ERC-8004](/sdk/erc8004)) after its first action, in a transaction of its own.
+The tool's answer carries the agent's number and its page. Set
+`ALTANA_AGENT_IDENTITY=off` to turn it off.
+
 
 ## Cursor / Continue / other hosts
 
