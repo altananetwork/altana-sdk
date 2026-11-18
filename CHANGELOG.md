@@ -16,6 +16,33 @@ version may contain breaking changes.
 > reconstructed from commit history after the fact, so they summarize what
 > shipped rather than itemizing every change.
 
+## [1.1.0] - Unreleased
+
+`@altananetwork/mcp` 1.1.0, `@altananetwork/x402-server` 0.4.0
+
+### Added
+
+- **`@altananetwork/x402-server`: `USAT_CELO`, USA₮ on Celo mainnet.** Tether
+  America USD at `0xD2ab3C9A02DBBAB236BfEC45D1d755DF4267F771`, 6 decimals,
+  EIP-712 domain `Tether America USD` / `1`, on the eip3009 and permit2-exact
+  rails. The name, version and decimals were read from the token, and a unit
+  test recomputes the domain separator of every Celo mainnet token config
+  against the value the token reports.
+
+### Fixed
+
+- **`@altananetwork/x402-server`: several tokens on the eip3009 rail each
+  settle on their own contract.** A merchant listing more than one eip3009
+  token verified a payment against the right token and then settled it on the
+  first eip3009 rail, so a USD₮ payment on a merchant that also listed USDC
+  was sent to the USDC contract and refused with "invalid signature".
+  Settlement now resolves the rail from the payment's token, the same way
+  verification does. A merchant with one eip3009 token is unaffected.
+- **USD₮ on Celo and Celo Sepolia serves the eip3009 rail.** The token configs
+  and docs said it was permit2-exact only. Both tokens accept
+  `transferWithAuthorization`, and a Celo mainnet fork test now settles USDC,
+  USD₮ and USA₮ on that rail.
+
 ## [1.0.0] - 2026-11-17
 
 `@altananetwork/mcp` 1.0.0, `@altananetwork/x402-server` 0.3.0,

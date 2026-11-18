@@ -7,12 +7,12 @@
  * An outcome that could not be determined is never "did not happen".
  */
 import { describe, expect, test } from "bun:test";
-import { keccak256, type Hex } from "viem";
+import { keccak256, parseTransaction, type Hex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { celoSepolia } from "viem/chains";
 
 import { describeError, settlePayment, type SettleClients } from "./settle.js";
-import { U_TOKEN, USDC_CELO_SEPOLIA } from "./tokens.js";
+import { U_TOKEN, USAT_CELO, USDC_CELO, USDC_CELO_SEPOLIA, USDT_CELO } from "./tokens.js";
 import type { DecodedPayment, MerchantConfig } from "./types.js";
 
 const PAY_TO = "0x3C5f3a6cE224BB89D72f5EB4232ecC27F67B3eeA" as const;
@@ -186,5 +186,47 @@ describe("Celo Sepolia settlement (chainId 11142220)", () => {
     expect(raws).toHaveLength(1);
     expect(raws[0]!.startsWith("0x02")).toBe(true);
     expect(res.txHash).toBe(keccak256(raws[0]!));
+  });
+
+  // A merchant on Celo lists three tokens on the eip3009 rail. Settling on
+  // "the eip3009 rail" used to mean the first one, so a USD₮ or USA₮ payment
+  // was sent to the USDC contract and reverted with "invalid signature".
+  describe("several tokens on the eip3009 rail", () => {
+    const cfg: MerchantConfig = {
+      chainId: 42220,
+      payTo: PAY_TO,
+      price: 5n,
+      rails: [
+        { rail: "eip3009", token: USDC_CELO },
+        { rail: "eip3009", token: USDT_CELO },
+        { rail: "eip3009", token: USAT_CELO },
+      ],
+    };
+    const settledOn = async (payment: DecodedPayment) => {
+      const { clients, calls } = fakeClients();
+      const res = await settlePayment(payment, cfg, clients);
+      expect(res.settlement).toBe("confirmed");
+      return parseTransaction(calls.raws[0]! as `0x02${string}`).to?.toLowerCase();
+    };
+
+    for (const token of [USDC_CELO, USDT_CELO, USAT_CELO]) {
+      test(`a ${token.symbol} payment is settled on the ${token.symbol} contract`, async () => {
+        expect(await settledOn({ ...PAYMENT, token: token.address })).toBe(token.address.toLowerCase());
+      });
+    }
+
+    test("an envelope that names no asset settles on the first eip3009 rail", async () => {
+      expect(await settledOn({ ...PAYMENT, token: "0x0000000000000000000000000000000000000000" })).toBe(
+        USDC_CELO.address.toLowerCase(),
+      );
+    });
+
+    test("a token the merchant does not list is refused before anything is signed", async () => {
+      const { clients, calls } = fakeClients();
+      await expect(settlePayment({ ...PAYMENT, token: U_TOKEN[56].address }, cfg, clients)).rejects.toThrow(
+        /no eip3009 rail configured/,
+      );
+      expect(calls.sendRaw).toBe(0);
+    });
   });
 });

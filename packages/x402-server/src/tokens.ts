@@ -48,11 +48,12 @@ export const USDT_BSC: TokenConfig = {
 
 /**
  * Celo tokens. USDC is Circle's native deployment (EIP-712 domain name
- * "USDC", version "2", 6 decimals; supports EIP-3009, so it serves the
- * eip3009 rail). USDT on Celo is 6 decimals and has no EIP-3009, so it is a
- * permit2-exact asset only. Domain values verified on-chain
- * (`DOMAIN_SEPARATOR()` / `decimals()`); Permit2 is at its canonical
- * address on both Celo chains.
+ * "USDC", version "2", 6 decimals). USD₮ and USA₮ are Tether's, 6 decimals
+ * each. All three have the EIP-3009 surface (`transferWithAuthorization`), so
+ * each serves the eip3009 rail as well as permit2-exact. Domain values are
+ * verified on chain (`DOMAIN_SEPARATOR()` / `decimals()`), and
+ * `tokens.test.ts` recomputes each mainnet domain separator from the config.
+ * Permit2 is at its canonical address on both Celo chains.
  */
 
 /** USDC on Celo mainnet (42220). eip3009 and permit2-exact rails. */
@@ -73,12 +74,11 @@ export const USDC_CELO_SEPOLIA: TokenConfig = {
   decimals: 6,
 };
 
-/** USDT on Celo mainnet (42220). permit2-exact rail only (no EIP-3009). */
 /**
- * Tether on Celo (42220). **`USD₮` names two different contracts on Celo**, and
+ * Tether on Celo (42220). eip3009 and permit2-exact rails. **`USD₮` names two different contracts on Celo**, and
  * this is the one that pays x402: 6 decimals, with the EIP-3009 surface. The
- * other is an 18-decimal contract in the FeeCurrencyDirectory that pays gas and
- * has no EIP-3009. Both report `symbol() = "USD₮"` and `name() = "Tether USD"`,
+ * other is an 18-decimal entry in the FeeCurrencyDirectory that gas is quoted
+ * through, and it is not a payment token. Both report `symbol() = "USD₮"` and `name() = "Tether USD"`,
  * so a ticker does not identify a token here — select by address. The same
  * split exists for `USAT`.
  *
@@ -95,12 +95,34 @@ export const USDT_CELO: TokenConfig = {
   decimals: 6,
 };
 
-/** USDT on Celo Sepolia (11142220). permit2-exact rail only (no EIP-3009). */
+/** USDT on Celo Sepolia (11142220). eip3009 and permit2-exact rails. */
 export const USDT_CELO_SEPOLIA: TokenConfig = {
   address: "0xd077A400968890Eacc75cdc901F0356c943e4fDb",
   name: "Tether USD",
   version: "1",
   // Its own symbol(), verified on chain 2026-10-05; see USDT_CELO.
   symbol: "USD₮",
+  decimals: 6,
+};
+
+/**
+ * USA₮ (Tether America USD) on Celo mainnet (42220). eip3009 and
+ * permit2-exact rails. Celo Sepolia has no USA₮.
+ *
+ * Like USD₮, the name covers two contracts on Celo: this 6-decimal token is
+ * the one that pays x402, and an 18-decimal entry in the FeeCurrencyDirectory
+ * (`0x0357EE22278c922e1D36cFe6b899269b161880C4`) is what gas is quoted
+ * through. Select by address.
+ *
+ * Verified on chain 2026-11-18: `eip712Domain()` answers name
+ * `Tether America USD`, version `1`; `symbol()` is the plain-ASCII `USAT`;
+ * decimals 6; `transferWithAuthorization` is present.
+ */
+export const USAT_CELO: TokenConfig = {
+  address: "0xD2ab3C9A02DBBAB236BfEC45D1d755DF4267F771",
+  name: "Tether America USD",
+  version: "1",
+  // The token's own symbol(), which is ASCII here, unlike USD₮'s.
+  symbol: "USAT",
   decimals: 6,
 };

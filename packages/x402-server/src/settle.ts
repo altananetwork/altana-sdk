@@ -10,6 +10,7 @@ import {
 } from "viem";
 import { PERMIT2_ADDRESS } from "@altananetwork/sdk";
 import type { DecodedPayment, MerchantConfig } from "./types.js";
+import { matchRail } from "./verify.js";
 
 /** FiatTokenV2_2-style EIP-3009 with a `bytes` signature (EOA 65-byte sigs and
  * ERC-1271-aware deployments alike). $U exposes this on both BSC networks. */
@@ -159,8 +160,11 @@ export async function settlePayment(
   let data: Hex;
 
   if (d.rail === "eip3009") {
-    const rail = cfg.rails.find((r) => r.rail === "eip3009");
-    if (!rail) throw new Error("settle: no eip3009 rail configured");
+    // The rail for this payment's own token, not the first eip3009 rail: with
+    // several tokens on the rail, settling on the first one sends a USD₮
+    // authorization to the USDC contract, which answers "invalid signature".
+    const rail = matchRail(cfg, d);
+    if (!rail) throw new Error(`settle: no eip3009 rail configured for ${d.token}`);
     const a = d.authorization!;
     to = rail.token.address;
     data = encodeFunctionData({
