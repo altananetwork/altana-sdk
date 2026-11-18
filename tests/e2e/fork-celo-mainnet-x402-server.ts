@@ -13,9 +13,16 @@
  *      name and version. The merchant settles with `transferWithAuthorization`
  *      and the payout address receives exactly the price.
  *   3. A replay of each header is refused.
+ *   4. For each token, an Altana smart account pays through `fetchWithX402`
+ *      with a session key, the path the MCP `x402_request` tool takes. The
+ *      account has approved the token as a signature checker for that key,
+ *      which is what `grantSession({ x402Tokens })` does, and the token checks
+ *      the session's ERC-1271 signature against the real account
+ *      implementation.
  *
  * What it proves: the three mainnet token configs are the ones the tokens
- * accept, USA₮ included, and that USD₮ on Celo settles on the eip3009 rail.
+ * accept, USA₮ included; USD₮ on Celo settles on the eip3009 rail; and each
+ * token honours an Altana session key's signature.
  *
  * Env: CELO_FORK_RPC_URL (default: public forno).
  *
@@ -25,8 +32,11 @@
 import {
   createTestClient,
   createPublicClient,
+  createWalletClient,
   http,
+  concatHex,
   encodeAbiParameters,
+  encodeFunctionData,
   keccak256,
   pad,
   toHex,
@@ -36,11 +46,14 @@ import {
 } from "viem";
 import { celo } from "viem/chains";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
-import { buildEip3009TypedData, networkToChainId } from "@altananetwork/sdk";
+import { buildEip3009TypedData, createPrivateKeySigner, fetchWithX402, networkToChainId } from "@altananetwork/sdk";
+import type { Session } from "@altananetwork/sdk";
 import { createX402Merchant, USAT_CELO, USDC_CELO, USDT_CELO, type TokenConfig } from "@altananetwork/x402-server";
 import { startAnvil, waitForAnvil } from "./anvil.js";
 
 const CHAIN_ID = 42220;
+/** The account implementation on Celo mainnet (the same address as on Ethereum and BNB Smart Chain). */
+const ACCOUNT_IMPL: Address = "0x4B5d20CD8a3927B500540d9BcCDDc27385c9fA79";
 const CELO_RPC = process.env.CELO_FORK_RPC_URL || "https://forno.celo.org";
 const ANVIL_PORT = 8563;
 const ANVIL_URL = `http://127.0.0.1:${ANVIL_PORT}`;
@@ -52,6 +65,19 @@ const ERC20_ABI = [
   { name: "balanceOf", type: "function", stateMutability: "view", inputs: [{ name: "a", type: "address" }], outputs: [{ type: "uint256" }] },
   { name: "decimals", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint8" }] },
   { name: "symbol", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
+] as const;
+
+const ACCOUNT_ABI = [
+  {
+    name: "authorize", type: "function", stateMutability: "nonpayable",
+    inputs: [{ name: "key", type: "tuple", components: [{ name: "expiry", type: "uint40" }, { name: "keyType", type: "uint8" }, { name: "isSuperAdmin", type: "bool" }, { name: "publicKey", type: "bytes" }] }],
+    outputs: [{ type: "bytes32" }],
+  },
+  {
+    name: "setSignatureCheckerApproval", type: "function", stateMutability: "nonpayable",
+    inputs: [{ name: "keyHash", type: "bytes32" }, { name: "checker", type: "address" }, { name: "isApproved", type: "bool" }],
+    outputs: [],
+  },
 ] as const;
 
 const test = createTestClient({ mode: "anvil", chain: celo, transport: http(ANVIL_URL) });
@@ -113,11 +139,28 @@ async function main() {
       chain: celo,
     });
 
+    // One single-token merchant per token too, at /pay/<n>, so a buyer that
+    // takes the first option it is offered is offered exactly one token.
+    const single = TOKENS.map((token, i) =>
+      createX402Merchant({
+        chainId: CHAIN_ID,
+        payTo: merchantAddr,
+        price: PRICE,
+        rails: [{ rail: "eip3009" as const, token }],
+        maxTimeoutSeconds: 600,
+        resource: `http://localhost:${HTTP_PORT}/pay/${i}`,
+        facilitator,
+        rpcUrl: ANVIL_URL,
+        chain: celo,
+      }),
+    );
+
     log("▶ Starting merchant service on :" + HTTP_PORT + " (0.2 USDC / USD₮ / USA₮ per call, chain 42220) ...");
     server = Bun.serve({
       port: HTTP_PORT,
       async fetch(req) {
-        const { response, receipt } = await merchant.guard(req);
+        const which = new URL(req.url).pathname.match(/^\/pay\/(\d)$/);
+        const { response, receipt } = await (which ? single[Number(which[1])]! : merchant).guard(req);
         if (response) return response;
         return new Response(
           JSON.stringify({ data: "paid capability output", settledTx: receipt!.txHash, settlement: receipt!.settlement, settledVia: receipt!.settledVia }),
@@ -187,7 +230,51 @@ async function main() {
       log("  ✓ replay refused");
     }
 
-    log("\nResult: PASS ✓: one merchant on Celo mainnet, real on-chain settlement over USDC, USD₮ and USA₮ on the eip3009 rail.\n");
+    // ════ An Altana smart account pays each token with a session key. ════
+    const implCode = await publicClient.getCode({ address: ACCOUNT_IMPL });
+    assert(!!implCode && implCode !== "0x", `the account implementation is deployed on Celo mainnet at ${ACCOUNT_IMPL}`);
+    for (const [i, token] of TOKENS.entries()) {
+      log(`\n▶ Altana smart account pays ${fmt(PRICE, token.symbol)} with a session key (eip3009, ERC-1271) ...`);
+      const walletSigner = createPrivateKeySigner();
+      const wallet = walletSigner.address;
+      await test.setBalance({ address: wallet, value: 10n ** 19n });
+      await test.setCode({ address: wallet, bytecode: concatHex(["0xef0100", ACCOUNT_IMPL]) });
+      await dealToken(token.address, wallet, 10n * 10n ** 6n);
+
+      const sessionSigner = createPrivateKeySigner();
+      const session: Session = { walletAddress: wallet, signer: sessionSigner, publicKey: sessionSigner.publicKey, permissions: {}, expiry: 0 };
+      const sessionPub = encodeAbiParameters([{ type: "address" }], [sessionSigner.address]);
+      const keyHash = keccak256(encodeAbiParameters([{ type: "uint256" }, { type: "bytes32" }], [2n, keccak256(sessionPub)]));
+
+      // What grantSession({ x402Tokens: [token] }) leaves on chain for the eip3009 rail:
+      // the session key authorized, and the token approved as its signature checker.
+      await test.impersonateAccount({ address: wallet });
+      const asWallet = createWalletClient({ account: wallet, chain: celo, transport: http(ANVIL_URL) });
+      for (const call of [
+        { to: wallet, data: encodeFunctionData({ abi: ACCOUNT_ABI, functionName: "authorize", args: [{ expiry: 0, keyType: 2, isSuperAdmin: false, publicKey: sessionPub }] }) },
+        { to: wallet, data: encodeFunctionData({ abi: ACCOUNT_ABI, functionName: "setSignatureCheckerApproval", args: [keyHash, token.address, true] }) },
+      ]) {
+        const h = await asWallet.sendTransaction({ ...call, gas: 1_000_000n });
+        const r = await publicClient.waitForTransactionReceipt({ hash: h });
+        assert(r.status === "success", "the session key is set up on the account");
+      }
+      await test.stopImpersonatingAccount({ address: wallet });
+
+      const before = await balanceOf(token.address, merchantAddr);
+      const res = await fetchWithX402(session, `http://localhost:${HTTP_PORT}/pay/${i}`, undefined, {
+        chainId: CHAIN_ID,
+        preferRail: "eip3009",
+        publicClient: publicClient as never,
+      });
+      const body: any = await res.json();
+      const after = await balanceOf(token.address, merchantAddr);
+      assert(res.status === 200, `the Altana buyer got 200 (got ${res.status}: ${JSON.stringify(body)})`);
+      assert(after - before === PRICE, `merchant received ${fmt(PRICE, token.symbol)} (got ${fmt(after - before, token.symbol)})`);
+      assert((await balanceOf(token.address, wallet)) === 10n * 10n ** 6n - PRICE, `the wallet paid exactly ${fmt(PRICE, token.symbol)}`);
+      log(`  ✓ 200 + ${fmt(PRICE, token.symbol)} settled, the token accepted the session key's ERC-1271 signature (${body.settledTx.slice(0, 14)}…)`);
+    }
+
+    log("\nResult: PASS ✓: one merchant on Celo mainnet, real on-chain settlement over USDC, USD₮ and USA₮ on the eip3009 rail, from plain accounts and from Altana smart accounts.\n");
   } finally {
     server?.stop(true);
     anvil.kill();

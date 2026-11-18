@@ -29,8 +29,20 @@ version may contain breaking changes.
   test recomputes the domain separator of every Celo mainnet token config
   against the value the token reports.
 
+- **`@altananetwork/mcp`: `grant_session` can set a session up to pay x402
+  requests.** The new `x402Tokens` input (one token address or a list) makes
+  the approvals an x402 payment needs in the same transaction as the grant:
+  each token approved to Permit2, and the token and Permit2 approved as
+  signature checkers for the session key. Before this, `x402_request` needed
+  approvals that no MCP tool could make. x402 payments are signed rather than
+  sent by the session, so its daily spend caps do not bound them.
+
 ### Fixed
 
+- **`@altananetwork/mcp`: `grant_session` stores the session key before it
+  sends the grant.** The key was stored after the grant confirmed, so a
+  keychain write that failed left a paid, authorized key that nobody held.
+  The key is now stored first and removed again if the grant fails.
 - **`@altananetwork/x402-server`: several tokens on the eip3009 rail each
   settle on their own contract.** A merchant listing more than one eip3009
   token verified a payment against the right token and then settled it on the
