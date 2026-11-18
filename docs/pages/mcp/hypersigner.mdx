@@ -1,0 +1,114 @@
+---
+title: Hypersigner KeyStore MCP
+description: A non-custodial MCP server that lets any agent SDK verify, register, timebox and revoke agent authority in the Altana KeyStore. It never holds a key and never signs.
+---
+
+import { Eyebrow } from '../../components/Eyebrow'
+
+<Eyebrow>MCP Server</Eyebrow>
+
+# Hypersigner KeyStore MCP
+
+`@altananetwork/hypersigner-keystore-mcp` is a second MCP server, separate from the [Altana MCP server](/mcp). It lets **any agent SDK** check agent-to-agent authority, and register, timebox and revoke that authority, through the Altana [KeyStore](/concepts/keystore).
+
+It is not a wallet. It reads the KeyStore and returns unsigned calls; the user's own wallet or SDK signs and sends them.
+
+## When to use it
+
+- **Agent-to-agent verification** before a payment, a work handoff or a data handoff.
+- **Time-boxed authority** for short-lived agent sessions that expire on their own.
+- **One kill switch across services:** one revoke makes an agent's key invalid for every reader.
+- **A neutral authorization check** for agent runtimes that already have their own wallet, such as Trust Wallet Agent Kit, Coinbase AgentKit, LangChain agents or a custom agent SDK.
+
+## Install
+
+[Bun](https://bun.sh) 1.1 or later. The package ships as TypeScript and runs under Bun.
+
+```bash
+bunx @altananetwork/hypersigner-keystore-mcp
+```
+
+Any MCP host that speaks stdio can run it:
+
+```json
+{
+  "mcpServers": {
+    "keystore": {
+      "command": "bunx",
+      "args": ["@altananetwork/hypersigner-keystore-mcp"],
+      "env": {
+        "ALTANA_CHAIN": "celo"
+      }
+    }
+  }
+}
+```
+
+## Networks
+
+One server process reads one network, chosen with `ALTANA_CHAIN`. It defaults to `bnb`.
+
+| `ALTANA_CHAIN` | Network |
+| --- | --- |
+| `bnb`, `bsc`, `56` | BNB Smart Chain |
+| `ethereum`, `eth`, `1` | Ethereum |
+| `celo`, `42220` | Celo |
+| `bnb-testnet`, `97` | BNB Smart Chain Testnet |
+| `celo-sepolia`, `11142220` | Celo Sepolia |
+| `sepolia`, `11155111` | Sepolia |
+| `base-sepolia`, `84532` | Base Sepolia, an L2 whose Keystore is on Sepolia |
+
+`RPC_URL` overrides the default RPC of the network that holds the Keystore. `L2_RPC_URL` overrides the L2's read RPC when `ALTANA_CHAIN` names an L2. Contract addresses are in [Networks and addresses](/concepts/networks).
+
+## Tools
+
+| Tool | What it does |
+| --- | --- |
+| `keystore_verify_authorization` | Reads `isValidKey(user, keyId)`: whether the key is registered, not revoked and not expired. |
+| `keystore_list_active_keys` | Lists a user's active key ids, each with its liveness, expiry, role and public key. |
+| `keystore_get_key` | Reads one key record. |
+| `keystore_registration_quote` | Reads the current one-time registration fee, in the network's native token. |
+| `keystore_encode_register_key` | Returns the unsigned call that registers a root or session key. A session key can carry an `expiry` timestamp. |
+| `keystore_encode_revoke_key` | Returns the unsigned call that revokes a key. The user's account signs it. |
+| `keystore_cache_status` | On an L2: whether the key is valid in the L2's KeyStoreCache right now, and which L1 block the L2 anchors. |
+| `keystore_encode_cache_proof` | On an L2: returns the unsigned call that proves a key's current L1 state into the L2's cache. Any funded L2 account can send it. |
+
+## Example flow
+
+1. An agent SDK creates an agent key pair.
+2. The SDK calls `keystore_encode_register_key` with the agent's public key and, for a timeboxed key, an `expiry`.
+3. The user's wallet signs and sends the returned transaction.
+4. A counterparty calls `keystore_verify_authorization` before serving the agent.
+5. The user later calls `keystore_encode_revoke_key`. Once that transaction is signed and sent, every reader sees the key as invalid.
+
+On an L2, steps 3 and 5 each continue with `keystore_encode_cache_proof`, signed and sent on the L2. It carries the new state to the L2's cache, and readers there see it from then on. [Sync to L2](/sdk/sync-to-l2) explains the cache.
+
+## Safety model
+
+- It does not accept private keys. A 32-byte value passed as `publicKey` is refused, because that usually means a private key was pasted by mistake.
+- It does not sign or send transactions.
+- It does not hold funds.
+- It only reads the KeyStore and encodes calls for another wallet or SDK to sign.
+
+## Programmatic helpers
+
+The same reads and encoders are exported for use without an MCP host:
+
+```ts
+import {
+  buildRegisterCall,
+  buildRevokeCall,
+  deriveKeyId,
+  readIsValidKey,
+  resolveChain,
+} from "@altananetwork/hypersigner-keystore-mcp/keystore";
+
+// The L2 cache, same shape: reads and unsigned calls.
+import { encodeCacheProof, readCacheStatus } from "@altananetwork/hypersigner-keystore-mcp/cache";
+```
+
+## Related
+
+- [Keystore](/concepts/keystore): what the registry stores and why it is public.
+- [Verify an agent's authority from anywhere](/use-cases/4-verify-agent-authority): the same check from the SDK.
+- [Keystore Explorer](/explorer): look up any wallet or key in a browser.

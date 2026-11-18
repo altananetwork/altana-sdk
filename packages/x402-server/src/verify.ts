@@ -32,7 +32,16 @@ export type VerifyOptions = {
   isContract?: (address: Address) => Promise<boolean> | boolean;
 };
 
-function matchRail(cfg: MerchantConfig, d: DecodedPayment): RailConfig | undefined {
+/**
+ * The merchant rail a payment answers: the one for its rail kind AND its
+ * token. A merchant may list several tokens on the same rail (USDC, USD₮ and
+ * USA₮ on eip3009), so the kind alone does not identify the rail. An eip3009
+ * envelope that names no asset falls to the first eip3009 rail.
+ *
+ * Verification and settlement both resolve the rail here, so the contract a
+ * payment is settled on is always the one it was verified against.
+ */
+export function matchRail(cfg: MerchantConfig, d: DecodedPayment): RailConfig | undefined {
   if (d.rail === "eip3009") {
     return cfg.rails.find(
       (r) =>

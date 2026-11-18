@@ -31,6 +31,7 @@ export {
   USDC_CELO_SEPOLIA,
   USDT_CELO,
   USDT_CELO_SEPOLIA,
+  USAT_CELO,
   type TokenConfig,
 } from "./tokens.js";
 export type {
