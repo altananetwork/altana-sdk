@@ -46,7 +46,7 @@ import {
   type PasskeySigner,
 } from "./passkey.js";
 import { buildFirstActionPrepend } from "./keystore.js";
-import { noteFirstAction } from "./firstActions.js";
+import { isKnownRegistered, noteFirstAction } from "./firstActions.js";
 
 /** Faucet for Celo Sepolia (chainId 11142220). */
 export const CELO_SEPOLIA_FAUCET_URL = "https://faucet.celo.org/celo-sepolia";
@@ -1138,7 +1138,11 @@ async function prepareIntent(
   // skipped here: the admin registers lazily on the registry chain inside the
   // wallet's first registry write (see submitRegistryCalls).
   let effectiveCalls: readonly Call[] = calls;
-  if (!opts.skipFirstActionPrepend && needsFirstActionPrepend(opts.network, opts.submittingKey.role)) {
+  if (
+    !opts.skipFirstActionPrepend &&
+    needsFirstActionPrepend(opts.network, opts.submittingKey.role) &&
+    !isKnownRegistered(opts.network.chainId, walletAddress)
+  ) {
     const publicClient = buildPublicClient(opts.network);
     const prepend = await buildFirstActionPrepend({
       publicClient,
