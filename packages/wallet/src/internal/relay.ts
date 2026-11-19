@@ -46,6 +46,7 @@ import {
   type PasskeySigner,
 } from "./passkey.js";
 import { buildFirstActionPrepend } from "./keystore.js";
+import { noteFirstAction } from "./firstActions.js";
 
 /** Faucet for Celo Sepolia (chainId 11142220). */
 export const CELO_SEPOLIA_FAUCET_URL = "https://faucet.celo.org/celo-sepolia";
@@ -567,6 +568,14 @@ export async function submitCallsDetailed(
     { client, network: opts.network },
     intentContext(walletAddress, effectiveCalls, feeToken, opts),
   );
+
+  // The intent just sent carried this wallet's first-action KeyStore
+  // registration. Noted for the agent identity step, which runs only after
+  // this action has confirmed and in a transaction of its own. Nothing above
+  // waits on that step or depends on it (see ./firstActions.ts).
+  if (isAdmin && effectiveCalls.length > calls.length) {
+    noteFirstAction(opts.network.chainId, walletAddress);
+  }
 
   return { callsId: (sent?.id ?? sent) as Hex, ...(feeToken ? { feeToken } : {}) };
 }
@@ -1541,6 +1550,23 @@ async function payerBalance(
     payNetwork.chainId === relay.network.chainId
       ? getAddress(intent.feeToken)
       : undefined;
+  // The fee was named in a token, and the calls send native value the wallet's
+  // own balance does not cover. That value is a shortfall in the chain's own
+  // currency whatever the fee is paid in, and it is stated before the fee token
+  // is looked at: a wallet paying the relay in USD₮ and holding 3 CELO for a
+  // 9.2 CELO registration held plenty of the token it named, so no shortfall
+  // was established and it was told "the relay gave no reason" (fork of Celo
+  // mainnet, 2026-11-18).
+  if (namedHere) {
+    const valueShort = nativeValueShortfall({
+      calls: intent.calls,
+      funded: intent.funded,
+      nativeBalance: onIntentChain?.balance ?? 0n,
+      network: relay.network,
+    });
+    if (valueShort) return { kind: "short", shortfall: valueShort };
+  }
+
   // A funded intent is paid on the paying chain in whichever accepted token
   // the payer holds there; the relay chooses. A payer holding none of that
   // chain's own currency but holding a token there is spoken to in that token:
@@ -1584,6 +1610,14 @@ async function payerBalance(
   const valueShort = quoted === undefined && sends > 0n;
   const payClient = payNetwork.chainId === relay.network.chainId ? relay.client : buildRelayClient(payNetwork);
   const tokens = valueShort ? [symbol] : await acceptedFeeSymbols(payClient, payNetwork);
+  // A request whose only value is the KeyStore's registration fee, paid here in
+  // the chain's own currency, is a registration the wallet cannot afford, and
+  // the sentence says so on every chain: BNB, Ethereum and Celo alike.
+  const registration =
+    !intent.funded &&
+    token === NATIVE_TOKEN &&
+    payNetwork.chainId === relay.network.chainId &&
+    sendsOnlyRegistrationValue(intent.calls, relay.network);
   return {
     kind: "short",
     shortfall: {
@@ -1591,6 +1625,7 @@ async function payerBalance(
       ...(need !== undefined ? { need } : {}),
       have,
       fund: { chain: payNetwork.chain.name, ...(tokens.length > 0 ? { tokens } : { tokens: [symbol] }) },
+      ...(registration ? { purpose: "registration" as const } : {}),
     },
   };
 }
@@ -1725,6 +1760,46 @@ const SHORTFALL_READ_TIMEOUT_MS = 3_000;
 /** Native wei a set of calls sends. */
 function totalValue(calls: readonly Call[]): bigint {
   return calls.reduce((sum, c) => sum + (c.value ?? 0n), 0n);
+}
+
+/** True when the calls send native value and every call that does goes to the KeyStore controller. */
+function sendsOnlyRegistrationValue(calls: readonly Call[], network: NetworkConfig): boolean {
+  const withValue = calls.filter((c) => (c.value ?? 0n) > 0n);
+  const controller = network.keyStoreController.toLowerCase();
+  return withValue.length > 0 && withValue.every((c) => c.to.toLowerCase() === controller);
+}
+
+/**
+ * The native value an intent's calls send that the wallet's own native balance
+ * does not cover, as a shortfall in the chain's own currency.
+ *
+ * Only the chain's own currency can be sent as value, so this holds whatever
+ * token the relay's fee is charged in. When every call that sends value goes
+ * to the KeyStore controller the shortfall is the registration fee, and says
+ * so. Nothing is returned for an intent funded from another chain (its value is
+ * paid there), for calls that send nothing, or for a balance that covers them.
+ *
+ * `need` is the value alone. It is exact for a wallet whose relay fee is paid
+ * in another token, which is the case this is used for.
+ */
+export function nativeValueShortfall(args: {
+  calls: readonly Call[];
+  funded: boolean;
+  nativeBalance: bigint;
+  network: NetworkConfig;
+}): FundingShortfall | undefined {
+  if (args.funded) return undefined;
+  const value = totalValue(args.calls);
+  if (value === 0n || args.nativeBalance >= value) return undefined;
+  const { symbol, decimals } = args.network.chain.nativeCurrency;
+  const isRegistration = sendsOnlyRegistrationValue(args.calls, args.network);
+  return {
+    token: { symbol, decimals },
+    need: value,
+    have: args.nativeBalance,
+    fund: { chain: args.network.chain.name, tokens: [symbol] },
+    ...(isRegistration ? { purpose: "registration" as const } : {}),
+  };
 }
 
 /** The chain's own currency, for chains the relay reports nothing about. */

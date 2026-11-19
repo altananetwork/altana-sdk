@@ -17,6 +17,7 @@ import type { Session } from "./internal/sessions.js";
 import { forgetAppLane, withAppLaneNonce } from "./internal/appNonceLane.js";
 import { expiredSessionError, sessionHasExpired } from "./errors.js";
 import { keyHashForSigner } from "./internal/erc1271.js";
+import { afterFirstAction, type AgentIdentityOption } from "./agentIdentity.js";
 
 export type ExecuteOptions = {
   /** Which chain to run on. Resolved by the client from a chainId. */
@@ -32,6 +33,12 @@ export type ExecuteOptions = {
    */
   feeToken?: Address | readonly Address[];
   noWait?: boolean;
+  /**
+   * The agent identity a new wallet gets after its first admin action:
+   * `false` turns it off, an object replaces parts of the default record.
+   * Omitted, it is on. See `agentIdentity.ts`.
+   */
+  agentIdentity?: AgentIdentityOption;
 };
 
 /**
@@ -68,7 +75,20 @@ export async function execute(
     callsOrOpts as readonly Call[],
     maybeOpts as ExecuteOptions,
   );
-  return result;
+  // A session never sets a wallet up, so only the admin form can have been a
+  // first action. The action above is finished and `result` is what the caller
+  // gets; the step below sends a transaction of its own and cannot change it.
+  if (isSession(walletOrSession)) return result;
+  const opts = maybeOpts as ExecuteOptions;
+  const agentIdentity = await afterFirstAction({
+    wallet: walletOrSession,
+    signer: signerOrCalls as Signer,
+    network: opts.network,
+    option: opts.agentIdentity,
+    action: result.status === "CONFIRMED" ? "confirmed" : result.status === "PENDING" ? "pending" : "failed",
+    ...(opts.feeToken ? { feeToken: opts.feeToken } : {}),
+  });
+  return agentIdentity ? { ...result, agentIdentity } : result;
 }
 
 /** An ExecuteResult plus the relay's status receipts, when it reported any. */

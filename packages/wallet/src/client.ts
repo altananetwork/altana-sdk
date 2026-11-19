@@ -27,6 +27,12 @@ import { createPasskeyWallet as createPasskeyWalletImpl } from "./createPasskeyW
 import { recoverFromPasskey as recoverFromPasskeyImpl } from "./recoverFromPasskey.js";
 import { execute as executeImpl, quoteExecute as quoteExecuteImpl } from "./execute.js";
 import { feeCurrencies as feeCurrenciesImpl, type FeeCurrenciesResult } from "./feeCurrencies.js";
+import {
+  registerAgentIdentity as registerAgentIdentityImpl,
+  type AgentIdentityOption,
+  type AgentIdentityOutcome,
+  type AgentIdentityRecord,
+} from "./agentIdentity.js";
 import { runGrantSession } from "./grantSession.js";
 import { runRevokeSession } from "./revokeSession.js";
 import { realSessionLegDeps, type SessionLegDeps } from "./internal/sessionLegs.js";
@@ -70,6 +76,20 @@ export type CreateClientOptions = {
    * `chains`. Must be one of the configured chains.
    */
   defaultChainId?: number;
+  /**
+   * The agent identity (ERC-8004) a new wallet gets by itself. After a
+   * wallet's first admin action has confirmed, the SDK registers it in the
+   * chain's agent registry, in a transaction of its own, so the wallet is
+   * listed as an agent. On by default.
+   *
+   * `false` turns it off. An object keeps it on and replaces parts of the
+   * record: `{ name, description, image, endpoint }`.
+   *
+   * A KeyStore registration never depends on it: the first action is complete
+   * before this transaction is sent, and a failure here is reported on the
+   * result (`agentIdentity`), never thrown.
+   */
+  agentIdentity?: AgentIdentityOption;
 };
 
 /** Per-operation chain selector. Omit to use the client's default chain. */
@@ -100,6 +120,8 @@ export type ClientExecuteOptions =
       /** One token to force, or a list to pay with the first accepted and held. */
       feeToken?: Address | readonly Address[];
       noWait?: boolean;
+      /** Overrides the client's `agentIdentity` for this call. */
+      agentIdentity?: AgentIdentityOption;
     } & ChainSelector)
   | ({
       session: Session;
@@ -133,6 +155,8 @@ type GrantSessionArgs = {
    * (see `feeSpendLimit`). One address or a list.
    */
   feeToken?: Address | readonly Address[];
+  /** Overrides the client's `agentIdentity` for this call. */
+  agentIdentity?: AgentIdentityOption;
 } & GrantSessionOptions;
 
 export type ClientGrantSessionOptions = GrantSessionArgs & GrantChainSelector;
@@ -195,6 +219,16 @@ export type ClientHoldingsOptions = {
 } & ChainSelector;
 
 export type ClientFeeCurrenciesOptions = ChainSelector;
+
+export type ClientRegisterAgentIdentityOptions = {
+  wallet: Wallet;
+  /** The wallet's admin signer. A passkey signer prompts, as for any transaction. */
+  signer: Signer;
+  /** Parts of the record to replace. Defaults to the client's `agentIdentity`. */
+  identity?: AgentIdentityRecord;
+  /** One token to force, or a list to pay with the first accepted and held. */
+  feeToken?: Address | readonly Address[];
+} & ChainSelector;
 
 export type ClientApproveSignatureCheckerOptions = {
   wallet: Wallet;
@@ -287,6 +321,15 @@ export type Client = {
    * the relay charges whichever of these the wallet holds.
    */
   feeCurrencies(opts?: ClientFeeCurrenciesOptions): Promise<FeeCurrenciesResult>;
+
+  /**
+   * Register a wallet's agent identity (ERC-8004) now. New wallets signed
+   * with a key get one by themselves after their first action; this is for a
+   * passkey wallet, which approves each transaction, and for a wallet whose
+   * automatic registration was skipped or failed. A wallet that owns an agent
+   * already is left as it is. Never throws: the outcome says what happened.
+   */
+  registerAgentIdentity(opts: ClientRegisterAgentIdentityOptions): Promise<AgentIdentityOutcome>;
 
   /** Sign a protocol digest with a session key (offline, chain-independent). */
   signOrder(opts: { session: Session; appDigest: Hex }): Promise<Hex>;
@@ -432,7 +475,11 @@ export function createClientWith(
       if ("session" in o) {
         return executeImpl(o.session, o.calls, execOpts);
       }
-      return executeImpl(o.wallet, o.signer, o.calls, execOpts);
+      const agentIdentity = o.agentIdentity ?? opts.agentIdentity;
+      return executeImpl(o.wallet, o.signer, o.calls, {
+        ...execOpts,
+        ...(agentIdentity !== undefined ? { agentIdentity } : {}),
+      });
     },
 
     quoteExecute(o) {
@@ -443,11 +490,16 @@ export function createClientWith(
 
     async grantSession(o) {
       const target = grantTarget(o, "grantSession");
+      const agentIdentity = o.agentIdentity ?? opts.agentIdentity;
       const result = await runGrantSession(
         o.wallet,
         o.signer,
         grantOptions(o),
-        { networks: target.networks, ...(o.feeToken ? { feeToken: o.feeToken } : {}) },
+        {
+          networks: target.networks,
+          ...(o.feeToken ? { feeToken: o.feeToken } : {}),
+          ...(agentIdentity !== undefined ? { agentIdentity } : {}),
+        },
         sessionLegs,
       );
       // Several chains: the result says how each went, and nothing throws.
@@ -525,6 +577,17 @@ export function createClientWith(
 
     feeCurrencies(o = {}) {
       return feeCurrenciesImpl({ network: resolve(o.chainId) });
+    },
+
+    registerAgentIdentity(o) {
+      const identity = o.identity ?? (opts.agentIdentity ? opts.agentIdentity : undefined);
+      return registerAgentIdentityImpl({
+        wallet: o.wallet,
+        signer: o.signer,
+        network: resolve(o.chainId),
+        ...(identity ? { identity } : {}),
+        ...(o.feeToken ? { feeToken: o.feeToken } : {}),
+      });
     },
 
     signOrder(o) {

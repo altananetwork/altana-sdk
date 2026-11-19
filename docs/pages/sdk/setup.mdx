@@ -64,6 +64,11 @@ await client.grantSession({ /* ... */, chainIds: [56, 42220] });  // several in 
 await client.revokeSession({ wallet, signer, session });   // wherever the key lives
 ```
 
+A wallet that is new on BNB Chain or Celo is registered as an agent (ERC-8004)
+after its first action, in a transaction of its own. `agentIdentity` sets the
+name and image it is listed with, and `agentIdentity: false` turns it off. See
+[ERC-8004: agent identity](/sdk/erc8004#a-new-wallet-gets-one-by-itself).
+
 `NETWORKS.mainnet` is BNB, Ethereum and Celo; `NETWORKS.testnet` is BNB
 testnet, Celo Sepolia and Base Sepolia. `networkByChainId(id)` returns the
 config for any chain the SDK knows, Sepolia included.

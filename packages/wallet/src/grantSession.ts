@@ -41,6 +41,7 @@ import type {
   SessionPermissions,
 } from "./internal/sessions.js";
 import type { Wallet } from "./internal/types.js";
+import { afterFirstAction, type AgentIdentityOption, type AgentIdentityOutcome } from "./agentIdentity.js";
 
 
 /**
@@ -83,6 +84,12 @@ export type GrantSessionConfig = {
    * whichever accepted token the wallet holds.
    */
   feeToken?: Address | readonly Address[];
+  /**
+   * The agent identity a new wallet gets after its first admin action:
+   * `false` turns it off, an object replaces parts of the default record.
+   * Omitted, it is on. See `agentIdentity.ts`.
+   */
+  agentIdentity?: AgentIdentityOption;
 };
 
 /**
@@ -533,6 +540,27 @@ export async function runGrantSession(
 
   onStatus?.("done");
   const ordered = orderLegs(legs);
+
+  // The grant is finished: every leg above has its final status, and nothing
+  // below can change one. On a chain where this grant was the wallet's first
+  // admin action and its account leg confirmed, the wallet's agent identity is
+  // now registered in a transaction of its own. `afterFirstAction` reads a
+  // note and returns at once on every other grant, and it never throws.
+  const identities = await Promise.all(
+    networks.map((network) => {
+      const account = ordered.find((leg) => leg.chainId === network.chainId && leg.kind === "account");
+      return afterFirstAction({
+        wallet,
+        signer: adminSigner,
+        network,
+        option: config.agentIdentity,
+        action: account?.status === "CONFIRMED" ? "confirmed" : account?.status === "PENDING" ? "pending" : "failed",
+        ...(feeToken ? { feeToken } : {}),
+      });
+    }),
+  );
+  const agentIdentities = identities.filter((outcome): outcome is AgentIdentityOutcome => outcome !== undefined);
+
   return {
     walletAddress: wallet.address,
     signer: sessionSigner,
@@ -545,6 +573,7 @@ export async function runGrantSession(
     legs: ordered,
     cacheSync,
     registration,
+    ...(agentIdentities.length > 0 ? { agentIdentities } : {}),
   };
 
   /** The deferred registry writes as they read at return: still running. */

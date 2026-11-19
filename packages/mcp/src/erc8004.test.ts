@@ -20,6 +20,7 @@ import {
   missingErc8004Permissions,
   runErc8004Registration,
   toMetadataEntries,
+  updateErc8004Registration,
   type Erc8004Writers,
 } from "./erc8004.js";
 import type { SessionPermissions } from "./sessions.js";
@@ -269,3 +270,39 @@ describe("runErc8004Registration", () => {
     await expect(run(writers)).rejects.toThrow(/register reverted/);
   });
 });
+
+// ===================== a wallet that already owns an agent ====================
+
+describe("updateErc8004Registration", () => {
+  const update = (writers: Erc8004Writers) =>
+    updateErc8004Registration(
+      { session: {}, chainId: CHAIN, opts: { network: {} }, agentId: 77n, file: buildRegistrationFile(FIELDS) },
+      writers,
+    );
+
+  test("rewrites the wallet's own agent with the record and its number, and mints nothing", async () => {
+    const { writers, seen } = stubWriters();
+
+    const outcome = await update(writers);
+
+    expect(seen.register).toBeUndefined();
+    expect(seen.setUri.agentId).toBe(77n);
+    const written = decodeErc8004AgentUri(seen.setUri.agentUri);
+    expect(written.name).toBe(FIELDS.name);
+    expect(written.registrations).toEqual([{ agentId: 77, agentRegistry: `eip155:97:${REGISTRY}` }]);
+
+    expect(outcome.complete).toBe(true);
+    expect(outcome.agentId).toBe("77");
+    expect(outcome.registerTransactionHash).toBeUndefined();
+    expect(outcome.setAgentUriTransactionHash).toBe(TX_PATCH);
+    expect(outcome.message).toContain("no second agent was created");
+  });
+
+  test("an update that does not confirm throws and says the record is unchanged", async () => {
+    const { writers } = stubWriters({
+      setAgentUri: async () => ({ callsId: "0x2" as Hex, status: "FAILED" }),
+    });
+    await expect(update(writers)).rejects.toThrow(/did not confirm.*Its record is unchanged/s);
+  });
+});
+

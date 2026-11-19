@@ -224,7 +224,8 @@ export const SEPOLIA: NetworkConfig = {
 
 /**
  * Celo Sepolia (chain 11142220). Wallets run through the Altana testnet
- * relay with fees in CELO. Celo Sepolia keeps its own KeyStore: keys are
+ * relay with fees in CELO or a stablecoin the relay lists
+ * (`client.feeCurrencies()`). Celo Sepolia keeps its own KeyStore: keys are
  * registered there, in the same request that authorizes them, and the
  * registration fee is paid in CELO. Fund wallets from
  * https://faucet.celo.org/celo-sepolia.
@@ -274,7 +275,7 @@ export const BASE_SEPOLIA: NetworkConfig = {
 
 /**
  * Celo (chain 42220). Wallets run through the Altana relay with fees in
- * CELO, USDC or USDT. Celo keeps its own KeyStore: keys are registered
+ * CELO or a stablecoin the relay lists (`client.feeCurrencies()`). Celo keeps its own KeyStore: keys are registered
  * there, in the same request that authorizes them, and the registration fee
  * is paid in CELO.
  *

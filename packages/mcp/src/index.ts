@@ -49,11 +49,12 @@ import {
   decodeErc8004AgentUri,
   encodeErc8004AgentUri,
   withErc8004Registration,
+  erc8004AgentCount,
   isCachedRegistry,
   isCachedKeyValid,
   readCachedKey,
 } from "@altananetwork/sdk";
-import type { Signer, Wallet } from "@altananetwork/sdk";
+import type { AgentIdentityOutcome, Signer, Wallet } from "@altananetwork/sdk";
 import {
   getWalletKey,
   setWalletKey,
@@ -74,13 +75,17 @@ import {
 import { searchSkills, getSkill } from "./skills.js";
 import { SUPPORTED_CHAINS, describeNetwork, fundingSteps, networkGroup, resolveNetwork } from "./network.js";
 import { acceptedFeeSymbols, feeCurrenciesPayload } from "./feeCurrencies.js";
+import { storeKeyThenGrant } from "./grantFlow.js";
+import { x402TokensFrom } from "./x402Tokens.js";
 import {
   assertErc8004Permissions,
   buildRegistrationFile,
   runErc8004Registration,
   toMetadataEntries,
+  updateErc8004Registration,
   type MetadataInput,
 } from "./erc8004.js";
+import { agentIdentityOption, agentIdentityReport, knownAgent, rememberAgent } from "./agentIdentity.js";
 
 // ---------- network ---------------------------------------------------------
 
@@ -106,7 +111,11 @@ if (!resolved.recognized) {
 }
 console.error(`[altana-mcp] network: ${describeNetwork(NETWORK)}`);
 
-const client = createClient({ chains: [NETWORK] });
+// A new wallet's agent identity (ERC-8004) is registered by the SDK after the
+// wallet's first action. ALTANA_AGENT_IDENTITY=off turns that off.
+const AGENT_IDENTITY = agentIdentityOption(process.env.ALTANA_AGENT_IDENTITY);
+if (AGENT_IDENTITY === false) console.error("[altana-mcp] agent identity: off (ALTANA_AGENT_IDENTITY)");
+const client = createClient({ chains: [NETWORK], ...(AGENT_IDENTITY === false ? { agentIdentity: false } : {}) });
 // Revocation reaches every chain of this environment, not only NETWORK: a key
 // granted on another chain of the group is revoked there too.
 const revokeClient = createClient({ chains: [...networkGroup(NETWORK)] });
@@ -229,6 +238,16 @@ function assertHexBytes(value: string): Hex {
  * are harmless on Porto's side. We swallow errors and rely on the next
  * call to fail clearly if something's actually wrong.
  */
+/**
+ * Write down the agent number a wallet was just given, so `erc8004_register`
+ * can find it later. Storing it is a convenience: a failure to write must not
+ * turn a completed action into an error.
+ */
+async function noteAgentIdentity(wallet: Address, outcome: AgentIdentityOutcome | undefined): Promise<void> {
+  if (outcome?.status !== "registered") return;
+  await rememberAgent(outcome.chainId, wallet, outcome.agentId).catch(() => {});
+}
+
 async function ensureRegistered(signer: Signer): Promise<void> {
   try {
     await client.createWallet({ signer });
@@ -681,6 +700,7 @@ tool(
       },
       ...(feeToken !== undefined ? { feeToken: assertFeeToken(feeToken) } : {}),
     });
+    await noteAgentIdentity(key.address, result.agentIdentity);
     return {
       content: [
         {
@@ -694,6 +714,8 @@ tool(
               transactionHash: result.transactionHash,
               // The token the relay charged its fee in (zero address: native).
               ...(result.feeToken ? { feeToken: result.feeToken } : {}),
+              // Set when this was the wallet's first action.
+              ...(result.agentIdentity ? { agentIdentity: agentIdentityReport(result.agentIdentity) } : {}),
             },
             null,
             2,
@@ -743,8 +765,9 @@ tool(
     description:
       "Admin (a named wallet) authorizes a fresh session key on-chain. " +
       "Session is scoped by recipient, daily ETH spend cap, and lifetime. " +
-      "The wallet needs to be funded first — check with wallet_balance " +
-      "before calling.",
+      "Pass x402Tokens to let the session pay x402 requests (x402_request) in " +
+      "those tokens. The wallet needs to be funded first — check with " +
+      "wallet_balance before calling.",
     inputSchema: {
       walletName: z.string(),
       sessionName: z.string(),
@@ -782,6 +805,19 @@ tool(
           "The daily cap added for each fee token, in the token's smallest unit " +
             "(for example 5000000 for 5 USDC). Default one whole token.",
         ),
+      x402Tokens: z
+        .union([z.string(), z.array(z.string())])
+        .optional()
+        .describe(
+          "The token(s) the session may pay x402 requests in, one contract " +
+            "address or a list. In the same transaction as the grant, each token " +
+            "is approved to Permit2, and the token and Permit2 are approved as " +
+            "signature checkers for this session key, which is what x402_request " +
+            "needs. x402 payments are signed, not sent by the session, so the " +
+            "daily spend caps do not bound them: the session can sign payments of " +
+            "any amount of these tokens until it expires or is revoked. Keep the " +
+            "lifetime short.",
+        ),
     },
   },
   async ({
@@ -793,6 +829,7 @@ tool(
     register,
     feeToken,
     feeSpendLimit,
+    x402Tokens,
   }: {
     walletName: string;
     sessionName: string;
@@ -802,6 +839,7 @@ tool(
     register?: boolean;
     feeToken?: string | string[];
     feeSpendLimit?: string;
+    x402Tokens?: string | string[];
   }) => {
     // Refuse to overwrite an existing session entry. Sessions live in their
     // own keychain namespace (altana-session), so this only collides with
@@ -817,6 +855,7 @@ tool(
     const adminSigner = signerFromPrivateKey(admin.privateKey);
     await ensureRegistered(adminSigner);
     const recipientAddr = assertAddress(recipient);
+    const x402 = x402TokensFrom(x402Tokens);
     const capEth = dailyCapEth ?? "0.01";
     const lifetime = lifetimeSeconds ?? 3600;
     const expiry = Math.floor(Date.now() / 1000) + lifetime;
@@ -830,30 +869,36 @@ tool(
       address: admin.address,
     };
 
-    // One chain: this throws when the account did not authorize the key, so
-    // nothing below runs and no session is stored for a grant that failed.
-    const session = await client.grantSession({
-      wallet,
-      signer: adminSigner,
-      sessionSigner,
-      permissions: {
-        calls: [{ to: recipientAddr }],
-        spend: [{ limit: capWei, period: "day" }],
-      },
-      expiry,
-      ...(register !== undefined ? { register } : {}),
-      ...(feeToken !== undefined ? { feeToken: assertFeeToken(feeToken) } : {}),
-      ...(feeSpendLimit !== undefined ? { feeSpendLimit: BigInt(feeSpendLimit) } : {}),
+    // The key goes into the keychain (encrypted at rest) BEFORE the grant is
+    // sent, and comes out again if the grant fails: a grant is paid for and
+    // on chain, so a key that could not be stored afterwards would be lost.
+    // One chain: the grant throws when the account did not authorize the key,
+    // so no session is stored for a grant that failed.
+    const session = await storeKeyThenGrant({
+      storeKey: () => setSessionKey(sessionName, sessionPk),
+      removeKey: () => deleteSessionKey(sessionName),
+      grant: () =>
+        client.grantSession({
+          wallet,
+          signer: adminSigner,
+          sessionSigner,
+          permissions: {
+            calls: [{ to: recipientAddr }],
+            spend: [{ limit: capWei, period: "day" }],
+          },
+          expiry,
+          ...(register !== undefined ? { register } : {}),
+          ...(feeToken !== undefined ? { feeToken: assertFeeToken(feeToken) } : {}),
+          ...(feeSpendLimit !== undefined ? { feeSpendLimit: BigInt(feeSpendLimit) } : {}),
+          ...(x402 ? { x402Tokens: x402 } : {}),
+        }),
     });
 
-    // Persist:
-    //   1. PK in keychain (encrypted at rest)
-    //   2. Metadata in ~/.altana/sessions.json (needed to rebuild Session
-    //      at session_execute time — permissions/expiry must match grant
-    //      byte-for-byte or Porto can't find the key hash). The grant may
-    //      have added fee spend caps, so the effective permissions come from
-    //      the returned session, not from the inputs.
-    await setSessionKey(sessionName, sessionPk);
+    // Metadata in ~/.altana/sessions.json (needed to rebuild Session at
+    // session_execute time — permissions/expiry must match grant
+    // byte-for-byte or Porto can't find the key hash). The grant may have
+    // added fee spend caps, so the effective permissions come from the
+    // returned session, not from the inputs.
 
     const permissionsForFile: SessionPermissions = serializeSession(session).permissions;
 
@@ -868,6 +913,8 @@ tool(
     });
 
     const keyId = keccak256(session.publicKey);
+    const agentIdentity = session.agentIdentities?.find((outcome) => outcome.chainId === NETWORK.chainId);
+    await noteAgentIdentity(admin.address, agentIdentity);
 
     return {
       content: [
@@ -880,6 +927,8 @@ tool(
               walletAddress: admin.address,
               sessionAddress: sessionSigner.address,
               sessionPublicKey: session.publicKey,
+              // Set when the session was set up to pay x402 requests in these tokens.
+              ...(x402 ? { x402Tokens: x402 } : {}),
               // keyId is the canonical identifier in KeyStore. Pass this
               // (or sessionName) to verify_authorization to confirm the
               // session is recognized in the public registry.
@@ -905,6 +954,8 @@ tool(
               },
               expiry,
               expiresAt: new Date(expiry * 1000).toISOString(),
+              // Set when this grant was the wallet's first action.
+              ...(agentIdentity ? { agentIdentity: agentIdentityReport(agentIdentity) } : {}),
             },
             null,
             2,
@@ -1104,9 +1155,9 @@ tool(
     description:
       "Fetch an HTTP URL, transparently paying an x402/B402 payment challenge " +
       "with a session key. On a 402 response the agent signs the payment " +
-      "(Permit2 or EIP-3009) and retries. Requires the wallet to have approved " +
-      "the payment token to Permit2 and approved the verifying contract as a " +
-      "signature checker for this session.",
+      "(Permit2 or EIP-3009) and retries. The session must have been granted " +
+      "with x402Tokens naming the payment token (grant_session), which makes " +
+      "the approvals a payment needs.",
     inputSchema: {
       sessionName: z.string(),
       url: z.string(),
@@ -1464,7 +1515,10 @@ tool(
       "record with the assigned agentId embedded. The session key must have been " +
       "granted the ERC-8004 registry permissions; the tool checks that before " +
       "spending gas. If the mint lands but the write-back fails, the agentId is " +
-      "still returned — repair with erc8004_set_agent_uri, never by registering again.",
+      "still returned — repair with erc8004_set_agent_uri, never by registering again. " +
+      "A wallet that already has its agent identity (a new wallet gets one when it is set up) " +
+      "is not given a second one: its existing agent's record is updated with these fields, " +
+      "and `metadata` is not used.",
     inputSchema: {
       sessionName: z.string(),
       name: z.string().describe("The agent's display name"),
@@ -1493,6 +1547,38 @@ tool(
     const { stored, session } = await sessionFromName(sessionName);
     assertErc8004Permissions(sessionName, stored.permissions, NETWORK.chainId);
 
+    // A wallet gets its agent identity when it is set up. Registering again
+    // would give it a second agent, so a wallet that owns one has that one
+    // updated. The registry cannot say which agent a wallet owns, only that it
+    // owns one: the number is the one this server wrote down when it was issued.
+    const walletAddress = stored.walletAddress as Address;
+    const owned = await erc8004AgentCount(NETWORK, walletAddress).catch(() => 0n);
+    if (owned > 0n) {
+      const known = await knownAgent(NETWORK.chainId, walletAddress);
+      if (!known) {
+        throw new Error(
+          `Wallet ${walletAddress} already owns an agent identity on ${NETWORK.chain.name}, and this server does not ` +
+            `know its number. Registering again would create a second agent. Find the agent's number (8004scan lists ` +
+            `agents by owner address) and change its record with erc8004_set_agent_uri.`,
+        );
+      }
+      const updated = await updateErc8004Registration({
+        session,
+        chainId: NETWORK.chainId,
+        opts: { network: NETWORK },
+        agentId: BigInt(known),
+        file: buildRegistrationFile(fields),
+      });
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ sessionName, walletAddress, ...updated }, null, 2),
+          },
+        ],
+      };
+    }
+
     const outcome = await runErc8004Registration({
       session,
       chainId: NETWORK.chainId,
@@ -1500,6 +1586,7 @@ tool(
       file: buildRegistrationFile(fields),
       metadata: toMetadataEntries(metadata),
     });
+    await rememberAgent(NETWORK.chainId, walletAddress, outcome.agentId).catch(() => {});
 
     return {
       content: [

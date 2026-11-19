@@ -40,7 +40,7 @@ The Keystore is on the chain the server runs on, and every tool works on that on
 
 | Tool | Purpose |
 |---|---|
-| `grant_session` | Generates a session key, registers it in Keystore, authorizes it with the given permissions. `feeToken` (one address or a list) names the tokens the session may pay relay fees in; each gets a daily spend cap added (`feeSpendLimit`, in the token's smallest unit, overrides the one-whole-token default). Returns the session details, keyId, and the grant's transaction hash. |
+| `grant_session` | Generates a session key, registers it in Keystore, authorizes it with the given permissions. `feeToken` (one address or a list) names the tokens the session may pay relay fees in; each gets a daily spend cap added (`feeSpendLimit`, in the token's smallest unit, overrides the one-whole-token default). `x402Tokens` (one token address or a list) sets the session up to pay x402 requests in those tokens. Returns the session details, keyId, and the grant's transaction hash. |
 | `list_sessions` | Lists local session metadata (those granted from this machine). |
 | `session_execute` | Submits calls signed by a stored session key. The fee comes out of the session's spend caps: the capped token the relay accepts that the wallet holds the most of; `feeToken` forces one address, or with a list pays with the first that qualifies. The result names the token charged (`feeToken`). |
 | `revoke_session` | Deactivates the session in Keystore and pulls onchain authority, then deletes the local session. A revoke that fails keeps the local session so it can be run again; the result lists each chain's outcome. |
@@ -49,7 +49,7 @@ The Keystore is on the chain the server runs on, and every tool works on that on
 
 | Tool | Purpose |
 |---|---|
-| `x402_request` | Fetches an HTTP URL, transparently paying an x402/B402 payment challenge with a session key (Permit2 or EIP-3009), and returns the paid resource. |
+| `x402_request` | Fetches an HTTP URL, transparently paying an x402/B402 payment challenge with a session key (Permit2 or EIP-3009), and returns the paid resource. The session is one granted with `x402Tokens` naming the payment token. |
 | `erc8183_create_job` | Hires an ERC-8183 seller agent (e.g. any BNB Agent Studio agent): escrows $U against its address for a task — the whole buyer flow as one atomic relay intent. |
 | `erc8183_job_status` | Reads a job's on-chain state; once the seller submits, resolves and fetches the deliverable. |
 | `erc8183_settle` | Releases the escrow to the seller after the dispute window (`approve`), or contests inside it (`dispute`). |
@@ -63,7 +63,7 @@ The registry these write to is `erc8004Registry(chainId)`, listed per network in
 
 | Tool | Purpose |
 |---|---|
-| `erc8004_register` | Mints the agent's identity and publishes its registration record, running both phases (mint, then write the assigned `agentId` back into the record). If the mint lands but the write-back fails, the `agentId` is still returned with repair instructions — registering again would mint a second identity. |
+| `erc8004_register` | Mints the agent's identity and publishes its registration record, running both phases (mint, then write the assigned `agentId` back into the record). A wallet that already has its agent identity has that agent's record updated, and no second agent is created. If the mint lands but the write-back fails, the `agentId` is still returned with repair instructions — registering again would mint a second identity. |
 | `erc8004_set_agent_uri` | Rewrites the record of an agent the wallet owns — changing its endpoint, or repairing a partial registration. Takes a ready-made `agentUri` or the structured fields. |
 | `erc8004_show` | Reads an agent's owner and registration record by id, decoding the record when it is a base64 data URI. |
 

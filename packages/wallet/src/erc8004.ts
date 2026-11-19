@@ -102,6 +102,7 @@ const REGISTRY_ABI = [
   { name: "setAgentURI", type: "function", stateMutability: "nonpayable", inputs: [{ name: "agentId", type: "uint256" }, { name: "newURI", type: "string" }], outputs: [] },
   { name: "tokenURI", type: "function", stateMutability: "view", inputs: [{ name: "tokenId", type: "uint256" }], outputs: [{ type: "string" }] },
   { name: "ownerOf", type: "function", stateMutability: "view", inputs: [{ name: "tokenId", type: "uint256" }], outputs: [{ type: "address" }] },
+  { name: "balanceOf", type: "function", stateMutability: "view", inputs: [{ name: "owner", type: "address" }], outputs: [{ type: "uint256" }] },
 ] as const;
 
 const REGISTERED_EVENT = {
@@ -382,6 +383,21 @@ export async function setErc8004AgentUri(
 // ---------------------------------------------------------------------------
 // Read
 // ---------------------------------------------------------------------------
+
+/**
+ * How many agents `owner` holds in the chain's registry. The registry has no
+ * lookup from an owner to its agent ids, but it does count them, which is
+ * enough to tell whether a wallet has an identity yet.
+ */
+export async function erc8004AgentCount(network: NetworkConfig, owner: Address): Promise<bigint> {
+  const publicClient = buildPublicClient(network);
+  return (await publicClient.readContract({
+    address: erc8004Registry(network.chainId),
+    abi: REGISTRY_ABI,
+    functionName: "balanceOf",
+    args: [owner],
+  })) as bigint;
+}
 
 /**
  * Read an agent's owner and identity record. There is no reverse lookup on the

@@ -122,7 +122,7 @@ which client is paying:
 
 ## Celo
 
-The package ships token configs for Celo mainnet and Celo Sepolia; the merchant itself is chain-agnostic (`chainId` plus viem's `celo` / `celoSepolia` chain). USDC on Celo is Circle's native deployment (EIP-712 domain `USDC` / `2`, 6 decimals) and serves both rails; USDT on Celo has no EIP-3009, so it is permit2-exact only. Both are 6 decimals: price in micro-units.
+The package ships token configs for Celo mainnet and Celo Sepolia; the merchant itself is chain-agnostic (`chainId` plus viem's `celo` / `celoSepolia` chain). USDC on Celo is Circle's native deployment (EIP-712 domain `USDC` / `2`); USD₮ (`Tether USD` / `1`) and, on mainnet, USA₮ (`Tether America USD` / `1`) are Tether's. Each supports EIP-3009 and serves both rails. All are 6 decimals: price in micro-units.
 
 ```ts
 import { celoSepolia } from "viem/chains";
@@ -143,7 +143,17 @@ const merchant = createX402Merchant({
 });
 ```
 
-`USDC_CELO` and `USDT_CELO` are the mainnet equivalents (chain 42220, `chain: celo`). Settlement transactions are standard EIP-1559: viem's Celo serializer only emits the Celo-specific type when a fee currency is set, which the merchant never does. Buyers name the chain as `eip155:11142220` (or the SDK alias `celo-sepolia`).
+`USDC_CELO`, `USDT_CELO` and `USAT_CELO` are the mainnet tokens (chain 42220, `chain: celo`). A merchant can list several tokens on the same rail, and each payment is settled on its own token's contract:
+
+```ts
+rails: [
+  { rail: "eip3009", token: USDC_CELO },
+  { rail: "eip3009", token: USDT_CELO },
+  { rail: "eip3009", token: USAT_CELO },
+],
+```
+
+Settlement transactions are standard EIP-1559: viem's Celo serializer only emits the Celo-specific type when a fee currency is set, which the merchant never does. Buyers name the chain as `eip155:11142220` (or the SDK alias `celo-sepolia`).
 
 ### Settling through Celo's facilitator
 

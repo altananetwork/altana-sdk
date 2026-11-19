@@ -201,6 +201,7 @@ export default defineConfig({
         { text: "Install", link: "/mcp/install" },
         { text: "Tools", link: "/mcp/tools" },
         { text: "Claude Skill", link: "/mcp/skill" },
+        { text: "Hypersigner KeyStore", link: "/mcp/hypersigner" },
       ],
     },
     {

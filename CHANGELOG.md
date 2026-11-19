@@ -16,6 +16,93 @@ version may contain breaking changes.
 > reconstructed from commit history after the fact, so they summarize what
 > shipped rather than itemizing every change.
 
+## [1.1.0] - 2026-11-18
+
+`@altananetwork/mcp` 1.1.0, `@altananetwork/x402-server` 0.4.0
+
+### Added
+
+- **A new wallet gets its agent identity (ERC-8004) by itself.** After a
+  wallet's first admin action has confirmed, the SDK registers the wallet in
+  the chain's agent registry, in a transaction of its own. On by default, on
+  BNB Chain, Celo and their testnets, after `execute` or `grantSession`,
+  whichever is the wallet's first action.
+  - The record is stored onchain: "Altana Agent", the Altana icon, and a link
+    to the wallet's page on the Altana explorer. `agentIdentity: { name,
+    description, image, endpoint }` on `createClient`, or on a single call,
+    replaces any of them. `agentIdentity: false` turns it off.
+  - A KeyStore registration never depends on it. The agent registration never
+    shares a transaction with one: it is sent only after the wallet's action
+    has confirmed, and a failure is reported on the result and never thrown.
+    `ExecuteResult.agentIdentity` and `GrantSessionResult.agentIdentities`
+    carry `registered` (with the agent's number and transaction), `skipped` or
+    `failed`.
+  - Only a wallet that is new on the chain is registered, once. A wallet that
+    owns an agent already is left as it is. A passkey wallet approves each
+    transaction, so it is not sent a second one: `client.registerAgentIdentity`
+    registers it when the app chooses to ask.
+  - Every registration carries the onchain tag `createdWith = altana`
+    (`ALTANA_AGENT_TAG`). `agentPageUrl(chainId, agentId)` is the agent's page
+    on 8004scan, and `erc8004AgentCount` reads how many agents a wallet owns.
+  - `@altananetwork/mcp`: tool answers carry the agent's number and page,
+    `erc8004_register` on a wallet that has its agent updates that agent
+    instead of creating a second one, and `ALTANA_AGENT_IDENTITY=off` turns
+    the automatic registration off.
+
+- **`@altananetwork/x402-server`: `USAT_CELO`, USA₮ on Celo mainnet.** Tether
+  America USD at `0xD2ab3C9A02DBBAB236BfEC45D1d755DF4267F771`, 6 decimals,
+  EIP-712 domain `Tether America USD` / `1`, on the eip3009 and permit2-exact
+  rails. The name, version and decimals were read from the token, and a unit
+  test recomputes the domain separator of every Celo mainnet token config
+  against the value the token reports.
+
+- **`@altananetwork/mcp`: `grant_session` can set a session up to pay x402
+  requests.** The new `x402Tokens` input (one token address or a list) makes
+  the approvals an x402 payment needs in the same transaction as the grant:
+  each token approved to Permit2, and the token and Permit2 approved as
+  signature checkers for the session key. Before this, `x402_request` needed
+  approvals that no MCP tool could make. x402 payments are signed rather than
+  sent by the session, so its daily spend caps do not bound them.
+
+- **`fetchWithX402` discovers canonical x402 v2 header challenges.** A present
+  `PAYMENT-REQUIRED` header supplies the complete version, resource and payment
+  options, even with an empty or non-JSON response body. Malformed or unsupported
+  header challenges fail before signing instead of falling back to conflicting
+  body instructions. When the header is absent, legacy v1, v2 and B402 body
+  challenges keep working. Each call still signs and retries at most once.
+
+### Fixed
+
+- **A wallet short of the chain's currency for a registration is told so, on
+  every chain and whatever token it pays the relay in.** A KeyStore
+  registration is paid in the chain's own currency, as value the request
+  sends. A wallet that named a stablecoin as its fee token and held too little
+  CELO for the registration was told "This could not be carried out, and the
+  relay gave no reason", because it held plenty of the token it named. The
+  error is now `insufficient_funds`: "Not enough CELO for the registration:
+  needs about 9.2 CELO, you have 3 CELO. Add CELO on Celo." The same request
+  paid in the chain's own currency said "Not enough BNB to pay for this"; it
+  now says "Not enough BNB for the registration" too, on BNB Smart Chain,
+  Ethereum and Celo. `FundingShortfall` gains an optional
+  `purpose: "registration"` for an app that lays the sentence out itself. A
+  shortfall that is not a registration keeps its wording.
+
+- **`@altananetwork/mcp`: `grant_session` stores the session key before it
+  sends the grant.** The key was stored after the grant confirmed, so a
+  keychain write that failed left a paid, authorized key that nobody held.
+  The key is now stored first and removed again if the grant fails.
+- **`@altananetwork/x402-server`: several tokens on the eip3009 rail each
+  settle on their own contract.** A merchant listing more than one eip3009
+  token verified a payment against the right token and then settled it on the
+  first eip3009 rail, so a USD₮ payment on a merchant that also listed USDC
+  was sent to the USDC contract and refused with "invalid signature".
+  Settlement now resolves the rail from the payment's token, the same way
+  verification does. A merchant with one eip3009 token is unaffected.
+- **USD₮ on Celo and Celo Sepolia serves the eip3009 rail.** The token configs
+  and docs said it was permit2-exact only. Both tokens accept
+  `transferWithAuthorization`, and a Celo mainnet fork test now settles USDC,
+  USD₮ and USA₮ on that rail.
+
 ## [1.0.0] - 2026-11-17
 
 `@altananetwork/mcp` 1.0.0, `@altananetwork/x402-server` 0.3.0,
