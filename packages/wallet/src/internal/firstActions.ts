@@ -31,3 +31,28 @@ export function hasFirstAction(chainId: number, wallet: Address): boolean {
 export function clearFirstAction(chainId: number, wallet: Address): boolean {
   return noted.delete(keyOf(chainId, wallet));
 }
+
+/**
+ * Which wallets this process has seen their KeyStore registration confirm for.
+ *
+ * A read made right after a write can be answered by a node that has not seen
+ * the write's block yet. Asked "does this wallet have keys?" such a node says
+ * no, and the wallet's next action would then carry the registration a second
+ * time, which the KeyStore refuses ("account already has keys"). The action
+ * that follows a first action most closely is the agent identity step, sent
+ * the moment the first action confirms (seen on Celo Sepolia, 2026-11-19).
+ *
+ * So what this process watched confirm is remembered and not asked again. A
+ * registration is never undone into "no keys", so the note never goes stale.
+ */
+const registered = new Set<string>();
+
+/** Record that `wallet`'s first-action registration on `chainId` confirmed. */
+export function noteRegistered(chainId: number, wallet: Address): void {
+  registered.add(keyOf(chainId, wallet));
+}
+
+/** True when this process saw `wallet`'s registration on `chainId` confirm. */
+export function isKnownRegistered(chainId: number, wallet: Address): boolean {
+  return registered.has(keyOf(chainId, wallet));
+}

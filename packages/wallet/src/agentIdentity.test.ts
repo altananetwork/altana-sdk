@@ -21,7 +21,7 @@ import {
   type AgentIdentityDeps,
 } from "./agentIdentity.js";
 import { ERC8004_ADDRESSES, decodeErc8004AgentUri, encodeErc8004AgentUri } from "./erc8004.js";
-import { clearFirstAction, hasFirstAction, noteFirstAction } from "./internal/firstActions.js";
+import { clearFirstAction, hasFirstAction, isKnownRegistered, noteFirstAction } from "./internal/firstActions.js";
 import { createPrivateKeySigner } from "./internal/signer.js";
 import type { PasskeySigner } from "./internal/passkey.js";
 
@@ -237,6 +237,43 @@ describe("after an admin action", () => {
     expect(await run({ action: "failed" }, deps)).toBeUndefined();
     expect(calls.registers).toHaveLength(0);
     expect(hasFirstAction(CELO.chainId, WALLET.address)).toBe(false);
+  });
+
+  test("a confirmed first action is remembered as registered, so the next action does not carry the registration again", async () => {
+    // Each case has a wallet of its own: what was seen to confirm is never forgotten.
+    const seen = { address: "0x00000000000000000000000000000000000000c1" as Address };
+    const { deps } = fakeDeps();
+    expect(isKnownRegistered(CELO.chainId, seen.address)).toBe(false);
+    noteFirstAction(CELO.chainId, seen.address);
+    await run({ wallet: seen }, deps);
+    expect(isKnownRegistered(CELO.chainId, seen.address)).toBe(true);
+    // Per chain: the same wallet's first action elsewhere still registers there.
+    expect(isKnownRegistered(BNB.chainId, seen.address)).toBe(false);
+  });
+
+  test("it is remembered with agentIdentity: false too, and for a passkey wallet", async () => {
+    const off = { address: "0x00000000000000000000000000000000000000c2" as Address };
+    const passkey = { address: "0x00000000000000000000000000000000000000c3" as Address };
+    const { deps } = fakeDeps();
+    noteFirstAction(CELO.chainId, off.address);
+    await run({ wallet: off, option: false }, deps);
+    expect(isKnownRegistered(CELO.chainId, off.address)).toBe(true);
+    noteFirstAction(CELO.chainId, passkey.address);
+    await run({ wallet: passkey, signer: PASSKEY_SIGNER }, deps);
+    expect(isKnownRegistered(CELO.chainId, passkey.address)).toBe(true);
+  });
+
+  test("a first action that failed or is still pending is not remembered as registered", async () => {
+    const failed = { address: "0x00000000000000000000000000000000000000c4" as Address };
+    const pending = { address: "0x00000000000000000000000000000000000000c5" as Address };
+    const { deps } = fakeDeps();
+    noteFirstAction(CELO.chainId, failed.address);
+    await run({ wallet: failed, action: "failed" }, deps);
+    expect(isKnownRegistered(CELO.chainId, failed.address)).toBe(false);
+    noteFirstAction(CELO.chainId, pending.address);
+    await run({ wallet: pending, action: "pending" }, deps);
+    expect(isKnownRegistered(CELO.chainId, pending.address)).toBe(false);
+    clearFirstAction(CELO.chainId, pending.address);
   });
 
   test("a first action still pending keeps its note for the next confirmed action", async () => {
