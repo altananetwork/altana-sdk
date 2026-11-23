@@ -1,0 +1,351 @@
+{
+  "network": "BNB Smart Chain Testnet",
+  "chainId": 97,
+  "tag": "0x616c74616e612c616c74616e615f74657374120080218021802180218021802180218021",
+  "codes": [
+    "altana",
+    "altana_test"
+  ],
+  "token": "0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd",
+  "adminWallet": "0x5FE633ef72cD029a44F587b2f50bf94da468c33f",
+  "passkeyWallet": "0xaaFb8c3537073669D3a7d3DA2630AB25902f55D7",
+  "explorer": "https://testnet.bscscan.com",
+  "results": [
+    {
+      "signer": "admin key",
+      "name": "token transfer",
+      "expect": "succeeds",
+      "plain": {
+        "ok": true,
+        "status": "CONFIRMED",
+        "transactionHash": "0xaaed89a1cc48c0fe36c2ff9a0e0c4a7f67e2ca4acf4ec6a20df893e95f8acf5d",
+        "gasUsed": "98561",
+        "tokenEvents": [
+          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef,0x0000000000000000000000005fe633ef72cd029a44f587b2f50bf94da468c33f,0x00000000000000000000000001354d2cd69d65185698059e3be293405a9e62b6:0x00000000000000000000000000000000000000000000000000000000000003e8"
+        ],
+        "eventCount": 2,
+        "tagOnChain": false
+      },
+      "tagged": {
+        "ok": true,
+        "status": "CONFIRMED",
+        "transactionHash": "0x757d26bfb1287a9c27ac856d045a1a632bf73ca9e601d19c855c6615741665a3",
+        "gasUsed": "99164",
+        "tokenEvents": [
+          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef,0x0000000000000000000000005fe633ef72cd029a44f587b2f50bf94da468c33f,0x00000000000000000000000001354d2cd69d65185698059e3be293405a9e62b6:0x00000000000000000000000000000000000000000000000000000000000003e8"
+        ],
+        "eventCount": 2,
+        "tagOnChain": true
+      },
+      "pass": true,
+      "notes": [
+        "gas 98561 plain, 99164 tagged (603 more)"
+      ]
+    },
+    {
+      "signer": "admin key",
+      "name": "token approve",
+      "expect": "succeeds",
+      "plain": {
+        "ok": true,
+        "status": "CONFIRMED",
+        "transactionHash": "0x26433784f1e659b577679b6cb633ec16e2c7dd7eb662b944afdfc375498c46fe",
+        "gasUsed": "110131",
+        "tokenEvents": [
+          "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925,0x0000000000000000000000005fe633ef72cd029a44f587b2f50bf94da468c33f,0x00000000000000000000000001354d2cd69d65185698059e3be293405a9e62b6:0x00000000000000000000000000000000000000000000000000000000000003e8"
+        ],
+        "eventCount": 2,
+        "tagOnChain": false
+      },
+      "tagged": {
+        "ok": true,
+        "status": "CONFIRMED",
+        "transactionHash": "0x0f65bd193a1dcab683b276390589e54babf8a6e535601f70cce84dbe0d8d81c7",
+        "gasUsed": "90822",
+        "tokenEvents": [
+          "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925,0x0000000000000000000000005fe633ef72cd029a44f587b2f50bf94da468c33f,0x00000000000000000000000001354d2cd69d65185698059e3be293405a9e62b6:0x00000000000000000000000000000000000000000000000000000000000003e8"
+        ],
+        "eventCount": 2,
+        "tagOnChain": true
+      },
+      "pass": true,
+      "notes": [
+        "gas 110131 plain, 90822 tagged (-19309 more)"
+      ]
+    },
+    {
+      "signer": "admin key",
+      "name": "batch of two calls, tag on the last",
+      "expect": "succeeds",
+      "plain": {
+        "ok": true,
+        "status": "CONFIRMED",
+        "transactionHash": "0x3917f5888b648dd53f8a182cbdaa3838548f6aafd2288cdb5aef596097b922fc",
+        "gasUsed": "108991",
+        "tokenEvents": [
+          "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925,0x0000000000000000000000005fe633ef72cd029a44f587b2f50bf94da468c33f,0x00000000000000000000000001354d2cd69d65185698059e3be293405a9e62b6:0x00000000000000000000000000000000000000000000000000000000000007d0",
+          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef,0x0000000000000000000000005fe633ef72cd029a44f587b2f50bf94da468c33f,0x00000000000000000000000001354d2cd69d65185698059e3be293405a9e62b6:0x00000000000000000000000000000000000000000000000000000000000003e8"
+        ],
+        "eventCount": 3,
+        "tagOnChain": false
+      },
+      "tagged": {
+        "ok": true,
+        "status": "CONFIRMED",
+        "transactionHash": "0x4cf76d63f57a8e426dd36089ae8e909847265169b300dd2b3d81bb87fe3b01aa",
+        "gasUsed": "106759",
+        "tokenEvents": [
+          "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925,0x0000000000000000000000005fe633ef72cd029a44f587b2f50bf94da468c33f,0x00000000000000000000000001354d2cd69d65185698059e3be293405a9e62b6:0x00000000000000000000000000000000000000000000000000000000000007d0",
+          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef,0x0000000000000000000000005fe633ef72cd029a44f587b2f50bf94da468c33f,0x00000000000000000000000001354d2cd69d65185698059e3be293405a9e62b6:0x00000000000000000000000000000000000000000000000000000000000003e8"
+        ],
+        "eventCount": 3,
+        "tagOnChain": true
+      },
+      "pass": true,
+      "notes": [
+        "gas 108991 plain, 106759 tagged (-2232 more)"
+      ]
+    },
+    {
+      "signer": "admin key",
+      "name": "plain coin transfer, tag as its only data",
+      "expect": "succeeds",
+      "plain": {
+        "ok": true,
+        "status": "CONFIRMED",
+        "transactionHash": "0x6d382a411f47713807a204a4be32c03490664fa07d03f67d172df0ebca6fa077",
+        "gasUsed": "91590",
+        "tokenEvents": [],
+        "eventCount": 1,
+        "tagOnChain": false
+      },
+      "tagged": {
+        "ok": true,
+        "status": "CONFIRMED",
+        "transactionHash": "0x67e949e1542a017d4eba1305b42520ce49270c6111592133fb3bc19c607720e9",
+        "gasUsed": "92361",
+        "tokenEvents": [],
+        "eventCount": 1,
+        "tagOnChain": true
+      },
+      "pass": true,
+      "notes": [
+        "gas 91590 plain, 92361 tagged (771 more)"
+      ]
+    },
+    {
+      "signer": "passkey",
+      "name": "token transfer",
+      "expect": "succeeds",
+      "plain": {
+        "ok": true,
+        "status": "CONFIRMED",
+        "transactionHash": "0x08dec203b495cebbc507802c755a244b0b0e9e2ff48cd73b3997029fb2d633df",
+        "gasUsed": "138150",
+        "tokenEvents": [
+          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef,0x000000000000000000000000aafb8c3537073669d3a7d3da2630ab25902f55d7,0x00000000000000000000000001354d2cd69d65185698059e3be293405a9e62b6:0x00000000000000000000000000000000000000000000000000000000000003e8"
+        ],
+        "eventCount": 2,
+        "tagOnChain": false
+      },
+      "tagged": {
+        "ok": true,
+        "status": "CONFIRMED",
+        "transactionHash": "0x559ab571463f95267019a45c5bf89be2b389e679da0af2ed231bc699e2d5d73d",
+        "gasUsed": "121664",
+        "tokenEvents": [
+          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef,0x000000000000000000000000aafb8c3537073669d3a7d3da2630ab25902f55d7,0x00000000000000000000000001354d2cd69d65185698059e3be293405a9e62b6:0x00000000000000000000000000000000000000000000000000000000000003e8"
+        ],
+        "eventCount": 2,
+        "tagOnChain": true
+      },
+      "pass": true,
+      "notes": [
+        "gas 138150 plain, 121664 tagged (-16486 more)"
+      ]
+    },
+    {
+      "signer": "passkey",
+      "name": "token approve",
+      "expect": "succeeds",
+      "plain": {
+        "ok": true,
+        "status": "CONFIRMED",
+        "transactionHash": "0x0fde0a8e8fe2dc1ea042f48461656291a57b1ea0e1965443b08201596a39438d",
+        "gasUsed": "132584",
+        "tokenEvents": [
+          "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925,0x000000000000000000000000aafb8c3537073669d3a7d3da2630ab25902f55d7,0x00000000000000000000000001354d2cd69d65185698059e3be293405a9e62b6:0x00000000000000000000000000000000000000000000000000000000000003e8"
+        ],
+        "eventCount": 2,
+        "tagOnChain": false
+      },
+      "tagged": {
+        "ok": true,
+        "status": "CONFIRMED",
+        "transactionHash": "0x54d8687258746b8b03585d0b25271f542f7f6417dea3192c0cdd100973de11de",
+        "gasUsed": "113310",
+        "tokenEvents": [
+          "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925,0x000000000000000000000000aafb8c3537073669d3a7d3da2630ab25902f55d7,0x00000000000000000000000001354d2cd69d65185698059e3be293405a9e62b6:0x00000000000000000000000000000000000000000000000000000000000003e8"
+        ],
+        "eventCount": 2,
+        "tagOnChain": true
+      },
+      "pass": true,
+      "notes": [
+        "gas 132584 plain, 113310 tagged (-19274 more)"
+      ]
+    },
+    {
+      "signer": "passkey",
+      "name": "batch of two calls, tag on the last",
+      "expect": "succeeds",
+      "plain": {
+        "ok": true,
+        "status": "CONFIRMED",
+        "transactionHash": "0x14f8f1048ebb8fe33970ba03087dd7b0145d6cdfbc466947554c1ad4f5c42f6f",
+        "gasUsed": "132213",
+        "tokenEvents": [
+          "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925,0x000000000000000000000000aafb8c3537073669d3a7d3da2630ab25902f55d7,0x00000000000000000000000001354d2cd69d65185698059e3be293405a9e62b6:0x00000000000000000000000000000000000000000000000000000000000007d0",
+          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef,0x000000000000000000000000aafb8c3537073669d3a7d3da2630ab25902f55d7,0x00000000000000000000000001354d2cd69d65185698059e3be293405a9e62b6:0x00000000000000000000000000000000000000000000000000000000000003e8"
+        ],
+        "eventCount": 3,
+        "tagOnChain": false
+      },
+      "tagged": {
+        "ok": true,
+        "status": "CONFIRMED",
+        "transactionHash": "0x051ad09fae83ff9d5ce2b4ed2105284197a78b8e3b6b42aa2d84171fde59c5e2",
+        "gasUsed": "130016",
+        "tokenEvents": [
+          "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925,0x000000000000000000000000aafb8c3537073669d3a7d3da2630ab25902f55d7,0x00000000000000000000000001354d2cd69d65185698059e3be293405a9e62b6:0x00000000000000000000000000000000000000000000000000000000000007d0",
+          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef,0x000000000000000000000000aafb8c3537073669d3a7d3da2630ab25902f55d7,0x00000000000000000000000001354d2cd69d65185698059e3be293405a9e62b6:0x00000000000000000000000000000000000000000000000000000000000003e8"
+        ],
+        "eventCount": 3,
+        "tagOnChain": true
+      },
+      "pass": true,
+      "notes": [
+        "gas 132213 plain, 130016 tagged (-2197 more)"
+      ]
+    },
+    {
+      "signer": "passkey",
+      "name": "plain coin transfer, tag as its only data",
+      "expect": "succeeds",
+      "plain": {
+        "ok": true,
+        "status": "CONFIRMED",
+        "transactionHash": "0x2603af7d53bceba2879f59ae4bd7c5b0c0d0a0f5f138f5d13d9805e8f8962dcf",
+        "gasUsed": "114054",
+        "tokenEvents": [],
+        "eventCount": 1,
+        "tagOnChain": false
+      },
+      "tagged": {
+        "ok": true,
+        "status": "CONFIRMED",
+        "transactionHash": "0x47d0f0d5b58eda5d251be00a31a1e549e0a7329a3cb00bab8b63f9bfe18690ab",
+        "gasUsed": "114838",
+        "tokenEvents": [],
+        "eventCount": 1,
+        "tagOnChain": true
+      },
+      "pass": true,
+      "notes": [
+        "gas 114054 plain, 114838 tagged (784 more)"
+      ]
+    },
+    {
+      "signer": "session key",
+      "name": "allowed call (transfer)",
+      "expect": "succeeds",
+      "plain": {
+        "ok": true,
+        "status": "CONFIRMED",
+        "transactionHash": "0x04c82dbdca04cbebcfeee99efbd0afebe5e90e0873c7ba635905135476e8b379",
+        "gasUsed": "179099",
+        "tokenEvents": [
+          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef,0x0000000000000000000000005fe633ef72cd029a44f587b2f50bf94da468c33f,0x00000000000000000000000001354d2cd69d65185698059e3be293405a9e62b6:0x00000000000000000000000000000000000000000000000000000000000003e8"
+        ],
+        "eventCount": 2,
+        "tagOnChain": false
+      },
+      "tagged": {
+        "ok": true,
+        "status": "CONFIRMED",
+        "transactionHash": "0xf53c27f4366fd420bc8c5cbb79d4a77e96bdc8670e19c2118dea2a954fade24c",
+        "gasUsed": "163964",
+        "tokenEvents": [
+          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef,0x0000000000000000000000005fe633ef72cd029a44f587b2f50bf94da468c33f,0x00000000000000000000000001354d2cd69d65185698059e3be293405a9e62b6:0x00000000000000000000000000000000000000000000000000000000000003e8"
+        ],
+        "eventCount": 2,
+        "tagOnChain": true
+      },
+      "pass": true,
+      "notes": [
+        "gas 179099 plain, 163964 tagged (-15135 more)"
+      ]
+    },
+    {
+      "signer": "session key",
+      "name": "call the session does not allow (approve)",
+      "expect": "refused",
+      "plain": {
+        "ok": false,
+        "error": "This session key is not allowed to make this call. Grant a new session key that allows it, as permissions cannot be widened."
+      },
+      "tagged": {
+        "ok": false,
+        "error": "This session key is not allowed to make this call. Grant a new session key that allows it, as permissions cannot be widened."
+      },
+      "pass": true,
+      "notes": []
+    },
+    {
+      "signer": "session key",
+      "name": "transfer over the spend limit",
+      "expect": "refused",
+      "plain": {
+        "ok": false,
+        "error": "This session key's spending limit does not cover this in tBNB. Grant a new session key with a higher limit, as limits cannot be raised."
+      },
+      "tagged": {
+        "ok": false,
+        "error": "This session key's spending limit does not cover this in tBNB. Grant a new session key with a higher limit, as limits cannot be raised."
+      },
+      "pass": true,
+      "notes": []
+    },
+    {
+      "signer": "session key",
+      "name": "allowed call again, still inside the limit",
+      "expect": "succeeds",
+      "plain": {
+        "ok": true,
+        "status": "CONFIRMED",
+        "transactionHash": "0x4afc1c2adfc968fe143ef715fbb70497b6758430f00cb3031542efdc7aaef6d6",
+        "gasUsed": "163365",
+        "tokenEvents": [
+          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef,0x0000000000000000000000005fe633ef72cd029a44f587b2f50bf94da468c33f,0x00000000000000000000000001354d2cd69d65185698059e3be293405a9e62b6:0x00000000000000000000000000000000000000000000000000000000000003e8"
+        ],
+        "eventCount": 2,
+        "tagOnChain": false
+      },
+      "tagged": {
+        "ok": true,
+        "status": "CONFIRMED",
+        "transactionHash": "0x0da4ab2074307e9d4dd9106495d6e03a2c9635483f3316cd534b74cbea8fe5aa",
+        "gasUsed": "163952",
+        "tokenEvents": [
+          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef,0x0000000000000000000000005fe633ef72cd029a44f587b2f50bf94da468c33f,0x00000000000000000000000001354d2cd69d65185698059e3be293405a9e62b6:0x00000000000000000000000000000000000000000000000000000000000003e8"
+        ],
+        "eventCount": 2,
+        "tagOnChain": true
+      },
+      "pass": true,
+      "notes": [
+        "gas 163365 plain, 163952 tagged (587 more)"
+      ]
+    }
+  ]
+}

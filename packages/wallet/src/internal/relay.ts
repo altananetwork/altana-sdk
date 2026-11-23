@@ -421,6 +421,15 @@ export type SubmitCallsOptions = {
    */
   skipFirstActionPrepend?: boolean;
   /**
+   * The same calls without their attribution tag (`attribution.ts`).
+   *
+   * Set only by `execute` and `quoteExecute` when they tagged a call. If the
+   * relay refuses the tagged calls while preparing them, before anything is
+   * signed or sent, these are prepared instead, so a tag can never be the
+   * reason a transaction does not go out. Nothing is retried after signing.
+   */
+  untaggedCalls?: readonly Call[];
+  /**
    * The nonce for this intent, when the caller is choosing it.
    *
    * Set only by `execute` for an app transaction, which runs on a lane of the
@@ -526,7 +535,7 @@ export async function submitCallsDetailed(
   calls: readonly Call[],
   opts: SubmitCallsOptions,
 ): Promise<SubmitCallsResult> {
-  const { prepared, signingKeyForPorto, isAdmin, effectiveCalls } = await prepareIntent(
+  const { prepared, signingKeyForPorto, isAdmin, effectiveCalls } = await prepareTaggedIntent(
     client,
     walletAddress,
     signer,
@@ -682,7 +691,7 @@ export async function quoteCalls(
   calls: readonly Call[],
   opts: SubmitCallsOptions,
 ): Promise<CallsQuote> {
-  const { prepared, effectiveCalls, feeToken: named } = await prepareIntent(client, walletAddress, signer, calls, opts);
+  const { prepared, effectiveCalls, feeToken: named } = await prepareTaggedIntent(client, walletAddress, signer, calls, opts);
   const value = effectiveCalls.reduce((sum, c) => sum + (c.value ?? 0n), 0n);
   const ownChainId = client.chain?.id;
   const fundedFromChainId = fundedFromChainIdOf(prepared, ownChainId);
@@ -1105,6 +1114,28 @@ function toBigInt(x: unknown): bigint {
   if (typeof x === "number") return BigInt(x);
   if (typeof x === "string" && x.length > 0) return BigInt(x);
   return 0n;
+}
+
+/**
+ * `prepareIntent`, falling back to the calls without their attribution tag
+ * when the relay refuses the tagged ones. A refusal that has nothing to do
+ * with the tag is refused again the second time, and that second answer,
+ * about the caller's own calls, is the one thrown.
+ */
+async function prepareTaggedIntent(
+  client: ReturnType<typeof buildRelayClient>,
+  walletAddress: Address,
+  signer: Signer,
+  calls: readonly Call[],
+  opts: SubmitCallsOptions,
+): ReturnType<typeof prepareIntent> {
+  const { untaggedCalls, ...rest } = opts;
+  if (!untaggedCalls) return prepareIntent(client, walletAddress, signer, calls, rest);
+  try {
+    return await prepareIntent(client, walletAddress, signer, calls, rest);
+  } catch {
+    return prepareIntent(client, walletAddress, signer, untaggedCalls, rest);
+  }
 }
 
 async function prepareIntent(

@@ -175,6 +175,7 @@ export default defineConfig({
             { text: "Sell over x402", link: "/sdk/x402-server" },
             { text: "ERC-8183: hire BNB agents", link: "/sdk/erc8183" },
             { text: "ERC-8004: agent identity", link: "/sdk/erc8004" },
+            { text: "Attribution: your app's code", link: "/sdk/attribution" },
             { text: "signOrder", link: "/sdk/sign-order" },
             { text: "approveSignatureChecker", link: "/sdk/approve-signature-checker" },
             { text: "approveTokenForPermit2", link: "/sdk/approve-permit2" },

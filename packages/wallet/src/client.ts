@@ -26,6 +26,7 @@ import {
 import { createPasskeyWallet as createPasskeyWalletImpl } from "./createPasskeyWallet.js";
 import { recoverFromPasskey as recoverFromPasskeyImpl } from "./recoverFromPasskey.js";
 import { execute as executeImpl, quoteExecute as quoteExecuteImpl } from "./execute.js";
+import { clientAttributionTag } from "./attribution.js";
 import { feeCurrencies as feeCurrenciesImpl, type FeeCurrenciesResult } from "./feeCurrencies.js";
 import {
   registerAgentIdentity as registerAgentIdentityImpl,
@@ -90,6 +91,18 @@ export type CreateClientOptions = {
    * result (`agentIdentity`), never thrown.
    */
   agentIdentity?: AgentIdentityOption;
+  /**
+   * Your app's attribution code (ERC-8021), or several. Every transaction
+   * sent with `execute` carries a short public tag naming the SDK and, when
+   * this is set, your app: `appCode: "my_app"` sends `altana,my_app`.
+   * Lowercase letters, digits and underscores, up to 32 characters each.
+   */
+  appCode?: string | readonly string[];
+  /**
+   * `false` sends transactions with no attribution tag. On by default: with
+   * no `appCode` the tag names the SDK alone.
+   */
+  attribution?: false;
 };
 
 /** Per-operation chain selector. Omit to use the client's default chain. */
@@ -386,6 +399,9 @@ export function createClientWith(
     byId.set(chain.chainId, chain);
   }
 
+  // Built once: a bad app code is refused here, not on the first transaction.
+  const attribution = clientAttributionTag(opts);
+
   const defaultChainId = opts.defaultChainId ?? chains[0]!.chainId;
   if (!byId.has(defaultChainId)) {
     throw new Error(
@@ -471,6 +487,7 @@ export function createClientWith(
         network: resolve(o.chainId),
         ...(o.feeToken ? { feeToken: o.feeToken } : {}),
         ...(o.noWait ? { noWait: o.noWait } : {}),
+        ...(attribution ? { attribution } : {}),
       };
       if ("session" in o) {
         return executeImpl(o.session, o.calls, execOpts);
@@ -483,7 +500,11 @@ export function createClientWith(
     },
 
     quoteExecute(o) {
-      const quoteOpts = { network: resolve(o.chainId), ...(o.feeToken ? { feeToken: o.feeToken } : {}) };
+      const quoteOpts = {
+        network: resolve(o.chainId),
+        ...(o.feeToken ? { feeToken: o.feeToken } : {}),
+        ...(attribution ? { attribution } : {}),
+      };
       if ("session" in o) return quoteExecuteImpl(o.session, o.calls, quoteOpts);
       return quoteExecuteImpl(o.wallet, o.signer, o.calls, quoteOpts);
     },

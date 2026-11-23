@@ -52,6 +52,12 @@ the agent's number and its page. `erc8004_register` on a wallet that has its
 agent updates that agent. Set `ALTANA_AGENT_IDENTITY=off` to turn the automatic
 registration off.
 
+## Attribution
+
+Each transaction carries a short public tag (ERC-8021), `altana,altana_mcp`,
+that names the app it came from. Set `ALTANA_APP_CODE=my_agent` to add your own
+code, and `ALTANA_ATTRIBUTION=off` to send none.
+
 One server process serves one chain, so restart with a different `ALTANA_CHAIN` to switch.
 
 ## Tools

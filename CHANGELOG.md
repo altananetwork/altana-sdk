@@ -16,7 +16,32 @@ version may contain breaking changes.
 > reconstructed from commit history after the fact, so they summarize what
 > shipped rather than itemizing every change.
 
-## [Unreleased]
+## [1.2.0] - Unreleased
+
+`@altananetwork/mcp` 1.2.0
+
+### Added
+
+- **Attribution tags (ERC-8021).** Every transaction sent with `execute`
+  carries a short public tag naming the app it came from: `altana`, and your
+  own code after it with `createClient({ chains, appCode: "my_app" })`. A code
+  is lowercase letters, digits and underscores, up to 32 characters, so a
+  code assigned by a program (a Celo `celo_...` code) can be passed as it is.
+  The tag is a few bytes on the end of one call and costs about 700 gas. It
+  was run on BNB testnet and Celo Sepolia with an admin key, a passkey and a
+  session key, plain and tagged side by side: the same result every time, and
+  session permissions and spend limits enforced the same way. Calls to a swap
+  route's contracts are sent untouched. `attribution: false` sends no tag.
+  `parseAttribution` reads the codes back from a transaction, and
+  `attributionTag` builds the bytes.
+- **mcp: transactions carry `altana,altana_mcp`.** `ALTANA_APP_CODE=my_agent`
+  adds your own code and `ALTANA_ATTRIBUTION=off` sends none.
+- **`smoke:activate-on-celo` (tests/e2e): a wallet made on BNB testnet, first
+  used on Celo Sepolia.** A passkey wallet and a private-key wallet are each
+  created with a client that knows BNB testnet only, transact there, and then
+  send their first transaction on Celo Sepolia with nothing provisioned again.
+  The address is the same and the key is registered in Celo Sepolia's
+  KeyStore by that transaction.
 
 ### Fixed
 
@@ -28,15 +53,6 @@ version may contain breaking changes.
   never affected; the agent was left unregistered. The SDK now remembers a
   registration it has seen confirm and does not ask again. Seen on Celo
   Sepolia.
-
-### Added
-
-- **`smoke:activate-on-celo` (tests/e2e): a wallet made on BNB testnet, first
-  used on Celo Sepolia.** A passkey wallet and a private-key wallet are each
-  created with a client that knows BNB testnet only, transact there, and then
-  send their first transaction on Celo Sepolia with nothing provisioned again.
-  The address is the same and the key is registered in Celo Sepolia's
-  KeyStore by that transaction.
 
 ## [1.1.0] - 2026-11-18
 

@@ -52,7 +52,7 @@
     },
     "packages/hypersigner-keystore-mcp": {
       "name": "@altananetwork/hypersigner-keystore-mcp",
-      "version": "0.2.1",
+      "version": "0.3.0",
       "bin": {
         "hypersigner-keystore-mcp": "./src/index.ts",
       },
@@ -70,7 +70,7 @@
     },
     "packages/mcp": {
       "name": "@altananetwork/mcp",
-      "version": "0.10.0",
+      "version": "1.1.0",
       "bin": {
         "altana-mcp": "./src/index.ts",
       },
@@ -87,9 +87,9 @@
     },
     "packages/wallet": {
       "name": "@altananetwork/sdk",
-      "version": "0.10.0",
+      "version": "1.1.0",
       "dependencies": {
-        "ox": "^0.14.0",
+        "ox": "^0.14.20",
         "porto": "0.2.37",
         "viem": "^2.21.0",
       },
@@ -99,7 +99,7 @@
     },
     "packages/x402-server": {
       "name": "@altananetwork/x402-server",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "dependencies": {
         "@altananetwork/sdk": "^0.10.0",
         "viem": "^2.21.0",

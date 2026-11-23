@@ -18,6 +18,7 @@ import { forgetAppLane, withAppLaneNonce } from "./internal/appNonceLane.js";
 import { expiredSessionError, sessionHasExpired } from "./errors.js";
 import { keyHashForSigner } from "./internal/erc1271.js";
 import { afterFirstAction, type AgentIdentityOption } from "./agentIdentity.js";
+import { tagCalls } from "./attribution.js";
 
 export type ExecuteOptions = {
   /** Which chain to run on. Resolved by the client from a chainId. */
@@ -39,6 +40,12 @@ export type ExecuteOptions = {
    * Omitted, it is on. See `agentIdentity.ts`.
    */
   agentIdentity?: AgentIdentityOption;
+  /**
+   * The attribution tag (ERC-8021) to put on the end of one of the calls, as
+   * built by `attributionTag`. The client sets it from `appCode`. Omitted,
+   * the calls are sent exactly as given. See `attribution.ts`.
+   */
+  attribution?: Hex;
 };
 
 /**
@@ -143,6 +150,7 @@ export async function executeWithReceipts(
 
   const relayClient = buildRelayClient(network);
   const userCalls = Array.isArray(callsArg) ? callsArg : [callsArg as Call];
+  const { calls: sentCalls, untaggedCalls } = withAttribution(userCalls, opts.attribution, isSessionCall);
 
   // The key that's signing the intent — admin for the wallet path, session
   // for the session path. KeyStore first-action registration (if needed) is
@@ -185,10 +193,11 @@ export async function executeWithReceipts(
       relayClient,
       walletAddress,
       signer,
-      userCalls,
+      sentCalls,
       {
         ...(opts.feeToken ? { feeToken: opts.feeToken } : {}),
         ...(nonce !== undefined ? { nonce } : {}),
+        ...(untaggedCalls ? { untaggedCalls } : {}),
         submittingKey,
         network,
       },
@@ -279,8 +288,11 @@ export async function quoteExecute(
   maybeOpts?: ExecuteOptions,
 ): Promise<CallsQuote> {
   const { walletAddress, signer, userCalls, submittingKey, opts } = intentOf(walletOrSession, signerOrCalls, callsOrOpts, maybeOpts);
-  return quoteCalls(buildRelayClient(opts.network), walletAddress, signer, userCalls, {
+  // Quoted with the same tag `execute` sends, so the fee is for the same bytes.
+  const { calls: sentCalls, untaggedCalls } = withAttribution(userCalls, opts.attribution, submittingKey.role === "session");
+  return quoteCalls(buildRelayClient(opts.network), walletAddress, signer, sentCalls, {
     ...(opts.feeToken ? { feeToken: opts.feeToken } : {}),
+    ...(untaggedCalls ? { untaggedCalls } : {}),
     submittingKey,
     network: opts.network,
   });
@@ -303,6 +315,20 @@ function intentOf(
     ? { type: "secp256k1", publicKey: walletOrSession.publicKey, role: "session", expiry: walletOrSession.expiry, permissions: walletOrSession.permissions }
     : { type: "secp256k1", publicKey: signer.publicKey, role: "admin" };
   return { walletAddress, signer, userCalls, submittingKey, opts };
+}
+
+/**
+ * The calls to send, tagged when the client asked for attribution, and the
+ * caller's own calls to fall back to when a call was tagged.
+ */
+function withAttribution(
+  userCalls: readonly Call[],
+  tag: Hex | undefined,
+  session: boolean,
+): { calls: readonly Call[]; untaggedCalls?: readonly Call[] } {
+  if (!tag) return { calls: userCalls };
+  const calls = tagCalls(userCalls, tag, { session });
+  return calls === userCalls ? { calls } : { calls, untaggedCalls: userCalls };
 }
 
 function isSession(x: Wallet | Session): x is Session {
