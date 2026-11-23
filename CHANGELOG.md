@@ -42,9 +42,31 @@ version may contain breaking changes.
   send their first transaction on Celo Sepolia with nothing provisioned again.
   The address is the same and the key is registered in Celo Sepolia's
   KeyStore by that transaction.
+- **A session's spend cap now bounds its x402 payments.** The account applies
+  spend caps inside `execute`, and an x402 payment is a signature the seller's
+  side settles, so no amount ever reached the account: a session capped at
+  0.005 USDC a day paid 0.02 USDC through x402 on Celo Sepolia (issue #164).
+  `fetchWithX402` now measures a payment against each cap the session holds on
+  the payment token before it signs: the amount, plus what the account
+  recorded for the key in the current period, plus what the process has already
+  signed for x402 in that period. Over the limit, nothing is signed and it
+  throws `spend_limit_exceeded` with the amount asked and what is left. A
+  session with no cap on the token pays as before. `checkX402SpendCap` returns
+  the same reading as data, for callers of `signX402Payment`, which does not
+  check; `checkSpendCap: false` switches it off. The count of x402 payments is
+  kept in the signing process, and the check is the SDK's, not the account's.
+- **`@altananetwork/mcp`: `grant_session` takes `x402SpendLimit`**, a daily cap
+  for each of its `x402Tokens`, which `x402_request` then applies. Left out,
+  the session has no cap on those tokens, as before.
 
 ### Fixed
 
+- **A spend limit error names the token whose cap was hit.** It named the fee
+  token: a session over its USDC cap, paying fees in CELO, was told its limit
+  "does not cover this in CELO". The token is now read from the account's
+  revert, and none is named when the revert names none.
+- **Docs: spend periods are fixed, not rolling.** A day starts at 00:00 UTC, a
+  week on Monday, a month on the 1st, as the account computes them.
 - **The agent identity of a new wallet no longer fails with "KeyStore: account
   already has keys".** The agent registration is sent the moment the wallet's
   first action confirms. A node that had not seen that block yet answered that

@@ -26,7 +26,7 @@ type Session = {
 
 type SessionPermissions = {
   calls?: readonly CallPermission[];   // allowed contracts / signatures
-  spend?: readonly SpendPermission[];  // per-token rolling caps
+  spend?: readonly SpendPermission[];  // per-token caps, per period
 };
 ```
 
@@ -42,7 +42,7 @@ calls: [
 ]
 ```
 
-**Spend permissions** cap how much the session can move per token, per rolling period:
+**Spend permissions** cap how much the session can move per token, per period. Periods are fixed on the UTC clock (a day starts at 00:00, a week on Monday, a month on the 1st):
 
 ```ts
 spend: [

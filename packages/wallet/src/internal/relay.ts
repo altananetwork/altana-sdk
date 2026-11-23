@@ -16,6 +16,7 @@ import {
   createClient,
   createPublicClient,
   decodeErrorResult,
+  erc20Abi,
   fallback,
   formatUnits,
   getAddress,
@@ -1414,10 +1415,17 @@ async function explainRelayError(args: {
   // is evidence the cause is something else, and telling a wallet that can pay
   // to add funds is the error this rule has made before.
   const fundingRefused = refusedToFund && balance.kind !== "covers";
+  // A pricing failure is about the fee token. A spend limit is about whichever
+  // token's cap was hit, which the account names in its revert and which is
+  // often not the fee token: a session capped in USDC and paying fees in CELO
+  // was told its limit "does not cover this in CELO" (issue #164). When the
+  // revert names no token, none is named here either.
   const feeSymbol =
-    provisional === "price_unavailable" || provisional === "spend_limit_exceeded"
+    provisional === "price_unavailable"
       ? await feeTokenSymbol(relay, intent?.feeToken)
-      : undefined;
+      : provisional === "spend_limit_exceeded"
+        ? await spendLimitSymbol(relay, reason)
+        : undefined;
   const facts: RelayFailureFacts = {
     relayMessage: reason,
     detail,
@@ -1490,6 +1498,26 @@ async function feeTokenSymbol(
   if (isNativeAddress(feeToken)) return relay.network.chain.nativeCurrency.symbol;
   const tokens = await acceptedFeeTokens(relay.client, relay.network);
   return tokens.find((t) => t.address.toLowerCase() === feeToken.toLowerCase())?.symbol;
+}
+
+/** The token an `ExceededSpendLimit` revert names, when it names one. */
+export function exceededSpendLimitToken(reason: string): Address | undefined {
+  return /token:\s*(0x[0-9a-fA-F]{40})/.exec(reason)?.[1] as Address | undefined;
+}
+
+/** The symbol of the token whose spend cap a revert says was exceeded, when it can be named. */
+async function spendLimitSymbol(
+  relay: { client: ReturnType<typeof buildRelayClient>; network: NetworkConfig } | undefined,
+  reason: string,
+): Promise<string | undefined> {
+  const token = exceededSpendLimitToken(reason);
+  if (!relay || !token) return undefined;
+  const known = await feeTokenSymbol(relay, token).catch(() => undefined);
+  if (known) return known;
+  return buildPublicClient(relay.network)
+    .readContract({ address: token, abi: erc20Abi, functionName: "symbol" })
+    .then((symbol) => (typeof symbol === "string" && symbol ? symbol : undefined))
+    .catch(() => undefined);
 }
 
 /**
@@ -2028,7 +2056,7 @@ export function relayRejectionHint(reason: string): string {
     );
   }
   if (/ExceededSpendLimit/i.test(reason) || reason.toLowerCase().includes(EXCEEDED_SPEND_LIMIT_SELECTOR)) {
-    const token = /token:\s*(0x[0-9a-fA-F]{40})/.exec(reason)?.[1];
+    const token = exceededSpendLimitToken(reason);
     if (token && token.toLowerCase() !== NATIVE_TOKEN) {
       return (
         ` ExceededSpendLimit: the session's spend cap for ${token} is exhausted for this period. Check the cap` +

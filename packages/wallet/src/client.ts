@@ -270,6 +270,11 @@ export type ClientFetchWithX402Options = {
    * refuse rather than settle into a revert. See `checkX402Approvals`.
    */
   checkApprovals?: boolean;
+  /**
+   * Apply the session's spend cap on the token before signing (default true).
+   * See `checkX402SpendCap`.
+   */
+  checkSpendCap?: boolean;
 } & ChainSelector;
 
 export type Client = {
@@ -658,6 +663,7 @@ export function createClientWith(
         chainId: o.chainId ?? defaultChainId,
         ...(o.preferRail ? { preferRail: o.preferRail } : {}),
         ...(o.checkApprovals !== undefined ? { checkApprovals: o.checkApprovals } : {}),
+        ...(o.checkSpendCap !== undefined ? { checkSpendCap: o.checkSpendCap } : {}),
       });
     },
   };
