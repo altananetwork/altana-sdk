@@ -52,6 +52,12 @@ the agent's number and its page. `erc8004_register` on a wallet that has its
 agent updates that agent. Set `ALTANA_AGENT_IDENTITY=off` to turn the automatic
 registration off.
 
+## Attribution
+
+Each transaction carries a short public tag (ERC-8021), `altana,altana_mcp`,
+that names the app it came from. Set `ALTANA_APP_CODE=my_agent` to add your own
+code, and `ALTANA_ATTRIBUTION=off` to send none.
+
 One server process serves one chain, so restart with a different `ALTANA_CHAIN` to switch.
 
 ## Tools
@@ -63,7 +69,7 @@ One server process serves one chain, so restart with a different `ALTANA_CHAIN` 
   - `list_fee_currencies` lists the tokens the relay accepts as fee payment on the selected chain, with the rate each is priced at, read live; pass a wallet `name` to see its balance of each. The relay charges whichever accepted token the wallet holds, so on Celo a wallet funded with a listed stablecoin transacts without CELO.
 - **Operate:** `wallet_execute`, `grant_session`, `revoke_session`, `session_execute`
   - The relay fee is paid in a token the wallet holds. `wallet_execute` lets the relay pick; `session_execute` pays from the session's spend caps (pass `feeToken` to `grant_session` so a session can pay in a stablecoin, each named token gets a daily cap). Both accept `feeToken` as one address to force it, or as a list to pay with the first the relay accepts and the wallet holds, and report the token charged as `feeToken`.
-  - Pass `x402Tokens` (one token address or a list) to `grant_session` to set the session up for `x402_request`: the token approvals a payment needs are made in the same transaction as the grant.
+  - Pass `x402Tokens` (one token address or a list) to `grant_session` to set the session up for `x402_request`: the token approvals a payment needs are made in the same transaction as the grant. Add `x402SpendLimit` (in the token's smallest unit, for example `5000000` for 5 USDC) to cap what the session may pay per day in each of them: `x402_request` refuses a payment that would pass it, before signing. Without it the session has no cap on those tokens.
 - **Skills:** `search_skills`, `get_skill`
 
 Built on [`@altananetwork/sdk`](https://www.npmjs.com/package/@altananetwork/sdk).

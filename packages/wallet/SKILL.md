@@ -155,6 +155,12 @@ const res = await client.fetchWithX402({ session, url: "https://api.example.com/
 console.log(res.status, await res.text());
 ```
 
+Cap what the agent may pay by giving the session a spend cap on the payment token
+(`spend: [{ token: "0xUSDC...", limit, period: "day" }]`). The account never sees an
+x402 amount, so the SDK applies that cap before it signs and throws
+`spend_limit_exceeded` for a payment that would pass it. With no cap on the token the
+session pays whatever the seller asks.
+
 Run this server-side: third-party x402 endpoints often omit `X-PAYMENT` from CORS, so
 browsers can't POST the payment. The signature is a smart-account (ERC-1271) signature,
 so a facilitator must verify via `isValidSignature`, not `ecrecover`.

@@ -43,7 +43,7 @@ const session = await client.grantSession({
   signer,
   permissions: {
     calls: [{ to: "0x…" }],
-    spend: [{ limit: 1_000_000n, period: "day" }], // 1 USDC/day
+    spend: [{ token: "0xUSDC…", limit: 1_000_000n, period: "day" }], // 1 USDC/day
   },
   expiry: Math.floor(Date.now() / 1000) + 60 * 60, // 1 hour
 });
@@ -70,6 +70,11 @@ await client.approveSignatureChecker({ wallet, signer, session, checker: PERMIT2
 // The agent pays + fetches (server-side):
 const res = await client.fetchWithX402({ session, url: "https://api.example.com/paid" });
 ```
+
+An x402 payment is signed, not sent through `execute`, so the account never sees its
+amount. The SDK applies the session's spend cap on the payment token before it signs,
+and refuses a payment that would pass it (`spend_limit_exceeded`). A session with no
+cap on that token pays what the seller asks.
 
 Payments are authorized with the account's ERC-1271 signature. See
 [Off-chain signatures](https://docs.altana.network/concepts/off-chain-signatures).
@@ -108,6 +113,11 @@ wallet's page on the Altana explorer. `createClient({ chains, agentIdentity: {
 name, description, image, endpoint } })` sets what it is listed with, and
 `agentIdentity: false` turns it off. A KeyStore registration never depends on
 it: the outcome is reported on the result (`agentIdentity`), never thrown.
+
+Every transaction sent with `execute` carries a short public tag (ERC-8021)
+naming the app it came from. `createClient({ chains, appCode: "my_app" })`
+sends `altana,my_app`; without it the tag is `altana`, and
+`attribution: false` sends none.
 
 To register with a record of your own from a session key:
 

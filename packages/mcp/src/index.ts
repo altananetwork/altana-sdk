@@ -76,7 +76,7 @@ import { searchSkills, getSkill } from "./skills.js";
 import { SUPPORTED_CHAINS, describeNetwork, fundingSteps, networkGroup, resolveNetwork } from "./network.js";
 import { acceptedFeeSymbols, feeCurrenciesPayload } from "./feeCurrencies.js";
 import { storeKeyThenGrant } from "./grantFlow.js";
-import { x402TokensFrom } from "./x402Tokens.js";
+import { x402SpendCapsFrom, x402TokensFrom } from "./x402Tokens.js";
 import {
   assertErc8004Permissions,
   buildRegistrationFile,
@@ -86,6 +86,7 @@ import {
   type MetadataInput,
 } from "./erc8004.js";
 import { agentIdentityOption, agentIdentityReport, knownAgent, rememberAgent } from "./agentIdentity.js";
+import { attributionFromEnv } from "./attribution.js";
 
 // ---------- network ---------------------------------------------------------
 
@@ -115,7 +116,21 @@ console.error(`[altana-mcp] network: ${describeNetwork(NETWORK)}`);
 // wallet's first action. ALTANA_AGENT_IDENTITY=off turns that off.
 const AGENT_IDENTITY = agentIdentityOption(process.env.ALTANA_AGENT_IDENTITY);
 if (AGENT_IDENTITY === false) console.error("[altana-mcp] agent identity: off (ALTANA_AGENT_IDENTITY)");
-const client = createClient({ chains: [NETWORK], ...(AGENT_IDENTITY === false ? { agentIdentity: false } : {}) });
+// Each transaction carries a short public tag naming this server, and the
+// builder's own code when ALTANA_APP_CODE is set. ALTANA_ATTRIBUTION=off sends none.
+const ATTRIBUTION = attributionFromEnv(process.env);
+if (ATTRIBUTION.rejected !== undefined) {
+  console.error(
+    `[altana-mcp] ALTANA_APP_CODE "${ATTRIBUTION.rejected}" cannot be used and was left out. ` +
+      `Use lowercase letters, digits and underscores, up to 32 characters.`,
+  );
+}
+if (ATTRIBUTION.options.attribution === false) console.error("[altana-mcp] attribution: off (ALTANA_ATTRIBUTION)");
+const client = createClient({
+  chains: [NETWORK],
+  ...(AGENT_IDENTITY === false ? { agentIdentity: false } : {}),
+  ...ATTRIBUTION.options,
+});
 // Revocation reaches every chain of this environment, not only NETWORK: a key
 // granted on another chain of the group is revoked there too.
 const revokeClient = createClient({ chains: [...networkGroup(NETWORK)] });
@@ -813,10 +828,19 @@ tool(
             "address or a list. In the same transaction as the grant, each token " +
             "is approved to Permit2, and the token and Permit2 are approved as " +
             "signature checkers for this session key, which is what x402_request " +
-            "needs. x402 payments are signed, not sent by the session, so the " +
-            "daily spend caps do not bound them: the session can sign payments of " +
-            "any amount of these tokens until it expires or is revoked. Keep the " +
-            "lifetime short.",
+            "needs. Set x402SpendLimit with it to cap what the session may pay: " +
+            "without one the session has no cap on these tokens and pays whatever " +
+            "a seller asks until it expires or is revoked.",
+        ),
+      x402SpendLimit: z
+        .string()
+        .regex(/^\d+$/)
+        .optional()
+        .describe(
+          "The most the session may pay per day in each of the x402Tokens, in " +
+            "the token's smallest unit (for example 5000000 for 5 USDC). " +
+            "x402_request refuses a payment that would pass it, before signing. " +
+            "The count of x402 payments is kept by this server while it runs.",
         ),
     },
   },
@@ -830,6 +854,7 @@ tool(
     feeToken,
     feeSpendLimit,
     x402Tokens,
+    x402SpendLimit,
   }: {
     walletName: string;
     sessionName: string;
@@ -840,6 +865,7 @@ tool(
     feeToken?: string | string[];
     feeSpendLimit?: string;
     x402Tokens?: string | string[];
+    x402SpendLimit?: string;
   }) => {
     // Refuse to overwrite an existing session entry. Sessions live in their
     // own keychain namespace (altana-session), so this only collides with
@@ -856,6 +882,7 @@ tool(
     await ensureRegistered(adminSigner);
     const recipientAddr = assertAddress(recipient);
     const x402 = x402TokensFrom(x402Tokens);
+    const x402Caps = x402SpendCapsFrom(x402, x402SpendLimit);
     const capEth = dailyCapEth ?? "0.01";
     const lifetime = lifetimeSeconds ?? 3600;
     const expiry = Math.floor(Date.now() / 1000) + lifetime;
@@ -884,7 +911,7 @@ tool(
           sessionSigner,
           permissions: {
             calls: [{ to: recipientAddr }],
-            spend: [{ limit: capWei, period: "day" }],
+            spend: [{ limit: capWei, period: "day" }, ...x402Caps],
           },
           expiry,
           ...(register !== undefined ? { register } : {}),

@@ -12,6 +12,7 @@ import {
   deepestRelayReason,
   emptyRevertMessage,
   relayRejectionHint,
+  exceededSpendLimitToken,
   SEPOLIA_FAUCET_URL,
   type IntentChain,
   type NativeHolding,
@@ -93,6 +94,18 @@ describe("relayRejectionHint", () => {
     );
     expect(native).toContain("native spend cap");
     expect(relayRejectionHint("intent reverted: 0x9054c912")).toContain("native spend cap");
+  });
+
+  // The sentence names the token whose cap was hit, read from the revert, and
+  // not the fee token (issue #164: a USDC cap was reported as a CELO one).
+  test("the token an ExceededSpendLimit revert names is read out of it, and none is invented", () => {
+    expect(
+      exceededSpendLimitToken(
+        "intent reverted: ExceededSpendLimit(ExceededSpendLimit { token: 0xc70B8741B8B07A6d61E54fd4B20f22Fa648E5565 })",
+      ),
+    ).toBe("0xc70B8741B8B07A6d61E54fd4B20f22Fa648E5565");
+    expect(exceededSpendLimitToken("intent reverted: 0x9054c912")).toBeUndefined();
+    expect(exceededSpendLimitToken("NoSpendPermissions()")).toBeUndefined();
   });
 
   // Without the balances there is nothing to check, so the hint says the

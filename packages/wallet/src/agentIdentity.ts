@@ -33,7 +33,7 @@ import {
   type Erc8004MetadataEntry,
   type Erc8004RegistrationFile,
 } from "./erc8004.js";
-import { clearFirstAction, hasFirstAction } from "./internal/firstActions.js";
+import { clearFirstAction, hasFirstAction, noteRegistered } from "./internal/firstActions.js";
 import { hasRawPrivateKey, type Signer } from "./internal/signer.js";
 import type { Wallet } from "./internal/types.js";
 
@@ -250,6 +250,10 @@ export async function afterFirstAction(
     // The first action did not land, so the wallet is not set up. Its next
     // attempt is a first action again and notes itself.
     if (args.action !== "confirmed") return undefined;
+    // The registration it carried is on chain. Remembered, so that the next
+    // action does not ask a node that may not have seen that block yet and
+    // carry the registration a second time.
+    noteRegistered(chainId, wallet);
 
     if (args.option === false) return undefined;
     if (!hasAgentRegistry(chainId)) return undefined;

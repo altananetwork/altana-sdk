@@ -38,6 +38,8 @@ await client.approveTokenForPermit2({ wallet, signer: admin, token: USDC });
 await client.approveSignatureChecker({ wallet, signer: admin, session, checker: PERMIT2_ADDRESS });
 ```
 
+The cap names the token the agent pays in. Before each payment is signed, the SDK measures it against that cap and refuses one that would pass it: see [the spend cap](/sdk/x402#the-spend-cap).
+
 ## 2. The agent pays and fetches
 
 Hand the agent the `session`. From then on, paying is one call:

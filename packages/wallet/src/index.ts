@@ -179,6 +179,15 @@ export {
   type X402ApprovalStatus,
 } from "./x402Approvals.js";
 
+// The session's spend cap, applied to an x402 payment before it is signed.
+export {
+  checkX402SpendCap,
+  x402SpendCapError,
+  startOfSpendPeriod,
+  type X402SpendCapStatus,
+  type X402SpendCapReading,
+} from "./x402SpendCap.js";
+
 // x402 payments (Permit2 + EIP-3009).
 export {
   fetchWithX402,
@@ -297,6 +306,16 @@ export {
   DEFAULT_AGENT_DESCRIPTION,
   DEFAULT_AGENT_IMAGE,
 } from "./agentIdentity.js";
+export {
+  attributionTag,
+  attributionCodes,
+  parseAttribution,
+  tagCalls,
+  ALTANA_CODE,
+  ERC_8021_MARKER,
+  UNTAGGED_TARGETS,
+} from "./attribution.js";
+export type { AttributionOptions, ParsedAttribution } from "./attribution.js";
 export type {
   AgentIdentityOption,
   AgentIdentityOutcome,

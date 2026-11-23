@@ -31,3 +31,25 @@ export function x402TokensFrom(value: string | readonly string[] | undefined): A
   }
   return out;
 }
+
+/**
+ * The `x402SpendLimit` input of `grant_session`: one daily spend cap per x402
+ * token, in the token's smallest unit.
+ *
+ * The cap is what `x402_request` measures a payment against before signing it.
+ * Left out, the session has no cap on these tokens and pays whatever a seller
+ * asks, which is what an x402 session did before the input existed.
+ */
+export function x402SpendCapsFrom(
+  tokens: readonly Address[] | undefined,
+  limit: string | undefined,
+): { token: Address; limit: bigint; period: "day" }[] {
+  if (limit === undefined) return [];
+  if (!/^\d+$/.test(limit) || BigInt(limit) === 0n) {
+    throw new Error(`x402SpendLimit is a whole number above zero in the token's smallest unit (for example 5000000 for 5 USDC), got: ${limit}`);
+  }
+  if (!tokens || tokens.length === 0) {
+    throw new Error("x402SpendLimit caps the tokens named in x402Tokens, so it needs x402Tokens too.");
+  }
+  return tokens.map((token) => ({ token, limit: BigInt(limit), period: "day" as const }));
+}

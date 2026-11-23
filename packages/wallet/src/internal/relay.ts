@@ -16,6 +16,7 @@ import {
   createClient,
   createPublicClient,
   decodeErrorResult,
+  erc20Abi,
   fallback,
   formatUnits,
   getAddress,
@@ -46,7 +47,7 @@ import {
   type PasskeySigner,
 } from "./passkey.js";
 import { buildFirstActionPrepend } from "./keystore.js";
-import { noteFirstAction } from "./firstActions.js";
+import { isKnownRegistered, noteFirstAction } from "./firstActions.js";
 
 /** Faucet for Celo Sepolia (chainId 11142220). */
 export const CELO_SEPOLIA_FAUCET_URL = "https://faucet.celo.org/celo-sepolia";
@@ -421,6 +422,15 @@ export type SubmitCallsOptions = {
    */
   skipFirstActionPrepend?: boolean;
   /**
+   * The same calls without their attribution tag (`attribution.ts`).
+   *
+   * Set only by `execute` and `quoteExecute` when they tagged a call. If the
+   * relay refuses the tagged calls while preparing them, before anything is
+   * signed or sent, these are prepared instead, so a tag can never be the
+   * reason a transaction does not go out. Nothing is retried after signing.
+   */
+  untaggedCalls?: readonly Call[];
+  /**
    * The nonce for this intent, when the caller is choosing it.
    *
    * Set only by `execute` for an app transaction, which runs on a lane of the
@@ -526,7 +536,7 @@ export async function submitCallsDetailed(
   calls: readonly Call[],
   opts: SubmitCallsOptions,
 ): Promise<SubmitCallsResult> {
-  const { prepared, signingKeyForPorto, isAdmin, effectiveCalls } = await prepareIntent(
+  const { prepared, signingKeyForPorto, isAdmin, effectiveCalls } = await prepareTaggedIntent(
     client,
     walletAddress,
     signer,
@@ -682,7 +692,7 @@ export async function quoteCalls(
   calls: readonly Call[],
   opts: SubmitCallsOptions,
 ): Promise<CallsQuote> {
-  const { prepared, effectiveCalls, feeToken: named } = await prepareIntent(client, walletAddress, signer, calls, opts);
+  const { prepared, effectiveCalls, feeToken: named } = await prepareTaggedIntent(client, walletAddress, signer, calls, opts);
   const value = effectiveCalls.reduce((sum, c) => sum + (c.value ?? 0n), 0n);
   const ownChainId = client.chain?.id;
   const fundedFromChainId = fundedFromChainIdOf(prepared, ownChainId);
@@ -1107,6 +1117,28 @@ function toBigInt(x: unknown): bigint {
   return 0n;
 }
 
+/**
+ * `prepareIntent`, falling back to the calls without their attribution tag
+ * when the relay refuses the tagged ones. A refusal that has nothing to do
+ * with the tag is refused again the second time, and that second answer,
+ * about the caller's own calls, is the one thrown.
+ */
+async function prepareTaggedIntent(
+  client: ReturnType<typeof buildRelayClient>,
+  walletAddress: Address,
+  signer: Signer,
+  calls: readonly Call[],
+  opts: SubmitCallsOptions,
+): ReturnType<typeof prepareIntent> {
+  const { untaggedCalls, ...rest } = opts;
+  if (!untaggedCalls) return prepareIntent(client, walletAddress, signer, calls, rest);
+  try {
+    return await prepareIntent(client, walletAddress, signer, calls, rest);
+  } catch {
+    return prepareIntent(client, walletAddress, signer, untaggedCalls, rest);
+  }
+}
+
 async function prepareIntent(
   client: ReturnType<typeof buildRelayClient>,
   walletAddress: Address,
@@ -1138,7 +1170,11 @@ async function prepareIntent(
   // skipped here: the admin registers lazily on the registry chain inside the
   // wallet's first registry write (see submitRegistryCalls).
   let effectiveCalls: readonly Call[] = calls;
-  if (!opts.skipFirstActionPrepend && needsFirstActionPrepend(opts.network, opts.submittingKey.role)) {
+  if (
+    !opts.skipFirstActionPrepend &&
+    needsFirstActionPrepend(opts.network, opts.submittingKey.role) &&
+    !isKnownRegistered(opts.network.chainId, walletAddress)
+  ) {
     const publicClient = buildPublicClient(opts.network);
     const prepend = await buildFirstActionPrepend({
       publicClient,
@@ -1379,10 +1415,17 @@ async function explainRelayError(args: {
   // is evidence the cause is something else, and telling a wallet that can pay
   // to add funds is the error this rule has made before.
   const fundingRefused = refusedToFund && balance.kind !== "covers";
+  // A pricing failure is about the fee token. A spend limit is about whichever
+  // token's cap was hit, which the account names in its revert and which is
+  // often not the fee token: a session capped in USDC and paying fees in CELO
+  // was told its limit "does not cover this in CELO" (issue #164). When the
+  // revert names no token, none is named here either.
   const feeSymbol =
-    provisional === "price_unavailable" || provisional === "spend_limit_exceeded"
+    provisional === "price_unavailable"
       ? await feeTokenSymbol(relay, intent?.feeToken)
-      : undefined;
+      : provisional === "spend_limit_exceeded"
+        ? await spendLimitSymbol(relay, reason)
+        : undefined;
   const facts: RelayFailureFacts = {
     relayMessage: reason,
     detail,
@@ -1455,6 +1498,26 @@ async function feeTokenSymbol(
   if (isNativeAddress(feeToken)) return relay.network.chain.nativeCurrency.symbol;
   const tokens = await acceptedFeeTokens(relay.client, relay.network);
   return tokens.find((t) => t.address.toLowerCase() === feeToken.toLowerCase())?.symbol;
+}
+
+/** The token an `ExceededSpendLimit` revert names, when it names one. */
+export function exceededSpendLimitToken(reason: string): Address | undefined {
+  return /token:\s*(0x[0-9a-fA-F]{40})/.exec(reason)?.[1] as Address | undefined;
+}
+
+/** The symbol of the token whose spend cap a revert says was exceeded, when it can be named. */
+async function spendLimitSymbol(
+  relay: { client: ReturnType<typeof buildRelayClient>; network: NetworkConfig } | undefined,
+  reason: string,
+): Promise<string | undefined> {
+  const token = exceededSpendLimitToken(reason);
+  if (!relay || !token) return undefined;
+  const known = await feeTokenSymbol(relay, token).catch(() => undefined);
+  if (known) return known;
+  return buildPublicClient(relay.network)
+    .readContract({ address: token, abi: erc20Abi, functionName: "symbol" })
+    .then((symbol) => (typeof symbol === "string" && symbol ? symbol : undefined))
+    .catch(() => undefined);
 }
 
 /**
@@ -1993,7 +2056,7 @@ export function relayRejectionHint(reason: string): string {
     );
   }
   if (/ExceededSpendLimit/i.test(reason) || reason.toLowerCase().includes(EXCEEDED_SPEND_LIMIT_SELECTOR)) {
-    const token = /token:\s*(0x[0-9a-fA-F]{40})/.exec(reason)?.[1];
+    const token = exceededSpendLimitToken(reason);
     if (token && token.toLowerCase() !== NATIVE_TOKEN) {
       return (
         ` ExceededSpendLimit: the session's spend cap for ${token} is exhausted for this period. Check the cap` +

@@ -69,6 +69,9 @@ after its first action, in a transaction of its own. `agentIdentity` sets the
 name and image it is listed with, and `agentIdentity: false` turns it off. See
 [ERC-8004: agent identity](/sdk/erc8004#a-new-wallet-gets-one-by-itself).
 
+Every transaction carries a short public tag naming the app it came from.
+`appCode: "my_app"` sets yours. See [Attribution](/sdk/attribution).
+
 `NETWORKS.mainnet` is BNB, Ethereum and Celo; `NETWORKS.testnet` is BNB
 testnet, Celo Sepolia and Base Sepolia. `networkByChainId(id)` returns the
 config for any chain the SDK knows, Sepolia included.

@@ -1,0 +1,80 @@
+---
+title: "Attribution: your app's code"
+description: Tag your app's transactions with an ERC-8021 code so they can be told apart on chain.
+---
+
+# Attribution: your app's code
+
+Every transaction sent with [`execute`](/sdk/execute) carries a short public
+tag that names the app it came from. The tag follows
+[ERC-8021](https://eip.tools/eip/8021), the standard Celo and Base use for
+attribution codes. Set your app's code once, on the client:
+
+```ts
+import { createClient, CELO } from "@altananetwork/sdk";
+
+const client = createClient({ chains: [CELO], appCode: "my_app" });
+```
+
+Transactions from this client carry `altana,my_app`. Without `appCode` they
+carry `altana`.
+
+## Codes
+
+A code is lowercase letters, digits and underscores, up to 32 characters.
+`createClient` refuses anything else when the client is created.
+
+Pass several codes as a list. A code assigned to you by a program, such as a
+Celo `celo_...` code, goes next to your own:
+
+```ts
+const client = createClient({
+  chains: [CELO],
+  appCode: ["my_app", "celo_b7k3p9da"],
+});
+```
+
+`altana` is always the first code, and each code appears once.
+
+## How it works
+
+The tag is a few bytes on the end of one call: the codes as text, a length
+byte, and a fixed 16-byte marker. A contract reads only its own arguments, so
+the call does exactly what it does without the tag. The tag costs about 700
+gas.
+
+In a batch, the tag goes on the last call that has data. A transaction that
+only sends coins from a wallet key carries the tag as that send's data. Calls
+to a swap route's contracts are sent as the route built them, and the tag
+goes on another call of the batch.
+
+Session keys send the same tag. A session's permissions and spend limits
+apply exactly as they do without it.
+
+## Read it back
+
+`parseAttribution` reads the codes from a call's data, or from a whole
+transaction's input:
+
+```ts
+import { parseAttribution } from "@altananetwork/sdk";
+
+const tx = await publicClient.getTransaction({ hash });
+parseAttribution(tx.input); // { codes: ["altana", "my_app"] }
+```
+
+`attributionTag(["altana", "my_app"])` returns the tag's bytes.
+
+## Turn it off
+
+```ts
+const client = createClient({ chains: [CELO], attribution: false });
+```
+
+Transactions from this client carry no tag.
+
+## MCP server
+
+The [MCP server](/mcp/install) sends `altana,altana_mcp`. Set
+`ALTANA_APP_CODE=my_agent` to add your own code, and `ALTANA_ATTRIBUTION=off`
+to send none.

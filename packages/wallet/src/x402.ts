@@ -24,6 +24,8 @@ import * as Base64 from "ox/Base64";
 import type { Session } from "./internal/sessions.js";
 import { signOrderTypedData } from "./signOrder.js";
 import { checkX402Approvals, x402ApprovalError } from "./x402Approvals.js";
+import { reserveX402Spend } from "./x402SpendCap.js";
+import { expiredSessionError, sessionHasExpired } from "./errors.js";
 
 import {
   PERMIT2_ADDRESS,
@@ -347,7 +349,15 @@ export type FetchWithX402Options = {
    * in place, or when the chain is not one the SDK has a config for.
    */
   checkApprovals?: boolean;
-  /** Public client for the approval reads; defaults to the chain's own. */
+  /**
+   * Apply the session's spend cap on the token to the payment before signing
+   * it (default true). A payment whose amount, plus what the session already
+   * spent in the cap's current period, is over the limit is refused with
+   * `spend_limit_exceeded` and nothing is signed. A session with no cap on the
+   * token pays as before. See `checkX402SpendCap`.
+   */
+  checkSpendCap?: boolean;
+  /** Public client for the approval and spend reads; defaults to the chain's own. */
   publicClient?: PublicClient;
   /**
    * Preferred rail when a chain offers several. Defaults to "permit2" —
@@ -495,6 +505,19 @@ export async function fetchWithX402(
     );
   }
 
+  // A session whose expiry has passed cannot pay: the account refuses its
+  // signature at settlement. The SDK has held that expiry since the grant, so
+  // it says so here, in the sentence `execute` uses, instead of signing a
+  // payment the seller will report as a failed settlement.
+  if (sessionHasExpired(session.expiry)) {
+    throw expiredSessionError({
+      expiry: session.expiry,
+      detail:
+        `Session key ${session.publicKey} on wallet ${session.walletAddress} expired at ` +
+        `${new Date(session.expiry * 1000).toISOString()}. No x402 payment was signed for ${url}.`,
+    });
+  }
+
   if (x402Opts?.checkApprovals !== false) {
     // Two reads, before anything is signed. Settling without both approvals
     // reverts with no reason naming either, and the merchant reports it as a
@@ -512,7 +535,24 @@ export async function fetchWithX402(
     if (status && !status.ok) throw x402ApprovalError(status, url);
   }
 
-  const { header } = await signX402Payment(session, req);
+  // The account is never shown an x402 amount, so its spend caps cannot bound
+  // one. This is where the amount is known and nothing is signed yet.
+  const reservation =
+    x402Opts?.checkSpendCap === false
+      ? undefined
+      : await reserveX402Spend(session, req, {
+          url,
+          ...(x402Opts?.publicClient ? { publicClient: x402Opts.publicClient } : {}),
+        });
+
+  let header: string;
+  try {
+    ({ header } = await signX402Payment(session, req));
+  } catch (e) {
+    // Nothing was signed, so nothing was spent.
+    reservation?.release();
+    throw e;
+  }
   const headers = new Headers(init?.headers);
   headers.set("X-PAYMENT", header);
   // Some b402 merchants (CoinMarketCap among them) read PAYMENT-SIGNATURE

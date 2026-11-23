@@ -20,7 +20,7 @@ export type CallPermission =
   | { signature: string }
   | { to: Address };
 
-/** A spending cap for a token over a rolling period. */
+/** A spending cap for a token per period. Periods are fixed on the UTC clock, not rolling. */
 export type SpendPermission = {
   limit: bigint;
   period: "minute" | "hour" | "day" | "week" | "month" | "year";
