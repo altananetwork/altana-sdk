@@ -16,7 +16,9 @@ version may contain breaking changes.
 > reconstructed from commit history after the fact, so they summarize what
 > shipped rather than itemizing every change.
 
-## [Unreleased]
+## [1.2.0] - Unreleased
+
+`@altananetwork/mcp` 1.2.0
 
 ### Added
 
@@ -34,6 +36,12 @@ version may contain breaking changes.
   `attributionTag` builds the bytes.
 - **mcp: transactions carry `altana,altana_mcp`.** `ALTANA_APP_CODE=my_agent`
   adds your own code and `ALTANA_ATTRIBUTION=off` sends none.
+- **`smoke:activate-on-celo` (tests/e2e): a wallet made on BNB testnet, first
+  used on Celo Sepolia.** A passkey wallet and a private-key wallet are each
+  created with a client that knows BNB testnet only, transact there, and then
+  send their first transaction on Celo Sepolia with nothing provisioned again.
+  The address is the same and the key is registered in Celo Sepolia's
+  KeyStore by that transaction.
 
 ### Fixed
 
@@ -45,15 +53,6 @@ version may contain breaking changes.
   never affected; the agent was left unregistered. The SDK now remembers a
   registration it has seen confirm and does not ask again. Seen on Celo
   Sepolia.
-
-### Added
-
-- **`smoke:activate-on-celo` (tests/e2e): a wallet made on BNB testnet, first
-  used on Celo Sepolia.** A passkey wallet and a private-key wallet are each
-  created with a client that knows BNB testnet only, transact there, and then
-  send their first transaction on Celo Sepolia with nothing provisioned again.
-  The address is the same and the key is registered in Celo Sepolia's
-  KeyStore by that transaction.
 
 ## [1.1.0] - 2026-11-18
 
