@@ -48,7 +48,7 @@
     "pretest": "bun run stamp"
   },
   "dependencies": {
-    "ox": "^0.14.0",
+    "ox": "^0.14.20",
     "porto": "0.2.37",
     "viem": "^2.21.0"
   },

@@ -52,7 +52,9 @@
     "serve:x402-celo": "bun run build:x402 && bun run serve-x402-celo.ts",
     "live:celo-first": "bun run live-celo-first-grant.ts",
     "live:app-lane": "bun run live-app-nonce-lane.ts",
-    "live:one-chain": "bun run live-one-chain-grants.ts"
+    "live:one-chain": "bun run live-one-chain-grants.ts",
+    "live:attribution": "bun run live-attribution-tag.ts",
+    "live:attribution-mcp": "bun run live-attribution-mcp.ts"
   },
   "dependencies": {
     "@altananetwork/hypersigner-keystore-mcp": "workspace:*",

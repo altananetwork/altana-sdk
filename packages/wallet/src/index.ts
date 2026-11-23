@@ -297,6 +297,16 @@ export {
   DEFAULT_AGENT_DESCRIPTION,
   DEFAULT_AGENT_IMAGE,
 } from "./agentIdentity.js";
+export {
+  attributionTag,
+  attributionCodes,
+  parseAttribution,
+  tagCalls,
+  ALTANA_CODE,
+  ERC_8021_MARKER,
+  UNTAGGED_TARGETS,
+} from "./attribution.js";
+export type { AttributionOptions, ParsedAttribution } from "./attribution.js";
 export type {
   AgentIdentityOption,
   AgentIdentityOutcome,

@@ -109,6 +109,11 @@ name, description, image, endpoint } })` sets what it is listed with, and
 `agentIdentity: false` turns it off. A KeyStore registration never depends on
 it: the outcome is reported on the result (`agentIdentity`), never thrown.
 
+Every transaction sent with `execute` carries a short public tag (ERC-8021)
+naming the app it came from. `createClient({ chains, appCode: "my_app" })`
+sends `altana,my_app`; without it the tag is `altana`, and
+`attribution: false` sends none.
+
 To register with a record of your own from a session key:
 
 Buyers find sellers through the ERC-8004 identity registry. An agent can mint

@@ -86,6 +86,7 @@ import {
   type MetadataInput,
 } from "./erc8004.js";
 import { agentIdentityOption, agentIdentityReport, knownAgent, rememberAgent } from "./agentIdentity.js";
+import { attributionFromEnv } from "./attribution.js";
 
 // ---------- network ---------------------------------------------------------
 
@@ -115,7 +116,21 @@ console.error(`[altana-mcp] network: ${describeNetwork(NETWORK)}`);
 // wallet's first action. ALTANA_AGENT_IDENTITY=off turns that off.
 const AGENT_IDENTITY = agentIdentityOption(process.env.ALTANA_AGENT_IDENTITY);
 if (AGENT_IDENTITY === false) console.error("[altana-mcp] agent identity: off (ALTANA_AGENT_IDENTITY)");
-const client = createClient({ chains: [NETWORK], ...(AGENT_IDENTITY === false ? { agentIdentity: false } : {}) });
+// Each transaction carries a short public tag naming this server, and the
+// builder's own code when ALTANA_APP_CODE is set. ALTANA_ATTRIBUTION=off sends none.
+const ATTRIBUTION = attributionFromEnv(process.env);
+if (ATTRIBUTION.rejected !== undefined) {
+  console.error(
+    `[altana-mcp] ALTANA_APP_CODE "${ATTRIBUTION.rejected}" cannot be used and was left out. ` +
+      `Use lowercase letters, digits and underscores, up to 32 characters.`,
+  );
+}
+if (ATTRIBUTION.options.attribution === false) console.error("[altana-mcp] attribution: off (ALTANA_ATTRIBUTION)");
+const client = createClient({
+  chains: [NETWORK],
+  ...(AGENT_IDENTITY === false ? { agentIdentity: false } : {}),
+  ...ATTRIBUTION.options,
+});
 // Revocation reaches every chain of this environment, not only NETWORK: a key
 // granted on another chain of the group is revoked there too.
 const revokeClient = createClient({ chains: [...networkGroup(NETWORK)] });
