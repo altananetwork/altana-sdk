@@ -58,5 +58,5 @@ Under the hood this is a self-call to `setSignatureCheckerApproval(sessionKeyHas
 
 ## Notes
 
-- This authorizes *who may verify* the session's signatures; it does not grant the session any spend or call permissions (those come from [grantSession](/sdk/grant-session)).
+- This authorizes *who may verify* the session's signatures. What the session may send through `execute` comes from [grantSession](/sdk/grant-session). A payment the session signs is settled by the checker, outside `execute`, so the account's spend caps are applied to it by the SDK before signing: see [the spend cap](/sdk/x402#the-spend-cap).
 - Super-admin keys skip the checker gate entirely; the gate applies to scoped session keys.

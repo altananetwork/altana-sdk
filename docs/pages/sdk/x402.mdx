@@ -60,7 +60,7 @@ So a session paying over permit2 needs two approvals, and over eip3009 one.
 const session = await client.grantSession({
   wallet,
   signer: admin,
-  permissions: { calls: [{ to: USDC }], spend: [{ limit: 200_000n, period: "day" }] },
+  permissions: { spend: [{ token: USDC, limit: 200_000n, period: "day" }] },  // 0.2 USDC a day
   expiry: Math.floor(Date.now() / 1000) + 3600,
   x402Tokens: [USDC],   // approves USDC to Permit2, and both checkers for this key
 });
@@ -87,6 +87,51 @@ account's storage is its own on each chain, and a new session starts with none.
 
 See [approveTokenForPermit2](/sdk/approve-permit2) and [approveSignatureChecker](/sdk/approve-signature-checker).
 
+## The spend cap
+
+The account applies a session's spend caps where it sees a spend, which is
+inside `execute`. An x402 payment does not pass through there. The session
+signs an authorization and the seller's side moves the token with it, so the
+only thing the account is asked is whether the signature is from a key it
+accepts. No amount reaches it.
+
+The SDK is what signs, so the SDK applies the cap. Before `fetchWithX402`
+signs, it takes each spend cap the session holds on the token the seller asks
+for and adds up:
+
+- the payment's amount,
+- what the account recorded for the key in the cap's current period, read from
+  the account (the session's spending through `execute`),
+- what this process has already signed for x402 in that period.
+
+Over the limit, nothing is signed and the call throws an
+[`AltanaError`](/sdk/errors) with code `spend_limit_exceeded`, in the token's
+own units:
+
+```
+This session key's spending limit does not cover this payment for
+https://api.example.com/paid-endpoint: it asks 0.3 USDC, and 0.2 USDC of the
+0.2 USDC daily limit is left. Grant a new session key with a higher limit, as
+limits cannot be raised.
+```
+
+A cap names its token (`{ token: USDC, limit, period }`). A session with no cap
+on the payment token has no limit to apply and pays what the seller asks, so
+set one for every token in `x402Tokens` that should be bounded. The allowed
+`calls` of a session are about `execute` as well: an x402 payment calls
+nothing from the wallet, and the seller it pays is whoever answered the
+request.
+
+Periods are fixed on the UTC clock, the same ones the account uses: a day
+starts at 00:00, a week on Monday, a month on the 1st.
+
+The count of x402 payments lives in the process that signs them and starts
+again when it does; the amount of any single payment is always measured
+against the cap. The check belongs to this SDK: `signX402Payment` signs
+without it (call `checkX402SpendCap(session, requirement)` first), and so does
+anything else holding the session key. A short `expiry` and a wallet holding
+only its working balance bound a session whatever signs with it.
+
 ## Parameters
 
 ```ts
@@ -100,6 +145,10 @@ type ClientFetchWithX402Options = {
   chainId?: number;
   /** Preferred rail when a chain offers several. Defaults to "permit2". */
   preferRail?: "permit2" | "eip3009";
+  /** Read the two approvals before paying, and refuse when one is missing. Default true. */
+  checkApprovals?: boolean;
+  /** Apply the session's spend cap on the token before signing. Default true. */
+  checkSpendCap?: boolean;
 };
 ```
 
@@ -114,6 +163,7 @@ import {
   fetchWithX402,          // fetchWithX402(session, url, init?, { chainId, preferRail })
   selectX402Requirement,  // choose an option from a 402 `accepts[]`
   signX402Payment,        // sign one requirement → { header, payload }
+  checkX402SpendCap,      // read a requirement against the session's spend caps, before signing
   buildPermit2TypedData,        // plain PermitTransferFrom
   buildPermit2WitnessTypedData, // permit2-exact PermitWitnessTransferFrom (B402)
   buildEip3009TypedData,        // TransferWithAuthorization

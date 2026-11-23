@@ -43,7 +43,7 @@ const session = await client.grantSession({
   signer,
   permissions: {
     calls: [{ to: "0x…" }],
-    spend: [{ limit: 1_000_000n, period: "day" }], // 1 USDC/day
+    spend: [{ token: "0xUSDC…", limit: 1_000_000n, period: "day" }], // 1 USDC/day
   },
   expiry: Math.floor(Date.now() / 1000) + 60 * 60, // 1 hour
 });
@@ -70,6 +70,11 @@ await client.approveSignatureChecker({ wallet, signer, session, checker: PERMIT2
 // The agent pays + fetches (server-side):
 const res = await client.fetchWithX402({ session, url: "https://api.example.com/paid" });
 ```
+
+An x402 payment is signed, not sent through `execute`, so the account never sees its
+amount. The SDK applies the session's spend cap on the payment token before it signs,
+and refuses a payment that would pass it (`spend_limit_exceeded`). A session with no
+cap on that token pays what the seller asks.
 
 Payments are authorized with the account's ERC-1271 signature. See
 [Off-chain signatures](https://docs.altana.network/concepts/off-chain-signatures).

@@ -118,6 +118,12 @@ bun run --filter '@altananetwork/e2e' smoke:celo-passkey
 bun run --filter '@altananetwork/e2e' live:celo-proof -- --send
 ```
 
+`live-x402-spend-cap.ts` proves a session's spend cap applied to x402 payments, which the SDK checks before it signs: a capped session is refused a payment that would pass its cap (and the account's refusal for `execute` names the capped token), a session with no cap on the token pays as before, and a revoked and an expired session cannot pay. It buys from a real seller, so start one first with `bun run serve:x402-celo`, and the funder needs a little USDC as well as CELO.
+
+```bash
+bun run --filter '@altananetwork/e2e' live:x402-spend-cap
+```
+
 `smoke-celo-fee-currency.ts` proves relay fees paid in a stablecoin: it lists the relay's fee tokens (`client.feeCurrencies()`), then for each token under test (default `usdc`, override with `SMOKE_FEE_TOKENS`) creates a wallet and funds it with that token plus the CELO for two Keystore registrations. The first execute names no `feeToken`: the result names the token, the fee came out of the token balance, the main key is registered, and CELO dropped by exactly one registration fee. A grant with `feeToken: [token]` and a session execute with nothing named do the same, the session paying from the cap the grant added. Leftovers go back to the funder. It needs `TEST_FUNDER_KEY` holding CELO and the tokens on Celo Sepolia (USDC: https://faucet.circle.com; CELO, USDm, EURm, KESm: https://faucet.celo.org/celo-sepolia) and fails loudly naming the missing one.
 
 ```bash

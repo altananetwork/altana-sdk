@@ -46,6 +46,7 @@
     "live:x402-celo-facilitator": "bun run live-x402-celo-facilitator.ts",
     "live:hypersigner-celo": "bun run live-hypersigner-celo-cache.ts",
     "live:x402-approvals": "bun run live-x402-session-approvals.ts",
+    "live:x402-spend-cap": "bun run live-x402-spend-cap.ts",
     "live:eip7708-registry": "bun run live-eip7708-sepolia-registry.ts",
     "check:header-rlp": "bun run check-header-rlp-live.ts",
     "build:x402": "cd ../../packages/x402-server && bun run build",

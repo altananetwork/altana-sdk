@@ -104,6 +104,13 @@ type ClientGrantSessionOptions = {
                       | "account-authorization" | "cache-sync" | "done",
               detail?: { chainId: number; step?: "root" | "session"; reason?: string }) => void;
   /**
+   * The token(s) the session may pay x402 requests in. Each is approved to
+   * Permit2, and the token and Permit2 are approved as signature checkers for
+   * the session key, in the same intent as the grant. Give each a spend cap
+   * in permissions.spend to bound what the session pays; see x402 payments.
+   */
+  x402Tokens?: readonly Address[];
+  /**
    * The token(s) the session may pay relay fees in, one address or a list.
    * Each gets a daily spend cap added to the session (default one whole
    * token; see feeSpendLimit), and the grant itself pays its fee with the
