@@ -85,7 +85,13 @@ try {
     } catch (err) {
       fail(`importing the installed packages failed:\n${err.stderr ?? err.message}`);
     }
-    // 5. Code written for the previous release still compiles.
+    // 5. ...and through require() from CommonJS.
+    try {
+      console.log(run("node", ["require.cjs"], app).trim());
+    } catch (err) {
+      fail(`requiring the installed packages failed:\n${err.stderr ?? err.message}`);
+    }
+    // 6. Code written for the previous release still compiles.
     try {
       run(join(app, "node_modules", ".bin", "tsc"), ["-p", "tsconfig.json"], app);
       console.log("code written for 0.9.0 compiles against the installed packages");

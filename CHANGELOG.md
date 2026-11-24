@@ -18,7 +18,7 @@ version may contain breaking changes.
 
 ## [1.2.0] - Unreleased
 
-`@altananetwork/mcp` 1.2.0
+`@altananetwork/mcp` 1.2.0, `@altananetwork/x402-server` 0.4.1
 
 ### Added
 
@@ -75,6 +75,15 @@ version may contain breaking changes.
   never affected; the agent was left unregistered. The SDK now remembers a
   registration it has seen confirm and does not ask again. Seen on Celo
   Sepolia.
+- **`require()` loads `@altananetwork/sdk` and `@altananetwork/x402-server`.**
+  Both are ES modules, and their `exports` named an entry for `import` only,
+  so `require("@altananetwork/sdk")` threw `ERR_PACKAGE_PATH_NOT_EXPORTED`
+  ("No "exports" main defined") before Node read any of the code, although
+  `main` pointed at the build (issue #88). Each package now names the same
+  build as its `default` entry: from CommonJS, Node 20.19 and 22.12 or later
+  load it through `require()`, and an older Node says the package is an ES
+  module. `import` is unchanged. The install check in CI now loads both
+  packages with `require()` as well as `import`.
 
 ## [1.1.0] - 2026-11-18
 
