@@ -17,6 +17,10 @@
  *   Job B (refund path): seller never submits; warp past expiredAt,
  *   claimRefund, job EXPIRED, escrow returned in full.
  *
+ *   Job C (another token, issue #121): buildHireCalls with `paymentToken`
+ *   funds a job in testnet USDT; the kernel binds the job to USDT, escrows
+ *   USDT and no $U, and pays the seller in USDT on settle.
+ *
  * Run: bun run fork:erc8183   (from tests/e2e)
  */
 import {
@@ -57,6 +61,8 @@ const RPC = process.env.BSC_TESTNET_FORK_RPC_URL || "https://data-seed-prebsc-1-
 const ANVIL_PORT = 8551;
 const ANVIL_URL = `http://127.0.0.1:${ANVIL_PORT}`;
 const BUDGET = 2n * 10n ** 18n; // 2 $U
+// USDT on BSC testnet (18 decimals), which the testnet kernel reports as supported.
+const USDT: Address = "0x337610d27c682E347C9cD60BD4b3b107C9d34dDd";
 
 const ERC20_ABI = [
   { name: "balanceOf", type: "function", stateMutability: "view", inputs: [{ name: "a", type: "address" }], outputs: [{ type: "uint256" }] },
@@ -64,6 +70,7 @@ const ERC20_ABI = [
 const VIEW_ABI = [
   { name: "jobCounter", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { name: "disputeWindow", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint64" }] },
+  { name: "jobPaymentToken", type: "function", stateMutability: "view", inputs: [{ name: "jobId", type: "uint256" }], outputs: [{ type: "address" }] },
 ] as const;
 const ROUTER_SETTLE_ABI = [
   { name: "settle", type: "function", stateMutability: "nonpayable", inputs: [{ name: "jobId", type: "uint256" }, { name: "evidence", type: "bytes" }], outputs: [] },
@@ -90,8 +97,9 @@ async function dealToken(token: Address, holder: Address, amount: bigint) {
 const u = (v: bigint) => `${formatUnits(v, 18)} $U`;
 const uBal = (a: Address) =>
   publicClient.readContract({ address: A.paymentToken, abi: ERC20_ABI, functionName: "balanceOf", args: [a] });
+const usdtBal = (a: Address) => publicClient.readContract({ address: USDT, abi: ERC20_ABI, functionName: "balanceOf", args: [a] });
 
-async function hireJob(asBuyer: ReturnType<typeof createWalletClient>, buyer: Address, provider: Address) {
+async function hireJob(asBuyer: ReturnType<typeof createWalletClient>, buyer: Address, provider: Address, paymentToken?: Address) {
   const [jobCounter, disputeWindow, block] = await Promise.all([
     publicClient.readContract({ address: A.commerce, abi: VIEW_ABI, functionName: "jobCounter" }),
     publicClient.readContract({ address: A.policy, abi: VIEW_ABI, functionName: "disputeWindow" }),
@@ -106,6 +114,7 @@ async function hireJob(asBuyer: ReturnType<typeof createWalletClient>, buyer: Ad
     description: "Audit wallet 0x0000000000000000000000000000000000000001's Venus position (fork test)",
     budget: BUDGET,
     expiredAt,
+    ...(paymentToken ? { paymentToken } : {}),
   });
   for (const call of calls) {
     const h = await asBuyer.sendTransaction({ to: call.to, data: call.data, account: asBuyer.account!, chain: bscTestnet });
@@ -206,7 +215,45 @@ async function main() {
     console.log(`  ✓ job EXPIRED, ${u(BUDGET)} refunded to the buyer`);
     console.log(`  (status enum sanity: ${JOB_STATUS.join(" → ")})`);
 
-    console.log("\nResult: PASS ✓ — full ERC-8183 lifecycle, buyer and seller, against real kernel bytecode.\n");
+    // ════════ Job C: a hire in USDT, through the same builder ════════
+    console.log("▶ Job C: hire in USDT (createJobWithToken → registerJob → setBudget → approve USDT → fund) ...");
+    await dealToken(USDT, buyer.address, 10n * 10n ** 18n);
+    const usdtSeller = privateKeyToAccount(generatePrivateKey());
+    await test.setBalance({ address: usdtSeller.address, value: 10n ** 20n });
+    const asUsdtSeller = createWalletClient({ account: usdtSeller, chain: bscTestnet, transport: http(ANVIL_URL) });
+    const uBefore = await uBal(buyer.address);
+    const c = await hireJob(asBuyer, buyer.address, usdtSeller.address, USDT);
+    const bound = await publicClient.readContract({ address: A.commerce, abi: VIEW_ABI, functionName: "jobPaymentToken", args: [c.jobId] });
+    assert(bound.toLowerCase() === USDT.toLowerCase(), `job ${c.jobId} is bound to USDT (got ${bound})`);
+    assert((await usdtBal(A.commerce)) >= BUDGET, "the kernel holds the USDT escrow");
+    assert((await usdtBal(buyer.address)) === 8n * 10n ** 18n, "2 USDT left the buyer");
+    assert((await uBal(buyer.address)) === uBefore, "no $U left the buyer for a USDT hire");
+    console.log(`  ✓ job ${c.jobId} FUNDED and bound to USDT; 2 USDT escrowed, no $U moved`);
+
+    const usdtSubmit = buildSubmitCall({
+      addresses: A,
+      jobId: c.jobId,
+      deliverable: keccak256(toHex("USDT job delivered (fork test)")),
+      optParams: toHex(JSON.stringify({ deliverable_url: "https://seller.example/manifests/usdt.json" })),
+    });
+    const ch = await asUsdtSeller.sendTransaction({ to: usdtSubmit.to, data: usdtSubmit.data, account: usdtSeller, chain: bscTestnet });
+    assert((await publicClient.waitForTransactionReceipt({ hash: ch })).status === "success", "USDT job submit reverted");
+    await test.increaseTime({ seconds: Number(c.disputeWindow) + 60 });
+    await test.mine({ blocks: 1 });
+    const cSettle = await asBuyer.sendTransaction({
+      to: A.router,
+      data: encodeFunctionData({ abi: ROUTER_SETTLE_ABI, functionName: "settle", args: [c.jobId, "0x"] }),
+      account: buyer,
+      chain: bscTestnet,
+    });
+    assert((await publicClient.waitForTransactionReceipt({ hash: cSettle })).status === "success", "USDT job settle reverted");
+    assert((await getErc8183Job(network, c.jobId)).statusName === "COMPLETED", "USDT job is COMPLETED");
+    const usdtPaid = await usdtBal(usdtSeller.address);
+    assert(usdtPaid === BUDGET, `seller received the USDT escrow (${formatUnits(usdtPaid, 18)} USDT)`);
+    assert((await uBal(usdtSeller.address)) === 0n, "seller received no $U for a USDT job");
+    console.log(`  ✓ COMPLETED; seller paid ${formatUnits(usdtPaid, 18)} USDT`);
+
+    console.log("\nResult: PASS ✓ — full ERC-8183 lifecycle, buyer and seller, in $U and in USDT, against real kernel bytecode.\n");
   } finally {
     anvil.kill();
   }

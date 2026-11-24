@@ -58,6 +58,17 @@ version may contain breaking changes.
 - **`@altananetwork/mcp`: `grant_session` takes `x402SpendLimit`**, a daily cap
   for each of its `x402Tokens`, which `x402_request` then applies. Left out,
   the session has no cap on those tokens, as before.
+- **Hire an ERC-8183 agent in a token other than $U.** The escrows on BNB
+  Chain and BNB testnet fund a job in any token their owner has turned on,
+  USDT on both today, but `buildHireCalls` always created a $U job and
+  approved $U, so a hire priced in USDT could not be made (issue #121).
+  `hireErc8183Agent` and `buildHireCalls` take `paymentToken`: the job is
+  created with `createJobWithToken`, which binds it to that token, the
+  approval is in that token, and the seller is paid in it. `hireErc8183Agent`
+  asks the escrow first (`isPaymentTokenSupported`) and throws, with nothing
+  signed, if it does not accept the token; its result names the token the job
+  is funded in. Left out, or naming $U, a hire sends the same calls as before.
+  The BSC testnet fork test now runs a USDT job from funding to settlement.
 
 ### Fixed
 

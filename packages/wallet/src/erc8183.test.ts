@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { toFunctionSelector } from "viem";
+import { getAddress, toFunctionSelector, type Address } from "viem";
 import { buildHireCalls, buildClaimRefundCall, erc8183Addresses, erc8183ExpiredAt, ERC8183_ADDRESSES } from "./erc8183.js";
 
 const A = erc8183Addresses(97);
@@ -70,6 +70,40 @@ describe("buildHireCalls", () => {
   test("registerJob is called with the registry's policy", () => {
     const [, registerJob] = buildHireCalls(HIRE);
     expect(registerJob!.data!.toLowerCase()).toContain(A.policy.slice(2).toLowerCase());
+  });
+});
+
+describe("buildHireCalls in another payment token (issue #121)", () => {
+  // USDT on BNB testnet, which the testnet kernel reports as supported.
+  const USDT: Address = "0x337610d27c682E347C9cD60BD4b3b107C9d34dDd";
+  const CREATE_WITH_TOKEN_ABI = [
+    { name: "createJobWithToken", type: "function", stateMutability: "nonpayable", inputs: [{ name: "provider", type: "address" }, { name: "evaluator", type: "address" }, { name: "expiredAt", type: "uint256" }, { name: "description", type: "string" }, { name: "hook", type: "address" }, { name: "paymentToken", type: "address" }], outputs: [{ type: "uint256" }] },
+  ] as const;
+  const APPROVE_ABI = [
+    { name: "approve", type: "function", stateMutability: "nonpayable", inputs: [{ name: "spender", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ type: "bool" }] },
+  ] as const;
+
+  test("creates the job bound to the token and approves the kernel in that token; the other calls are unchanged", () => {
+    const calls = buildHireCalls({ ...HIRE, paymentToken: USDT });
+    const plain = buildHireCalls(HIRE);
+    expect(calls.map((c) => c.to)).toEqual([A.commerce, A.router, A.commerce, USDT, A.commerce]);
+    expect(calls[0]!.data!.slice(0, 10)).toBe(toFunctionSelector("createJobWithToken(address,address,uint256,string,address,address)"));
+    const created = decodeFunctionData({ abi: CREATE_WITH_TOKEN_ABI, data: calls[0]!.data! });
+    expect(created.args).toEqual([getAddress(HIRE.provider), A.router, HIRE.expiredAt, HIRE.description, A.router, USDT]);
+    const approve = decodeFunctionData({ abi: APPROVE_ABI, data: calls[3]!.data! });
+    expect(approve.args).toEqual([A.commerce, HIRE.budget]);
+    // registerJob, setBudget and fund do not name a token.
+    for (const i of [1, 2, 4]) expect(calls[i]).toEqual(plain[i]!);
+  });
+
+  test("naming the default token, in any case, builds the default hire", () => {
+    const plain = buildHireCalls(HIRE);
+    expect(buildHireCalls({ ...HIRE, paymentToken: A.paymentToken })).toEqual(plain);
+    expect(buildHireCalls({ ...HIRE, paymentToken: A.paymentToken.toLowerCase() as Address })).toEqual(plain);
+  });
+
+  test("an address that is not one throws before any call is built", () => {
+    expect(() => buildHireCalls({ ...HIRE, paymentToken: "0x1234" as Address })).toThrow(/0x1234/);
   });
 });
 
