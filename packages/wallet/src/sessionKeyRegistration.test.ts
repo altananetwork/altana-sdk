@@ -18,10 +18,10 @@
  * file's beforeEach and switched back in afterAll.
  */
 import { test, expect, mock, beforeEach, afterAll } from "bun:test";
-import { decodeFunctionData, keccak256, type Address, type Hex } from "viem";
+import { decodeFunctionData, keccak256, toFunctionSelector, type Address, type Hex } from "viem";
 import { BNB } from "./config.js";
 import { keyHashForSigner } from "./internal/erc1271.js";
-import { hireErc8183Agent } from "./erc8183.js";
+import { erc8183Addresses, hireErc8183Agent } from "./erc8183.js";
 import type { Signer } from "./internal/signer.js";
 import type { Session } from "./internal/sessions.js";
 
@@ -429,14 +429,22 @@ test("grant omits transactionHash on the leg when the relay reports none", async
 const HIRE_WALLET = { address: "0x2222222222222222222222222222222222222222" as Address };
 let jobClientOnChain: Address;
 let getJobCalled: boolean;
+let tokenAccepted: boolean;
+let tokensAsked: Address[];
 
 function mockErc8183Chain() {
   jobClientOnChain = "0x0000000000000000000000000000000000000000";
   getJobCalled = false;
+  tokenAccepted = true;
+  tokensAsked = [];
   buildPublicClientImpl = () => ({
-    readContract: async ({ functionName }: { functionName: string }) => {
+    readContract: async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
       if (functionName === "disputeWindow") return 3600n;
       if (functionName === "jobCounter") return 0n;
+      if (functionName === "isPaymentTokenSupported") {
+        tokensAsked.push(args![0] as Address);
+        return tokenAccepted;
+      }
       if (functionName === "getJob") {
         getJobCalled = true;
         return {
@@ -504,4 +512,71 @@ test("hireErc8183Agent default (waits) succeeds and verifies when the job matche
 
   expect(result.status).toBe("CONFIRMED");
   expect(getJobCalled).toBe(true);
+});
+
+// ============== hireErc8183Agent in another payment token (#121) =============
+//
+// The deployed kernels bind a job to any token their owner has turned on
+// (createJobWithToken). A hire in one of them is asked of the escrow before
+// anything is signed, and funded in that token; a hire in $U asks nothing and
+// sends the same calls as before.
+
+const USDT_BNB: Address = "0x55d398326f99059fF775485246999027B3197955";
+const CREATE_WITH_TOKEN = toFunctionSelector("createJobWithToken(address,address,uint256,string,address,address)");
+
+test("hireErc8183Agent in another token asks the escrow, and signs nothing when it does not accept the token", async () => {
+  mockErc8183Chain();
+  tokenAccepted = false;
+  jobClientOnChain = HIRE_WALLET.address;
+  const admin = createPrivateKeySigner();
+
+  await expect(
+    hireErc8183Agent(
+      HIRE_WALLET,
+      admin,
+      { provider: HIRE_WALLET.address, task: "test", budget: 1n, paymentToken: USDT_BNB },
+      { network: BNB },
+    ),
+  ).rejects.toThrow(/does not accept 0x55d398326f99059fF775485246999027B3197955 as a payment token .*nothing was signed/);
+  expect(tokensAsked).toEqual([USDT_BNB]);
+  expect(submitted).toBeNull();
+});
+
+test("hireErc8183Agent in an accepted token funds the job in it", async () => {
+  mockErc8183Chain();
+  jobClientOnChain = HIRE_WALLET.address;
+  const admin = createPrivateKeySigner();
+
+  const result = await hireErc8183Agent(
+    HIRE_WALLET,
+    admin,
+    { provider: HIRE_WALLET.address, task: "test", budget: 5n * 10n ** 18n, paymentToken: USDT_BNB },
+    { network: BNB },
+  );
+
+  const calls = submitted!.calls as { to: Address; data: Hex }[];
+  expect(calls[0]!.data.slice(0, 10)).toBe(CREATE_WITH_TOKEN);
+  expect(calls[0]!.data.toLowerCase()).toContain(USDT_BNB.slice(2).toLowerCase());
+  expect(calls[3]!.to).toBe(USDT_BNB);
+  expect(result.paymentToken).toBe(USDT_BNB);
+  expect(result.status).toBe("CONFIRMED");
+});
+
+test("hireErc8183Agent in $U asks the escrow nothing and reports $U", async () => {
+  mockErc8183Chain();
+  jobClientOnChain = HIRE_WALLET.address;
+  const admin = createPrivateKeySigner();
+  const { paymentToken: U } = erc8183Addresses(56);
+
+  const result = await hireErc8183Agent(
+    HIRE_WALLET,
+    admin,
+    { provider: HIRE_WALLET.address, task: "test", budget: 1n },
+    { network: BNB },
+  );
+
+  expect(tokensAsked).toEqual([]);
+  const calls = submitted!.calls as { to: Address; data: Hex }[];
+  expect(calls[3]!.to).toBe(U);
+  expect(result.paymentToken).toBe(U);
 });

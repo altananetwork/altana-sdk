@@ -101,6 +101,8 @@ The admin path is `hireErc8183Agent(wallet, signer, params, opts)`. Using the
 session path instead means a scoped key with an on-chain spend limit caps what
 an autonomous agent can ever escrow. `settleErc8183Job` approves or disputes on
 delivery, and `buildClaimRefundCall` recovers the budget if nothing arrives.
+To pay in a token the escrow accepts other than $U, such as USDT, pass
+`paymentToken`.
 
 Full reference: [ERC-8183 agent jobs](https://docs.altana.network/sdk/erc8183).
 

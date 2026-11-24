@@ -16,8 +16,8 @@ earn the escrow (the seller side). For per-HTTP-request payments — a
 different rail entirely, no job or escrow — see
 [Sell over x402](/sdk/x402-server).
 
-ERC-8183 is a job escrow: the buyer funds a Job in $U against a seller's
-address, the seller submits a deliverable, and the escrow releases after an
+ERC-8183 is a job escrow: the buyer funds a Job in $U (or [another token the
+escrow accepts](#pay-in-another-token)) against a seller's address, the seller submits a deliverable, and the escrow releases after an
 optimistic dispute window. If the seller never delivers, the buyer reclaims
 the full escrow after expiry.
 
@@ -38,6 +38,30 @@ dispute policy), `setBudget`, `approve $U`, `fund` — as **one atomic relay
 intent**. The session-key path works too (`hireErc8183Agent(session, params,
 opts)`), so a scoped key with an on-chain spend limit caps what an autonomous
 agent can ever escrow.
+
+### Pay in another token
+
+The escrow funds jobs in $U by default, and in any other token its owner has
+turned on: USDT, on BNB Chain and on BNB testnet, at the time of writing. To
+hire in one, pass `paymentToken`, with `budget` in that token's units:
+
+```ts
+const { jobId, paymentToken } = await hireErc8183Agent(wallet, signer, {
+  provider: "0xSellerAgentAddress",
+  task: "Audit wallet 0x…'s Venus position and recommend an action.",
+  budget: 5_000_000_000_000_000_000n, // 5 USDT (18 decimals on BNB Chain)
+  paymentToken: "0x55d398326f99059fF775485246999027B3197955", // USDT on BNB Chain
+}, { network: BNB });
+```
+
+Before anything is signed, the SDK asks the escrow whether it accepts the
+token (`isPaymentTokenSupported`) and throws if it does not. The job is then
+created with `createJobWithToken`, which binds it to that token, and the
+approval is in that token; `registerJob`, `setBudget` and `fund` are the same
+calls. The seller is paid in that token. `buildHireCalls` takes the same
+`paymentToken` but does not ask the escrow: a token it does not accept reverts
+the batch at its first call with `UnsupportedPaymentToken()`. A session key
+needs a spend limit on the token, as it does for $U.
 
 ### Deadline and expiry
 

@@ -3,9 +3,10 @@
  * agents from an Altana wallet.
  *
  * ERC-8183 is the BNB agent economy's job-escrow rail: the buyer (Client)
- * creates and funds a Job in $U on the AgenticCommerce kernel, the seller
- * (Provider) submits a deliverable, and after an optimistic dispute window
- * `settle` releases the escrow. Three contracts are involved:
+ * creates and funds a Job in $U (or another token the kernel accepts) on the
+ * AgenticCommerce kernel, the seller (Provider) submits a deliverable, and
+ * after an optimistic dispute window `settle` releases the escrow. Three
+ * contracts are involved:
  *
  *  - **AgenticCommerce** ("commerce") — escrow + job state machine.
  *  - **EvaluatorRouter** ("router") — set as every job's evaluator AND hook.
@@ -18,7 +19,7 @@
  * buyers need five self-paid transactions for the same flow.
  */
 
-import { encodeFunctionData, hexToString, keccak256, toHex, type Address, type Hex } from "viem";
+import { encodeFunctionData, hexToString, isAddressEqual, keccak256, toHex, type Address, type Hex } from "viem";
 import { canonicalJson } from "./internal/canonicalJson.js";
 import { erc8004Registry } from "./erc8004.js";
 import { type NetworkConfig } from "./config.js";
@@ -82,6 +83,8 @@ export type Erc8183Job = {
 
 const COMMERCE_ABI = [
   { name: "createJob", type: "function", stateMutability: "nonpayable", inputs: [{ name: "provider", type: "address" }, { name: "evaluator", type: "address" }, { name: "expiredAt", type: "uint256" }, { name: "description", type: "string" }, { name: "hook", type: "address" }], outputs: [{ type: "uint256" }] },
+  { name: "createJobWithToken", type: "function", stateMutability: "nonpayable", inputs: [{ name: "provider", type: "address" }, { name: "evaluator", type: "address" }, { name: "expiredAt", type: "uint256" }, { name: "description", type: "string" }, { name: "hook", type: "address" }, { name: "paymentToken", type: "address" }], outputs: [{ type: "uint256" }] },
+  { name: "isPaymentTokenSupported", type: "function", stateMutability: "view", inputs: [{ name: "token", type: "address" }], outputs: [{ type: "bool" }] },
   { name: "setBudget", type: "function", stateMutability: "nonpayable", inputs: [{ name: "jobId", type: "uint256" }, { name: "amount", type: "uint256" }, { name: "optParams", type: "bytes" }], outputs: [] },
   { name: "fund", type: "function", stateMutability: "nonpayable", inputs: [{ name: "jobId", type: "uint256" }, { name: "expectedBudget", type: "uint256" }, { name: "optParams", type: "bytes" }], outputs: [] },
   { name: "claimRefund", type: "function", stateMutability: "nonpayable", inputs: [{ name: "jobId", type: "uint256" }], outputs: [] },
@@ -145,29 +148,55 @@ export type HireCallsInput = {
   provider: Address;
   /** Job description — the task text (or an anchored signed quote), ≤4096 bytes. */
   description: string;
-  /** Budget in raw $U units (18 decimals). */
+  /** Budget in raw units of the payment token: $U (18 decimals) unless `paymentToken` names another. */
   budget: bigint;
   /** Absolute unix seconds; must exceed now + disputeWindow. */
   expiredAt: bigint;
+  /**
+   * The token to fund the job in, when it is not the deployment's default
+   * (`addresses.paymentToken`, $U): one the kernel accepts, such as USDT on
+   * BNB Chain. Left out, or naming the default, the calls are the default
+   * hire's. This builder does not ask the kernel; `hireErc8183Agent` does.
+   */
+  paymentToken?: Address;
 };
 
 /**
+ * The token a hire is funded in: `paymentToken` when it names a token other
+ * than the deployment's default, otherwise the default. Undefined means the
+ * default hire, whose calls stay exactly as they have always been.
+ */
+function otherPaymentToken(addresses: Erc8183Addresses, paymentToken: Address | undefined): Address | undefined {
+  return paymentToken !== undefined && !isAddressEqual(paymentToken, addresses.paymentToken) ? paymentToken : undefined;
+}
+
+/**
  * The buyer's five calls as one atomic batch: createJob, registerJob (binds
- * the policy), setBudget, approve $U to the kernel, fund. The jobId every
- * later call targets is predicted from `jobCounter() + 1`; if another job is
- * created in the same block the batch reverts harmlessly (registerJob is
- * client-only) — re-read the counter and retry.
+ * the policy), setBudget, approve the payment token to the kernel, fund. The
+ * jobId every later call targets is predicted from `jobCounter() + 1`; if
+ * another job is created in the same block the batch reverts harmlessly
+ * (registerJob is client-only) — re-read the counter and retry.
+ *
+ * With `paymentToken` set to a token other than the default, the job is
+ * created with `createJobWithToken`, which binds it to that token, and the
+ * approval is in that token; the other three calls are the same. A token the
+ * kernel does not accept reverts the batch at the first call
+ * (`UnsupportedPaymentToken()`), so nothing is escrowed.
  */
 export function buildHireCalls(input: HireCallsInput): Call[] {
   if (new TextEncoder().encode(input.description).length > 4096) {
     throw new Error("erc8183: description exceeds 4096 bytes (kernel limit — do not truncate signed quotes).");
   }
   const { addresses: a, jobId } = input;
+  const other = otherPaymentToken(a, input.paymentToken);
+  const createJob: Call = other
+    ? { to: a.commerce, data: encodeFunctionData({ abi: COMMERCE_ABI, functionName: "createJobWithToken", args: [input.provider, a.router, input.expiredAt, input.description, a.router, other] }) }
+    : { to: a.commerce, data: encodeFunctionData({ abi: COMMERCE_ABI, functionName: "createJob", args: [input.provider, a.router, input.expiredAt, input.description, a.router] }) };
   return [
-    { to: a.commerce, data: encodeFunctionData({ abi: COMMERCE_ABI, functionName: "createJob", args: [input.provider, a.router, input.expiredAt, input.description, a.router] }) },
+    createJob,
     { to: a.router, data: encodeFunctionData({ abi: ROUTER_ABI, functionName: "registerJob", args: [jobId, a.policy] }) },
     { to: a.commerce, data: encodeFunctionData({ abi: COMMERCE_ABI, functionName: "setBudget", args: [jobId, input.budget, "0x"] }) },
-    { to: a.paymentToken, data: encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [a.commerce, input.budget] }) },
+    { to: other ?? a.paymentToken, data: encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [a.commerce, input.budget] }) },
     { to: a.commerce, data: encodeFunctionData({ abi: COMMERCE_ABI, functionName: "fund", args: [jobId, input.budget, "0x"] }) },
   ];
 }
@@ -252,8 +281,14 @@ export type HireAgentParams = {
   provider: Address;
   /** The task text (Mode A) or an anchored signed-quote JSON (Mode B). */
   task: string;
-  /** Budget in raw $U units (18 decimals). */
+  /** Budget in raw units of the payment token: $U (18 decimals) unless `paymentToken` names another. */
   budget: bigint;
+  /**
+   * The token to pay in, when it is not $U: one the escrow accepts, such as
+   * USDT on BNB Chain (`0x55d398326f99059fF775485246999027B3197955`). The
+   * escrow is asked (`isPaymentTokenSupported`) before anything is signed.
+   */
+  paymentToken?: Address;
   /**
    * The seller's submission window, seconds (default 1800). The bound
    * policy's dispute window is added on top: `expiredAt = now +
@@ -284,16 +319,20 @@ export type HireAgentResult = ExecuteResult & {
   provider: Address;
   budget: bigint;
   expiredAt: bigint;
+  /** The token the job is funded in: `paymentToken`, or the deployment's default. */
+  paymentToken: Address;
 };
 
 /**
- * Hire an ERC-8183 seller: fund a job against `provider` for `budget` $U in
- * ONE atomic relay intent (five calls batched). Returns once the job is
- * FUNDED on-chain — unless `opts.noWait` is set, in which case it resolves
- * as soon as the relay accepts the intent (`result.status === "PENDING"`)
- * and the FUNDED/ownership check below is skipped, since the batch isn't
- * mined yet to check. Callers using `noWait` are responsible for verifying
- * (e.g. via `getErc8183Job`) once their `callsId` confirms.
+ * Hire an ERC-8183 seller: fund a job against `provider` for `budget`, in $U
+ * or in `paymentToken`, in ONE atomic relay intent (five calls batched). A
+ * token the escrow does not accept throws before anything is signed. Returns
+ * once the job is FUNDED on-chain — unless `opts.noWait` is set, in which
+ * case it resolves as soon as the relay accepts the intent
+ * (`result.status === "PENDING"`) and the FUNDED/ownership check below is
+ * skipped, since the batch isn't mined yet to check. Callers using `noWait`
+ * are responsible for verifying (e.g. via `getErc8183Job`) once their
+ * `callsId` confirms.
  *
  * Overloads mirror `execute`: admin path (wallet + signer) or session path.
  */
@@ -325,10 +364,20 @@ export async function hireErc8183Agent(
   const addresses = erc8183Addresses(network.chainId);
   const publicClient = buildPublicClient(network);
 
-  const [disputeWindow, jobCounter] = await Promise.all([
+  const other = otherPaymentToken(addresses, params.paymentToken);
+  const [disputeWindow, jobCounter, accepted] = await Promise.all([
     publicClient.readContract({ address: addresses.policy, abi: POLICY_ABI, functionName: "disputeWindow" }),
     publicClient.readContract({ address: addresses.commerce, abi: COMMERCE_ABI, functionName: "jobCounter" }),
+    // The escrow's owner turns tokens on and off, so ask it now rather than trust a list.
+    other
+      ? publicClient.readContract({ address: addresses.commerce, abi: COMMERCE_ABI, functionName: "isPaymentTokenSupported", args: [other] })
+      : true,
   ]);
+  if (other && accepted !== true) {
+    throw new Error(
+      `erc8183: the escrow on chainId ${network.chainId} does not accept ${other} as a payment token (isPaymentTokenSupported is false); nothing was signed.`,
+    );
+  }
 
   const jobId = jobCounter + 1n;
   const expiredAt = erc8183ExpiredAt(BigInt(Math.floor(Date.now() / 1000)), BigInt(disputeWindow), params.deadlineSeconds);
@@ -340,6 +389,7 @@ export async function hireErc8183Agent(
     description: params.task,
     budget: params.budget,
     expiredAt,
+    ...(other ? { paymentToken: other } : {}),
   });
 
   const result = isSessionCall
@@ -362,7 +412,7 @@ export async function hireErc8183Agent(
       );
     }
   }
-  return { ...result, jobId, provider: params.provider, budget: params.budget, expiredAt };
+  return { ...result, jobId, provider: params.provider, budget: params.budget, expiredAt, paymentToken: other ?? addresses.paymentToken };
 }
 
 /**
