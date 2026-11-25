@@ -16,7 +16,7 @@ version may contain breaking changes.
 > reconstructed from commit history after the fact, so they summarize what
 > shipped rather than itemizing every change.
 
-## [1.2.0] - Unreleased
+## [1.2.0] - 2026-11-23
 
 `@altananetwork/mcp` 1.2.0
 
